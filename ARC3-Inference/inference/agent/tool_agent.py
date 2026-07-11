@@ -150,6 +150,9 @@ _REQUEST_SAFETY_MARGIN_TOKENS = 512
 _CONTEXT_OVERFLOW_RETRY_TRIM_TOKENS = 512
 _PERSISTENT_HISTORY_ASSISTANT_TURNS = 30
 _RESPONSE_META_MAX_CHARS = 4000
+# A 64x64 grid upscaled 4x is a 256x256 image: 16x16 patches, 2x2-merged, is 64
+# vision tokens. Rounded up for the vision special tokens that wrap it.
+_IMAGE_TOKEN_ESTIMATE = 96
 
 _PYTHON_TOOL_DESCRIPTION = (
     "Run one ephemeral Python snippet against preloaded ASCII game state. Available globals: "
@@ -463,12 +466,28 @@ def _format_action_span(start_action_num: int | None, end_action_num: int | None
     return f"{start_action_num}-{end_action_num}"
 
 
+def _strip_image_payloads(value: Any, counter: list[int]) -> Any:
+    if isinstance(value, dict):
+        if value.get("type") == "image_url":
+            counter[0] += 1
+            return {"type": "image_url"}
+        return {key: _strip_image_payloads(item, counter) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_strip_image_payloads(item, counter) for item in value]
+    return value
+
+
 def _estimate_tokens(value: Any) -> int:
+    # Image parts carry a base64 data URL whose character count says nothing about
+    # its cost to the model, so drop the payload and charge the vision-token price.
+    counter = [0]
+    value = _strip_image_payloads(value, counter)
     try:
         rendered = json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
     except TypeError:
         rendered = str(value)
-    return max(1, (len(rendered) + 2) // 3)
+    text_tokens = max(1, (len(rendered) + 2) // 3)
+    return text_tokens + counter[0] * _IMAGE_TOKEN_ESTIMATE
 
 
 def _host_accessible_base_url(base_url: str) -> str:
@@ -1138,6 +1157,21 @@ class ToolAgent:
             if value:
                 self._summarized_knowledge[key] = value
 
+    def _update_summarized_knowledge_from_tool_arguments(self, arguments: dict[str, Any]) -> bool:
+        # The followup prompts tell the model to reply with a tool call and no assistant
+        # text, so scraping text alone lets the carried world model freeze exactly when
+        # the agent is struggling. Accept it as a structured tool argument too.
+        note = arguments.get("world_model")
+        if not isinstance(note, dict):
+            return False
+        updated = False
+        for key in _empty_world_model():
+            value = _normalize_summary_text(note.get(key), max_chars=None)
+            if value:
+                self._summarized_knowledge[key] = value
+                updated = True
+        return updated
+
     def _update_summarized_knowledge_from_step_summary(self) -> None:
         summary = self._last_step_summary
         if not summary:
@@ -1255,6 +1289,7 @@ class ToolAgent:
                 "Use Python to inspect the evidence, refine that world model from the newest history, and search or score candidate actions or short sequences against the current goal as you currently understand it.",
                 "Maintain a compact working world model of what the current level seems to contain, what actions appear to do, what the goal seems to be, what is still uncertain, and what plan currently looks best.",
                 "Below you are provided with the current world model from the previous turn. The default behavior is to copy it and add or remove things based on the evidence that you gathered. BEFORE EXECUTING NEW ACTIONS YOU MUST ALWAYS GIVE THE REVISED VERSION OF THE WORLD MODEL.",
+                "Pass it as the `world_model` argument of the `python` tool call, alongside `code`. That argument is the one that carries forward, so send it on every call, even when you reply with a tool call and no assistant text.",
             ]
         )
         lines.append(
@@ -1275,7 +1310,7 @@ class ToolAgent:
             [
                 "When ready, call `action(actions)` from inside the `python` tool with the best valid action or ordered batch selected by your code. If your code has found a reliable short sequence, prefer batching it in one call.",
                 "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it.",
-                "If you include assistant text before a tool call, keep it short and use it to update the world model. Helpful optional prefixes are `World model:`, `Goal model:`, `Action model:`, `Recent findings:`, `Open questions:`, `Plan:`, and `Cross-level notes:`.",
+                "The `world_model` tool argument is the reliable way to update it. Assistant text is optional; if you write any, keep it short and prefix lines with `World model:`, `Goal model:`, `Action model:`, `Recent findings:`, `Open questions:`, `Plan:`, or `Cross-level notes:`.",
                 TOOL_CALL_FORMAT_GUIDANCE,
             ]
         )
@@ -1299,6 +1334,22 @@ class ToolAgent:
                                 "description": (
                                     "Python code to run. The snippet is ephemeral and is not saved across tool calls."
                                 ),
+                            },
+                            "world_model": {
+                                "type": "object",
+                                "description": (
+                                    "Your revised understanding of the game, carried forward to every later turn. "
+                                    "Send it with every call; omitted fields keep their previous value."
+                                ),
+                                "properties": {
+                                    "world_model": {"type": "string", "description": "How the board and its objects behave."},
+                                    "goal_model": {"type": "string", "description": "What winning a level requires."},
+                                    "action_model": {"type": "string", "description": "What each action does."},
+                                    "recent_findings": {"type": "string", "description": "What the last actions just taught you."},
+                                    "open_questions": {"type": "string", "description": "What you still need to test."},
+                                    "current_plan": {"type": "string", "description": "The next few steps you intend to take."},
+                                    "cross_level_notes": {"type": "string", "description": "What carries across levels."},
+                                },
                             },
                         },
                         "required": ["code"],
@@ -1480,6 +1531,9 @@ class ToolAgent:
 
     def _run_python_tool(self, state_path: Path, arguments: dict[str, Any]) -> _ToolDispatchResult:
         self._ensure_session(state_path)
+        # Capture before the code checks below: a turn whose snippet is empty or malformed
+        # still carries a world model worth keeping.
+        self._update_summarized_knowledge_from_tool_arguments(arguments)
         code = str(arguments.get("code", "")).rstrip()
         if not code:
             return _ToolDispatchResult(json.dumps({"error": "python requires a non-empty `code` string."}, indent=2))
