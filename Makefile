@@ -21,6 +21,7 @@ RSYNC_EXCLUDES := \
 	--exclude reports \
 	--exclude __pycache__ \
 	--exclude '*.pyc' \
+	--exclude '*.log' \
 	--exclude example-run
 
 help:
