@@ -153,6 +153,10 @@ _RESPONSE_META_MAX_CHARS = 4000
 # A 64x64 grid upscaled 4x is a 256x256 image: 16x16 patches, 2x2-merged, is 64
 # vision tokens. Rounded up for the vision special tokens that wrap it.
 _IMAGE_TOKEN_ESTIMATE = 96
+# When the history overflows, trim to this fraction of the budget rather than to the
+# budget itself, so later turns append into the headroom instead of re-trimming (and
+# re-invalidating the prefix cache) on every request.
+_CONTEXT_TRIM_LOW_WATER = 0.6
 
 _PYTHON_TOOL_DESCRIPTION = (
     "Run one ephemeral Python snippet against preloaded ASCII game state. Available globals: "
@@ -1765,7 +1769,18 @@ class ToolAgent:
         history = list(messages[1:])
         preserve_recent = max(0, preserve_recent)
         budget_tokens = max(1, self._context_budget_tokens - max(0, extra_safety_tokens))
-        while history and self._estimate_request_input_tokens([system_message, *history], tools=tools) > budget_tokens:
+        if self._estimate_request_input_tokens([system_message, *history], tools=tools) <= budget_tokens:
+            history = self._drop_until_first_user_message(history)
+            return [system_message, *history]
+
+        # Dropping the oldest block shifts every token after it, so the server's prefix
+        # cache misses on the whole request. Trimming to *just* under budget means the
+        # next turn overflows and trims again, so once the history fills up the prefix
+        # changes on every single request and the cache never pays off. Trim down to a
+        # low-water mark instead: the following turns append into the headroom and reuse
+        # the cached prefix until the next compaction.
+        target_tokens = max(1, int(budget_tokens * _CONTEXT_TRIM_LOW_WATER))
+        while history and self._estimate_request_input_tokens([system_message, *history], tools=tools) > target_tokens:
             if not self._drop_oldest_history_block(history, preserve_recent=preserve_recent):
                 break
         history = self._drop_until_first_user_message(history)
