@@ -54,7 +54,12 @@ def current_grid_image_style() -> str:
     return style if style in {"plain", "outline"} else "plain"
 
 
-_OUTLINE_BACKGROUND = (248, 248, 244)
+# Gutter tints deliberately sit outside the 16-color game palette (which includes
+# pure white and four pure greys), so margin never reads as board. They also differ
+# from each other: warm = top/left, cool = bottom/right, giving the model an
+# orientation anchor that survives any crop or mental rotation.
+_OUTLINE_GUTTER_TOP_LEFT = (240, 233, 216)      # warm parchment
+_OUTLINE_GUTTER_BOTTOM_RIGHT = (186, 197, 206)  # cool blue-grey
 _OUTLINE_EDGE = (0, 0, 0)
 _OUTLINE_HALO = (255, 255, 255)
 _OUTLINE_LABEL = (80, 80, 80)
@@ -87,10 +92,16 @@ def _render_outline(grid: list, rows: int, cols: int, scale: int) -> Image.Image
         return int(row[c]) if c < len(row) else 0
 
     margin = _OUTLINE_MARGIN
+    width = margin + cols * scale + margin
+    height = margin + rows * scale + margin
     board = _render_plain(grid, rows, cols, scale)
-    image = Image.new("RGB", (cols * scale + margin, rows * scale + margin), _OUTLINE_BACKGROUND)
-    image.paste(board, (margin, margin))
+    # Bottom/right gutter as the ground, top/left gutter as an L on top of it, so the
+    # two tints meet at the off corners and every canvas edge is unambiguous.
+    image = Image.new("RGB", (width, height), _OUTLINE_GUTTER_BOTTOM_RIGHT)
     draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 0, width - 1, margin - 1], fill=_OUTLINE_GUTTER_TOP_LEFT)
+    draw.rectangle([0, 0, margin - 1, height - 1], fill=_OUTLINE_GUTTER_TOP_LEFT)
+    image.paste(board, (margin, margin))
 
     def x(c: int) -> int:
         return margin + c * scale
@@ -113,9 +124,13 @@ def _render_outline(grid: list, rows: int, cols: int, scale: int) -> Image.Image
     for c in range(0, cols, _OUTLINE_TICK_EVERY):
         draw.line([(x(c), margin - 5), (x(c), margin - 1)], fill=_OUTLINE_LABEL, width=1)
         draw.text((x(c) + 2, 2), str(c), fill=_OUTLINE_LABEL)
+        draw.line([(x(c), y(rows) + 1), (x(c), y(rows) + 5)], fill=_OUTLINE_LABEL, width=1)
+        draw.text((x(c) + 2, y(rows) + 8), str(c), fill=_OUTLINE_LABEL)
     for r in range(0, rows, _OUTLINE_TICK_EVERY):
         draw.line([(margin - 5, y(r)), (margin - 1, y(r))], fill=_OUTLINE_LABEL, width=1)
         draw.text((2, y(r) + 2), str(r), fill=_OUTLINE_LABEL)
+        draw.line([(x(cols) + 1, y(r)), (x(cols) + 5, y(r))], fill=_OUTLINE_LABEL, width=1)
+        draw.text((x(cols) + 8, y(r) + 2), str(r), fill=_OUTLINE_LABEL)
     return image
 
 

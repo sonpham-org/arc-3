@@ -76,9 +76,12 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
 MULTIMODAL_OUTLINE_ADDENDUM = (
     "- In the image, black outlines are drawn only where adjacent cells differ in color, so each"
     " outlined shape is one contiguous same-color region -- the same objects `segmentation` reports.\n"
-    "- The numbers along the top and left margins are column and row indices (labelled every 8"
-    " cells). Read MOUSE targets directly off them: a label 16 on the top margin marks col=16, on"
-    " the left margin row=16.\n"
+    "- The numbers in the margins are column indices (top and bottom rulers) and row indices (left"
+    " and right rulers), labelled every 8 cells. Read MOUSE targets directly off them: a label 16"
+    " on the top or bottom ruler marks col=16, on the left or right ruler row=16.\n"
+    "- The margins themselves are not board: the warm parchment gutter marks the top and left"
+    " edges, the cool blue-grey gutter the bottom and right edges. Neither tint appears in the"
+    " game palette, and the asymmetry tells you the image's orientation at a glance.\n"
 )
 
 PYTHON_ADDENDUM = (

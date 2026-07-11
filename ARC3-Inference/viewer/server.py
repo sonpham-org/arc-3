@@ -12,7 +12,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from inference.utils.run_artifacts import is_selectable_run_dir_name
-from viewer.data import load_game_payload, load_game_shell_payload, load_game_step_payload, load_run_summary
+from viewer.data import (
+    load_game_frames,
+    load_game_payload,
+    load_game_shell_payload,
+    load_game_step_payload,
+    load_run_overview,
+    load_run_summary,
+)
 
 
 log = logging.getLogger(__name__)
@@ -25,11 +32,23 @@ class _ResponseBody:
     is_gzipped: bool
 
 
-def _index_html_path() -> Path:
-    return Path(__file__).resolve().parent / "index.html"
+_STATIC_CONTENT_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+}
+
+
+def _viewer_root() -> Path:
+    return Path(__file__).resolve().parent
+
 
 def _index_html_path() -> Path:
-    return Path(__file__).resolve().parent / "index.html"
+    return _viewer_root() / "index.html"
+
+
+def _static_root() -> Path:
+    return _viewer_root() / "static"
 
 
 def _load_index_html() -> str:
@@ -37,7 +56,27 @@ def _load_index_html() -> str:
 
 
 def _index_html_version() -> int:
-    return _index_html_path().stat().st_mtime_ns
+    """Newest mtime across the whole frontend, so hot reload fires on CSS/JS edits too."""
+    versions = [_index_html_path().stat().st_mtime_ns]
+    static_root = _static_root()
+    if static_root.is_dir():
+        versions.extend(
+            path.stat().st_mtime_ns
+            for path in static_root.rglob("*")
+            if path.is_file() and path.suffix in _STATIC_CONTENT_TYPES
+        )
+    return max(versions)
+
+
+def _resolve_static_path(url_path: str) -> Path | None:
+    """Map a /static/... URL to a file, refusing anything that escapes the static root."""
+    static_root = _static_root().resolve()
+    candidate = (static_root / url_path.removeprefix("/static/")).resolve()
+    if not candidate.is_relative_to(static_root) or not candidate.is_file():
+        return None
+    if candidate.suffix not in _STATIC_CONTENT_TYPES:
+        return None
+    return candidate
 
 
 def _requested_run_dir(*, runs_dir: Path, default_run_dir: Path | None, requested_run: str | None) -> Path | None:
@@ -75,13 +114,29 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/run":
             self._handle_run_api(parsed.query)
             return
+        if parsed.path == "/api/run-overview":
+            self._handle_run_overview_api(parsed.query)
+            return
         if parsed.path == "/api/game":
             self._handle_game_api(parsed.query)
             return
         if parsed.path == "/api/game-step":
             self._handle_game_step_api(parsed.query)
             return
+        if parsed.path == "/api/game-frames":
+            self._handle_game_frames_api(parsed.query)
+            return
+        if parsed.path.startswith("/static/"):
+            self._handle_static(parsed.path)
+            return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _handle_static(self, url_path: str) -> None:
+        path = _resolve_static_path(url_path)
+        if path is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        self._send_bytes(path.read_bytes(), content_type=_STATIC_CONTENT_TYPES[path.suffix])
 
     def log_message(self, fmt: str, *args) -> None:
         log.info("%s - %s", self.address_string(), fmt % args)
@@ -169,6 +224,68 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(payload)
+
+    def _handle_run_overview_api(self, query: str) -> None:
+        params = parse_qs(query)
+        requested_run = params.get("run", [None])[0]
+        try:
+            payload = load_run_overview(
+                runs_dir=self.runs_dir,
+                run_dir=_requested_run_dir(
+                    runs_dir=self.runs_dir,
+                    default_run_dir=self.run_dir,
+                    requested_run=requested_run,
+                ),
+            )
+        except FileNotFoundError as exc:
+            self._send_json({"error": str(exc), "games": []}, status=HTTPStatus.NOT_FOUND)
+            return
+        except json.JSONDecodeError as exc:
+            self._send_json({"error": f"Invalid viewer artifact JSON: {exc}", "games": []}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        self._send_json(payload)
+
+    def _handle_game_frames_api(self, query: str) -> None:
+        params = parse_qs(query)
+        requested_run = params.get("run", [None])[0]
+        raw_index = params.get("index", [None])[0]
+        try:
+            game_index = int(str(raw_index))
+        except (TypeError, ValueError):
+            self._send_json({"error": "Missing or invalid game index."}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        try:
+            payload = load_game_frames(
+                runs_dir=self.runs_dir,
+                run_dir=_requested_run_dir(
+                    runs_dir=self.runs_dir,
+                    default_run_dir=self.run_dir,
+                    requested_run=requested_run,
+                ),
+                game_index=game_index,
+            )
+        except FileNotFoundError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+            return
+        except json.JSONDecodeError as exc:
+            self._send_json({"error": f"Invalid viewer artifact JSON: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        self._send_json(payload)
+
+    def _send_bytes(self, raw: bytes, *, content_type: str) -> None:
+        content = self._maybe_gzip(raw)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        if content.is_gzipped:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(content.body)))
+        self.end_headers()
+        self.wfile.write(content.body)
 
     def _send_html(self, html: str) -> None:
         content = html.encode("utf-8")
