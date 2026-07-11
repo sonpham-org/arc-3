@@ -1,11 +1,16 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help check-workspace a108-check-ssh a108-sync a108-check-env a108-install a108-download-model a108-server a108-check-server a108-stop-server a108-server-log-path a108-tail-server a108-smoke-chat a108-smoke-tool a108-smoke-game a108-score-run a108-score-latest a108-bootstrap-report
+.PHONY: help check-workspace a108-check-ssh a108-sync a108-check-env a108-install a108-download-model a108-server a108-check-server a108-stop-server a108-server-log-path a108-tail-server a108-smoke-chat a108-smoke-tool a108-smoke-game a108-score-run a108-score-latest a108-bootstrap-report a424-sync a424-inspect
 
 A108_HOST ?= gx10-a108.tail57a229.ts.net
 A108_SSH_OPTS ?= -o BatchMode=yes -o ConnectTimeout=10
 A108_ROOT ?= $$HOME/GitHub/arc-3
 A108_CONFIG ?= configs/a108.qwen36.json
+
+A424_HOST ?= gx10-a424.tail57a229.ts.net
+A424_ROOT ?= $$HOME/GitHub/arc-3
+A424_CONFIG ?= configs/a424.qwen36.duck.json
+A424_VIEW_PORT ?= 8021
 A108_SMOKE_GAME ?= ft09
 A108_SMOKE_RUN ?= a108-smoke-ft09
 A108_SCORE_RUN_DIR ?=
@@ -42,6 +47,10 @@ help:
 	@echo "  make a108-score-latest  Score the newest run under ARC3-Inference/runs"
 	@echo "  make a108-score-run A108_SCORE_RUN_DIR=... Score a specific run directory"
 	@echo "  make a108-bootstrap-report Run sync/install/server/smoke sequence with logs"
+	@echo ""
+	@echo "a424 targets:"
+	@echo "  make a424-sync          Rsync this workspace to A424_ROOT on A424_HOST=$(A424_HOST)"
+	@echo "  make a424-inspect       Sync, restart the run inspector on a424, tunnel it to localhost:$(A424_VIEW_PORT)"
 
 check-workspace:
 	A108_HOST="$(A108_HOST)" A108_SSH_OPTS="$(A108_SSH_OPTS)" A108_CONFIG="$(A108_CONFIG)" scripts/check_workspace.sh
@@ -95,6 +104,18 @@ a108-score-run:
 
 a108-score-latest:
 	ssh $(A108_SSH_OPTS) "$(A108_HOST)" 'cd "$(A108_ROOT)/ARC3-Inference" && latest="$$(ls -dt runs/*/ 2>/dev/null | head -n 1)" && if [ -z "$$latest" ]; then echo "No run directories under runs/"; exit 1; fi; echo "Scoring $$latest"; CONFIG_PATH="$(A108_CONFIG)" make score_run SCORE_RUN_DIR="$$latest"'
+
+a424-sync:
+	ssh $(A108_SSH_OPTS) "$(A424_HOST)" 'mkdir -p "$(A424_ROOT)"'
+	rsync -e "$(RSYNC_RSH)" -az --delete $(RSYNC_EXCLUDES) ./ "$(A424_HOST):$(A424_ROOT)/"
+
+# Restart the inspector on a424 against the runs it is writing, and forward its port here.
+# Frontend edits only need `make a424-sync` -- the page hot-reloads off /api/viewer-version.
+a424-inspect: a424-sync
+	ssh $(A108_SSH_OPTS) "$(A424_HOST)" 'pkill -f "inference-view.*--port $(A424_VIEW_PORT)" || true'
+	@echo "Inspector: http://127.0.0.1:$(A424_VIEW_PORT)  (Ctrl-C to stop)"
+	ssh $(A108_SSH_OPTS) -L $(A424_VIEW_PORT):127.0.0.1:$(A424_VIEW_PORT) -t "$(A424_HOST)" \
+		'cd "$(A424_ROOT)/ARC3-Inference" && CONFIG_PATH="$(A424_CONFIG)" make view VIEW_RUN_DIR='"''"
 
 a108-bootstrap-report:
 	A108_HOST="$(A108_HOST)" A108_SSH_OPTS="$(A108_SSH_OPTS)" A108_ROOT="$(A108_ROOT)" A108_CONFIG="$(A108_CONFIG)" A108_SMOKE_GAME="$(A108_SMOKE_GAME)" A108_SMOKE_RUN="$(A108_SMOKE_RUN)" A108_SERVER_START_TIMEOUT="$(A108_SERVER_START_TIMEOUT)" A108_SERVER_TAIL_ON_WAIT="$(A108_SERVER_TAIL_ON_WAIT)" scripts/a108_bootstrap_report.sh

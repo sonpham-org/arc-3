@@ -564,7 +564,12 @@ def _artifact_metadata(root_run_dir: Path, viewer_data_path: Path) -> dict[str, 
 
 def _run_dir_fingerprint(run_dir: Path) -> tuple[Any, ...]:
     relevant_paths: list[Path] = []
-    relevant_paths.extend(_viewer_data_paths(run_dir))
+    viewer_data_paths = _viewer_data_paths(run_dir)
+    relevant_paths.extend(viewer_data_paths)
+    # The event logs are the source for frames and board thumbnails, so they have to be part of
+    # the cache key: a live run appends to them, and only the solver's separate rewrite of
+    # viewer_data.json would otherwise invalidate the cache.
+    relevant_paths.extend(raw_events_jsonl_sidecar_path(path) for path in viewer_data_paths)
     relevant_paths.extend(sorted(run_dir.glob("*requests.jsonl")))
     relevant_paths.extend(sorted(run_dir.glob("seeds/*/*requests.jsonl")))
     relevant_paths.extend(sorted(run_dir.glob("seeds/*/run_config.json")))

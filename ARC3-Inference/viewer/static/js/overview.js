@@ -12,12 +12,16 @@ export function renderOverview(root, totalsEl, payload, { onOpen }) {
     return;
   }
 
+  // A multi-pass run repeats every game_id, so the pass has to be on the card or the cards lie.
+  const multiPass = new Set(games.map((g) => g.game_id)).size < games.length;
+
   games.forEach((game, index) => {
+    const pass = multiPass && game.pass_label !== undefined ? ` <span class="pass">p${escapeHtml(game.pass_label)}</span>` : "";
     const card = document.createElement("div");
     card.className = `card is-${game.status || "unknown"}`;
     card.innerHTML = `
       <div class="card-head">
-        <span class="game-id">${escapeHtml(game.game_id || "?")}</span>
+        <span class="game-id">${escapeHtml(game.game_id || "?")}${pass}</span>
         <span class="card-status status-${game.status}">${escapeHtml(game.status || "")}</span>
       </div>
       <canvas></canvas>
