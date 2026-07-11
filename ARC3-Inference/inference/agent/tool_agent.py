@@ -1350,21 +1350,19 @@ class ToolAgent:
                                     "Python code to run. The snippet is ephemeral and is not saved across tool calls."
                                 ),
                             },
+                            # A string, not an object: the qwen3_coder tool parser renders each
+                            # parameter as a flat <parameter=name>value</parameter>, and a nested
+                            # object type comes back with the arguments empty.
                             "world_model": {
-                                "type": "object",
+                                "type": "string",
                                 "description": (
                                     "Your revised understanding of the game, carried forward to every later turn. "
-                                    "Send it with every call; omitted fields keep their previous value."
+                                    "A JSON object with the string fields: world_model (how the board and its objects "
+                                    "behave), goal_model (what clearing a level requires), action_model (what each action "
+                                    "does), recent_findings (what the last actions just taught you), open_questions (what "
+                                    "you still need to test), current_plan (your next few steps), cross_level_notes (what "
+                                    "carries across levels). Send it on every call; omitted fields keep their previous value."
                                 ),
-                                "properties": {
-                                    "world_model": {"type": "string", "description": "How the board and its objects behave."},
-                                    "goal_model": {"type": "string", "description": "What winning a level requires."},
-                                    "action_model": {"type": "string", "description": "What each action does."},
-                                    "recent_findings": {"type": "string", "description": "What the last actions just taught you."},
-                                    "open_questions": {"type": "string", "description": "What you still need to test."},
-                                    "current_plan": {"type": "string", "description": "The next few steps you intend to take."},
-                                    "cross_level_notes": {"type": "string", "description": "What carries across levels."},
-                                },
                             },
                         },
                         # world_model is required: as an optional parameter the model simply
