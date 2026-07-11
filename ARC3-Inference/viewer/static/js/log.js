@@ -1,4 +1,4 @@
-// The event log: one row per frame, showing the action taken and whether it did anything.
+// The event log: one row per action, showing what the model decided and whether it worked.
 
 import { annotateCoordRefs, MODE } from "./coords.js";
 
@@ -26,33 +26,60 @@ export class EventLog {
     const stepByTurn = new Map((steps || []).map((step) => [step.analysisStep, step]));
 
     for (let i = this.rows.length; i < frames.length; i += 1) {
-      const tr = this.buildRow(frames[i], stepByTurn.get(frames[i].analysis_step));
+      const frame = frames[i];
+      const step = stepByTurn.get(frame.analysis_step);
+      // Only the first action of a turn gets the decision; the rest of the batch replays it.
+      const isTurnHead = step !== undefined && frames[i - 1]?.analysis_step !== frame.analysis_step;
+      const tr = this.buildRow(frame, step, isTurnHead);
       this.tbody.appendChild(tr);
       this.rows.push(tr);
     }
   }
 
-  buildRow(frame, step) {
+  buildRow(frame, step, isTurnHead) {
     const tr = document.createElement("tr");
     tr.dataset.frame = String(frame.frameIndex);
 
-    const isTurnStart = frame.type === "action" && frame.action_num !== undefined;
-    const changed = frame.board_changed;
     const type = frame.type === "initial" ? "INI" : "ACT";
-
-    // A no-op action is a strong signal that the agent is stuck, and nothing surfaces it today.
+    // A no-op action is a strong signal the agent is stuck, and nothing surfaced it before.
+    const changed = frame.board_changed;
     const delta = frame.type === "action" ? (changed ? "●" : "·") : "";
     const deltaClass = frame.type === "action" && !changed ? "col-d nochange" : "col-d";
+    const turn = frame.analysis_step !== undefined ? `T${frame.analysis_step}` : "";
 
     tr.innerHTML = `
       <td class="col-n">${frame.action_num ?? 0}</td>
+      <td class="col-t">${turn}</td>
       <td class="col-ty">${type}</td>
       <td class="${deltaClass}">${delta}</td>
       <td class="col-what"></td>`;
 
     const what = tr.querySelector(".col-what");
-    what.textContent = describe(frame, step);
-    if (frame.analysis_step !== undefined && isTurnStart) tr.classList.add("is-turn");
+    const action = document.createElement("span");
+    action.className = "act";
+    action.textContent = frame.action_display || frame.title || "";
+    what.appendChild(action);
+
+    if (isTurnHead) {
+      tr.classList.add("is-turn");
+      if (step.decisionPreview) {
+        const code = document.createElement("code");
+        code.className = "decision";
+        code.textContent = step.decisionPreview;
+        what.appendChild(code);
+      }
+      const bits = [];
+      if (step.toolCallCount) bits.push(`${step.toolCallCount} calls`);
+      if (step.attemptCount > 1) bits.push(`${step.attemptCount} attempts`);
+      if (step.errorCount) bits.push(`${step.errorCount} err`);
+      if (bits.length) {
+        const meta = document.createElement("span");
+        meta.className = step.errorCount ? "llm-meta has-error" : "llm-meta";
+        meta.textContent = bits.join(" · ");
+        what.appendChild(meta);
+      }
+    }
+
     annotateCoordRefs(what, MODE.PROSE);
     return tr;
   }
@@ -64,22 +91,4 @@ export class EventLog {
     tr.classList.add("selected");
     if (this.autoScroll) tr.scrollIntoView({ block: "nearest" });
   }
-}
-
-function describe(frame, step) {
-  const action = frame.action_display || frame.title || "";
-  const turn = frame.analysis_step !== undefined ? `T${frame.analysis_step} ` : "";
-  const decision = firstCodeLine(step);
-  return decision ? `${turn}${action}  ⟨${decision}⟩` : `${turn}${action}`;
-}
-
-/** The first substantive line of the python the model ran, so decisions are skimmable. */
-function firstCodeLine(step) {
-  const section = (step?.localContext?.sections || []).find((s) => /^TOOL CALL/i.test(s.label || ""));
-  if (!section) return "";
-  const line = String(section.content || "")
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith("#"));
-  return line ? (line.length > 48 ? `${line.slice(0, 47)}…` : line) : "";
 }

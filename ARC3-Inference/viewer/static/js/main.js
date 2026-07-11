@@ -138,12 +138,18 @@ async function selectFrame(index) {
 
   el.boardMeta.textContent = `${frame.title || ""} · ${frame.action_display || ""} · score ${frame.score ?? 0} · ${frame.state || ""}`;
 
-  const step = (state.game.viewer_steps || []).find((s) => s.analysisStep === turn);
+  const steps = state.game.viewer_steps || [];
+  const step = steps.find((s) => s.analysisStep === turn);
   if (!step) {
     renderDecision(el.decision, null);
     return;
   }
-  renderDecision(el.decision, await loadStep(step.stepIndex), { currentClick: frame.click });
+  // The previous turn is needed to diff the prompt: only the delta is worth reading.
+  const previous = step.stepIndex > 0 ? await loadStep(step.stepIndex - 1) : null;
+  renderDecision(el.decision, await loadStep(step.stepIndex), {
+    currentClick: frame.click,
+    previousStep: previous,
+  });
 }
 
 async function loadStep(stepIndex) {

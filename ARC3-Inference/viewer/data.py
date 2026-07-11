@@ -1813,7 +1813,46 @@ def _lightweight_analysis_step(
     )
     step["stepIndex"] = index
     _apply_attempt_metadata(step, group)
+    step.update(_decision_summary(analysis_event))
     return step
+
+
+def _decision_summary(analysis_event: dict[str, Any] | None) -> dict[str, Any]:
+    """Summarise a turn's LLM calls straight from its transcript.
+
+    The event log needs this on the lightweight step, so it can show what the model actually
+    did on every row without hydrating (and re-parsing) each step's full 38 KB transcript.
+    The transcript is already in memory here, so this costs nothing extra.
+    """
+    transcript = str((analysis_event or {}).get("transcript") or "")
+    if not transcript:
+        return {}
+
+    sections = _split_labeled_sections(transcript)
+    calls = [section for section in sections if str(section.get("label", "")).startswith("TOOL CALL")]
+    errors = [section for section in sections if str(section.get("label", "")).startswith("ERROR")]
+
+    # The decision is the call that actually moved the game: the one invoking `action(...)`.
+    # Fall back to the last call, which is the closest thing to a decision when none did.
+    preview = ""
+    for section in calls:
+        code = _extract_python_code(section.get("content", ""))
+        line = next(
+            (raw.strip() for raw in code.splitlines() if raw.strip() and not raw.strip().startswith("#")),
+            "",
+        )
+        if not line:
+            continue
+        preview = line
+        if "action" in _count_runtime_symbols_in_code(code):
+            break
+
+    summary: dict[str, Any] = {"toolCallCount": len(calls)}
+    if preview:
+        summary["decisionPreview"] = preview
+    if errors:
+        summary["errorCount"] = len(errors)
+    return summary
 
 
 def _apply_attempt_metadata(step: dict[str, Any], group: dict[str, Any]) -> None:
