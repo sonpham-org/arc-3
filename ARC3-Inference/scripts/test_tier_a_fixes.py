@@ -105,8 +105,32 @@ agent._update_summarized_knowledge_from_tool_arguments({"world_model": {"recent_
 blob2 = "\n".join(agent._summarized_knowledge_lines())
 check("partial update preserves untouched fields", "3x3 movable block" in blob2 and "SPACE does nothing" in blob2)
 
+# Observed live on a424: the model never sent an OPTIONAL world_model, so the
+# carried model stayed empty for the whole game. It must be required.
+required = None
+for const in ta.ToolAgent._tools.__code__.co_consts:
+    if isinstance(const, tuple) and "code" in const:
+        required = const
+check("world_model is a REQUIRED tool parameter", required is not None and "world_model" in required, str(required))
+
+# Also observed live: the model emits <parameter=...> markup, and that recovery path
+# hands every argument back as a *string*, which the dict-only check silently dropped.
+agent3 = ta.ToolAgent.__new__(ta.ToolAgent)
+agent3._summarized_knowledge = ta._empty_world_model()
+agent3._update_summarized_knowledge_from_tool_arguments(
+    {"code": "x=1", "world_model": json.dumps({"world_model": "Arrived as a JSON string."})}
+)
+check("JSON-string world_model parsed", "Arrived as a JSON string" in "\n".join(agent3._summarized_knowledge_lines()))
+
+agent4 = ta.ToolAgent.__new__(ta.ToolAgent)
+agent4._summarized_knowledge = ta._empty_world_model()
+agent4._update_summarized_knowledge_from_tool_arguments(
+    {"code": "x=1", "world_model": "World model: Arrived as labelled prose."}
+)
+check("prose-string world_model parsed", "labelled prose" in "\n".join(agent4._summarized_knowledge_lines()))
+
 # Junk must not crash the turn.
-check("non-dict world_model ignored safely", agent._update_summarized_knowledge_from_tool_arguments({"world_model": "junk"}) is False)
+check("unparseable world_model ignored safely", agent._update_summarized_knowledge_from_tool_arguments({"world_model": "!!!"}) is False)
 check("absent world_model ignored safely", agent._update_summarized_knowledge_from_tool_arguments({"code": "x=1"}) is False)
 
 print()

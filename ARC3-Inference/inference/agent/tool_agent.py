@@ -1166,6 +1166,17 @@ class ToolAgent:
         # text, so scraping text alone lets the carried world model freeze exactly when
         # the agent is struggling. Accept it as a structured tool argument too.
         note = arguments.get("world_model")
+        if isinstance(note, str):
+            # The XML-markup recovery path hands every parameter back as a string, so a
+            # world model that arrives that way is JSON (or, failing that, the labelled
+            # prose the text scraper already understands).
+            text = note.strip()
+            if not text:
+                return False
+            try:
+                note = json.loads(text)
+            except json.JSONDecodeError:
+                note = _extract_scientist_note(text)
         if not isinstance(note, dict):
             return False
         updated = False
@@ -1356,7 +1367,9 @@ class ToolAgent:
                                 },
                             },
                         },
-                        "required": ["code"],
+                        # world_model is required: as an optional parameter the model simply
+                        # never sends it, and the carried world model stays empty all game.
+                        "required": ["code", "world_model"],
                     },
                 },
             }
