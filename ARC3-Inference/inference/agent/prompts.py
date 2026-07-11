@@ -73,6 +73,14 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
     "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
 )
 
+MULTIMODAL_OUTLINE_ADDENDUM = (
+    "- In the image, black outlines are drawn only where adjacent cells differ in color, so each"
+    " outlined shape is one contiguous same-color region -- the same objects `segmentation` reports.\n"
+    "- The numbers along the top and left margins are column and row indices (labelled every 8"
+    " cells). Read MOUSE targets directly off them: a label 16 on the top margin marks col=16, on"
+    " the left margin row=16.\n"
+)
+
 PYTHON_ADDENDUM = (
     "\n\nPython tool guidance:\n"
     "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"

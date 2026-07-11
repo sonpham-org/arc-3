@@ -20,6 +20,7 @@ from inference.agent.prompts import (
     PYTHON_ADDENDUM,
     STRUCTURED_RUNTIME_STATE_ADDENDUM,
     MULTIMODAL_CONTEXT_ADDENDUM,
+    MULTIMODAL_OUTLINE_ADDENDUM,
     TOOL_CALL_FORMAT_GUIDANCE,
     VISUAL_GAME_ADDENDUM,
 )
@@ -27,6 +28,7 @@ from inference.agent.prompts import (
 from inference.agent.vision_context import (
     current_grid_image_enabled,
     current_grid_image_part,
+    current_grid_image_style,
 )
 
 from inference.agent.python_tool_sandbox import run_sandboxed_python
@@ -150,9 +152,15 @@ _REQUEST_SAFETY_MARGIN_TOKENS = 512
 _CONTEXT_OVERFLOW_RETRY_TRIM_TOKENS = 512
 _PERSISTENT_HISTORY_ASSISTANT_TURNS = 30
 _RESPONSE_META_MAX_CHARS = 4000
-# A 64x64 grid upscaled 4x is a 256x256 image: 16x16 patches, 2x2-merged, is 64
-# vision tokens. Rounded up for the vision special tokens that wrap it.
-_IMAGE_TOKEN_ESTIMATE = 96
+def _image_token_estimate() -> int:
+    # A 64x64 grid upscaled Nx is a 64N-pixel-square image: 16px patches, 2x2-merged,
+    # is (4N)^2/4 vision tokens, plus a margin for the special tokens that wrap it.
+    # Upscale 4 (256px) -> ~96; upscale 8 (512px + outline gutter) -> ~288.
+    try:
+        scale = max(1, int(os.environ.get("MULTIMODAL_UPSCALE", "4").strip() or "4"))
+    except ValueError:
+        scale = 4
+    return (4 * scale) ** 2 // 4 + 32
 # When the history overflows, trim to this fraction of the budget rather than to the
 # budget itself, so later turns append into the headroom instead of re-trimming (and
 # re-invalidating the prefix cache) on every request.
@@ -360,6 +368,8 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
     if current_grid_image_enabled():
         prompt += MULTIMODAL_CONTEXT_ADDENDUM
+        if current_grid_image_style() == "outline":
+            prompt += MULTIMODAL_OUTLINE_ADDENDUM
     prompt += VISUAL_GAME_ADDENDUM
     prompt += PYTHON_ADDENDUM
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
@@ -491,7 +501,7 @@ def _estimate_tokens(value: Any) -> int:
     except TypeError:
         rendered = str(value)
     text_tokens = max(1, (len(rendered) + 2) // 3)
-    return text_tokens + counter[0] * _IMAGE_TOKEN_ESTIMATE
+    return text_tokens + counter[0] * _image_token_estimate()
 
 
 def _host_accessible_base_url(base_url: str) -> str:

@@ -50,7 +50,7 @@ print(f"  NEW estimate        : {fixed:,} tokens")
 print(f"  overcharge removed  : {naive - fixed:,} tokens ({naive / max(fixed, 1):.1f}x)")
 
 check("image no longer costed by base64 length", fixed < naive / 4, f"{fixed} vs {naive}")
-check("image still costs something", fixed >= ta._IMAGE_TOKEN_ESTIMATE)
+check("image still costs something", fixed >= ta._image_token_estimate())
 
 # 30 turns of history, the persistent-history window the agent actually carries.
 history = [message] * 30

@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from inference.utils.grid_utils import ARC_COLOR_CHARS
 from inference.utils.run_artifacts import is_selectable_run_dir_name, run_dir_sort_key
-from inference.utils.viewer_artifacts import load_raw_events
+from inference.utils.viewer_artifacts import load_raw_events, raw_events_jsonl_sidecar_path
 
 
 _SECTION_RE = re.compile(r"(?m)^\[(.+?)\]\s*$")
@@ -80,6 +81,23 @@ _RUNTIME_CALL_SYMBOLS = {
     "board_lines",
 }
 _RUNTIME_SYMBOLS = _RUNTIME_VALUE_SYMBOLS | _RUNTIME_CALL_SYMBOLS
+_CLICK_RE = re.compile(r"row\s*=\s*(?P<row>\d+)\s*,\s*col\s*=\s*(?P<col>\d+)", flags=re.IGNORECASE)
+_FRAME_EVENT_KEYS = (
+    "type",
+    "title",
+    "action_num",
+    "analysis_step",
+    "action_name",
+    "action_display",
+    "score",
+    "state",
+    "level",
+    "reward",
+    "board_changed",
+    "level_completed",
+    "game_over",
+    "run_status",
+)
 
 
 @dataclass(frozen=True)
@@ -274,6 +292,177 @@ def load_game_step_payload(
             _RUN_PAYLOAD_CACHE.pop(existing_key, None)
         _RUN_PAYLOAD_CACHE[cache_key] = cached
     return cached
+
+
+def load_run_overview(*, runs_dir: str | Path = "runs", run_dir: str | Path | None = None) -> dict[str, Any]:
+    """Load per-game summaries plus a latest-board thumbnail, for the run overview grid.
+
+    `load_run_summary` is deliberately board-free, but the overview cards render a mini
+    board per game, and `lastEvent` has its board stripped before it is written out.
+    """
+    resolved_run_dir = _resolve_run_dir(runs_dir=runs_dir, run_dir=run_dir)
+    available_runs = [path.name for path in list_run_dirs(runs_dir)]
+    cache_key = (
+        str(resolved_run_dir.resolve()),
+        "overview",
+        _run_dir_fingerprint(resolved_run_dir),
+    )
+    cached = _RUN_PAYLOAD_CACHE.get(cache_key)
+    if cached is None:
+        cached = {
+            "source": "viewer_data",
+            "arc_palette": _arc_palette(),
+            "color_chars": ARC_COLOR_CHARS,
+            "games": [
+                _load_game_overview(resolved_run_dir, path)
+                for path in _viewer_data_paths(resolved_run_dir)
+            ],
+        }
+        for existing_key in [key for key in _RUN_PAYLOAD_CACHE if key[:2] == cache_key[:2] and key != cache_key]:
+            _RUN_PAYLOAD_CACHE.pop(existing_key, None)
+        _RUN_PAYLOAD_CACHE[cache_key] = cached
+
+    return {
+        "run_name": resolved_run_dir.name,
+        "selected_run": resolved_run_dir.name,
+        "available_runs": available_runs,
+        "source": cached["source"],
+        "arc_palette": cached["arc_palette"],
+        "color_chars": cached["color_chars"],
+        "games": cached["games"],
+    }
+
+
+def load_game_frames(
+    *,
+    runs_dir: str | Path = "runs",
+    run_dir: str | Path | None = None,
+    game_index: int,
+) -> dict[str, Any]:
+    """Load every board state of one game as a flat, scrubber-indexed frame list.
+
+    A frame is the `initial` event plus each `action` event -- one distinct board apiece.
+    Boards ship in a single payload so scrubbing needs no per-frame fetch; a 64x64 grid of
+    small ints gzips to roughly a kilobyte.
+    """
+    resolved_run_dir = _resolve_run_dir(runs_dir=runs_dir, run_dir=run_dir)
+    path = _viewer_data_path_for_index(resolved_run_dir, game_index)
+    cache_key = (
+        str(resolved_run_dir.resolve()),
+        str(game_index),
+        "game-frames",
+        _run_dir_fingerprint(resolved_run_dir),
+    )
+    cached = _RUN_PAYLOAD_CACHE.get(cache_key)
+    if cached is None:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_events = _raw_event_dicts(payload, viewer_data_path=path)
+        frames = _build_frames(raw_events)
+        cached = {
+            "gameIndex": game_index,
+            "game_id": str(payload.get("game_id") or "").strip(),
+            "status": str(payload.get("status") or "").strip(),
+            "frameCount": len(frames),
+            "frames": frames,
+        }
+        for existing_key in [key for key in _RUN_PAYLOAD_CACHE if key[:3] == cache_key[:3] and key != cache_key]:
+            _RUN_PAYLOAD_CACHE.pop(existing_key, None)
+        _RUN_PAYLOAD_CACHE[cache_key] = cached
+    return cached
+
+
+def _load_game_overview(run_dir: Path, path: Path) -> dict[str, Any]:
+    """Summary plus the game's latest board, without parsing the whole event log.
+
+    Every field except the board is already in `viewer_data.json`; the action count is
+    `sum(actions_per_level)`. So the only thing worth touching the (multi-megabyte, mostly
+    transcript) event log for is the last board, and for that the file's tail is enough.
+    """
+    game = _load_game_summary(run_dir, path)
+    game["actionCount"] = sum(game.get("actions_per_level") or [])
+
+    last_event = _tail_jsonl_event(raw_events_jsonl_sidecar_path(path))
+    if last_event is not None:
+        board_ascii = _event_board_ascii(last_event)
+        if board_ascii:
+            game["board_ascii"] = board_ascii
+    return game
+
+
+def _tail_jsonl_event(path: Path, *, max_bytes: int = 1 << 20) -> dict[str, Any] | None:
+    """Return the last complete JSON object in an append-only JSONL file.
+
+    A live event log always has a partially written trailing line, so the last complete
+    `\\n`-terminated record is the newest one that can be trusted.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - max_bytes))
+            chunk = handle.read()
+    except OSError:
+        return None
+
+    for line in reversed(chunk.split(b"\n")):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _event_board_ascii(event: dict[str, Any]) -> str:
+    """Board as ARC colour characters -- a lossless encoding that is 3x smaller than the int grid."""
+    board_ascii = event.get("board_ascii")
+    if isinstance(board_ascii, str) and board_ascii:
+        return board_ascii
+    board = event.get("board")
+    if not isinstance(board, list) or not board:
+        return ""
+    last = len(ARC_COLOR_CHARS) - 1
+    return "\n".join(
+        "".join(ARC_COLOR_CHARS[max(0, min(last, int(value)))] for value in row)
+        for row in board
+    )
+
+
+def _build_frames(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    frames: list[dict[str, Any]] = []
+    for event_index, event in enumerate(events):
+        if event.get("type") not in {"initial", "action"}:
+            continue
+        frame: dict[str, Any] = {
+            "frameIndex": len(frames),
+            "eventIndex": event_index,
+        }
+        for key in _FRAME_EVENT_KEYS:
+            if event.get(key) is not None:
+                frame[key] = event.get(key)
+        frame["board_ascii"] = _event_board_ascii(event)
+        click = parse_click_cell(event.get("action_display"))
+        if click is not None:
+            frame["click"] = click
+        frames.append(frame)
+    return frames
+
+
+def parse_click_cell(action_display: Any) -> dict[str, int] | None:
+    """Return the clicked cell for a MOUSE action, or None for the keyboard actions.
+
+    Matched by name, never by position: the old monitor logged clicks as `(col, row)` while
+    its parser read `(row, col)`, so every click highlight was transposed.
+    """
+    if not isinstance(action_display, str):
+        return None
+    match = _CLICK_RE.search(action_display)
+    if match is None:
+        return None
+    return {"row": int(match.group("row")), "col": int(match.group("col"))}
 
 
 def _seed_sort_key(path: Path) -> tuple[int, int | str, str]:
@@ -703,6 +892,12 @@ def _summary_from_compact_payload(compact_payload: dict[str, Any]) -> dict[str, 
     last_event = compact_payload.get("lastEvent")
     if isinstance(last_event, dict) and last_event:
         game["lastEvent"] = dict(last_event)
+    for key in ("levels_completed", "total_levels", "final_score"):
+        if compact_payload.get(key) is not None:
+            game[key] = compact_payload.get(key)
+    actions_per_level = compact_payload.get("actions_per_level")
+    if isinstance(actions_per_level, list):
+        game["actions_per_level"] = list(actions_per_level)
     return game
 
 
@@ -1019,17 +1214,54 @@ def _load_request_snapshots(path: Path | None) -> list[dict[str, Any]]:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        snapshots.append(
-            {
-                "messages": list(payload.get("messages") or []),
-                "tools": list(payload.get("tools") or []),
-                "tool_choice": str(payload.get("tool_choice") or "").strip() or None,
-                "analysis_step": _normalize_positive_int(payload.get("analysis_step")),
-                "action": _normalize_positive_int(payload.get("action")),
-                "request_index_within_turn": _normalize_positive_int(payload.get("request_index_within_turn")),
-            }
-        )
+        snapshot = {
+            "messages": list(payload.get("messages") or []),
+            "tools": list(payload.get("tools") or []),
+            "tool_choice": str(payload.get("tool_choice") or "").strip() or None,
+            "analysis_step": _normalize_positive_int(payload.get("analysis_step")),
+            "action": _normalize_positive_int(payload.get("action")),
+            "request_index_within_turn": _normalize_positive_int(payload.get("request_index_within_turn")),
+            "event": str(payload.get("event") or "").strip() or None,
+        }
+        # `response` records carry what the model actually decided, and what it cost.
+        for key in ("finish_reason", "usage", "response_message", "error"):
+            if payload.get(key) is not None:
+                snapshot[key] = payload.get(key)
+        snapshots.append(snapshot)
     return snapshots
+
+
+def turn_usage(request_snapshots: list[dict[str, Any]], *, analysis_step: int | None) -> dict[str, Any] | None:
+    """Total token usage and per-call outcomes for one analyzer turn."""
+    if analysis_step is None:
+        return None
+    responses = [
+        snapshot
+        for snapshot in request_snapshots
+        if snapshot.get("event") == "response" and snapshot.get("analysis_step") == analysis_step
+    ]
+    if not responses:
+        return None
+
+    prompt_tokens = completion_tokens = 0
+    finish_reasons: list[str] = []
+    for response in responses:
+        usage = response.get("usage")
+        if isinstance(usage, dict):
+            prompt_tokens += int(usage.get("prompt_tokens") or 0)
+            completion_tokens += int(usage.get("completion_tokens") or 0)
+        finish_reason = str(response.get("finish_reason") or "").strip()
+        if finish_reason:
+            finish_reasons.append(finish_reason)
+
+    return {
+        "llmCalls": len(responses),
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        "totalTokens": prompt_tokens + completion_tokens,
+        "finishReasons": finish_reasons,
+        "errors": sum(1 for response in responses if response.get("error") is not None),
+    }
 
 
 def _split_labeled_sections(text: str) -> list[dict[str, str]]:
@@ -1399,6 +1631,7 @@ def _new_analysis_group(analysis_step: int, source_event_index: int) -> dict[str
         "analysis_step": analysis_step,
         "source_event_index": source_event_index,
         "analysis_event": None,
+        "analysis_event_indices": [],
         "pre_board_event": None,
         "actions": [],
         "last_action_event": None,
@@ -1574,7 +1807,23 @@ def _lightweight_analysis_step(
         action_summary,
     )
     step["stepIndex"] = index
+    _apply_attempt_metadata(step, group)
     return step
+
+
+def _apply_attempt_metadata(step: dict[str, Any], group: dict[str, Any]) -> None:
+    """Pin the step to one specific analysis event.
+
+    A retried turn re-enters `analyze()` with the same `analysis_step`, so it emits several
+    `analysis` events under that number. Without pinning, the summary describes the last
+    attempt while the hydrated transcript describes the first -- two different attempts shown
+    as one turn.
+    """
+    indices = [index for index in group.get("analysis_event_indices") or [] if index is not None]
+    if not indices:
+        return
+    step["analysisEventIndex"] = indices[-1]
+    step["attemptCount"] = len(indices)
 
 
 def _lightweight_latest_state_step(
@@ -1698,6 +1947,7 @@ def _build_lightweight_viewer_steps(events: list[dict[str, Any]]) -> list[dict[s
                 group = analysis_groups.setdefault(analysis_step, _new_analysis_group(analysis_step, event_index))
                 group["source_event_index"] = min(group["source_event_index"], event_index)
                 group["analysis_event"] = event
+                group["analysis_event_indices"].append(event_index)
                 if group["pre_board_event"] is None:
                     group["pre_board_event"] = current_board_event or event
             continue
@@ -1764,6 +2014,32 @@ def _build_lightweight_viewer_steps(events: list[dict[str, Any]]) -> list[dict[s
     ]
 
 
+def _analysis_event_for_step(
+    summary: dict[str, Any],
+    events: list[dict[str, Any]],
+    analysis_step: int,
+) -> dict[str, Any] | None:
+    """Resolve the exact analysis event this step was summarised from.
+
+    Prefer the pinned event index, so a retried turn hydrates the same attempt it summarised.
+    Fall back to a search by `analysis_step` for payloads written before the index existed.
+    """
+    pinned_index = summary.get("analysisEventIndex")
+    if isinstance(pinned_index, int) and 0 <= pinned_index < len(events):
+        candidate = events[pinned_index]
+        if candidate.get("type") == "analysis":
+            return candidate
+
+    return next(
+        (
+            event
+            for event in events
+            if event.get("type") == "analysis" and _normalize_analysis_step(event.get("analysis_step")) == analysis_step
+        ),
+        None,
+    )
+
+
 def _hydrate_lightweight_step(
     summary: dict[str, Any],
     events: list[dict[str, Any]],
@@ -1777,14 +2053,7 @@ def _hydrate_lightweight_step(
     if analysis_step is None:
         return step
 
-    analysis_event = next(
-        (
-            event
-            for event in events
-            if event.get("type") == "analysis" and _normalize_analysis_step(event.get("analysis_step")) == analysis_step
-        ),
-        None,
-    )
+    analysis_event = _analysis_event_for_step(summary, events, analysis_step)
     if analysis_event is None:
         return step
 
@@ -1798,6 +2067,10 @@ def _hydrate_lightweight_step(
     if context is not None:
         step["localContext"] = context
         step["context"] = context
+
+    usage = turn_usage(request_snapshots, analysis_step=analysis_step)
+    if usage is not None:
+        step["llm"] = usage
     return step
 
 
@@ -1860,6 +2133,7 @@ def _build_viewer_steps(events: list[dict[str, Any]], *, request_snapshots: list
                 group = analysis_groups.setdefault(analysis_step, _new_analysis_group(analysis_step, event_index))
                 group["source_event_index"] = min(group["source_event_index"], event_index)
                 group["analysis_event"] = event
+                group["analysis_event_indices"].append(event_index)
                 if group["pre_board_event"] is None:
                     group["pre_board_event"] = current_board_event or event
             continue
