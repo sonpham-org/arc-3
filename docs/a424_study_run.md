@@ -62,7 +62,24 @@ not ideas. Kaggle's RTX PRO 6000 has ~6x the bandwidth *and* batches 28 games.
 | `MAX_RUNTIME_MINUTES=10` hardcoded | root `Makefile:86` (`a108-smoke-game`) | Overrides the config's 20 min. Game dies at 10 min. |
 | `analyzer.yield_seconds` = 60 | `ARC3-Inference/Makefile:155` default (unset in every config; Python default is 0/disabled) | At ~4 tok/s **every turn** hits the 60 s budget and bounces back to the solver mid-thought. Momentum is discarded continuously. |
 | `analyzer.max_output: 512` | `a108.qwen36.safe.json` | Truncates the model mid-plan (~400 tokens/action observed). A truncated tool call parses as *no* tool call, costing another turn. |
-| `include_tags: ["official"]` | all three a108 configs | **Selects zero games.** The 25 real environment files are tagged `keyboard_click` / `click` / `keyboard`; none are tagged `official`. The real submission target (`kaggle-duck`) passes no tag filter at all. |
+| ~~`include_tags: ["official"]`~~ | ~~all three a108 configs~~ | **RETRACTED — this was not a bug.** See "Correction" below. |
+
+## Correction (2026-07-11)
+
+An earlier revision of this document claimed `include_tags: ["official"]` selected
+zero games, on the grounds that the 25 environment files are tagged
+`keyboard_click` / `click` / `keyboard` and none carry an `official` tag. That was
+wrong, and setting it to `[]` is what made the 25-game launch fail with
+`At least one of --game, --include-tags official, or --kaggle-duck-public-harness
+is required`.
+
+`official` is **not** matched against game metadata. It is a sentinel:
+`inference/framework/run.py:118-135` maps it to the hardcoded
+`DUCK_HARNESS_PUBLIC_GAME_IDS` list in `inference/framework/kaggle.py:20`, which is
+exactly the 25 official games. The a108 configs were correct.
+
+The lesson: the tag names in `metadata.json` and the tag names the CLI accepts are
+different namespaces. Read the selection code, not the data.
 
 ## Config deltas: `a424.qwen36.study.json`
 
