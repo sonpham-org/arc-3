@@ -60,8 +60,12 @@ def current_grid_image_style() -> str:
 # orientation anchor that survives any crop or mental rotation.
 _OUTLINE_GUTTER_TOP_LEFT = (240, 233, 216)      # warm parchment
 _OUTLINE_GUTTER_BOTTOM_RIGHT = (186, 197, 206)  # cool blue-grey
-_OUTLINE_EDGE = (0, 0, 0)
-_OUTLINE_HALO = (255, 255, 255)
+# Transition edges are a bevel, not a uniform outline: every shape is edged light
+# on its top/left and shadow on its bottom/right, as if lit from the top-left. The
+# pair marks the boundary AND which side each object is on. Both tints sit outside
+# the game palette (whose white is pure 255 and whose greys are pure 51..204).
+_OUTLINE_BEVEL_LIGHT = (255, 251, 240)   # warm near-white
+_OUTLINE_BEVEL_SHADOW = (84, 96, 112)    # dark blue-grey
 _OUTLINE_LABEL = (80, 80, 80)
 _OUTLINE_MARGIN = 26
 _OUTLINE_TICK_EVERY = 8
@@ -109,17 +113,29 @@ def _render_outline(grid: list, rows: int, cols: int, scale: int) -> Image.Image
     def y(r: int) -> int:
         return margin + r * scale
 
-    # Edges sit along color transitions only. Halos go down first so a halo never
-    # paints over a neighbouring edge's dark line.
-    horizontal = [(r, c) for r in range(rows + 1) for c in range(cols)
-                  if r == 0 or r == rows or cell(r - 1, c) != cell(r, c)]
-    vertical = [(r, c) for c in range(cols + 1) for r in range(rows)
-                if c == 0 or c == cols or cell(r, c - 1) != cell(r, c)]
-    for width, color in ((4, _OUTLINE_HALO), (2, _OUTLINE_EDGE)):
-        for r, c in horizontal:
-            draw.line([(x(c), y(r)), (x(c + 1), y(r))], fill=color, width=width)
-        for r, c in vertical:
-            draw.line([(x(c), y(r)), (x(c), y(r + 1))], fill=color, width=width)
+    # Edges sit along color transitions only, drawn as a bevel: the cell on the
+    # top/left side of a boundary gets a shadow strip on its last pixels (that is
+    # its bottom/right edge), the cell on the bottom/right side gets a light strip
+    # on its first pixels (its top/left edge). Explicit rectangles, not width-N
+    # lines, so corners always close -- PIL centers even-width lines with a side
+    # bias that leaves notches where strokes meet.
+    t = max(1, scale // 4)
+    for r in range(rows + 1):
+        for c in range(cols):
+            if not (r == 0 or r == rows or cell(r - 1, c) != cell(r, c)):
+                continue
+            if r > 0:  # bottom edge of the cell above -> shadow
+                draw.rectangle([x(c), y(r) - t, x(c + 1) - 1, y(r) - 1], fill=_OUTLINE_BEVEL_SHADOW)
+            if r < rows:  # top edge of the cell below -> light
+                draw.rectangle([x(c), y(r), x(c + 1) - 1, y(r) + t - 1], fill=_OUTLINE_BEVEL_LIGHT)
+    for c in range(cols + 1):
+        for r in range(rows):
+            if not (c == 0 or c == cols or cell(r, c - 1) != cell(r, c)):
+                continue
+            if c > 0:  # right edge of the cell to the left -> shadow
+                draw.rectangle([x(c) - t, y(r), x(c) - 1, y(r + 1) - 1], fill=_OUTLINE_BEVEL_SHADOW)
+            if c < cols:  # left edge of the cell to the right -> light
+                draw.rectangle([x(c), y(r), x(c) + t - 1, y(r + 1) - 1], fill=_OUTLINE_BEVEL_LIGHT)
 
     for c in range(0, cols, _OUTLINE_TICK_EVERY):
         draw.line([(x(c), margin - 5), (x(c), margin - 1)], fill=_OUTLINE_LABEL, width=1)

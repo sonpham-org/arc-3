@@ -74,8 +74,12 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
 )
 
 MULTIMODAL_OUTLINE_ADDENDUM = (
-    "- In the image, black outlines are drawn only where adjacent cells differ in color, so each"
-    " outlined shape is one contiguous same-color region -- the same objects `segmentation` reports.\n"
+    "- In the image, edges are drawn only where adjacent cells differ in color, so each edged"
+    " shape is one contiguous same-color region -- the same objects `segmentation` reports.\n"
+    "- Edges are a bevel, as if lit from the top-left: every shape has a warm near-white strip"
+    " along its top and left edges and a dark blue-grey strip along its bottom and right edges."
+    " The light side of an edge belongs to the object below/right of it, the shadow side to the"
+    " object above/left of it.\n"
     "- The numbers in the margins are column indices (top and bottom rulers) and row indices (left"
     " and right rulers), labelled every 8 cells. Read MOUSE targets directly off them: a label 16"
     " on the top or bottom ruler marks col=16, on the left or right ruler row=16.\n"
