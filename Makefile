@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help check-workspace a108-check-ssh a108-sync a108-check-env a108-install a108-download-model a108-server a108-check-server a108-stop-server a108-server-log-path a108-tail-server a108-smoke-chat a108-smoke-tool a108-smoke-game a108-score-run a108-score-latest a108-bootstrap-report a424-sync a424-inspect
+.PHONY: help check-workspace a108-check-ssh a108-sync a108-check-env a108-install a108-download-model a108-server a108-check-server a108-stop-server a108-server-log-path a108-tail-server a108-smoke-chat a108-smoke-tool a108-smoke-game a108-score-run a108-score-latest a108-bootstrap-report a424-sync a424-inspect a424-serve a424-serve-stop a424-serve-log
 
 A108_HOST ?= gx10-a108.tail57a229.ts.net
 A108_SSH_OPTS ?= -o BatchMode=yes -o ConnectTimeout=10
@@ -11,6 +11,7 @@ A424_HOST ?= gx10-a424.tail57a229.ts.net
 A424_ROOT ?= $$HOME/GitHub/arc-3
 A424_CONFIG ?= configs/a424.qwen36.duck.json
 A424_VIEW_PORT ?= 8021
+A424_TAILNET_PORT ?= 8022
 A108_SMOKE_GAME ?= ft09
 A108_SMOKE_RUN ?= a108-smoke-ft09
 A108_SCORE_RUN_DIR ?=
@@ -51,6 +52,9 @@ help:
 	@echo "a424 targets:"
 	@echo "  make a424-sync          Rsync this workspace to A424_ROOT on A424_HOST=$(A424_HOST)"
 	@echo "  make a424-inspect       Sync, restart the run inspector on a424, tunnel it to localhost:$(A424_VIEW_PORT)"
+	@echo "  make a424-serve         Sync, serve the inspector on the tailnet at http://$(A424_HOST):$(A424_TAILNET_PORT)"
+	@echo "  make a424-serve-stop    Stop the tailnet inspector"
+	@echo "  make a424-serve-log     Tail the tailnet inspector log"
 
 check-workspace:
 	A108_HOST="$(A108_HOST)" A108_SSH_OPTS="$(A108_SSH_OPTS)" A108_CONFIG="$(A108_CONFIG)" scripts/check_workspace.sh
@@ -108,6 +112,28 @@ a108-score-latest:
 a424-sync:
 	ssh $(A108_SSH_OPTS) "$(A424_HOST)" 'mkdir -p "$(A424_ROOT)"'
 	rsync -e "$(RSYNC_RSH)" -az --delete $(RSYNC_EXCLUDES) ./ "$(A424_HOST):$(A424_ROOT)/"
+
+# Serve the inspector on a424's Tailscale IP so it is reachable from any tailnet device at
+# http://$(A424_HOST):$(A424_TAILNET_PORT). Bound to the tailnet address specifically -- not
+# 0.0.0.0 -- so it is never exposed on the box's Wi-Fi LAN, and no funnel is configured, so it
+# is never exposed to the public internet.
+a424-serve: a424-sync
+	ssh $(A108_SSH_OPTS) "$(A424_HOST)" 'set -e; \
+		ip=$$(tailscale ip -4); \
+		systemctl --user reset-failed arc3-inspector 2>/dev/null || true; \
+		systemctl --user stop arc3-inspector 2>/dev/null || true; \
+		systemd-run --user --unit=arc3-inspector --description="ARC3 run inspector" \
+			--working-directory="$(A424_ROOT)/ARC3-Inference" \
+			"$(A424_ROOT)/ARC3-Inference/.venv/bin/inference-view" \
+			--host "$$ip" --port $(A424_TAILNET_PORT) --runs-dir runs >/dev/null; \
+		sleep 3; systemctl --user is-active arc3-inspector'
+	@echo "Inspector: http://$(A424_HOST):$(A424_TAILNET_PORT)"
+
+a424-serve-stop:
+	ssh $(A108_SSH_OPTS) "$(A424_HOST)" 'systemctl --user stop arc3-inspector 2>/dev/null || true; echo stopped'
+
+a424-serve-log:
+	ssh $(A108_SSH_OPTS) -t "$(A424_HOST)" 'journalctl --user -u arc3-inspector -n 50 -f'
 
 # Restart the inspector on a424 against the runs it is writing, and forward its port here.
 # Frontend edits only need `make a424-sync` -- the page hot-reloads off /api/viewer-version.
