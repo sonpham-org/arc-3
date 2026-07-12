@@ -28,7 +28,7 @@ gcloud compute instance-templates create "$TEMPLATE" \
   --project="$PROJECT" \
   --machine-type="$MACHINE" \
   --image-family="$IMAGE_FAMILY" --image-project=deeplearning-platform-release \
-  --boot-disk-size=300GB --boot-disk-type=pd-ssd \
+  --boot-disk-size=300GB --boot-disk-type=hyperdisk-balanced \
   --provisioning-model=SPOT \
   --maintenance-policy=TERMINATE \
   --scopes=cloud-platform \
