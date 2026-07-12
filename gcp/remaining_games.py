@@ -32,5 +32,5 @@ for path in glob.glob(sys.argv[1] + "/*/benchmark.json"):
             done.add(run.get("game_id", ""))
 
 remaining = [g for g in DUCK_HARNESS_PUBLIC_GAME_IDS if g not in done]
-print(",".join(remaining))
+print(",".join(remaining) if remaining else "NONE")
 print(f"terminal={len(done)} remaining={len(remaining)}", file=sys.stderr)

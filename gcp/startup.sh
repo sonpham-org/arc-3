@@ -55,6 +55,7 @@ else
 fi
 
 # ---- deps -------------------------------------------------------------------
+command -v make >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq make; }
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
@@ -87,9 +88,15 @@ make check-server
 # ---- resume: play only games with no terminal state in any prior shard ------
 mkdir -p /tmp/prior
 gcloud storage rsync -r -x '^(?!.*benchmark\.json$).*' "$BUCKET/$RUN_ID/runs" /tmp/prior >/dev/null 2>&1 || true
-REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior)
+REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior) || REMAINING="ERROR"
+[ -z "$REMAINING" ] && REMAINING="ERROR"
 echo "remaining games: $REMAINING"
-if [ -z "$REMAINING" ]; then
+if [ "$REMAINING" = "ERROR" ]; then
+  echo "resume check failed -- refusing to guess; marking FAILED and stopping"
+  echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
+  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
+  exit 1
+elif [ "$REMAINING" = "NONE" ]; then
   echo "nothing left to play"
 else
   make interactive GAME="$REMAINING" RUN_NAME="$RUN_ID-$(date -u +%H%M%S)" || echo "run exited $?"
@@ -98,8 +105,9 @@ fi
 # ---- teardown: final sync, DONE marker, scale the MIG to zero ----------------
 gcloud storage rsync -r runs "$BUCKET/$RUN_ID/runs"
 gcloud storage rsync -r -x '^(?!.*benchmark\.json$).*' "$BUCKET/$RUN_ID/runs" /tmp/prior >/dev/null 2>&1 || true
-FINAL_REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior)
-if [ -z "$FINAL_REMAINING" ]; then
+FINAL_REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior) || FINAL_REMAINING="ERROR"
+[ -z "$FINAL_REMAINING" ] && FINAL_REMAINING="ERROR"
+if [ "$FINAL_REMAINING" = "NONE" ]; then
   echo done | gcloud storage cp - "$BUCKET/$RUN_ID/DONE"
   echo "run complete; scaling MIG to zero"
   gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
