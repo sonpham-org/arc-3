@@ -59,7 +59,7 @@ fi
 export HF_HUB_OFFLINE=1
 
 # ---- deps -------------------------------------------------------------------
-apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential ffmpeg
+apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential ffmpeg ninja-build
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
