@@ -8,8 +8,11 @@ echo "=== arc3 startup $(date -u +%FT%TZ) ==="
 
 BUCKET=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-bucket")
 RUN_ID=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-run-id")
+CODE_OBJ=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-code-object" || echo code/arc3-code.tgz)
+CFG=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-config" || echo configs/gcp.qwen36.duck.json)
+MIG=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-mig" || echo arc3-g4-duck)
 ZONE=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/zone" | awk -F/ '{print $NF}')
-echo "bucket=$BUCKET run_id=$RUN_ID zone=$ZONE"
+echo "bucket=$BUCKET run_id=$RUN_ID zone=$ZONE code=$CODE_OBJ cfg=$CFG mig=$MIG"
 
 mkdir -p /opt/arc3
 cd /opt/arc3
@@ -22,12 +25,12 @@ echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/attempts"
 echo "boot attempt #$ATTEMPTS"
 if [ "$ATTEMPTS" -gt 6 ]; then
   echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
-  gcloud compute instance-groups managed resize arc3-g4-duck --size=0 --zone="$ZONE" || true
+  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
   exit 1
 fi
 
 # ---- code -------------------------------------------------------------------
-gcloud storage cp "$BUCKET/code/arc3-code.tgz" /tmp/arc3-code.tgz
+gcloud storage cp "$BUCKET/$CODE_OBJ" /tmp/arc3-code.tgz
 tar xzf /tmp/arc3-code.tgz -C /opt/arc3
 echo "code unpacked: $(ls /opt/arc3)"
 
@@ -47,7 +50,7 @@ fi
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
-export CONFIG_PATH=configs/gcp.qwen36.duck.json
+export CONFIG_PATH="$CFG"
 # Checkpoint benchmark.json every 2 min instead of 10 so a preemption replays
 # at most ~2 min of already-terminal games, not ~12.
 export TAAF_PERIODIC_SAVE_INTERVAL_S=120
@@ -91,7 +94,7 @@ FINAL_REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior
 if [ -z "$FINAL_REMAINING" ]; then
   echo done | gcloud storage cp - "$BUCKET/$RUN_ID/DONE"
   echo "run complete; scaling MIG to zero"
-  gcloud compute instance-groups managed resize arc3-g4-duck --size=0 --zone="$ZONE" || true
+  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
 else
   echo "games still remaining after exit: $FINAL_REMAINING -- leaving MIG up for retry"
 fi
