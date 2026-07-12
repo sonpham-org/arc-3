@@ -50,9 +50,13 @@ if gcloud storage ls "$MODEL_DIR_MARKER" >/dev/null 2>&1; then
   mkdir -p "$HF_HOME/hub"
   gcloud storage rsync -r "$BUCKET/model/Qwen3.6-27B-FP8/hub" "$HF_HOME/hub"
 else
-  echo "no GCS snapshot; will download from HF during install, then stash"
-  NEED_MODEL_STASH=1
+  # Policy: VMs never download from HF. Seed the bucket first with
+  # gcp/upload_model.sh; a missing snapshot is a non-retryable failure.
+  echo "MODEL SNAPSHOT MISSING in GCS ($MODEL_DIR_MARKER) -- refusing to download from HF"
+  echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
+  exit 1
 fi
+export HF_HUB_OFFLINE=1
 
 # ---- deps -------------------------------------------------------------------
 apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential ffmpeg
@@ -64,12 +68,8 @@ export CONFIG_PATH="$CFG"
 # at most ~2 min of already-terminal games, not ~12.
 export TAAF_PERIODIC_SAVE_INTERVAL_S=120
 make install-a108
-make download-model
-if [ "${NEED_MODEL_STASH:-0}" = "1" ]; then
-  echo "stashing model snapshot to GCS for future boots"
-  gcloud storage rsync -r "$HF_HOME/hub" "$BUCKET/model/Qwen3.6-27B-FP8/hub" && \
-    (echo done | gcloud storage cp - "$MODEL_DIR_MARKER") || echo "stash failed (non-fatal)"
-fi
+# HF_HUB_OFFLINE=1: the snapshot came from GCS; download-model only verifies it.
+make download-model || true
 
 # ---- continuous log sync (survives everything below) ------------------------
 mkdir -p runs
