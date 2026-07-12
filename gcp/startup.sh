@@ -24,7 +24,7 @@ ATTEMPTS=$( (gcloud storage cat "$BUCKET/$RUN_ID/attempts" 2>/dev/null || echo 0
 ATTEMPTS=$(( ${ATTEMPTS:-0} + 1 ))
 echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/attempts"
 echo "boot attempt #$ATTEMPTS"
-if [ "$ATTEMPTS" -gt 6 ]; then
+if [ "$ATTEMPTS" -gt 8 ]; then
   echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
   gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
   exit 1
@@ -55,7 +55,7 @@ else
 fi
 
 # ---- deps -------------------------------------------------------------------
-apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq make ffmpeg
+apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential ffmpeg
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
