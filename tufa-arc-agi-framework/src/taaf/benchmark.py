@@ -167,6 +167,10 @@ class Benchmark:
                 if pass_idx == 0 and len({r.game_id for r in self.game_runs}) != len(self.games):
                     raise ValueError("duplicate game_ids in benchmark.games are not allowed")
 
+            # Save at the event, not just the periodic tick: any game reaching
+            # a terminal state flushes benchmark.json immediately.
+            if self.job_dir is not None:
+                taaf.game.ON_GAME_FINISHED = self._save_json
             solver_task = asyncio.create_task(played_solver.run_games(to_play))
             self._solver_task = solver_task
             if self.job_dir is not None:
@@ -196,6 +200,7 @@ class Benchmark:
             # Clear before teardown so a stray request_stop() can't
             # cancel a stale solver_task. Teardown is uncancellable.
             self._solver_task = None
+            taaf.game.ON_GAME_FINISHED = None
             if periodic_task is not None:
                 periodic_task.cancel()
             if deadline_task is not None:

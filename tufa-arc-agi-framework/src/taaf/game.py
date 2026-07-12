@@ -26,6 +26,11 @@ import numpy.typing as npt
 
 T = TypeVar("T")
 
+# Invoked (when set) after a game reaches a terminal state in finish_game().
+# Benchmark.run registers its JSON saver here so terminal states become
+# durable at the event, not at the next periodic-save tick.
+ON_GAME_FINISHED: Callable[[], None] | None = None
+
 # arcengine's GameAction / GameState enums use composite keys in
 # ``_value2member_map_``, so the default ``Enum(value)`` reconstruction
 # fails on unpickle. Reduce by name instead.
@@ -630,6 +635,14 @@ class Game:
                 cancelling = False
             self.game_run.state = "cancelled" if cancelling else "gave_up"
         self.game_run.final_score = self.game_run._compute_final_score()
+        # Terminal states must become durable at the event, not at the next
+        # periodic tick: on preemptible hosts a game that finished between
+        # checkpoints would otherwise be replayed wholesale on the next boot.
+        if ON_GAME_FINISHED is not None:
+            try:
+                ON_GAME_FINISHED()
+            except Exception:
+                warnings.warn("ON_GAME_FINISHED hook raised; continuing", stacklevel=2)
         # One-line per-game finish note to stdout — same fields as the
         # per-pass row in the diagnostics HTML, plus per-level
         # actions/baseline so the score is auditable from the log alone.
