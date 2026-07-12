@@ -79,7 +79,7 @@ updated = agent._update_summarized_knowledge_from_tool_arguments(
         "code": "print(current_frame.step)",
         "world_model": {
             "world_model": "Board has a 3x3 movable block and a fixed goal tile.",
-            "action_model": "UP/DOWN/LEFT/RIGHT translate the block by one cell.",
+            "action_semantics": "UP/DOWN/LEFT/RIGHT translate the block by one cell.",
             "current_plan": "Push the block onto the goal tile.",
         },
     }
@@ -89,7 +89,7 @@ check("structured world model accepted", updated)
 lines = agent._summarized_knowledge_lines()
 blob = "\n".join(lines)
 check("world model carried into the next prompt", "3x3 movable block" in blob)
-check("action model carried", "translate the block" in blob)
+check("action semantics carried", "translate the block" in blob)
 check("plan carried", "Push the block" in blob)
 
 # The exact scenario that froze it: tool call, no assistant text.

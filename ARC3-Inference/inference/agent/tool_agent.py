@@ -166,6 +166,30 @@ def _image_token_estimate() -> int:
 # re-invalidating the prefix cache) on every request.
 _CONTEXT_TRIM_LOW_WATER = 0.6
 
+# Before old turns are evicted, one compaction request folds their conclusions into
+# the knowledge ledger. It is sent with the still-cached history as its prefix, so
+# its prefill is nearly free; the trim that follows was invalidating the cache anyway.
+_COMPACTION_MAX_TOKENS = 1600
+_COMPACTION_PROMPT = (
+    "Context is full: turns older than the recent window are about to be removed from this "
+    "conversation. Before they disappear, fold everything durable into the knowledge ledger.\n"
+    "Rules:\n"
+    "- Output ONLY a JSON object. Its keys are the ledger fields: action_semantics, "
+    "object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes, world_model, "
+    "goal_model, recent_findings, open_questions, current_plan, failed_probes. Omit fields "
+    "with nothing new; omitted fields keep their previous value.\n"
+    "- Start from the current ledger shown in the latest user message and revise it. Do not "
+    "drop entries that are still valid.\n"
+    "- Preserve verified action effects and rules WITH step numbers, e.g. \"UP moves avatar "
+    "1 cell (VERIFIED step 7)\". Tag unproven claims HYPOTHESIS.\n"
+    "- Record every probe that produced no change as a one-liner in failed_probes, e.g. "
+    "\"MOUSE(44,48): no change (step 31)\", so it is never repeated.\n"
+    "- If a level was completed, append one line to level_log: level number, actions used, "
+    "and the trick that solved it.\n"
+    "- Do NOT copy board contents or frame dumps: the `python` tool's `history` and "
+    "`transitions` retain every frame and stay queryable after this conversation is trimmed."
+)
+
 _PYTHON_TOOL_DESCRIPTION = (
     "Run one ephemeral Python snippet against preloaded ASCII game state. Available globals: "
     "`current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, "
@@ -275,52 +299,66 @@ def _extract_labeled_blocks(content: str, labels: list[str]) -> dict[str, str]:
     }
 
 
+# The knowledge ledger is two-tier, mirroring how ARC-AGI-3 games are organized:
+# levels share mechanics (what actions do, what objects are, where the HUD is)
+# but change layouts and goals. Game-tier fields persist across level
+# transitions; level-tier fields are wiped when a level ends.
+_LEDGER_GAME_KEYS: tuple[str, ...] = (
+    "action_semantics",
+    "object_taxonomy",
+    "hud_map",
+    "win_pattern",
+    "level_log",
+    "cross_level_notes",
+)
+_LEDGER_LEVEL_KEYS: tuple[str, ...] = (
+    "world_model",
+    "goal_model",
+    "recent_findings",
+    "open_questions",
+    "current_plan",
+    "failed_probes",
+)
+
+# Prose label <-> ledger key, for the text-scraping path. Legacy labels from the
+# original scientist note keep working ("Action model" folds into semantics).
+_LEDGER_LABEL_TO_KEY: dict[str, str] = {
+    "Action semantics": "action_semantics",
+    "Action model": "action_semantics",
+    "Object taxonomy": "object_taxonomy",
+    "HUD map": "hud_map",
+    "Win pattern": "win_pattern",
+    "Level log": "level_log",
+    "Cross-level notes": "cross_level_notes",
+    "World model": "world_model",
+    "Goal model": "goal_model",
+    "Recent findings": "recent_findings",
+    "Open questions": "open_questions",
+    "Plan": "current_plan",
+    "Failed probes": "failed_probes",
+}
+
+
 def _extract_scientist_note(content: str) -> dict[str, str]:
     if not content.strip():
         return {}
     extracted = _extract_labeled_blocks(
         content,
-        [
-            "World model",
-            "Goal model",
-            "Action model",
-            "Recent findings",
-            "Open questions",
-            "Plan",
-            "Cross-level notes",
-            "Hypothesis",
-            "History check",
-            "Next test",
-        ],
+        [*_LEDGER_LABEL_TO_KEY, "Hypothesis", "History check", "Next test"],
     )
-    result = {
-        "world_model": extracted.get("World model", ""),
-        "goal_model": extracted.get("Goal model", ""),
-        "action_model": extracted.get("Action model", ""),
-        "recent_findings": extracted.get("Recent findings", ""),
-        "open_questions": extracted.get("Open questions", ""),
-        "current_plan": extracted.get("Plan", ""),
-        "cross_level_notes": extracted.get("Cross-level notes", ""),
-    }
-    if not result["world_model"]:
-        result["world_model"] = extracted.get("Hypothesis", "")
-    if not result["recent_findings"]:
-        result["recent_findings"] = extracted.get("History check", "")
-    if not result["current_plan"]:
-        result["current_plan"] = extracted.get("Next test", "")
-    return result
+    result: dict[str, str] = {}
+    for label, key in _LEDGER_LABEL_TO_KEY.items():
+        value = extracted.get(label, "")
+        if value and not result.get(key):
+            result[key] = value
+    result.setdefault("world_model", extracted.get("Hypothesis", ""))
+    result.setdefault("recent_findings", extracted.get("History check", ""))
+    result.setdefault("current_plan", extracted.get("Next test", ""))
+    return {key: value for key, value in result.items() if value}
 
 
 def _empty_world_model() -> dict[str, str]:
-    return {
-        "world_model": "",
-        "goal_model": "",
-        "action_model": "",
-        "recent_findings": "",
-        "open_questions": "",
-        "current_plan": "",
-        "cross_level_notes": "",
-    }
+    return {key: "" for key in (*_LEDGER_GAME_KEYS, *_LEDGER_LEVEL_KEYS)}
 
 
 def _request_tool_choice(tools: list[dict[str, Any]] | None) -> str | None:
@@ -1197,39 +1235,78 @@ class ToolAgent:
                 updated = True
         return updated
 
+    def _compact_history_into_ledger(
+        self,
+        history: list[dict[str, Any]],
+        *,
+        request_timeout_seconds: float | None,
+    ) -> bool:
+        """Fold soon-to-be-evicted turns into the ledger with one model request.
+
+        Sent as [system, *history, compaction-user-turn]: the history is byte-identical
+        to the previous request's prefix, so the server's KV cache absorbs the prefill.
+        Failures are non-fatal -- the caller trims either way, exactly as before v2.
+        """
+        if not history:
+            return False
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            *history,
+            {"role": "user", "content": _COMPACTION_PROMPT},
+        ]
+        try:
+            result = self._chat_completion(
+                messages,
+                tools=None,
+                request_timeout_seconds=request_timeout_seconds,
+                max_tokens_override=_COMPACTION_MAX_TOKENS,
+                thinking_override=False,
+            )
+        except Exception as exc:
+            log.warning("ledger compaction request failed; falling back to plain trim: %s", exc)
+            return False
+        content = str(result.message.get("content") or "").strip()
+        if not content:
+            return False
+        return self._update_summarized_knowledge_from_tool_arguments({"world_model": content})
+
     def _update_summarized_knowledge_from_step_summary(self) -> None:
         summary = self._last_step_summary
         if not summary:
             return
         if summary.get("level_transition") or summary.get("run_complete") or summary.get("game_over"):
-            for key in (
-                "world_model",
-                "goal_model",
-                "action_model",
-                "recent_findings",
-                "open_questions",
-                "current_plan",
-            ):
+            # Level-tier knowledge dies with the level; game-tier knowledge
+            # (action semantics, object taxonomy, HUD map, win pattern,
+            # level log) is exactly what must survive into the next one.
+            for key in _LEDGER_LEVEL_KEYS:
                 self._summarized_knowledge[key] = ""
 
+    _LEDGER_KEY_TO_LABEL = {key: label for label, key in _LEDGER_LABEL_TO_KEY.items() if label != "Action model"}
+
     def _summarized_knowledge_lines(self) -> list[str]:
-        entries = [
-            ("World model", self._summarized_knowledge.get("world_model", "")),
-            ("Goal model", self._summarized_knowledge.get("goal_model", "")),
-            ("Action model", self._summarized_knowledge.get("action_model", "")),
-            ("Recent findings", self._summarized_knowledge.get("recent_findings", "")),
-            ("Open questions", self._summarized_knowledge.get("open_questions", "")),
-            ("Plan", self._summarized_knowledge.get("current_plan", "")),
-            ("Cross-level notes", self._summarized_knowledge.get("cross_level_notes", "")),
-        ]
-        lines = [f"- {label}: {value}" for label, value in entries if value]
-        if not lines:
+        def section(keys: tuple[str, ...]) -> list[str]:
+            return [
+                f"- {self._LEDGER_KEY_TO_LABEL[key]}: {value}"
+                for key in keys
+                if (value := self._summarized_knowledge.get(key, ""))
+            ]
+
+        game_lines = section(_LEDGER_GAME_KEYS)
+        level_lines = section(_LEDGER_LEVEL_KEYS)
+        if not game_lines and not level_lines:
             return []
-        return [
-            "Working world model carried from earlier turns:",
-            *lines,
-            "- Revise any item above immediately if `current_frame` or `history` contradicts it.",
-        ]
+        lines = ["Knowledge ledger carried from earlier turns:"]
+        if game_lines:
+            lines.append("Game knowledge (persists across levels):")
+            lines.extend(game_lines)
+        if level_lines:
+            lines.append("Current level:")
+            lines.extend(level_lines)
+        lines.append(
+            "- Revise any item above immediately if `current_frame` or `history` contradicts it."
+            " Tag claims VERIFIED(step N) when the evidence is in `history`, otherwise HYPOTHESIS."
+        )
+        return lines
 
     def _build_user_message(self, user_prompt: str, current_frame: Frame | None) -> dict[str, Any]:
         image_part = current_grid_image_part(current_frame)
@@ -1313,8 +1390,9 @@ class ToolAgent:
                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
                 "Use Python to inspect the evidence, refine that world model from the newest history, and search or score candidate actions or short sequences against the current goal as you currently understand it.",
                 "Maintain a compact working world model of what the current level seems to contain, what actions appear to do, what the goal seems to be, what is still uncertain, and what plan currently looks best.",
-                "Below you are provided with the current world model from the previous turn. The default behavior is to copy it and add or remove things based on the evidence that you gathered. BEFORE EXECUTING NEW ACTIONS YOU MUST ALWAYS GIVE THE REVISED VERSION OF THE WORLD MODEL.",
+                "Below you are provided with the current knowledge ledger from the previous turn. The default behavior is to copy it and add or remove things based on the evidence that you gathered. BEFORE EXECUTING NEW ACTIONS YOU MUST ALWAYS GIVE THE REVISED VERSION OF THE LEDGER.",
                 "Pass it as the `world_model` argument of the `python` tool call, alongside `code`. That argument is the one that carries forward, so send it on every call, even when you reply with a tool call and no assistant text.",
+                "Game-tier fields (action_semantics, object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes) persist across levels; level-tier fields (world_model, goal_model, recent_findings, open_questions, current_plan, failed_probes) reset when a level ends. Record every unproductive probe in failed_probes so it is never repeated, and tag claims VERIFIED(step N) or HYPOTHESIS.",
             ]
         )
         lines.append(
@@ -1335,7 +1413,7 @@ class ToolAgent:
             [
                 "When ready, call `action(actions)` from inside the `python` tool with the best valid action or ordered batch selected by your code. If your code has found a reliable short sequence, prefer batching it in one call.",
                 "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it.",
-                "The `world_model` tool argument is the reliable way to update it. Assistant text is optional; if you write any, keep it short and prefix lines with `World model:`, `Goal model:`, `Action model:`, `Recent findings:`, `Open questions:`, `Plan:`, or `Cross-level notes:`.",
+                "The `world_model` tool argument is the reliable way to update the ledger. Assistant text is optional; if you write any, keep it short and prefix lines with `Action semantics:`, `Object taxonomy:`, `HUD map:`, `Win pattern:`, `Level log:`, `Cross-level notes:`, `World model:`, `Goal model:`, `Recent findings:`, `Open questions:`, `Plan:`, or `Failed probes:`.",
                 TOOL_CALL_FORMAT_GUIDANCE,
             ]
         )
@@ -1366,12 +1444,16 @@ class ToolAgent:
                             "world_model": {
                                 "type": "string",
                                 "description": (
-                                    "Your revised understanding of the game, carried forward to every later turn. "
-                                    "A JSON object with the string fields: world_model (how the board and its objects "
-                                    "behave), goal_model (what clearing a level requires), action_model (what each action "
-                                    "does), recent_findings (what the last actions just taught you), open_questions (what "
-                                    "you still need to test), current_plan (your next few steps), cross_level_notes (what "
-                                    "carries across levels). Send it on every call; omitted fields keep their previous value."
+                                    "Your knowledge ledger, carried forward to every later turn. A JSON object with "
+                                    "string fields in two tiers. Game tier, persists across levels: action_semantics "
+                                    "(verified effect of each action, with step refs), object_taxonomy (what each "
+                                    "color/shape is), hud_map (which regions are indicators, not board), win_pattern "
+                                    "(what completing a level required), level_log (one line per finished level: "
+                                    "actions used, the trick), cross_level_notes. Level tier, resets each level: "
+                                    "world_model (current level's layout and behavior), goal_model, recent_findings, "
+                                    "open_questions, current_plan, failed_probes (one-liners for probes that did "
+                                    "nothing, so they are never repeated). Tag claims VERIFIED(step N) or HYPOTHESIS. "
+                                    "Send it on every call; omitted fields keep their previous value."
                                 ),
                             },
                         },
@@ -1389,16 +1471,18 @@ class ToolAgent:
         *,
         tools: list[dict[str, Any]] | None,
         request_timeout_seconds: float | None = None,
+        max_tokens_override: int | None = None,
+        thinking_override: bool | None = None,
     ) -> _ChatCompletionResult:
         payload = build_chat_payload(
             provider=self._model.provider,
             model=self._model.model_id,
             messages=messages,
-            max_tokens=self._max_output_tokens,
+            max_tokens=max_tokens_override if max_tokens_override is not None else self._max_output_tokens,
             temperature=_LOCAL_ANALYZER_TEMPERATURE,
             top_p=_LOCAL_ANALYZER_TOP_P,
             top_k=_LOCAL_ANALYZER_TOP_K,
-            thinking=bool(_LOCAL_ANALYZER_ENABLE_THINKING),
+            thinking=bool(_LOCAL_ANALYZER_ENABLE_THINKING) if thinking_override is None else thinking_override,
             tools=tools,
             tool_choice=_request_tool_choice(tools),
             seed=_LOCAL_ANALYZER_SEED,
@@ -1884,6 +1968,31 @@ class ToolAgent:
 
         previous_history_messages = list(self._history_messages)
         preserve_history = True
+        # Eviction pays a toll: when this turn's request would overflow the budget (so
+        # the trim below is about to drop the oldest turns), first fold their durable
+        # conclusions into the ledger, then rebuild the user prompt so it carries the
+        # updated ledger into this and every later turn.
+        untrimmed = [
+            {"role": "system", "content": self._system_prompt},
+            *self._history_messages,
+            self._build_user_message(user_prompt, current_frame),
+        ]
+        if (
+            self._history_messages
+            and self._estimate_request_input_tokens(untrimmed, tools=self._tools(state_path)) > self._context_budget_tokens
+        ):
+            compacted = self._compact_history_into_ledger(
+                self._history_messages, request_timeout_seconds=request_timeout_seconds
+            )
+            if compacted:
+                user_prompt = self._build_user_prompt(
+                    action_num,
+                    valid_actions=valid_actions,
+                    current_frame=current_frame,
+                    history_entries=history_entries,
+                    previous_step_summary=self._last_step_summary,
+                )
+                append_transcript("LEDGER COMPACTION", "\n".join(self._summarized_knowledge_lines()) or "(empty)")
         messages: list[dict[str, Any]] = self._trim_messages_for_context(
             [{"role": "system", "content": self._system_prompt}, *self._history_messages, self._build_user_message(user_prompt, current_frame)],
             tools=self._tools(state_path),
@@ -2104,7 +2213,7 @@ class ToolAgent:
                     followup_prompt = (
                         f"{followup_prefix}"
                         "Then investigate and revise your working world model of what the level contains, what actions appear to do, what the current goal seems to be, and what plan looks best. "
-                        "If helpful, include short world-model update lines such as `World model:`, `Goal model:`, `Action model:`, `Recent findings:`, `Open questions:`, `Plan:`, or `Cross-level notes:`. "
+                        "Update the ledger via the `world_model` tool argument; note anything you just ruled out in `failed_probes`. "
                         "Call the `python` tool with code that inspects `current_frame`, `previous_frame`, `last_transition`, `history`, or `valid_actions` -- use `current_frame.segmentation` as the primary view, and `.ascii` only for a small specific region -- "
                         "compare `previous_frame` to `current_frame` for the most recent change, "
                         "derives a compact board summary, programs a small search or scorer over candidate actions or short sequences, "
