@@ -176,12 +176,16 @@ _COMPACTION_PROMPT = (
     "Rules:\n"
     "- Output ONLY a JSON object. Its keys are the ledger fields: action_semantics, "
     "object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes, world_model, "
-    "goal_model, recent_findings, open_questions, current_plan, failed_probes. Omit fields "
+    "goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes. "
+    "Omit fields "
     "with nothing new; omitted fields keep their previous value.\n"
     "- Start from the current ledger shown in the latest user message and revise it. Do not "
     "drop entries that are still valid.\n"
     "- Preserve verified action effects and rules WITH step numbers, e.g. \"UP moves avatar "
     "1 cell (VERIFIED step 7)\". Tag unproven claims HYPOTHESIS.\n"
+    "- When you abandon an approach, add one line to strategy_log saying what it was and "
+    "why it failed, e.g. \"tried matching tiles by color only: counter reset at step 22\"; "
+    "individual no-effect actions go in failed_probes instead.\n"
     "- Record every probe that produced no change as a one-liner in failed_probes, e.g. "
     "\"MOUSE(44,48): no change (step 31)\", so it is never repeated.\n"
     "- If a level was completed, append one line to level_log: level number, actions used, "
@@ -317,6 +321,7 @@ _LEDGER_LEVEL_KEYS: tuple[str, ...] = (
     "recent_findings",
     "open_questions",
     "current_plan",
+    "strategy_log",
     "failed_probes",
 )
 
@@ -335,6 +340,7 @@ _LEDGER_LABEL_TO_KEY: dict[str, str] = {
     "Recent findings": "recent_findings",
     "Open questions": "open_questions",
     "Plan": "current_plan",
+    "Strategy log": "strategy_log",
     "Failed probes": "failed_probes",
 }
 
@@ -1392,7 +1398,7 @@ class ToolAgent:
                 "Maintain a compact working world model of what the current level seems to contain, what actions appear to do, what the goal seems to be, what is still uncertain, and what plan currently looks best.",
                 "Below you are provided with the current knowledge ledger from the previous turn. The default behavior is to copy it and add or remove things based on the evidence that you gathered. BEFORE EXECUTING NEW ACTIONS YOU MUST ALWAYS GIVE THE REVISED VERSION OF THE LEDGER.",
                 "Pass it as the `world_model` argument of the `python` tool call, alongside `code`. That argument is the one that carries forward, so send it on every call, even when you reply with a tool call and no assistant text.",
-                "Game-tier fields (action_semantics, object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes) persist across levels; level-tier fields (world_model, goal_model, recent_findings, open_questions, current_plan, failed_probes) reset when a level ends. Record every unproductive probe in failed_probes so it is never repeated, and tag claims VERIFIED(step N) or HYPOTHESIS.",
+                "Game-tier fields (action_semantics, object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes) persist across levels; level-tier fields (world_model, goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes) reset when a level ends. Record every unproductive probe in failed_probes so it is never repeated, and tag claims VERIFIED(step N) or HYPOTHESIS.",
             ]
         )
         lines.append(
@@ -1451,7 +1457,8 @@ class ToolAgent:
                                     "(what completing a level required), level_log (one line per finished level: "
                                     "actions used, the trick), cross_level_notes. Level tier, resets each level: "
                                     "world_model (current level's layout and behavior), goal_model, recent_findings, "
-                                    "open_questions, current_plan, failed_probes (one-liners for probes that did "
+                                    "open_questions, current_plan, strategy_log (approaches tried on this level and why "
+                                    "abandoned, one line each), failed_probes (one-liners for probes that did "
                                     "nothing, so they are never repeated). Tag claims VERIFIED(step N) or HYPOTHESIS. "
                                     "Send it on every call; omitted fields keep their previous value."
                                 ),
