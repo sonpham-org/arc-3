@@ -55,7 +55,7 @@ else
 fi
 
 # ---- deps -------------------------------------------------------------------
-command -v make >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq make; }
+apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq make ffmpeg
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
@@ -83,7 +83,12 @@ echo "log sync loop pid=$SYNC_PID"
 
 # ---- server -----------------------------------------------------------------
 make server SERVER_START_TIMEOUT=1800 SERVER_TAIL_ON_WAIT=false
-make check-server
+if ! make check-server; then
+  echo "SERVER FAILED TO START -- aborting attempt $ATTEMPTS"
+  gcloud storage cp .cache/arc3_runtime/arc3-inference-server.log "$BUCKET/$RUN_ID/serverlog-$(hostname)-$ATTEMPTS.log" 2>/dev/null || true
+  echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/serverfail"
+  exit 1
+fi
 
 # ---- resume: play only games with no terminal state in any prior shard ------
 mkdir -p /tmp/prior
