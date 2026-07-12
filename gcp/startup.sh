@@ -5,6 +5,7 @@
 set -uo pipefail
 exec > >(tee -a /var/log/arc3-startup.log) 2>&1
 echo "=== arc3 startup $(date -u +%FT%TZ) ==="
+export HOME="${HOME:-/root}"
 
 BUCKET=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-bucket")
 RUN_ID=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-run-id")
@@ -28,6 +29,13 @@ if [ "$ATTEMPTS" -gt 6 ]; then
   gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
   exit 1
 fi
+
+# ---- early log sync: visibility from minute one, before install/model -------
+( while true; do
+    gcloud storage cp /var/log/arc3-startup.log "$BUCKET/$RUN_ID/startup-$(hostname).log" >/dev/null 2>&1
+    sleep 60
+  done ) &
+EARLY_SYNC_PID=$!
 
 # ---- code -------------------------------------------------------------------
 gcloud storage cp "$BUCKET/$CODE_OBJ" /tmp/arc3-code.tgz
