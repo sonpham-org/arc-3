@@ -29,7 +29,7 @@ gcloud compute instance-templates create "$TEMPLATE" \
   --machine-type="$MACHINE" \
   --image-family="$IMAGE_FAMILY" --image-project=deeplearning-platform-release \
   --boot-disk-size=300GB --boot-disk-type=pd-ssd \
-  --provisioning-model=SPOT --instance-termination-action=DELETE \
+  --provisioning-model=SPOT \
   --maintenance-policy=TERMINATE \
   --scopes=cloud-platform \
   --metadata-from-file=startup-script=gcp/startup.sh \
