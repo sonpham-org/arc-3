@@ -48,6 +48,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /opt/arc3/ARC3-Inference
 export CONFIG_PATH=configs/gcp.qwen36.duck.json
+# Checkpoint benchmark.json every 2 min instead of 10 so a preemption replays
+# at most ~2 min of already-terminal games, not ~12.
+export TAAF_PERIODIC_SAVE_INTERVAL_S=120
 make install-a108
 make download-model
 if [ "${NEED_MODEL_STASH:-0}" = "1" ]; then

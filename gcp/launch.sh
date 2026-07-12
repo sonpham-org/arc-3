@@ -32,7 +32,7 @@ gcloud compute instance-templates create "$TEMPLATE" \
   --provisioning-model=SPOT \
   --maintenance-policy=TERMINATE \
   --scopes=cloud-platform \
-  --metadata-from-file=startup-script=gcp/startup.sh \
+  --metadata-from-file=startup-script=gcp/startup.sh,shutdown-script=gcp/shutdown.sh \
   --metadata=arc3-bucket="$BUCKET",arc3-run-id="$RUN_ID",install-nvidia-driver=True
 
 echo "== managed instance group (size 1) =="

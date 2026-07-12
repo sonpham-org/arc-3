@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import pickle
 import time
 import traceback
@@ -60,7 +61,13 @@ class Benchmark:
     solver_label: str = field(default="", init=False)
     start_time: datetime | None = field(default=None, init=False)
     end_time: datetime | None = field(default=None, init=False)
-    periodic_save_interval_s: float = field(default=600.0, init=True, repr=False)
+    # Overridable for preemptible hosts, where a stale benchmark.json means
+    # replaying games that already finished (state syncs off-box every ~2 min).
+    periodic_save_interval_s: float = field(
+        default_factory=lambda: float(os.environ.get("TAAF_PERIODIC_SAVE_INTERVAL_S", "") or 600.0),
+        init=True,
+        repr=False,
+    )
 
     # Internal cancellation flag — lets run() distinguish deadline-fired
     # CancelledError (swallow) from caller-cancellation (re-raise).
