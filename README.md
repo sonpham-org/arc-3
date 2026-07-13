@@ -21,9 +21,25 @@ from finished runs only — no live streaming.
 | `g4-v2-ledger-64k` | RTX PRO 6000 spot | + two-tier ledger, 64k | 0.244 | 4 |
 
 Reference points: Tufa's public-set score with this harness is **1.6002**; their
-semi-private milestone score was 1.21. The `tufa-exact` reproduction run (their pristine
-code, their vrfai quant, their pinned vllm 0.19 stack, on the same GPU) is in flight and
-will be added when it finishes.
+semi-private milestone score was 1.21.
+
+## The reproduction matrix (all on spot RTX PRO 6000, Tufa tempo, pristine agent)
+
+| Run | Server | Weights | Spec decode | Avg score | Tokens |
+|---|---|---|---|---|---|
+| tufa-exact (rung 0) | vLLM 0.19 (their wheelhouse) | vrfai | no | **0.679** | 1.46M |
+| rung 1c | vLLM 0.25 | official Qwen FP8 | yes | **0.644** | 676k |
+| rung 1b | vLLM 0.25 | vrfai | no | 0.306 | 425k |
+| rung 1 | vLLM 0.25 | vrfai | yes | 0.000 | 98k |
+
+Findings: the vrfai compressed-tensors quant hits a pathological kernel path on vLLM
+0.25 (3.4x slower than 0.19; ngram spec decode amplifies it to unusable), while
+spec decode + official weights is statistically tied with the pristine stack. Separately,
+our agent-side modifications (required ledger, outline renders, 900s yield) cost ~2.2x
+on identical serving (0.644 pristine vs 0.297 modified) -- the tempo regime (60s yield,
+act-look-act) dominates everything else at this model scale.
+
+Log review site: **https://arc3.sonpham.net** (also in [sonpham-org/arc3](https://github.com/sonpham-org/arc3)).
 
 Big raw request logs (`*_requests.jsonl`, multi-GB for thinking runs) live in
 `gs://cellens-ai-artifacts/arc3-duck/` rather than git; a424-run request logs are included
