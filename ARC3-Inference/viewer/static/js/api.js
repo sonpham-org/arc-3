@@ -13,3 +13,4 @@ export const fetchGameFrames = (run, index) => json(`/api/game-frames?${runParam
 export const fetchGameStep = (run, index, step) =>
   json(`/api/game-step?${runParam(run)}&index=${index}&step=${step}`);
 export const fetchViewerVersion = () => json("/api/viewer-version");
+export const fetchRunsIndex = () => json("/api/runs-index").catch(() => null);
