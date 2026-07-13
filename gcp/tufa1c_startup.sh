@@ -28,7 +28,7 @@ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq buil
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/c.tgz && tar xzf /tmp/c.tgz -C /opt/arc3
 mkdir -p /opt/arc3/hf/hub
 gcloud storage rsync -r "$BUCKET/model/Qwen3.6-27B-FP8/hub" /opt/arc3/hf/hub
-export HF_HOME=/opt/arc3/hf HF_HUB_OFFLINE=1
+export HF_HOME=/opt/arc3/hf
 gcloud storage rsync -r "$SEED/wheelhouse" /opt/arc3/wheelhouse
 echo "model cache: $(du -sh /opt/arc3/hf | cut -f1), wheelhouse wheels: $(ls /opt/arc3/wheelhouse/*.whl 2>/dev/null | wc -l)"
 
