@@ -127,6 +127,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "faithful v12 rerun (Kaggle 1.28 recipe) with engine pinned to competition wheels (arc_agi 0.9.8/arcengine 0.9.3) and teardown parity",
     },
+    "20260714_151100_v12-fullframe-peraction": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 + per-action full-frame animation (last_animation)",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "v12-corrected plus last_animation: one entry per INDIVIDUAL action of the latest action(...) call, each with every engine frame that single action produced (16-entry cap)",
+    },
     "20260713_042338_rung1c-spec-official-v025": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "Tufa upstream, pristine",
