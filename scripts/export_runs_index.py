@@ -138,6 +138,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "v12-corrected plus last_animation: one entry per INDIVIDUAL action of the latest action(...) call, each with every engine frame that single action produced (16-entry cap)",
     },
+    "20260714_152900_v12-qwen36-35b-a3b": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts)",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.25.0",
+        "server_max_len": 65536, "spec_decode": "ngram",
+        "weights": "Qwen3.6-35B-A3B-FP8 (37.5 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "model swap experiment: 35B-A3B MoE (3B active) in the v12 harness -- 3,230 actions, zero levels on all 25 games; the 27B dense remains the harness's brain",
+    },
     "20260713_042338_rung1c-spec-official-v025": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "Tufa upstream, pristine",
