@@ -67,8 +67,8 @@ mkdir -p /opt/arc3/engwheels && gcloud storage rsync -r "$SEED/engine-wheels" /o
 export PATH="$HOME/.local/bin:$PATH"
 uv pip install --python ./.venv/bin/python --no-deps /opt/arc3/engwheels/arc_agi-0.9.8-py3-none-any.whl /opt/arc3/engwheels/arcengine-0.9.3-py3-none-any.whl
 ./.venv/bin/python -c "import arc_agi, arcengine, importlib.metadata as m; print('engine:', m.version('arc-agi'), m.version('arcengine'))"
-mkdir -p runs
-( while true; do gcloud storage rsync -r runs "$BUCKET/$RUN_ID/runs" >/dev/null 2>&1; sleep 120; done ) &
+mkdir -p /opt/arc3/work && rm -rf runs && ln -sfn /opt/arc3/work runs
+( while true; do gcloud storage rsync -r /opt/arc3/work "$BUCKET/$RUN_ID/runs" >/dev/null 2>&1; sleep 120; done ) &
 
 # Their exact setup_env (setup_commands.json), passed as real env so Make's ?= yields.
 export LOCAL_ANALYZER_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_BASE_URL=http://127.0.0.1:1234/v1
@@ -82,8 +82,6 @@ export LOCAL_ANALYZER_TEMPERATURE=0.6 LOCAL_ANALYZER_TOP_P=0.95 LOCAL_ANALYZER_T
 export LOCAL_ANALYZER_ENABLE_THINKING=true
 export MULTIMODAL_CONTEXT=current_grid MULTIMODAL_UPSCALE=4
 
-RUNS_LINK=/opt/arc3/work
-mkdir -p "$RUNS_LINK" && ln -sfn "$RUNS_LINK" runs
 ./.venv/bin/python /opt/arc3/v12_run.py 2>&1 | tee /opt/arc3/v12.log || echo "runner exited $?"
 gcloud storage cp /opt/arc3/v12.log "$BUCKET/$RUN_ID/v12-run.log" || true
 # teardown_commands equivalent: SIGTERM the vLLM server, then hard-kill
@@ -91,7 +89,7 @@ pkill -TERM -f "vllm.entrypoints.openai.api_server" 2>/dev/null; sleep 10
 pkill -KILL -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
 echo "vLLM server stopped (teardown parity)"
 
-gcloud storage rsync -r runs "$BUCKET/$RUN_ID/runs"
+gcloud storage rsync -r /opt/arc3/work "$BUCKET/$RUN_ID/runs"
 gcloud storage rsync -r -x '^(?!.*benchmark\.json$).*' "$BUCKET/$RUN_ID/runs" /tmp/prior >/dev/null 2>&1 || true
 echo done | gcloud storage cp - "$BUCKET/$RUN_ID/DONE"
 gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
