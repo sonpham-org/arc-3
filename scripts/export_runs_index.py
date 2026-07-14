@@ -9,6 +9,26 @@ entry names the run every other run's knobs are diffed against on the site.
 import glob
 import json
 import os
+import re
+
+
+def extract_prompts(run_dir: str) -> dict:
+    """First [SYSTEM PROMPT] and first [USER PROMPT] block from any transcript."""
+    for t in sorted(glob.glob(os.path.join(run_dir, "transcripts", "*_p0.txt"))):
+        text = open(t, errors="replace").read(200_000)
+        blocks = re.split(r"^\[([A-Z ]+)\]$", text, flags=re.M)
+        # blocks: [pre, LABEL, content, LABEL, content, ...]
+        out = {}
+        for label, content in zip(blocks[1::2], blocks[2::2]):
+            if label == "SYSTEM PROMPT" and "system" not in out:
+                out["system"] = content.strip()
+            if label == "USER PROMPT" and "user_example" not in out:
+                out["user_example"] = content.strip()
+            if len(out) == 2:
+                return out
+        if out:
+            return out
+    return {}
 
 BASELINE = "20260712_170321_tufa-exact-rung0"
 
@@ -141,6 +161,7 @@ for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
         ),
         "per_game": sorted(per_game, key=lambda g: g["id"]),
         "harness": HARNESS.get(run, {}),
+        "prompts": extract_prompts(os.path.dirname(bench_path)),
     })
 
 runs.sort(key=lambda r: -r["avg_score"])
