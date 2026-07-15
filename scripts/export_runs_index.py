@@ -178,6 +178,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "v12-corrected plus last_animation: one entry per INDIVIDUAL action of the latest action(...) call, each with every engine frame that single action produced (16-entry cap)",
     },
+    "20260715_104800_v12-thinkingcap-27b": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts)",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.25.0",
+        "server_max_len": 65536, "spec_decode": "ngram",
+        "weights": "ThinkingCap-Qwen3.6-27B-FP8 (30.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "brevity-RL fine-tune (-46% thinking tokens): saved thinking did NOT convert to actions -- 1,710 actions vs baseline's 3,073, 6 levels vs 16. Shallower reasoning cost exploration depth",
+    },
     "20260714_152900_v12-qwen36-35b-a3b": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts)",
