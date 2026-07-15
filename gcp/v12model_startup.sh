@@ -21,7 +21,7 @@ elif [ "$MODEL_FLAVOR" = "nemotron" ]; then
   # Reasoning-default checkpoint; nano_v3 reasoning parser (builtin in this vLLM).
   # NVIDIA's official recipe requires trust-remote-code: the checkpoint ships
   # its own loading code (hybrid mamba arch) that vLLM must execute.
-  PARSER_ARGS="--trust-remote-code --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nano_v3"
+  PARSER_ARGS="--trust-remote-code --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3"
 elif [ "$MODEL_FLAVOR" = "gemma" ]; then
   # Gemma 4 ships thinking DISABLED by default -- force it on to match the
   # thinking-on regime every other run uses.
