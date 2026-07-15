@@ -1,0 +1,79 @@
+--- /tmp/claude-1000/-home-son-GitHub-arc-3/a0ed6cff-5335-48a6-ae10-a0e7ffce4b71/scratchpad/bundle-v12/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-08 22:36:34.000000000 -0400
++++ /tmp/claude-1000/-home-son-GitHub-arc-3/a0ed6cff-5335-48a6-ae10-a0e7ffce4b71/scratchpad/bundle-v12-telem/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 07:45:32.492835163 -0400
+@@ -777,6 +777,24 @@
+     )
+ 
+ 
++def _resolve_turn_stats_path(state_path: Path) -> Path:
++    return _resolve_named_run_artifact(
++        state_path,
++        default_name="turn_stats.jsonl",
++        per_game_suffix="_turn_stats.jsonl",
++    )
++
++
++def _append_turn_stats(path: Path, record: dict[str, Any]) -> None:
++    # Observational only: stats failures must never affect play.
++    try:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        with path.open("a") as fh:
++            fh.write(json.dumps(record) + "\n")
++    except Exception:
++        pass
++
++
+ def _append_request_snapshot(
+     log_path: Path,
+     *,
+@@ -899,6 +917,7 @@
+     message: dict[str, Any]
+     finish_reason: str = ""
+     usage: dict[str, Any] | None = None
++    latency_s: float = 0.0
+ 
+ 
+ class ToolAgent:
+@@ -1307,7 +1326,9 @@
+                 timeout=request_timeout_seconds if request_timeout_seconds is not None else self._timeout,
+             )
+ 
++        _t0 = time.perf_counter()
+         response = post_chat(payload)
++        _latency_s = time.perf_counter() - _t0
+         try:
+             response.raise_for_status()
+         except requests.HTTPError as exc:
+@@ -1331,6 +1352,7 @@
+             message=choice.get("message", {}),
+             finish_reason=str(choice.get("finish_reason", "") or ""),
+             usage=payload.get("usage"),
++            latency_s=_latency_s,
+         )
+ 
+     def _trim_tool_text(self, text: str) -> tuple[str, bool]:
+@@ -1821,6 +1843,25 @@
+                         )
+                     result = self._chat_completion(messages, **request_kwargs)
+                     self._accumulate_usage_tokens(result.usage)
++                    _usage = result.usage if isinstance(result.usage, dict) else {}
++                    _details = _usage.get("completion_tokens_details") or {}
++                    _msg = result.message or {}
++                    _completion = _usage.get("completion_tokens") or 0
++                    _append_turn_stats(_resolve_turn_stats_path(state_path), {
++                        "ts": time.time(),
++                        "game": state_path.stem.removesuffix("_tool_runtime_state"),
++                        "action": display_action_num,
++                        "analysis_step": analysis_step,
++                        "latency_s": round(result.latency_s, 3),
++                        "prompt_tokens": _usage.get("prompt_tokens"),
++                        "completion_tokens": _completion,
++                        "reasoning_tokens": _details.get("reasoning_tokens") if isinstance(_details, dict) else None,
++                        "reasoning_chars": len(_msg.get("reasoning_content") or ""),
++                        "content_chars": len(_msg.get("content") or ""),
++                        "tool_calls": len(_msg.get("tool_calls") or []),
++                        "tok_s": round(_completion / result.latency_s, 1) if result.latency_s > 0 and _completion else None,
++                        "finish_reason": result.finish_reason,
++                    })
+                     if self._save_request_logs:
+                         _append_request_snapshot(
+                             _resolve_request_log_path(state_path),

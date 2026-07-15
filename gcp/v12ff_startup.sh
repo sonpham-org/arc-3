@@ -26,7 +26,7 @@ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq buil
 
 # ---- pristine code + their model + their wheelhouse -------------------------
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/c.tgz && tar xzf /tmp/c.tgz -C /opt/arc3
-mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/bundle-v12ff.tgz" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
+mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/bundle-v12ff-telem.tgz" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
 gcloud storage cp "$BUCKET/code/v12_run.py" /opt/arc3/v12_run.py
 gcloud storage rsync -r "$SEED/model" /opt/arc3/vrfai-model
 gcloud storage rsync -r "$SEED/wheelhouse" /opt/arc3/wheelhouse
