@@ -15,6 +15,7 @@ MODEL_GCS=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.intern
 MODEL_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-name")
 # Parser family: qwen (default) or glm -- picks vLLM tool/reasoning parsers.
 MODEL_FLAVOR=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-flavor" || echo qwen)
+SPEC_ARGS="--speculative-config {\"method\":\"ngram\",\"num_speculative_tokens\":5,\"prompt_lookup_max\":5,\"prompt_lookup_min\":2}"
 if [ "$MODEL_FLAVOR" = "glm" ]; then
   PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser glm45 --reasoning-parser glm45"
 elif [ "$MODEL_FLAVOR" = "nemotron" ]; then
@@ -22,6 +23,8 @@ elif [ "$MODEL_FLAVOR" = "nemotron" ]; then
   # NVIDIA's official recipe requires trust-remote-code: the checkpoint ships
   # its own loading code (hybrid mamba arch) that vLLM must execute.
   PARSER_ARGS="--trust-remote-code --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3"
+  # ngram spec decode crashes the NemotronH hybrid kernels (cudaErrorIllegalInstruction)
+  SPEC_ARGS=""
 elif [ "$MODEL_FLAVOR" = "gemma" ]; then
   # Gemma 4 ships thinking DISABLED by default -- force it on to match the
   # thinking-on regime every other run uses.
@@ -61,7 +64,7 @@ nohup /opt/arc3/pysrv/bin/python -m vllm.entrypoints.openai.api_server \
   $PARSER_ARGS \
   --generation-config vllm --enable-prefix-caching \
   --max-model-len 65536 --max-num-seqs 128 \
-  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":5,"prompt_lookup_min":2}' \
+  $SPEC_ARGS \
   > /opt/arc3/vllm.log 2>&1 &
 for i in $(seq 1 120); do curl -s -m 3 http://127.0.0.1:1234/v1/models >/dev/null && break; sleep 10; done
 if ! curl -s -m 5 http://127.0.0.1:1234/v1/models >/dev/null; then
