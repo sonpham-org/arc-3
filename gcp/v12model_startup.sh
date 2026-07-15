@@ -13,6 +13,13 @@ RUN_ID=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/c
 MIG=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-mig" || echo arc3-g4-v12m)
 MODEL_GCS=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-gcs")
 MODEL_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-name")
+# Parser family: qwen (default) or glm -- picks vLLM tool/reasoning parsers.
+MODEL_FLAVOR=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-flavor" || echo qwen)
+if [ "$MODEL_FLAVOR" = "glm" ]; then
+  PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser glm45 --reasoning-parser glm45"
+else
+  PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 --default-chat-template-kwargs {\"preserve_thinking\":true}"
+fi
 ZONE=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/zone" | awk -F/ '{print $NF}')
 SEED=$BUCKET/tufa-exact
 echo "bucket=$BUCKET run=$RUN_ID mig=$MIG"
@@ -42,10 +49,9 @@ export USE_TF=0 TRANSFORMERS_NO_TF=1 TRANSFORMERS_NO_TORCHVISION=1 VLLM_NO_USAGE
 nohup /opt/arc3/pysrv/bin/python -m vllm.entrypoints.openai.api_server \
   --model /opt/arc3/model --served-model-name "$MODEL_NAME" \
   --host 127.0.0.1 --port 1234 --tensor-parallel-size 1 \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder \
+  $PARSER_ARGS \
   --generation-config vllm --enable-prefix-caching \
-  --default-chat-template-kwargs '{"preserve_thinking": true}' \
-  --reasoning-parser qwen3 --max-model-len 65536 --max-num-seqs 128 \
+  --max-model-len 65536 --max-num-seqs 128 \
   --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":5,"prompt_lookup_min":2}' \
   > /opt/arc3/vllm.log 2>&1 &
 for i in $(seq 1 120); do curl -s -m 3 http://127.0.0.1:1234/v1/models >/dev/null && break; sleep 10; done
