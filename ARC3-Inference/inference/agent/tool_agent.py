@@ -17,6 +17,8 @@ from inference.agent.action_names import to_engine_action, to_model_action
 from inference.agent.prompts import (
     COMPACT_TOOL_SESSION_ADDENDUM,
     GAME_OVERVIEW_ADDENDUM,
+    LAST_ANIMATION_ADDENDUM,
+    LAST_ANIMATION_TOOL_CLAUSE,
     PYTHON_ADDENDUM,
     STRUCTURED_RUNTIME_STATE_ADDENDUM,
     MULTIMODAL_CONTEXT_ADDENDUM,
@@ -25,6 +27,7 @@ from inference.agent.prompts import (
     VISUAL_GAME_ADDENDUM,
 )
 
+from inference.agent.frame_mode import full_frame_enabled
 from inference.agent.vision_context import (
     current_grid_image_enabled,
     current_grid_image_part,
@@ -33,7 +36,7 @@ from inference.agent.vision_context import (
 )
 
 from inference.agent.python_tool_sandbox import run_sandboxed_python
-from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_runtime_state
+from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_last_animation, load_runtime_state
 from inference.utils.openai_compat import build_chat_payload, build_headers
 
 log = logging.getLogger(__name__)
@@ -415,6 +418,8 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
         prompt += MULTIMODAL_CONTEXT_ADDENDUM
         if current_grid_image_style() == "outline":
             prompt += MULTIMODAL_OUTLINE_ADDENDUM
+    if full_frame_enabled():
+        prompt += LAST_ANIMATION_ADDENDUM
     prompt += VISUAL_GAME_ADDENDUM
     prompt += PYTHON_ADDENDUM
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
@@ -1391,7 +1396,8 @@ class ToolAgent:
             [
                 state_line,
                 f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
-                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`.",
+                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
+                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
@@ -1678,8 +1684,21 @@ class ToolAgent:
                 if isinstance(last_action_result, dict)
                 else self._last_action_result
             )
+            # Empty in last-frame mode (no last_animation persisted); the sandbox
+            # then leaves `last_animation` an inert empty list.
+            anim_total, anim_entries = load_last_animation(state_path)
             return {
                 "current_frame": current_frame_payload,
+                "last_animation": {
+                    "total_actions": anim_total,
+                    "entries": [
+                        {
+                            "action": entry_action,
+                            "frames": [_ascii_frame_view_payload(f) for f in entry_frames],
+                        }
+                        for entry_action, entry_frames in anim_entries
+                    ],
+                },
                 "history": _ascii_history_view_payload(refreshed_history),
                 "valid_actions": sanitized_actions,
                 "last_action_result": (

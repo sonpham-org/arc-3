@@ -29,6 +29,7 @@ from inference.agent.action_names import (
     to_model_action,
     to_model_actions,
 )
+from inference.agent.frame_mode import full_frame_enabled
 from inference.agent.runtime_state import (
     Frame,
     HistoryEntry,
@@ -199,6 +200,9 @@ class _HarnessGameSession:
             self.state_path,
             current_frame=self.current_frame(),
             history=self.history_entries,
+            # None in last-frame mode -> the key is omitted; only full-frame mode
+            # populates self.last_batch_animations (see _execute_action).
+            last_animation=getattr(self, "last_batch_animations", None),
         )
 
     def seed_initial_history(self) -> None:
@@ -778,6 +782,39 @@ class _HarnessGameSession:
             step=self.action_count,
             level=_level_number(self.game),
         )
+        # Full-frame mode: keep every frame the engine produced for THIS single
+        # action (intermediate animation frames + final), one entry per action in
+        # execution order, so the agent can step through per-move motion via the
+        # `last_animation` global. Last-frame mode skips this -- current_frame is
+        # already the settled frame the stock harness always used.
+        if full_frame_enabled():
+            frames_payload = [{
+                "grid": [list(row) for row in current_frame.grid],
+                "step": current_frame.step,
+                "level": current_frame.level,
+            }]
+            try:
+                raw_frames = list(new_state.all_frames)
+                if len(raw_frames) > 1:
+                    level_now = _level_number(self.game)
+                    frames_payload = [
+                        {
+                            "grid": [[int(cell) for cell in row] for row in raw.data],
+                            "step": self.action_count,
+                            "level": level_now,
+                        }
+                        for raw in raw_frames
+                    ]
+            except Exception:
+                pass
+            if batch_index == 1 or not isinstance(getattr(self, "last_batch_animations", None), dict):
+                self.last_batch_animations = {"total_actions": 0, "entries": []}
+            self.last_batch_animations["total_actions"] += 1
+            self.last_batch_animations["entries"].append(
+                {"action": action_display, "frames": frames_payload}
+            )
+            if len(self.last_batch_animations["entries"]) > 16:
+                self.last_batch_animations["entries"] = self.last_batch_animations["entries"][-16:]
         self.history_entries.append(
             HistoryEntry(action=action_display, frame=current_frame)
         )

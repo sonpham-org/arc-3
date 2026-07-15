@@ -73,6 +73,25 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
     "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
 )
 
+LAST_ANIMATION_ADDENDUM = (
+    "\n\nPer-action animation (`last_animation`):\n"
+    "- `last_animation` is a list with ONE ENTRY PER INDIVIDUAL ACTION of your most recent"
+    " `action(...)` call, in execution order. Each entry has `.action` and `.frames` -- every"
+    " frame the engine produced for THAT SINGLE action (intermediate animation frames plus its"
+    " final frame, in temporal order; length 1 means that action caused no animation).\n"
+    "- After `action(['UP','UP','LEFT'])` there are three entries: first UP, second UP, then LEFT."
+    " All change within one entry's `.frames` is that single action animating, never several"
+    " actions. Step through entries to read per-move motion and causality.\n"
+    "- For long batches only the last 16 entries are retained; `last_animation_total_actions` is the"
+    " true count. Reading it costs nothing until you inspect it.\n"
+)
+
+# Appended to the per-turn "It receives ..." line only in full-frame mode.
+LAST_ANIMATION_TOOL_CLAUSE = (
+    " Full-frame mode also provides `last_animation` (one entry per individual action of your last"
+    " `action(...)` call: `.action` + `.frames`; length 1 = no animation)."
+)
+
 MULTIMODAL_OUTLINE_ADDENDUM = (
     "- In the image, edges are drawn only where adjacent cells differ in color, so each edged"
     " shape is one contiguous same-color region -- the same objects `segmentation` reports.\n"

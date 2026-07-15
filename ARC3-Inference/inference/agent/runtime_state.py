@@ -124,12 +124,37 @@ def write_runtime_state(
     *,
     current_frame: Frame | None,
     history: list[HistoryEntry],
+    last_animation: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "current_frame": frame_to_payload(current_frame),
         "history": [history_entry_to_payload(entry) for entry in history],
     }
+    # Only present in full-frame mode; its absence is what makes a state file
+    # read back as last-frame (see load_last_animation / the sandbox).
+    if last_animation is not None:
+        payload["last_animation"] = last_animation
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def load_last_animation(path: Path) -> tuple[int, list[tuple[str, list[Frame]]]]:
+    """(total_actions, [(action, [frames]), ...]) for full-frame mode.
+
+    Returns (0, []) when the state has no last_animation -- i.e. last-frame mode,
+    or any older state file -- so callers degrade to last-frame automatically."""
+    if not path.exists():
+        return 0, []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    anim = payload.get("last_animation")
+    if not isinstance(anim, dict):
+        return 0, []
+    entries: list[tuple[str, list[Frame]]] = []
+    for item in anim.get("entries", []):
+        if not isinstance(item, dict):
+            continue
+        frames = [f for f in (frame_from_payload(p) for p in item.get("frames", [])) if f is not None]
+        entries.append((str(item.get("action", "")), frames))
+    return int(anim.get("total_actions", 0) or 0), entries

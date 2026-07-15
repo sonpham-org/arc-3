@@ -157,6 +157,19 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
         __repr__ = __str__
 
 
+    class ActionFramesView:
+        # One executed action and every frame the engine produced for it
+        # (intermediates + final). Only populated in full-frame mode.
+        def __init__(self, *, action, frames):
+            self.action = action
+            self.frames = frames
+
+        def __str__(self):
+            return f"ActionFramesView(action={self.action!r}, frames={len(self.frames)})"
+
+        __repr__ = __str__
+
+
     class TransitionView:
         def __init__(self, *, action, before_frame, after_frame, result):
             self.action = action
@@ -343,6 +356,23 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["history"] = history
             runtime_globals["transitions"] = transitions
             runtime_globals["last_transition"] = last_transition
+            # Full-frame mode only: present iff the harness wrote last_animation.
+            # In last-frame mode the key is absent, so this stays an empty list and
+            # the global is effectively inert (the agent just never sees animation).
+            _anim_raw = state_payload.get("last_animation")
+            _anim_raw = _anim_raw if isinstance(_anim_raw, dict) else {}
+            runtime_globals["last_animation"] = [
+                ActionFramesView(
+                    action=str(item.get("action", "")),
+                    frames=[
+                        f for f in (_frame_from_payload(p) for p in item.get("frames", []))
+                        if f is not None
+                    ],
+                )
+                for item in _anim_raw.get("entries", [])
+                if isinstance(item, dict)
+            ]
+            runtime_globals["last_animation_total_actions"] = int(_anim_raw.get("total_actions", 0) or 0)
             runtime_globals["previous_frame"] = (
                 last_transition.before_frame if last_transition is not None else None
             )
