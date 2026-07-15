@@ -373,6 +373,8 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
                 if isinstance(item, dict)
             ]
             runtime_globals["last_animation_total_actions"] = int(_anim_raw.get("total_actions", 0) or 0)
+            _fs = state_payload.get("frame_stats")
+            runtime_globals["frame_stats"] = dict(_fs) if isinstance(_fs, dict) else {}
             runtime_globals["previous_frame"] = (
                 last_transition.before_frame if last_transition is not None else None
             )

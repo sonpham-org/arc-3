@@ -125,19 +125,32 @@ def write_runtime_state(
     current_frame: Frame | None,
     history: list[HistoryEntry],
     last_animation: dict[str, Any] | None = None,
+    frame_stats: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "current_frame": frame_to_payload(current_frame),
         "history": [history_entry_to_payload(entry) for entry in history],
     }
-    # Only present in full-frame mode; its absence is what makes a state file
-    # read back as last-frame (see load_last_animation / the sandbox).
+    # Only present in full-frame mode; their absence is what makes a state file
+    # read back as last-frame (see load_last_animation / load_frame_stats).
     if last_animation is not None:
         payload["last_animation"] = last_animation
+    if frame_stats is not None:
+        payload["frame_stats"] = frame_stats
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def load_frame_stats(path: Path) -> dict[str, Any]:
+    """Running per-action animation gauge for the game so far; {} in last-frame
+    mode or for older states, so the sandbox global is just an empty dict then."""
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    stats = payload.get("frame_stats")
+    return stats if isinstance(stats, dict) else {}
 
 
 def load_last_animation(path: Path) -> tuple[int, list[tuple[str, list[Frame]]]]:

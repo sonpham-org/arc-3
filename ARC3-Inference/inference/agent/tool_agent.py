@@ -36,7 +36,14 @@ from inference.agent.vision_context import (
 )
 
 from inference.agent.python_tool_sandbox import run_sandboxed_python
-from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_last_animation, load_runtime_state
+from inference.agent.runtime_state import (
+    Frame,
+    HistoryEntry,
+    RUNTIME_STATE_FILENAME,
+    load_frame_stats,
+    load_last_animation,
+    load_runtime_state,
+)
 from inference.utils.openai_compat import build_chat_payload, build_headers
 
 log = logging.getLogger(__name__)
@@ -1699,6 +1706,7 @@ class ToolAgent:
                         for entry_action, entry_frames in anim_entries
                     ],
                 },
+                "frame_stats": load_frame_stats(state_path),
                 "history": _ascii_history_view_payload(refreshed_history),
                 "valid_actions": sanitized_actions,
                 "last_action_result": (

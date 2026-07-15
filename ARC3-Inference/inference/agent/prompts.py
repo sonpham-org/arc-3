@@ -74,22 +74,31 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
 )
 
 LAST_ANIMATION_ADDENDUM = (
-    "\n\nPer-action animation (`last_animation`):\n"
-    "- `last_animation` is a list with ONE ENTRY PER INDIVIDUAL ACTION of your most recent"
-    " `action(...)` call, in execution order. Each entry has `.action` and `.frames` -- every"
-    " frame the engine produced for THAT SINGLE action (intermediate animation frames plus its"
-    " final frame, in temporal order; length 1 means that action caused no animation).\n"
-    "- After `action(['UP','UP','LEFT'])` there are three entries: first UP, second UP, then LEFT."
-    " All change within one entry's `.frames` is that single action animating, never several"
-    " actions. Step through entries to read per-move motion and causality.\n"
-    "- For long batches only the last 16 entries are retained; `last_animation_total_actions` is the"
-    " true count. Reading it costs nothing until you inspect it.\n"
+    "\n\nOptional per-action frames (`last_animation`, `frame_stats`):\n"
+    "- `current_frame` is always the settled board after your last action -- on its own it is enough"
+    " for a purely static reading, and you never have to look further.\n"
+    "- If you want to, `last_animation` additionally exposes every frame the engine produced for each"
+    " INDIVIDUAL action of your most recent `action(...)` call: a list with one entry per action, in"
+    " execution order, each with `.action` and `.frames` (intermediate animation frames plus the"
+    " final frame; length 1 means that action caused no animation). After `action(['UP','UP','LEFT'])`"
+    " there are three entries. All change within one entry's `.frames` is that single action"
+    " animating -- read it to see per-move motion and causality that the settled frame discards.\n"
+    "- `frame_stats` summarizes how much THIS game has animated so far: `actions`,"
+    " `animated_actions`, `mean_frames_per_action`, `max_frames`, and `recent_frame_counts`"
+    " (per action, most recent last). Use it to gauge, from the game so far, whether the extra"
+    " frames are likely worth reading.\n"
+    "- It is entirely your judgement whether the intermediate frames are signal or noise. Motion may"
+    " be meaningful (an object sliding, a chain reaction, a knock-on effect) OR incidental (a"
+    " decorative transition, a flashing timer/HUD, a cosmetic redraw). Treat multi-frame motion as a"
+    " HYPOTHESIS to test against the puzzle, not a fact. Reading `last_animation` costs tokens only"
+    " when you inspect it, so pull it only when you expect it to help.\n"
 )
 
 # Appended to the per-turn "It receives ..." line only in full-frame mode.
 LAST_ANIMATION_TOOL_CLAUSE = (
-    " Full-frame mode also provides `last_animation` (one entry per individual action of your last"
-    " `action(...)` call: `.action` + `.frames`; length 1 = no animation)."
+    " It also provides `last_animation` (per-action frames of your last `action(...)` call) and"
+    " `frame_stats` (how much this game has animated so far) -- optional; use them only if you"
+    " judge the intermediate motion informative rather than incidental."
 )
 
 MULTIMODAL_OUTLINE_ADDENDUM = (

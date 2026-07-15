@@ -200,9 +200,10 @@ class _HarnessGameSession:
             self.state_path,
             current_frame=self.current_frame(),
             history=self.history_entries,
-            # None in last-frame mode -> the key is omitted; only full-frame mode
-            # populates self.last_batch_animations (see _execute_action).
+            # None in last-frame mode -> the keys are omitted; only full-frame mode
+            # populates these (see _execute_action).
             last_animation=getattr(self, "last_batch_animations", None),
+            frame_stats=getattr(self, "frame_stats", None),
         )
 
     def seed_initial_history(self) -> None:
@@ -815,6 +816,25 @@ class _HarnessGameSession:
             )
             if len(self.last_batch_animations["entries"]) > 16:
                 self.last_batch_animations["entries"] = self.last_batch_animations["entries"][-16:]
+
+            # Running per-action animation gauge for the WHOLE game so far, so the
+            # agent can judge whether this game animates before deciding to spend
+            # tokens reading last_animation. Never reset (unlike last_batch_animations).
+            n_frames = len(frames_payload)
+            fs = getattr(self, "frame_stats", None)
+            if not isinstance(fs, dict):
+                fs = {"actions": 0, "animated_actions": 0, "total_frames": 0,
+                      "max_frames": 0, "recent_frame_counts": []}
+                self.frame_stats = fs
+            fs["actions"] += 1
+            fs["total_frames"] += n_frames
+            if n_frames > 1:
+                fs["animated_actions"] += 1
+            fs["max_frames"] = max(fs["max_frames"], n_frames)
+            fs["recent_frame_counts"].append(n_frames)
+            if len(fs["recent_frame_counts"]) > 16:
+                fs["recent_frame_counts"] = fs["recent_frame_counts"][-16:]
+            fs["mean_frames_per_action"] = round(fs["total_frames"] / fs["actions"], 2)
         self.history_entries.append(
             HistoryEntry(action=action_display, frame=current_frame)
         )
