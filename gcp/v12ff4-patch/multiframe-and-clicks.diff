@@ -1,0 +1,284 @@
+a/ARC3-Inference/inference/agent/vision_context.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/vision_context.py	2026-07-15 19:21:58.060064880 -0400
+@@ -6,7 +6,7 @@
+ import os
+ from typing import Any
+ 
+-from PIL import Image
++from PIL import Image, ImageDraw, ImageFont
+ 
+ from inference.agent.runtime_state import Frame
+ 
+@@ -49,13 +49,25 @@
+         return 16
+ 
+ 
+-def frame_to_png_data_url(frame: Frame, *, upscale: int | None = None) -> str:
++def multimodal_frames() -> int:
++    """How many chronological frame images to attach per turn. 1 (default) = the
++    stock single current-frame image. >1 attaches the last N frames as a
++    STEP-labeled sequence (2nd/3rd-place style), capped at 4 to match typical
++    vLLM per-prompt image limits."""
++    raw = os.environ.get("MULTIMODAL_FRAMES", "").strip()
++    if not raw:
++        return 1
++    try:
++        return max(1, min(4, int(raw)))
++    except ValueError:
++        return 1
++
++
++def _frame_to_image(frame: Frame, scale: int) -> Image.Image:
+     rows = len(frame.grid)
+     cols = max((len(row) for row in frame.grid), default=0)
+     if rows <= 0 or cols <= 0:
+         raise ValueError("Cannot render an empty grid as an image.")
+-
+-    scale = current_grid_image_upscale() if upscale is None else max(1, int(upscale))
+     image = Image.new("RGB", (cols, rows), ARC_COLOR_MAP[0])
+     pixels = image.load()
+     for row_idx, row in enumerate(frame.grid):
+@@ -64,19 +76,61 @@
+             pixels[col_idx, row_idx] = ARC_COLOR_MAP.get(int(value), ARC_COLOR_MAP[0])
+     if scale > 1:
+         image = image.resize((cols * scale, rows * scale), Image.Resampling.NEAREST)
++    return image
++
++
++def _label_image(image: Image.Image, label: str) -> Image.Image:
++    """Draw a small red STEP label top-left (chronology cue, not game UI)."""
++    labeled = image.copy()
++    try:
++        draw = ImageDraw.Draw(labeled)
++        try:
++            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
++        except OSError:
++            font = ImageFont.load_default()
++        draw.text((6, 4), label, font=font, fill=(255, 32, 32), stroke_width=3, stroke_fill=(0, 0, 0))
++    except Exception:
++        pass
++    return labeled
++
+ 
++def _image_to_data_url(image: Image.Image) -> str:
+     buffer = io.BytesIO()
+     image.save(buffer, format="PNG")
+-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+-    return f"data:image/png;base64,{encoded}"
++    return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
++
++
++def frame_to_png_data_url(frame: Frame, *, upscale: int | None = None) -> str:
++    scale = current_grid_image_upscale() if upscale is None else max(1, int(upscale))
++    return _image_to_data_url(_frame_to_image(frame, scale))
++
++
++def _image_part(url: str) -> dict[str, Any]:
++    return {"type": "image_url", "image_url": {"url": url}}
+ 
+ 
+ def current_grid_image_part(frame: Frame | None) -> dict[str, Any] | None:
+     if frame is None or not current_grid_image_enabled():
+         return None
+-    return {
+-        "type": "image_url",
+-        "image_url": {
+-            "url": frame_to_png_data_url(frame),
+-        },
+-    }
++    return _image_part(frame_to_png_data_url(frame))
++
++
++def grid_image_parts(frames: list[Frame | None]) -> list[dict[str, Any]]:
++    """One STEP-labeled image part per frame, chronological (current is last).
++    Empty when multimodal is off. With MULTIMODAL_FRAMES=1 this reduces to the
++    single current-frame image (unlabeled) -- byte-identical to the stock path."""
++    if not current_grid_image_enabled():
++        return []
++    usable = [f for f in frames if f is not None]
++    if not usable:
++        return []
++    n = multimodal_frames()
++    if n <= 1:
++        part = current_grid_image_part(usable[-1])
++        return [part] if part is not None else []
++    scale = current_grid_image_upscale()
++    usable = usable[-n:]
++    return [
++        _image_part(_image_to_data_url(_label_image(_frame_to_image(f, scale), f"STEP {f.step}")))
++        for f in usable
++    ]
+a/ARC3-Inference/inference/agent/tool_agent.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 19:23:59.647018320 -0400
+@@ -20,6 +20,7 @@
+     PYTHON_ADDENDUM,
+     STRUCTURED_RUNTIME_STATE_ADDENDUM,
+     MULTIMODAL_CONTEXT_ADDENDUM,
++    MULTIMODAL_FRAMES_ADDENDUM,
+     TOOL_CALL_FORMAT_GUIDANCE,
+     VISUAL_GAME_ADDENDUM,
+ )
+@@ -27,6 +28,8 @@
+ from inference.agent.vision_context import (
+     current_grid_image_enabled,
+     current_grid_image_part,
++    grid_image_parts,
++    multimodal_frames,
+ )
+ 
+ from inference.agent.python_tool_sandbox import run_sandboxed_python
+@@ -353,6 +356,8 @@
+     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
+     if current_grid_image_enabled():
+         prompt += MULTIMODAL_CONTEXT_ADDENDUM
++        if multimodal_frames() > 1:
++            prompt += MULTIMODAL_FRAMES_ADDENDUM
+     prompt += VISUAL_GAME_ADDENDUM
+     prompt += PYTHON_ADDENDUM
+     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
+@@ -1144,7 +1149,27 @@
+             "- Revise any item above immediately if `current_frame` or `history` contradicts it.",
+         ]
+ 
+-    def _build_user_message(self, user_prompt: str, current_frame: Frame | None) -> dict[str, Any]:
++    def _build_user_message(
++        self,
++        user_prompt: str,
++        current_frame: Frame | None,
++        history_entries: list[HistoryEntry] | None = None,
++    ) -> dict[str, Any]:
++        # Multi-frame mode (MULTIMODAL_FRAMES>1): attach the last N boards as a
++        # chronological STEP-labeled sequence. Falls back to the single current
++        # image otherwise, byte-identical to the stock path.
++        if multimodal_frames() > 1 and current_grid_image_enabled() and current_frame is not None:
++            frames = [e.frame for e in (history_entries or []) if e.frame is not None]
++            if not frames or frames[-1].grid != current_frame.grid:
++                frames = frames + [current_frame]
++            parts = grid_image_parts(frames)
++            if parts:
++                text = (
++                    f"{user_prompt}\n\nRecent grid images (chronological; the LAST is the current"
++                    " frame; the red STEP labels are chronology cues, not part of the game):"
++                )
++                return {"role": "user", "content": [{"type": "text", "text": text}, *parts]}
++
+         image_part = current_grid_image_part(current_frame)
+         if image_part is None:
+             return {"role": "user", "content": user_prompt}
+@@ -1754,7 +1779,7 @@
+         previous_history_messages = list(self._history_messages)
+         preserve_history = True
+         messages: list[dict[str, Any]] = self._trim_messages_for_context(
+-            [{"role": "system", "content": self._system_prompt}, *self._history_messages, self._build_user_message(user_prompt, current_frame)],
++            [{"role": "system", "content": self._system_prompt}, *self._history_messages, self._build_user_message(user_prompt, current_frame, history_entries)],
+             tools=self._tools(state_path),
+             preserve_recent=1,
+         )
+a/ARC3-Inference/inference/agent/prompts.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/prompts.py	2026-07-15 19:23:40.890025739 -0400
+@@ -73,6 +73,15 @@
+     "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
+ )
+ 
++MULTIMODAL_FRAMES_ADDENDUM = (
++    "\n\nMultimodal frame sequence:\n"
++    "- Each user turn attaches the last few grid frames as a chronological sequence of images"
++    " (oldest first; the LAST image is the current frame), each tagged with a small red STEP label.\n"
++    "- Compare consecutive images to SEE what changed between recent steps -- motion, spawns,"
++    " disappearances, knock-on effects -- that a single still frame hides. The STEP labels and any"
++    " border are annotations, not part of the board.\n"
++)
++
+ PYTHON_ADDENDUM = (
+     "\n\nPython tool guidance:\n"
+     "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"
+a/ARC3-Inference/inference/framework/solver.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/framework/solver.py	2026-07-15 19:30:43.963843743 -0400
+@@ -28,6 +28,12 @@
+     to_model_action,
+     to_model_actions,
+ )
++from inference.agent.click_heuristics import (
++    DeadSigTracker,
++    click_signature,
++    deadsig_enabled,
++    deadsig_k,
++)
+ from inference.agent.runtime_state import (
+     Frame,
+     HistoryEntry,
+@@ -664,6 +670,35 @@
+         action = arcengine.ActionInput(id=arcengine.GameAction.RESET, data={})
+         self._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0)
+ 
++    def _suppressed_click_payload(
++        self, action: arcengine.ActionInput, *, action_display: str, batch_index: int, batch_size: int
++    ) -> dict[str, Any]:
++        """A no-op result for a dead-signature click the engine never sees: the board
++        is unchanged, the action is NOT spent, and the agent sees board_changed=False."""
++        state = self.game.current_state
++        raw_state = state.raw.state
++        return {
++            "executed": True,
++            "action_num": self.action_count,
++            "level": _level_number(self.game),
++            "score": int(state.levels_completed),
++            "reward": 0.0,
++            "state": raw_state.name,
++            "valid_actions": to_model_actions(_engine_action_names(self.game)),
++            "board_changed": False,
++            "click_suppressed": True,
++            "done": raw_state == arcengine.GameState.WIN,
++            "level_completed": False,
++            "game_over": raw_state == arcengine.GameState.GAME_OVER,
++            "run_complete": raw_state == arcengine.GameState.WIN,
++            "action_name": action.id.name,
++            "action_data": _model_mouse_action_data(action.data),
++            "action_display": action_display,
++            "batch_index": batch_index,
++            "batch_size": batch_size,
++            **self.timing_payload(),
++        }
++
+     def _execute_action(
+         self,
+         action: arcengine.ActionInput,
+@@ -675,6 +710,26 @@
+     ) -> dict[str, Any]:
+         previous_grid = _grid_from_state(self.game.current_state)
+         previous_completed = int(self.game.current_state.levels_completed)
++
++        # Click heuristics (MOUSE only): dead-signature pruning. Compute the clicked
++        # object's signature from the PRE-click board; if this class has been inert
++        # all level (CLICK_DEADSIG), suppress the click without spending it on the
++        # engine. Off by default -> this whole block is inert.
++        click_sig = None
++        if action.id == arcengine.GameAction.ACTION6 and deadsig_enabled():
++            tracker = getattr(self, "_deadsig_tracker", None)
++            if tracker is None:
++                tracker = self._deadsig_tracker = DeadSigTracker()
++            _md = _model_mouse_action_data(action.data)
++            click_sig = click_signature(previous_grid, _md.get("row", 0), _md.get("col", 0))
++            if tracker.is_dead(click_sig):
++                return self._suppressed_click_payload(
++                    action,
++                    action_display=_format_action_display(action.id.name, dict(action.data)),
++                    batch_index=batch_index,
++                    batch_size=batch_size,
++                )
++
+         if generated_tokens is None:
+             current_tokens = _analyzer_reported_tokens(self.analyzer)
+             generated_tokens = max(0, current_tokens - self.token_baseline)
+@@ -704,6 +759,11 @@
+         level_completed = bool(
+             new_state.just_won_level and raw_state != arcengine.GameState.WIN
+         )
++        if click_sig is not None:
++            # Ever-changed classes are protected; K inert clicks marks a class dead.
++            self._deadsig_tracker.record(click_sig, board_changed, deadsig_k())
++        if level_completed and getattr(self, "_deadsig_tracker", None) is not None:
++            self._deadsig_tracker.reset()  # an L0-inert class may be the L1 win class
+         payload = {
+             "executed": True,
+             "action_num": self.action_count,
