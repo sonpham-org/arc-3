@@ -178,6 +178,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "v12-corrected plus last_animation: one entry per INDIVIDUAL action of the latest action(...) call, each with every engine frame that single action produced (16-entry cap)",
     },
+    "20260715_113500_v12-gemma4-31b": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts)",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px)",
+        "yield_s": 60, "thinking": "on (forced via enable_thinking)",
+        "agent_ctx": 32768, "server": "vLLM 0.25.0",
+        "server_max_len": 65536, "spec_decode": "ngram",
+        "weights": "Gemma-4-31B-IT QAT w4a16 (16 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "the one dense rival with a real math-reasoning claim (AIME 89.2): 0.156 -- benchmark math does not transfer to interactive grid play",
+    },
     "20260715_104800_v12-thinkingcap-27b": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts)",
