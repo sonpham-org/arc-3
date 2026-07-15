@@ -150,7 +150,8 @@ def _render_outline(grid: list, rows: int, cols: int, scale: int) -> Image.Image
     return image
 
 
-def frame_to_png_data_url(frame: Frame, *, upscale: int | None = None, style: str | None = None) -> str:
+def frame_to_png_bytes(frame: Frame, *, upscale: int | None = None, style: str | None = None) -> bytes:
+    """Render a frame to PNG bytes exactly as it is uploaded to the model."""
     rows = len(frame.grid)
     cols = max((len(row) for row in frame.grid), default=0)
     if rows <= 0 or cols <= 0:
@@ -165,8 +166,29 @@ def frame_to_png_data_url(frame: Frame, *, upscale: int | None = None, style: st
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return buffer.getvalue()
+
+
+def frame_to_png_data_url(frame: Frame, *, upscale: int | None = None, style: str | None = None) -> str:
+    encoded = base64.b64encode(frame_to_png_bytes(frame, upscale=upscale, style=style)).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def save_uploaded_grid_image(frame: Frame | None, out_path: "os.PathLike[str] | str") -> Any | None:
+    """Persist the exact PNG uploaded to the model this turn, or nothing if no image
+    is being sent (multimodal off / empty frame). Never raises: image capture must
+    never be able to fail a live turn."""
+    if frame is None or not current_grid_image_enabled():
+        return None
+    try:
+        from pathlib import Path
+
+        path = Path(out_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(frame_to_png_bytes(frame))
+        return path
+    except Exception:
+        return None
 
 
 def current_grid_image_part(frame: Frame | None) -> dict[str, Any] | None:

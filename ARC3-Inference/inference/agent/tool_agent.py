@@ -29,6 +29,7 @@ from inference.agent.vision_context import (
     current_grid_image_enabled,
     current_grid_image_part,
     current_grid_image_style,
+    save_uploaded_grid_image,
 )
 
 from inference.agent.python_tool_sandbox import run_sandboxed_python
@@ -1933,6 +1934,15 @@ class ToolAgent:
         analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
         prompt_log = _resolve_prompt_log_path(state_path)
         current_frame, history_entries = load_runtime_state(state_path)
+
+        # Persist the exact grid image this turn uploads to the model, so the multimodal
+        # input is recoverable byte-for-byte later. No-op when multimodal is off; never
+        # raises (see save_uploaded_grid_image), so it cannot fail a live turn.
+        _grid_step = analysis_step if analysis_step is not None else action_num
+        save_uploaded_grid_image(
+            current_frame,
+            state_path.parent / "grid_images" / f"{state_path.stem}_astep{_grid_step:04d}.png",
+        )
         user_prompt = self._build_user_prompt(
             action_num,
             valid_actions=valid_actions,
