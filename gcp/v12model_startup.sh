@@ -17,6 +17,10 @@ MODEL_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.inter
 MODEL_FLAVOR=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-model-flavor" || echo qwen)
 if [ "$MODEL_FLAVOR" = "glm" ]; then
   PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser glm45 --reasoning-parser glm45"
+elif [ "$MODEL_FLAVOR" = "gemma" ]; then
+  # Gemma 4 ships thinking DISABLED by default -- force it on to match the
+  # thinking-on regime every other run uses.
+  PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 --default-chat-template-kwargs {\"enable_thinking\":true}"
 else
   PARSER_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 --default-chat-template-kwargs {\"preserve_thinking\":true}"
 fi
