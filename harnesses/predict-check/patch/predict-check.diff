@@ -1,0 +1,249 @@
+--- pristine/src/ARC3-Inference/inference/agent/prompts.py	2026-07-15 18:49:51.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/prompts.py	2026-07-16 09:16:35.992720389 -0400
+@@ -101,6 +101,35 @@
+     " judge the intermediate motion informative rather than incidental."
+ )
+ 
++PREDICT_ADDENDUM = (
++    "\n\nOptional predict-then-check (`predict(...)`, `prediction_stats`,"
++    " `last_prediction_result`):\n"
++    "- You keep a working world model of what each action does. `predict(...)` lets you commit that"
++    " model to a testable claim BEFORE you act, and the harness scores it against what the engine"
++    " actually did -- for free, from the frame you already get back after the action.\n"
++    "- Call `predict(expect_change=True|False)` and/or `predict(expected_grid=<2D list of color ints>)`"
++    " right before the `action(...)` whose effect you are predicting. `expect_change` is the cheap"
++    " form (will the board change at all?); `expected_grid` is the exact form (what will it become?)."
++    " You may pass a short `note='...'` recording the rule you are testing.\n"
++    "- After that action, `last_prediction_result` reports `correct`, `surprise` (True when the world"
++    " disagreed with you), `expected_change`, `actual_change`, and, for an `expected_grid`,"
++    " `mismatch_cells`. `prediction_stats` accumulates over the whole game: `predictions`,"
++    " `correct`, `surprises`, `accuracy`.\n"
++    "- A `surprise` is the most valuable signal you get: it marks exactly where your model of the"
++    " dynamics is wrong. Treat it as a cue to probe that action/region and repair the rule, rather"
++    " than to press on. High, stable `accuracy` means your model is trustworthy enough to plan"
++    " several moves ahead from it instead of stepping one action at a time.\n"
++    "- Predicting is entirely optional and never required to act. Predict when you hold a real belief"
++    " worth testing; skip it when you are only exploring blindly.\n"
++)
++
++# Appended to the per-turn "It receives ..." line only when predict-check is on.
++PREDICT_TOOL_CLAUSE = (
++    " You may also `predict(expect_change=..., expected_grid=...)` before an `action(...)` to test"
++    " your world model; `last_prediction_result`/`prediction_stats` then score it, and a `surprise`"
++    " flags where your model was wrong -- optional, use it when you hold a belief worth checking."
++)
++
+ PYTHON_ADDENDUM = (
+     "\n\nPython tool guidance:\n"
+     "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"
+--- pristine/src/ARC3-Inference/inference/agent/python_tool_sandbox.py	2026-07-15 18:47:37.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/python_tool_sandbox.py	2026-07-16 09:23:08.671599848 -0400
+@@ -341,6 +341,100 @@
+         }
+         runtime_globals["__builtins__"]["__import__"] = _safe_import
+ 
++        # predict-then-check state -- active only when the host enables it. Reads
++        # its seed from the persisted per-game gauge so accuracy accumulates.
++        _state0 = initial.get("state") or {}
++        _predict_on = bool(_state0.get("predict_check"))
++        _pred_stats = _state0.get("prediction_stats")
++        _pred_stats = dict(_pred_stats) if isinstance(_pred_stats, dict) else {}
++        for _k in ("predictions", "correct", "surprises"):
++            _pred_stats.setdefault(_k, 0)
++        _pred_stats.setdefault("accuracy", 0.0)
++        _pending_pred = {}
++
++        def _grid_of(frame):
++            g = getattr(frame, "_grid", None)
++            if not g:
++                return None
++            try:
++                return [[int(cell) for cell in row] for row in g]
++            except Exception:
++                return None
++
++        def _count_mismatch(pred, actual):
++            if pred is None or actual is None:
++                return None
++            n = 0
++            for r in range(min(len(pred), len(actual))):
++                pr, ar = pred[r], actual[r]
++                for c in range(min(len(pr), len(ar))):
++                    if pr[c] != ar[c]:
++                        n += 1
++            return n
++
++        def _check_prediction(action_result):
++            # Score a pending prediction against what the engine actually did, from
++            # data already returned to the sandbox (board_changed + the new frame).
++            if not _pending_pred.get("active"):
++                return
++            before = _pending_pred.get("before")
++            after = _grid_of(runtime_globals.get("current_frame"))
++            ar = action_result if isinstance(action_result, dict) else {}
++            if "board_changed" in ar:
++                actual_change = bool(ar.get("board_changed"))
++            elif before is not None and after is not None:
++                actual_change = (before != after)
++            else:
++                actual_change = None
++            expected_grid = _pending_pred.get("expected_grid")
++            expect_change = _pending_pred.get("expect_change")
++            mismatch_cells = None
++            if expected_grid is not None:
++                mismatch_cells = _count_mismatch(expected_grid, after)
++                correct = (mismatch_cells == 0) if mismatch_cells is not None else None
++            elif expect_change is not None:
++                correct = None if actual_change is None else (expect_change == actual_change)
++            else:
++                correct = None
++            result = {
++                "correct": correct,
++                "surprise": (correct is False),
++                "expected_change": expect_change,
++                "actual_change": actual_change,
++                "mismatch_cells": mismatch_cells,
++                "note": _pending_pred.get("note", ""),
++            }
++            if correct is not None:
++                _pred_stats["predictions"] += 1
++                if correct:
++                    _pred_stats["correct"] += 1
++                else:
++                    _pred_stats["surprises"] += 1
++                p = _pred_stats["predictions"]
++                _pred_stats["accuracy"] = round(_pred_stats["correct"] / p, 3) if p else 0.0
++            runtime_globals["last_prediction_result"] = result
++            runtime_globals["prediction_stats"] = dict(_pred_stats)
++            _pending_pred.clear()
++
++        def predict(expected_grid=None, expect_change=None, note=""):
++            # Record a testable claim about the NEXT action's effect; checked
++            # automatically after that action(...) call.
++            eg = None
++            if expected_grid is not None:
++                try:
++                    eg = [[int(cell) for cell in row] for row in expected_grid]
++                except Exception:
++                    eg = None
++            _pending_pred.clear()
++            _pending_pred.update({
++                "active": True,
++                "before": _grid_of(runtime_globals.get("current_frame")),
++                "expected_grid": eg,
++                "expect_change": (None if expect_change is None else bool(expect_change)),
++                "note": str(note or ""),
++            })
++            return {"recorded": True}
++
+         def _refresh_state(state_payload):
+             current_frame = _frame_from_payload(state_payload.get("current_frame"))
+             history = _history_from_payload(state_payload.get("history"))
+@@ -396,9 +490,15 @@
+             action_result = reply.get("action_result") or {}
+             action_results.append(action_result)
+             _refresh_state(reply.get("state") or {})
++            if _predict_on:
++                _check_prediction(action_result)
+             return action_result
+ 
+         runtime_globals["action"] = action
++        if _predict_on:
++            runtime_globals["predict"] = predict
++            runtime_globals["prediction_stats"] = dict(_pred_stats)
++            runtime_globals["last_prediction_result"] = None
+         _refresh_state(initial.get("state") or {})
+ 
+         try:
+@@ -411,6 +511,7 @@
+                     "stdout": stdout.getvalue(),
+                     "result": _json_safe(runtime_globals.get("result")),
+                     "action_results": _json_safe(action_results),
++                    "prediction_stats": _json_safe(_pred_stats),
+                 }
+             )
+         except Exception as exc:
+@@ -420,6 +521,7 @@
+                     "error": _sanitize_exception(exc),
+                     "stdout": stdout.getvalue(),
+                     "action_results": _json_safe(action_results),
++                    "prediction_stats": _json_safe(_pred_stats),
+                 }
+             )
+ 
+@@ -598,6 +700,7 @@
+                     "result": message.get("result"),
+                     "error": str(message.get("error", "") or ""),
+                     "action_results": list(message.get("action_results") or host_action_results),
++                    "prediction_stats": message.get("prediction_stats"),
+                 }
+ 
+             _wait_for_process_exit(process)
+--- pristine/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 18:49:35.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-16 09:20:30.389654304 -0400
+@@ -19,6 +19,8 @@
+     GAME_OVERVIEW_ADDENDUM,
+     LAST_ANIMATION_ADDENDUM,
+     LAST_ANIMATION_TOOL_CLAUSE,
++    PREDICT_ADDENDUM,
++    PREDICT_TOOL_CLAUSE,
+     PYTHON_ADDENDUM,
+     STRUCTURED_RUNTIME_STATE_ADDENDUM,
+     MULTIMODAL_CONTEXT_ADDENDUM,
+@@ -27,6 +29,7 @@
+ )
+ 
+ from inference.agent.frame_mode import full_frame_enabled
++from inference.agent.predict_check import predict_check_enabled
+ from inference.agent.vision_context import (
+     current_grid_image_enabled,
+     current_grid_image_part,
+@@ -365,6 +368,8 @@
+         prompt += MULTIMODAL_CONTEXT_ADDENDUM
+     if full_frame_enabled():
+         prompt += LAST_ANIMATION_ADDENDUM
++    if predict_check_enabled():
++        prompt += PREDICT_ADDENDUM
+     prompt += VISUAL_GAME_ADDENDUM
+     prompt += PYTHON_ADDENDUM
+     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
+@@ -991,6 +996,8 @@
+             self._history_messages = []
+             self._session_total_tokens = 0
+             self._session_generated_tokens = 0
++            # Per-game predict-then-check gauge; resets with each new game session.
++            self._prediction_stats = {}
+             self._last_step_summary = None
+             self._last_action_result = None
+             self._summarized_knowledge = _empty_world_model()
+@@ -1233,7 +1240,8 @@
+                 state_line,
+                 f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
+                 "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
+-                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
++                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else "")
++                + (PREDICT_TOOL_CLAUSE if predict_check_enabled() else ""),
+                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
+                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
+                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
+@@ -1508,6 +1516,8 @@
+                     ],
+                 },
+                 "frame_stats": load_frame_stats(state_path),
++                "predict_check": predict_check_enabled(),
++                "prediction_stats": getattr(self, "_prediction_stats", {}) or {},
+                 "history": _ascii_history_view_payload(refreshed_history),
+                 "valid_actions": sanitized_actions,
+                 "last_action_result": (
+@@ -1583,6 +1593,11 @@
+             for item in sandbox_result.get("action_results") or []
+             if isinstance(item, dict)
+         ]
++        # Carry the predict-then-check gauge forward so accuracy accrues over the
++        # whole game (the sandbox is a fresh process each turn).
++        _ps = sandbox_result.get("prediction_stats")
++        if isinstance(_ps, dict) and _ps:
++            self._prediction_stats = _ps
+         payload: dict[str, Any] = {"tool": "python"}
+         rendered_stdout = str(sandbox_result.get("stdout", "") or "")
+         rendered_error = str(sandbox_result.get("error", "") or "")

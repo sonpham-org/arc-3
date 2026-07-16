@@ -32,4 +32,6 @@ artifact; experiments copy from it and never edit it in place.**
 ## Contents
 - `baseline-v12/` — FROZEN reference. Validated ex-`ft09` ≈ **1.21** (2 runs: 1.224, 1.188).
 - `frame-full/` — variant (env-toggle `ARC3_FRAME_MODE=full`). ex-`ft09` **1.44 (+19%)**.
+- `predict-check/` — variant of `frame-full` (env-toggle `ARC3_PREDICT_CHECK=1`): OPINE
+  predict-then-check / counterexample signal grafted onto the graft loop. Score pending.
 - `world-model/` — stub for the OPINE-style verified-world-model harness (new loop).
