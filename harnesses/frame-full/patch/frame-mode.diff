@@ -1,0 +1,294 @@
+a/ARC3-Inference/inference/agent/runtime_state.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/runtime_state.py	2026-07-15 18:47:37.546332058 -0400
+@@ -124,12 +124,50 @@
+     *,
+     current_frame: Frame | None,
+     history: list[HistoryEntry],
++    last_animation: dict[str, Any] | None = None,
++    frame_stats: dict[str, Any] | None = None,
+ ) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True)
+     payload = {
+         "current_frame": frame_to_payload(current_frame),
+         "history": [history_entry_to_payload(entry) for entry in history],
+     }
++    # Only present in full-frame mode; their absence is what makes a state file
++    # read back as last-frame (see load_last_animation / load_frame_stats).
++    if last_animation is not None:
++        payload["last_animation"] = last_animation
++    if frame_stats is not None:
++        payload["frame_stats"] = frame_stats
+     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+     tmp_path.replace(path)
++
++
++def load_frame_stats(path: Path) -> dict[str, Any]:
++    """Running per-action animation gauge for the game so far; {} in last-frame
++    mode or for older states, so the sandbox global is just an empty dict then."""
++    if not path.exists():
++        return {}
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    stats = payload.get("frame_stats")
++    return stats if isinstance(stats, dict) else {}
++
++
++def load_last_animation(path: Path) -> tuple[int, list[tuple[str, list[Frame]]]]:
++    """(total_actions, [(action, [frames]), ...]) for full-frame mode.
++
++    Returns (0, []) when the state has no last_animation -- i.e. last-frame mode,
++    or any older state file -- so callers degrade to last-frame automatically."""
++    if not path.exists():
++        return 0, []
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    anim = payload.get("last_animation")
++    if not isinstance(anim, dict):
++        return 0, []
++    entries: list[tuple[str, list[Frame]]] = []
++    for item in anim.get("entries", []):
++        if not isinstance(item, dict):
++            continue
++        frames = [f for f in (frame_from_payload(p) for p in item.get("frames", [])) if f is not None]
++        entries.append((str(item.get("action", "")), frames))
++    return int(anim.get("total_actions", 0) or 0), entries
+a/ARC3-Inference/inference/agent/python_tool_sandbox.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/python_tool_sandbox.py	2026-07-15 18:47:37.547878548 -0400
+@@ -157,6 +157,19 @@
+         __repr__ = __str__
+ 
+ 
++    class ActionFramesView:
++        # One executed action and every frame the engine produced for it
++        # (intermediates + final). Only populated in full-frame mode.
++        def __init__(self, *, action, frames):
++            self.action = action
++            self.frames = frames
++
++        def __str__(self):
++            return f"ActionFramesView(action={self.action!r}, frames={len(self.frames)})"
++
++        __repr__ = __str__
++
++
+     class TransitionView:
+         def __init__(self, *, action, before_frame, after_frame, result):
+             self.action = action
+@@ -343,6 +356,25 @@
+             runtime_globals["history"] = history
+             runtime_globals["transitions"] = transitions
+             runtime_globals["last_transition"] = last_transition
++            # Full-frame mode only: present iff the harness wrote last_animation.
++            # In last-frame mode the key is absent, so this stays an empty list and
++            # the global is effectively inert (the agent just never sees animation).
++            _anim_raw = state_payload.get("last_animation")
++            _anim_raw = _anim_raw if isinstance(_anim_raw, dict) else {}
++            runtime_globals["last_animation"] = [
++                ActionFramesView(
++                    action=str(item.get("action", "")),
++                    frames=[
++                        f for f in (_frame_from_payload(p) for p in item.get("frames", []))
++                        if f is not None
++                    ],
++                )
++                for item in _anim_raw.get("entries", [])
++                if isinstance(item, dict)
++            ]
++            runtime_globals["last_animation_total_actions"] = int(_anim_raw.get("total_actions", 0) or 0)
++            _fs = state_payload.get("frame_stats")
++            runtime_globals["frame_stats"] = dict(_fs) if isinstance(_fs, dict) else {}
+             runtime_globals["previous_frame"] = (
+                 last_transition.before_frame if last_transition is not None else None
+             )
+a/ARC3-Inference/inference/agent/prompts.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/prompts.py	2026-07-15 18:49:51.502137476 -0400
+@@ -73,6 +73,34 @@
+     "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
+ )
+ 
++LAST_ANIMATION_ADDENDUM = (
++    "\n\nOptional per-action frames (`last_animation`, `frame_stats`):\n"
++    "- `current_frame` is always the settled board after your last action -- on its own it is enough"
++    " for a purely static reading, and you never have to look further.\n"
++    "- If you want to, `last_animation` additionally exposes every frame the engine produced for each"
++    " INDIVIDUAL action of your most recent `action(...)` call: a list with one entry per action, in"
++    " execution order, each with `.action` and `.frames` (intermediate animation frames plus the"
++    " final frame; length 1 means that action caused no animation). After `action(['UP','UP','LEFT'])`"
++    " there are three entries. All change within one entry's `.frames` is that single action"
++    " animating -- read it to see per-move motion and causality that the settled frame discards.\n"
++    "- `frame_stats` summarizes how much THIS game has animated so far: `actions`,"
++    " `animated_actions`, `mean_frames_per_action`, `max_frames`, and `recent_frame_counts`"
++    " (per action, most recent last). Use it to gauge, from the game so far, whether the extra"
++    " frames are likely worth reading.\n"
++    "- It is entirely your judgement whether the intermediate frames are signal or noise. Motion may"
++    " be meaningful (an object sliding, a chain reaction, a knock-on effect) OR incidental (a"
++    " decorative transition, a flashing timer/HUD, a cosmetic redraw). Treat multi-frame motion as a"
++    " HYPOTHESIS to test against the puzzle, not a fact. Reading `last_animation` costs tokens only"
++    " when you inspect it, so pull it only when you expect it to help.\n"
++)
++
++# Appended to the per-turn "It receives ..." line only in full-frame mode.
++LAST_ANIMATION_TOOL_CLAUSE = (
++    " It also provides `last_animation` (per-action frames of your last `action(...)` call) and"
++    " `frame_stats` (how much this game has animated so far) -- optional; use them only if you"
++    " judge the intermediate motion informative rather than incidental."
++)
++
+ PYTHON_ADDENDUM = (
+     "\n\nPython tool guidance:\n"
+     "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"
+a/ARC3-Inference/inference/agent/tool_agent.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 18:49:35.411147239 -0400
+@@ -17,6 +17,8 @@
+ from inference.agent.prompts import (
+     COMPACT_TOOL_SESSION_ADDENDUM,
+     GAME_OVERVIEW_ADDENDUM,
++    LAST_ANIMATION_ADDENDUM,
++    LAST_ANIMATION_TOOL_CLAUSE,
+     PYTHON_ADDENDUM,
+     STRUCTURED_RUNTIME_STATE_ADDENDUM,
+     MULTIMODAL_CONTEXT_ADDENDUM,
+@@ -24,13 +26,21 @@
+     VISUAL_GAME_ADDENDUM,
+ )
+ 
++from inference.agent.frame_mode import full_frame_enabled
+ from inference.agent.vision_context import (
+     current_grid_image_enabled,
+     current_grid_image_part,
+ )
+ 
+ from inference.agent.python_tool_sandbox import run_sandboxed_python
+-from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_runtime_state
++from inference.agent.runtime_state import (
++    Frame,
++    HistoryEntry,
++    RUNTIME_STATE_FILENAME,
++    load_frame_stats,
++    load_last_animation,
++    load_runtime_state,
++)
+ from inference.utils.openai_compat import build_chat_payload, build_headers
+ 
+ log = logging.getLogger(__name__)
+@@ -353,6 +363,8 @@
+     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
+     if current_grid_image_enabled():
+         prompt += MULTIMODAL_CONTEXT_ADDENDUM
++    if full_frame_enabled():
++        prompt += LAST_ANIMATION_ADDENDUM
+     prompt += VISUAL_GAME_ADDENDUM
+     prompt += PYTHON_ADDENDUM
+     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
+@@ -1220,7 +1232,8 @@
+             [
+                 state_line,
+                 f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
+-                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`.",
++                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
++                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
+                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
+                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
+                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
+@@ -1479,8 +1492,22 @@
+                 if isinstance(last_action_result, dict)
+                 else self._last_action_result
+             )
++            # Empty in last-frame mode (no last_animation persisted); the sandbox
++            # then leaves `last_animation` an inert empty list.
++            anim_total, anim_entries = load_last_animation(state_path)
+             return {
+                 "current_frame": current_frame_payload,
++                "last_animation": {
++                    "total_actions": anim_total,
++                    "entries": [
++                        {
++                            "action": entry_action,
++                            "frames": [_ascii_frame_view_payload(f) for f in entry_frames],
++                        }
++                        for entry_action, entry_frames in anim_entries
++                    ],
++                },
++                "frame_stats": load_frame_stats(state_path),
+                 "history": _ascii_history_view_payload(refreshed_history),
+                 "valid_actions": sanitized_actions,
+                 "last_action_result": (
+a/ARC3-Inference/inference/framework/solver.py	2026-07-08 22:36:34.000000000 -0400
+a/ARC3-Inference/inference/framework/solver.py	2026-07-15 18:48:45.490176977 -0400
+@@ -28,6 +28,7 @@
+     to_model_action,
+     to_model_actions,
+ )
++from inference.agent.frame_mode import full_frame_enabled
+ from inference.agent.runtime_state import (
+     Frame,
+     HistoryEntry,
+@@ -196,6 +197,10 @@
+             self.state_path,
+             current_frame=self.current_frame(),
+             history=self.history_entries,
++            # None in last-frame mode -> the keys are omitted; only full-frame mode
++            # populates these (see _execute_action).
++            last_animation=getattr(self, "last_batch_animations", None),
++            frame_stats=getattr(self, "frame_stats", None),
+         )
+ 
+     def seed_initial_history(self) -> None:
+@@ -690,6 +695,58 @@
+             step=self.action_count,
+             level=_level_number(self.game),
+         )
++        # Full-frame mode: keep every frame the engine produced for THIS single
++        # action (intermediate animation frames + final), one entry per action in
++        # execution order, so the agent can step through per-move motion via the
++        # `last_animation` global. Last-frame mode skips this -- current_frame is
++        # already the settled frame the stock harness always used.
++        if full_frame_enabled():
++            frames_payload = [{
++                "grid": [list(row) for row in current_frame.grid],
++                "step": current_frame.step,
++                "level": current_frame.level,
++            }]
++            try:
++                raw_frames = list(new_state.all_frames)
++                if len(raw_frames) > 1:
++                    level_now = _level_number(self.game)
++                    frames_payload = [
++                        {
++                            "grid": [[int(cell) for cell in row] for row in raw.data],
++                            "step": self.action_count,
++                            "level": level_now,
++                        }
++                        for raw in raw_frames
++                    ]
++            except Exception:
++                pass
++            if batch_index == 1 or not isinstance(getattr(self, "last_batch_animations", None), dict):
++                self.last_batch_animations = {"total_actions": 0, "entries": []}
++            self.last_batch_animations["total_actions"] += 1
++            self.last_batch_animations["entries"].append(
++                {"action": action_display, "frames": frames_payload}
++            )
++            if len(self.last_batch_animations["entries"]) > 16:
++                self.last_batch_animations["entries"] = self.last_batch_animations["entries"][-16:]
++
++            # Running per-action animation gauge for the WHOLE game so far, so the
++            # agent can judge whether this game animates before deciding to spend
++            # tokens reading last_animation. Never reset (unlike last_batch_animations).
++            n_frames = len(frames_payload)
++            fs = getattr(self, "frame_stats", None)
++            if not isinstance(fs, dict):
++                fs = {"actions": 0, "animated_actions": 0, "total_frames": 0,
++                      "max_frames": 0, "recent_frame_counts": []}
++                self.frame_stats = fs
++            fs["actions"] += 1
++            fs["total_frames"] += n_frames
++            if n_frames > 1:
++                fs["animated_actions"] += 1
++            fs["max_frames"] = max(fs["max_frames"], n_frames)
++            fs["recent_frame_counts"].append(n_frames)
++            if len(fs["recent_frame_counts"]) > 16:
++                fs["recent_frame_counts"] = fs["recent_frame_counts"][-16:]
++            fs["mean_frames_per_action"] = round(fs["total_frames"] / fs["actions"], 2)
+         self.history_entries.append(
+             HistoryEntry(action=action_display, frame=current_frame)
+         )
