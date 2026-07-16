@@ -1,6 +1,6 @@
 --- pristine/src/ARC3-Inference/inference/agent/prompts.py	2026-07-15 18:49:51.000000000 -0400
-+++ base/src/ARC3-Inference/inference/agent/prompts.py	2026-07-16 09:16:35.992720389 -0400
-@@ -101,6 +101,35 @@
++++ base/src/ARC3-Inference/inference/agent/prompts.py	2026-07-16 11:21:24.495280405 -0400
+@@ -101,6 +101,69 @@
      " judge the intermediate motion informative rather than incidental."
  )
  
@@ -31,6 +31,40 @@
 +    " You may also `predict(expect_change=..., expected_grid=...)` before an `action(...)` to test"
 +    " your world model; `last_prediction_result`/`prediction_stats` then score it, and a `surprise`"
 +    " flags where your model was wrong -- optional, use it when you hold a belief worth checking."
++)
++
++# Prescriptive variant (ARC3_PREDICT_FORCE): the same mechanism, but REQUIRED, with
++# an explicit per-turn workflow. Used instead of PREDICT_ADDENDUM when forced.
++PREDICT_ADDENDUM_FORCED = (
++    "\n\nREQUIRED method -- predict before you act (this is how you build a reliable"
++    " world model):\n"
++    "- Before every `action(...)`, first call `predict(...)` stating what you expect that action"
++    " to do. The harness scores your claim against what the engine actually did -- for free, from"
++    " the frame you already get back.\n"
++    "- Cheap form: `predict(expect_change=True)` or `predict(expect_change=False)` (will the board"
++    " change at all?). Exact form: `predict(expected_grid=<2D list of color ints>)` (what it"
++    " becomes). Add `note='...'` naming the rule you are testing.\n"
++    "- Then act, then read the result. Standard turn:\n"
++    "    predict(expect_change=True, note='ACTION1 slides the agent up one cell')\n"
++    "    action(['ACTION1'])\n"
++    "    if last_prediction_result and last_prediction_result['surprise']:\n"
++    "        pass  # your model was WRONG here -- probe this action/region and fix the rule\n"
++    "- `last_prediction_result` gives `correct`, `surprise`, `actual_change`, `mismatch_cells`."
++    " `prediction_stats` accumulates over the game: `predictions`, `correct`, `surprises`,"
++    " `accuracy`.\n"
++    "- A `surprise` is your single most valuable signal: it pinpoints exactly where your dynamics"
++    " model is wrong. STOP and re-probe that action/region rather than pressing on. When `accuracy`"
++    " is high and stable, your model is trustworthy -- plan several verified moves ahead from it"
++    " instead of stepping blindly one action at a time.\n"
++    "- Predict once before a single probing action, or before a short batch (predict its net"
++    " effect). You do not need to predict again inside a loop that merely executes an"
++    " already-verified plan.\n"
++)
++
++PREDICT_TOOL_CLAUSE_FORCED = (
++    " REQUIRED: call `predict(expect_change=... )` (or `predict(expected_grid=...)`) before each"
++    " `action(...)`; then read `last_prediction_result`/`prediction_stats`. A `surprise` marks where"
++    " your world model is wrong -- re-probe there instead of pressing on."
 +)
 +
  PYTHON_ADDENDUM = (
@@ -180,34 +214,36 @@
  
              _wait_for_process_exit(process)
 --- pristine/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 18:49:35.000000000 -0400
-+++ base/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-16 09:20:30.389654304 -0400
-@@ -19,6 +19,8 @@
++++ base/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-16 11:21:44.991272638 -0400
+@@ -19,6 +19,10 @@
      GAME_OVERVIEW_ADDENDUM,
      LAST_ANIMATION_ADDENDUM,
      LAST_ANIMATION_TOOL_CLAUSE,
 +    PREDICT_ADDENDUM,
++    PREDICT_ADDENDUM_FORCED,
 +    PREDICT_TOOL_CLAUSE,
++    PREDICT_TOOL_CLAUSE_FORCED,
      PYTHON_ADDENDUM,
      STRUCTURED_RUNTIME_STATE_ADDENDUM,
      MULTIMODAL_CONTEXT_ADDENDUM,
-@@ -27,6 +29,7 @@
+@@ -27,6 +31,7 @@
  )
  
  from inference.agent.frame_mode import full_frame_enabled
-+from inference.agent.predict_check import predict_check_enabled
++from inference.agent.predict_check import predict_check_enabled, predict_check_forced
  from inference.agent.vision_context import (
      current_grid_image_enabled,
      current_grid_image_part,
-@@ -365,6 +368,8 @@
+@@ -365,6 +370,8 @@
          prompt += MULTIMODAL_CONTEXT_ADDENDUM
      if full_frame_enabled():
          prompt += LAST_ANIMATION_ADDENDUM
 +    if predict_check_enabled():
-+        prompt += PREDICT_ADDENDUM
++        prompt += PREDICT_ADDENDUM_FORCED if predict_check_forced() else PREDICT_ADDENDUM
      prompt += VISUAL_GAME_ADDENDUM
      prompt += PYTHON_ADDENDUM
      prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
-@@ -991,6 +996,8 @@
+@@ -991,6 +998,8 @@
              self._history_messages = []
              self._session_total_tokens = 0
              self._session_generated_tokens = 0
@@ -216,17 +252,18 @@
              self._last_step_summary = None
              self._last_action_result = None
              self._summarized_knowledge = _empty_world_model()
-@@ -1233,7 +1240,8 @@
+@@ -1233,7 +1242,9 @@
                  state_line,
                  f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
                  "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
 -                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
 +                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else "")
-+                + (PREDICT_TOOL_CLAUSE if predict_check_enabled() else ""),
++                + ((PREDICT_TOOL_CLAUSE_FORCED if predict_check_forced() else PREDICT_TOOL_CLAUSE)
++                   if predict_check_enabled() else ""),
                  "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                  "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                  "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
-@@ -1508,6 +1516,8 @@
+@@ -1508,6 +1519,8 @@
                      ],
                  },
                  "frame_stats": load_frame_stats(state_path),
@@ -235,7 +272,7 @@
                  "history": _ascii_history_view_payload(refreshed_history),
                  "valid_actions": sanitized_actions,
                  "last_action_result": (
-@@ -1583,6 +1593,11 @@
+@@ -1583,6 +1596,11 @@
              for item in sandbox_result.get("action_results") or []
              if isinstance(item, dict)
          ]
