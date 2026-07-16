@@ -28,4 +28,12 @@ This gets its **own folder / own loop** because it doesn't share the graft agent
    a frontier API model.
 
 ## Status
-Not started. `../README.md` has the build rules. Validated score: n/a.
+**In progress — "run theirs first, then port" (Track B).** OPINE's own code runs
+in scratchpad; `opine-port/` records the patch that makes it run on our local
+models (its backends were hard-wired to hosted OpenAI/Anthropic). codex↔Ollama
+transport proven; backend patched + unit-verified. Next: smoke-run the loop on
+`ls20` with gpt-oss:20b (free, on the 4090), then repoint to our Qwen on a PRO
+6000 via `OPINE_CODEX_BASE_URL`. Native reimplementation in this folder is the
+step after understanding the live loop. Validated score: n/a.
+
+See `opine-port/README.md` for the run recipe and the key integration facts.

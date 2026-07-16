@@ -1,0 +1,76 @@
+diff --git a/src/opine_world/synth_loop/codex_backend.py b/src/opine_world/synth_loop/codex_backend.py
+index 663f793..012da64 100644
+--- a/src/opine_world/synth_loop/codex_backend.py
++++ b/src/opine_world/synth_loop/codex_backend.py
+@@ -214,6 +214,59 @@ def _docker_resource_flags(
+     return flags
+ 
+ 
++def _codex_local_enabled() -> bool:
++    return os.environ.get("OPINE_CODEX_LOCAL", "").strip().lower() in {
++        "1", "true", "yes", "on"
++    }
++
++
++def _build_local_codex_cmd(
++    *,
++    workspace_dir: Path,
++    model: str,
++    effort: str,
++    images: list[str] | None = None,
++    session_id: str | None = None,
++) -> list[str]:
++    """Run codex on the HOST against a local model -- no docker, no egress gateway,
++    no dangerous bypass. Isolation is codex's own `workspace-write` sandbox, which
++    confines writes to the run workspace (where the agent writes next_actions.json
++    / game_engine.py). Default provider is Ollama via codex's native `--oss`; set
++    OPINE_CODEX_BASE_URL to point at any OpenAI /v1/responses endpoint (e.g. a
++    vLLM-served Qwen over an SSH tunnel) instead.
++    """
++    base_url = os.environ.get("OPINE_CODEX_BASE_URL", "").strip()
++    provider = os.environ.get("OPINE_CODEX_LOCAL_PROVIDER", "ollama").strip() or "ollama"
++    head: list[str] = ["codex"]
++    if base_url:
++        head += [
++            "-m", model, "-c", f"model_reasoning_effort={effort}",
++            "-c", 'model_provider="local_srv"',
++            "-c", 'model_providers.local_srv.name="Local"',
++            "-c", f'model_providers.local_srv.base_url="{base_url}"',
++            "-c", 'model_providers.local_srv.wire_api="responses"',
++            "-c", "model_providers.local_srv.requires_openai_auth=false",
++            "-c", 'web_search="disabled"',
++        ]
++    else:
++        head += [
++            "--oss", "--local-provider", provider,
++            "-m", model, "-c", f"model_reasoning_effort={effort}",
++            "-c", 'web_search="disabled"',
++        ]
++    head += ["--disable", "plugins"]
++    argv = head + [
++        "exec", "--sandbox", "workspace-write", "--ask-for-approval", "never",
++        "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
++        "--cd", str(workspace_dir.resolve()), "--json",
++    ]
++    for im in (images or []):
++        argv += ["-i", im]
++    if session_id:
++        argv += ["resume", session_id, "-"]
++    return argv
++
++
+ def build_codex_cmd(
+     *,
+     workspace_dir: Path,
+@@ -247,6 +300,11 @@ def build_codex_cmd(
+     run_dir = run_dir.resolve()
+     workspace_dir = workspace_dir.resolve()
+     rel = workspace_dir.relative_to(run_dir)
++    if _codex_local_enabled():
++        return _build_local_codex_cmd(
++            workspace_dir=workspace_dir, model=model, effort=effort,
++            images=images, session_id=session_id,
++        )
+     gw = gateway_ip(gateway)
+     if not gw:
+         raise RuntimeError(
