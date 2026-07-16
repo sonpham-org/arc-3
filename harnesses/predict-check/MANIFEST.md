@@ -61,7 +61,18 @@ patch -p1 < <predict-check/patch/predict-check.diff>   # from build/src/ARC3-Inf
 | run | mode | all-25 | **ex-`ft09`** | vs frame-full 1.44 / baseline ≈1.21 |
 |---|---|---|---|---|
 | `g4run-v12pc-20260716-1326` | optional | 1.510 | **0.977** | below both |
-| `g4run-v12pcf-20260716-1549` | prescriptive | _pending_ | _pending_ | in flight |
+| `g4run-v12pcf-20260716-1549` | prescriptive | 1.145 | **1.192** | ≈baseline, below frame-full |
+
+**Prescriptive result:** forcing flipped predict() usage 0 → 1,346 calls (~1:1 with
+action(), 2,674 surprises in the model's reasoning) — the awareness hypothesis is
+confirmed. But it lifted the score only from the ignored-optional run (0.977 →
+1.192), landing at **baseline (~1.19), still below frame-full (1.44).** So Qwen-27B
+can *emit* predictions on command but does not *leverage* the surprise signal to
+play better. The CEGIS counterexample pays off only if the model then acts on it
+(re-probe / repair / replan) — the load-bearing half Qwen doesn't do unaided.
+Single runs; ex-ft09 ~±0.15 noise; prediction accuracy itself wasn't logged (gap).
+Conclusion: predict-then-check is not a win on Qwen; the OPINE value needs the
+plan-by-simulation + rule-repair half, or a stronger model. (`ft09`=0.00 this run.)
 
 **Key finding (optional run):** Qwen-27B **ignored the `predict()` tool entirely** —
 0 real calls vs 1,750 `action()` calls across 25 games; in 3.08 MB of its own
