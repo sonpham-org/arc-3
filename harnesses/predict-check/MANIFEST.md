@@ -60,15 +60,20 @@ patch -p1 < <predict-check/patch/predict-check.diff>   # from build/src/ARC3-Inf
 ## Validated score (public 25 games, ex-`ft09`)
 | run | mode | all-25 | **ex-`ft09`** | vs frame-full 1.44 / baseline ≈1.21 |
 |---|---|---|---|---|
-| `g4run-v12pc-20260716-1326` | optional | 1.49 | **~0.95** | below both |
-| `g4run-v12pcf-*` | prescriptive | _pending_ | _pending_ | in flight |
+| `g4run-v12pc-20260716-1326` | optional | 1.510 | **0.977** | below both |
+| `g4run-v12pcf-20260716-1549` | prescriptive | _pending_ | _pending_ | in flight |
 
-**Key finding (optional run):** Qwen-27B **ignored `predict()` entirely** — 0 real
-calls vs 1,750 `action()` calls across 25 games. So the ex-`ft09` drop is NOT the
-mechanism failing (it was never exercised); it's a noisy frame-full re-run carrying
-~300 tokens of unused instructions. An OPINE idea grafted as an *optional* tool is
-inert on Qwen-27B. Hence the prescriptive re-run: does Qwen engage + benefit when
-the workflow is required? (`ft09` itself scored 14.29 this run, but excluded by rule.)
+**Key finding (optional run):** Qwen-27B **ignored the `predict()` tool entirely** —
+0 real calls vs 1,750 `action()` calls across 25 games; in 3.08 MB of its own
+`[THINKING]`, 0 references to `predict(` (vs `segmentation` 456, `history` 248,
+`BFS` 47). So the ex-`ft09` drop is NOT the mechanism failing (never exercised);
+it's a noisy frame-full re-run carrying ~300 tokens of unused, "Optional"-labelled
+instructions. **But** the model *does* predict — informally, in prose ("`Predicted:
+R b R / b ? R / R b b`") — it just never routed that through the scored tool. So the
+diagnosis is "didn't notice/prioritize an optional tool," not "prediction is
+useless." Hence the prescriptive re-run: make it required + prominent so those
+hand-predictions land in the scored loop where surprises can steer. (`ft09` scored
+14.29 this run, excluded by rule.)
 
 Compare on ex-`ft09` only (raw all-25 swings ±1.0 on `ft09` alone). Replicate a
 2nd seed before trusting a positive.
