@@ -54,3 +54,22 @@ Then, for the real model: bring up the PRO 6000 Qwen vLLM (serve on :1234),
 Backend patched + unit-verified; codex↔Ollama transport proven. Blocked on the
 ARC key to download games for the first smoke run. Not yet reimplemented natively
 (that's the eventual `../` world-model harness).
+
+## Update: running OPINE on our own Qwen3.6-27B (on-instance)
+The tunnel-from-laptop path is a dead end in the sandbox (IAP tunnel + SSH
+port-forward both crash, exit 144). So the working recipe is **self-contained on
+the PRO 6000**: serve Qwen3.6 + run OPINE there, no tunnel. `gcp/
+qwen36_opine_startup.sh` does the whole thing (serve vLLM :1234 -> proxy :1235 ->
+install codex/uv/OPINE -> run -> sync to GCS -> scale MIG to 0).
+
+**codex <-> vLLM Responses incompatibility (the reason the proxy exists):**
+codex 0.142's `/v1/responses` request uses the `developer` message role, which
+vLLM 0.19's Responses API rejects with `400 "Unexpected message role."` Ollama's
+`/v1/responses` accepts it (why gpt-oss worked directly); vLLM's does not. Fix:
+`opine_proxy.py`, a stdlib reverse proxy that recursively rewrites role
+`developer -> system` and streams everything else through (SSE included).
+Validated: codex -> proxy -> model completes the agent loop (file write).
+
+**Also required for the Blackwell (SM120) PRO 6000:** `ninja-build` must be apt-
+installed or vLLM/flashinfer dies JIT-compiling the GEMM kernel (`FileNotFoundError:
+'ninja'`).
