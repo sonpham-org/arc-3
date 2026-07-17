@@ -37,7 +37,10 @@ def chat(messages, temperature: float = 0.2, max_tokens: int = 8192,
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.loads(r.read())
-    return data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    # Some servers (vLLM + reasoning-parser) return content=None with the text in
+    # reasoning_content; never return None (callers run regex/extract on this).
+    return msg.get("content") or msg.get("reasoning_content") or ""
 
 
 def extract_code(text: str) -> str:

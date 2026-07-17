@@ -64,3 +64,17 @@ richer/uncertainty-driven probing to build a COMPLETE model, then plan/explore.
 What definitively works today: synthesize -> exact-replay verify -> admit (the
 CEGIS core), plan-by-simulation, and grounded exploration + validation -- all
 native, on plain chat-completions.
+
+## RESULT: our Qwen3.6-27B does the OPINE synthesis (step 2)
+Ran the native CEGIS core on a PRO 6000 with our own **Qwen3.6-27B-FP8 served via
+vLLM `/v1/chat/completions`** (no codex, no proxy, none of the Responses dialect
+problems). Verdict on `ls20`:
+
+    ls20: admitted=True, exact-replay=16/16, rounds=1
+
+Qwen3.6 synthesized a correct, exactly-verified `transition_function` in ONE round
+-- same as gpt-oss. So **our production model does the world-model synthesis
+method**; the earlier "run theirs" failure was purely the codex<->vLLM Responses
+incompatibility, never a Qwen capability limit. Launcher: `gcp/qwen36_native_startup.sh`.
+(`ft09` hit a harness bug -- llm.chat returned None content under vLLM's
+reasoning-parser -- now fixed to fall back to reasoning_content.)
