@@ -80,6 +80,31 @@ class ArcEnv:
             })
         return objs
 
+    def candidate_actions(self, state=None, max_clicks=48):
+        """Generalized action set as dicts {'id','x','y'}. Directional actions as-is,
+        plus salient CLICKS (action 6) at the center of each distinct object -- the
+        interactive targets in point-and-click games (walls/full-bg excluded)."""
+        state = state if state is not None else self.extract_state()
+        acts = [{"id": a, "x": None, "y": None}
+                for a in self.available_actions() if a in (1, 2, 3, 4, 5)]
+        if 6 in self.available_actions():
+            seen = set()
+            for o in state:
+                cx, cy = int(o["x"] + o["w"] // 2), int(o["y"] + o["h"] // 2)
+                if (cx, cy) in seen:
+                    continue
+                seen.add((cx, cy))
+                acts.append({"id": 6, "x": cx, "y": cy})
+                if len(acts) >= max_clicks + 5:
+                    break
+        return acts
+
+    def apply(self, action):
+        """Step with a generalized action dict {'id','x','y'}."""
+        if isinstance(action, dict):
+            return self.step(action["id"], x=action.get("x"), y=action.get("y"))
+        return self.step(action)
+
     def step(self, action_id: int, x=None, y=None):
         from arcengine import ActionInput, GameAction
         amap = {1: GameAction.ACTION1, 2: GameAction.ACTION2, 3: GameAction.ACTION3,
