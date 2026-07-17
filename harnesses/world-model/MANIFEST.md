@@ -28,6 +28,15 @@ This gets its **own folder / own loop** because it doesn't share the graft agent
    a frontier API model.
 
 ## Status
+**Native core WORKS** (`native/`): OPINE's synthesize->exact-replay-verify->CEGIS
+loop reproduced in our own code, plain chat-completions (no codex/Responses). On
+`ls20` with gpt-oss it admits a correct `transition_function` at 12/12 exact-replay
+in 1 round. Runs on any /v1/chat/completions -> ready for our Qwen3.6 via vLLM.
+Still to build: planner (plan-by-simulation) + full act/verify/plan loop. The
+run-theirs path (`opine-port/`) is shelved -- codex<->vLLM Responses is incompatible.
+
+### Prior status
+# Status
 **In progress — "run theirs first, then port" (Track B).** OPINE's own code runs
 in scratchpad; `opine-port/` records the patch that makes it run on our local
 models (its backends were hard-wired to hosted OpenAI/Anthropic). codex↔Ollama
