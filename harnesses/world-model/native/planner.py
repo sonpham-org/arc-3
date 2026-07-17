@@ -27,7 +27,7 @@ GOAL_SYS = (
 )
 
 
-def synthesize_goal(buffer, actions, transition_code):
+def synthesize_goal(buffer, actions, transition_code, failed=None):
     sample = buffer[0]["state"] if buffer else []
     names = sorted({o["name"] for o in sample})
     movers = sorted({o["name"] for t in buffer
@@ -35,12 +35,25 @@ def synthesize_goal(buffer, actions, transition_code):
                      if o["name"] in {p["name"] for p in t["state"]}
                      and (o["x"], o["y"]) != next(((p["x"], p["y"]) for p in t["state"]
                                                    if p["name"] == o["name"]), (o["x"], o["y"]))})
+    # Give the model the full object layout (positions) so it can reason about
+    # which target the movable object should reach.
+    layout = [{"name": o["name"], "x": o["x"], "y": o["y"], "w": o["w"], "h": o["h"]}
+              for o in sample]
     user = (
         f"Object names on the board: {names}\n"
-        f"Objects observed to MOVE under actions: {sorted(movers)}\n"
+        f"Objects observed to MOVE under actions: {sorted(movers)} (these are the "
+        f"agent-controlled pieces; everything else is scenery/targets/walls).\n"
+        f"Full initial layout (name,x,y,w,h): {json.dumps(layout)}\n"
         f"The synthesized transition model is:\n```python\n{transition_code}\n```\n"
         f"Hypothesize the win condition as is_goal(state)."
     )
+    if failed:
+        user += (
+            "\n\nEARLIER GOAL HYPOTHESES THAT WERE WRONG (the planned route reached "
+            "the described board but the real game did NOT advance the level -- so "
+            "these conditions are NOT the win condition; hypothesize a DIFFERENT one):\n"
+            + json.dumps(failed[-4:], default=str)[:2500]
+        )
     reply = llm.chat([{"role": "system", "content": GOAL_SYS},
                       {"role": "user", "content": user}], max_tokens=4096)
     return llm.extract_code(reply)
@@ -99,6 +112,35 @@ def plan(transition_fn, is_goal_fn, start_state, actions, max_depth=20, max_node
             seen.add(key)
             q.append((nxt, path + [a]))
     return None
+
+
+def explore_for_reward(env, transition_fn, actions, budget=250, log=print):
+    """Grounded goal discovery: don't GUESS the unobserved goal -- find it. Use the
+    verified transition model to always step toward a state we haven't visited yet
+    (novelty search), playing the REAL game, until it advances the level (reward).
+    Returns (solved, steps, visited_count). No goal hypothesis needed.
+    """
+    visited = {tuple(canon(env.extract_state()))}
+    for step in range(budget):
+        state = env.extract_state()
+        # prefer an action whose predicted result is novel; else round-robin
+        choice = None
+        for a in actions:
+            try:
+                nxt = transition_fn(copy.deepcopy(state), a)
+            except Exception:
+                continue
+            if isinstance(nxt, list) and tuple(canon(nxt)) not in visited:
+                choice = a
+                break
+        if choice is None:
+            choice = actions[step % len(actions)]  # stuck: cycle to jog loose
+        _, reward, done = env.step(choice)
+        visited.add(tuple(canon(env.extract_state())))
+        if done or reward > 0:
+            log(f"[explore] REWARD at step {step+1}: level advanced (goal found by exploration).")
+            return True, step + 1, len(visited)
+    return False, budget, len(visited)
 
 
 def execute_plan(env, plan_actions, log=print):

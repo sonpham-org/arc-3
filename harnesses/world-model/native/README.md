@@ -45,3 +45,22 @@ a prod run bundles it like the other GCP runs.
 - **Qwen3.6 run**: point `WM_LLM_*` at our Qwen on a PRO 6000 and compare its
   synthesis quality to gpt-oss (the "does our model do the method" question,
   finally answerable without the codex wall).
+
+## Update: goal refinement + grounded exploration (step 1)
+Added `planner.explore_for_reward` (novelty-search the real game via the verified
+model, no goal guessing) and an iterative goal-hypothesis loop in `loop.py`
+(hypothesize is_goal -> plan -> validate on real game -> feed failure back).
+
+**Honest finding on ls20:** the transition model admits at 16/16, but grounded
+exploration reaches only **7 distinct states** (none winning), and goal-guessing
+(even with negative feedback) doesn't crack it. Root cause: **exact-replay of a
+shallow 16-move probe admits an INCOMPLETE model** -- correct for what it saw
+("player moves ±5") but blind to the hidden dynamics ls20's win needs. This is
+exactly the problem OPINE's ontology-error η targets (probe where the model is
+uncertain to discover new dynamics). The harness correctly *surfaces* the
+incompleteness; fully solving needs the η-driven exploration layer (future work):
+richer/uncertainty-driven probing to build a COMPLETE model, then plan/explore.
+
+What definitively works today: synthesize -> exact-replay verify -> admit (the
+CEGIS core), plan-by-simulation, and grounded exploration + validation -- all
+native, on plain chat-completions.
