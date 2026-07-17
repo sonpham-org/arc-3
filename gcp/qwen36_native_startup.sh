@@ -47,7 +47,8 @@ echo "vLLM chat endpoint ready"
 mkdir -p /opt/native && gcloud storage cp "$BUCKET/code/native_pkg.tgz" /tmp/n.tgz && tar xzf /tmp/n.tgz -C /opt/native
 mkdir -p /opt/native/engwheels && gcloud storage rsync -r "$SEED/engine-wheels" /opt/native/engwheels
 uv venv --python 3.12.12 /opt/native/.venv
-uv pip install --python /opt/native/.venv/bin/python numpy pillow opencv-python-headless >/dev/null 2>&1
+uv pip install --python /opt/native/.venv/bin/python numpy pillow opencv-python-headless \
+  pydantic requests python-dateutil packaging >/dev/null 2>&1
 uv pip install --python /opt/native/.venv/bin/python --no-deps \
   /opt/native/engwheels/arc_agi-0.9.8-py3-none-any.whl /opt/native/engwheels/arcengine-0.9.3-py3-none-any.whl
 /opt/native/.venv/bin/python -c "import arcengine, numpy; print('arcengine ok')" || { done_stop arcengine RUN_FAILED; exit 1; }
