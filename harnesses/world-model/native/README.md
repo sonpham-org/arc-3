@@ -78,3 +78,18 @@ method**; the earlier "run theirs" failure was purely the codex<->vLLM Responses
 incompatibility, never a Qwen capability limit. Launcher: `gcp/qwen36_native_startup.sh`.
 (`ft09` hit a harness bug -- llm.chat returned None content under vLLM's
 reasoning-parser -- now fixed to fall back to reasoning_content.)
+
+## Update: η-driven exploration layer (explore.py)
+`explore.build_complete_model` plays the real game, treats a model MISPREDICTION
+of a live transition as ontology error (η) == a CEGIS counterexample, adds it,
+re-synthesizes, and steers probing toward novel + under-tried (state,action) pairs.
+
+**Result on ls20 (gpt-oss, 100 steps):** state coverage **7 -> 38** (the naive
+probe's "7 reachable states" was an artifact, not the game); recent-η converges to
+0; 12 incremental re-syntheses grow the buffer 8->97. Surfaced a deeper truth:
+full-buffer exact-replay drifts to ~75% because ls20's dynamics are
+POSITION-DEPENDENT (walls block moves) -- a single "move ±5" rule approximates it,
+100% needs collision/wall modeling. The layer correctly discovers the state space
+AND reveals the missing physics. Did not solve in 100 steps (goal still unobserved
+/ deeper). Next: bigger budget + CEGIS-repair rounds inside each re-synth (wall-
+aware model) + wire into loop.py; then the Qwen3.6 run.
