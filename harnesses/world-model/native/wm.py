@@ -91,43 +91,64 @@ def verify(code, buffer):
 
 
 SYNTH_SYS = (
-    "You are a world-model synthesizer for a grid game. You are given observed "
-    "transitions and must write ONE Python function that reproduces them EXACTLY.\n"
-    "State is a list of object records: {'name': str, 'tags': list, 'x': int, "
-    "'y': int, 'w': int, 'h': int}. Actions are integers.\n"
-    "Write `def transition_function(state, action_id):` that returns the NEW state "
-    "(same list-of-records format). Deep-copy the input; do not mutate it. Infer "
-    "which object(s) move and the rule for each action from the data. Only `copy`, "
-    "`math`, `collections`, `itertools`, `functools` may be imported.\n"
+    "You synthesize an EXACT world model for a grid game. Given observed "
+    "transitions, write ONE Python function that reproduces them all exactly.\n"
+    "State is a list of object records {'name','tags','x','y','w','h'}. Actions are ints.\n"
+    "Write `def transition_function(state, action_id):` returning the NEW state (same "
+    "format). Deep-copy the input; never mutate it.\n"
+    "CRITICAL -- effects are usually POSITION-DEPENDENT. A moving object is often "
+    "BLOCKED (it stays put) when its destination goes out of bounds or would overlap a "
+    "WALL / solid object. The FULL state, including every wall object, is passed to your "
+    "function -- so compute the destination cell and CHECK it against the other objects; "
+    "if blocked, leave the object where it is. Any transition where the action did NOT "
+    "move the agent is evidence of a block condition at that position -- infer the rule "
+    "(usually: destination overlaps a static object) rather than special-casing coordinates.\n"
+    "Only copy, math, collections, itertools, functools importable. "
     "Return ONLY a ```python code block."
 )
 
 
-def _diff_summary(t):
-    """Compact per-transition summary: which objects moved."""
+def movers(buffer):
+    """Object names that ever changed position -- the agent-controlled pieces."""
+    names = set()
+    for t in buffer:
+        b = {o["name"]: (o["x"], o["y"]) for o in t["state"]}
+        for o in t["next_state"]:
+            if o["name"] in b and (o["x"], o["y"]) != b[o["name"]]:
+                names.add(o["name"])
+    return names
+
+
+def _agent_row(t, mv):
+    """Per-transition: each mover's from->to and whether it actually moved
+    (moved=false == the action was BLOCKED in that position)."""
     b = {o["name"]: (o["x"], o["y"]) for o in t["state"]}
     a = {o["name"]: (o["x"], o["y"]) for o in t["next_state"]}
-    moved = {n: [b[n], a[n]] for n in a if n in b and b[n] != a[n]}
-    return {"action": t["action"], "moved": moved, "reward": t.get("reward", 0)}
+    rows = {n: {"from": list(b[n]), "to": list(a.get(n, b[n])),
+                "moved": b[n] != a.get(n, b[n])} for n in mv if n in b}
+    return {"action": t["action"], "agent": rows, "reward": t.get("reward", 0)}
 
 
 def synthesize(buffer, actions, counterexamples=None, prev_code=None):
-    diffs = [_diff_summary(t) for t in buffer]
-    sample_state = buffer[0]["state"] if buffer else []
+    mv = movers(buffer)
+    if not mv and buffer:
+        mv = {buffer[0]["state"][0]["name"]} if buffer[0]["state"] else set()
+    sample = buffer[0]["state"] if buffer else []
+    static = [[o["x"], o["y"], o["w"], o["h"]] for o in sample if o["name"] not in mv]
+    rows = [_agent_row(t, mv) for t in buffer]
     user = (
-        f"Actions available: {actions}\n"
-        f"Initial state has {len(sample_state)} objects. Example objects: "
-        f"{json.dumps(sample_state[:6])}\n\n"
-        f"Observed transitions (which objects moved per action):\n"
-        f"{json.dumps(diffs, indent=1)}\n"
+        f"Actions: {actions}. Agent (movable) object(s): {sorted(mv)}.\n"
+        f"Static objects as [x,y,w,h] (the agent may be BLOCKED by these -- your "
+        f"function receives them in `state` too): {json.dumps(static)[:2500]}\n\n"
+        f"Observed transitions (agent from->to per action; moved=false means BLOCKED "
+        f"at that position):\n{json.dumps(rows)[:6000]}\n"
     )
     if prev_code and counterexamples:
         user += (
-            f"\nYour PREVIOUS model was:\n```python\n{prev_code}\n```\n"
-            f"It FAILED these transitions (counterexamples). For each: the state, the "
-            f"action, what you predicted, and the correct next state:\n"
-            f"{json.dumps(counterexamples[:4], default=str)[:3000]}\n"
-            f"Fix the rule so ALL observed transitions replay exactly.\n"
+            f"\nYour PREVIOUS model:\n```python\n{prev_code}\n```\n"
+            f"FAILED these (state, action, your prediction, correct next state). Most "
+            f"failures are missed BLOCK conditions -- fix the collision rule so ALL "
+            f"transitions replay exactly:\n{json.dumps(counterexamples[:4], default=str)[:3500]}\n"
         )
     reply = llm.chat([{"role": "system", "content": SYNTH_SYS},
                       {"role": "user", "content": user}], max_tokens=8192)
