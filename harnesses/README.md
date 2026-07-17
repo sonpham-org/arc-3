@@ -34,4 +34,6 @@ artifact; experiments copy from it and never edit it in place.**
 - `frame-full/` — variant (env-toggle `ARC3_FRAME_MODE=full`). ex-`ft09` **1.44 (+19%)**.
 - `predict-check/` — variant of `frame-full` (env-toggle `ARC3_PREDICT_CHECK=1`): OPINE
   predict-then-check / counterexample signal grafted onto the graft loop. Score pending.
+- `action7-anim/` — variant of `baseline-v12`: ACTION7 round-trip fix + compact
+  always-visible animation metadata (ported from the 1.47 dark-agi notebook). Score pending.
 - `world-model/` — stub for the OPINE-style verified-world-model harness (new loop).
