@@ -150,5 +150,7 @@ def cegis(env, n_transitions=12, max_rounds=3, log=print):
         best = (passed, total, cxs)
         if passed == total:
             log("[wm] ADMITTED: model replays the full buffer exactly.")
-            return {"code": code, "passed": passed, "total": total, "admitted": True, "rounds": r + 1}
-    return {"code": code, "passed": best[0], "total": best[1], "admitted": False, "rounds": max_rounds}
+            return {"code": code, "passed": passed, "total": total, "admitted": True,
+                    "rounds": r + 1, "buffer": buf}
+    return {"code": code, "passed": best[0], "total": best[1], "admitted": False,
+            "rounds": max_rounds, "buffer": buf}
