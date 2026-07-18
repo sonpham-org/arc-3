@@ -393,6 +393,9 @@ for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
         "per_game": sorted(per_game, key=lambda g: g["id"]),
         "harness": HARNESS.get(run, {}),
         "prompts": extract_prompts(os.path.dirname(bench_path)),
+        # A resource capture exists for this run (see export_usage.py) -> the
+        # scoreboard shows a "usage" link to the visualizer.
+        "has_usage": os.path.exists(os.path.join("docs", "data", run, "usage.json")),
     })
 
 runs.sort(key=lambda r: -r["avg_score"])
