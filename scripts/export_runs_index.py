@@ -95,6 +95,28 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "seed 2 of the a7 fixes (identical config), run for variance. ex-ft09 0.987 (all-25 1.52). The two seeds (1.489 vs 0.987) show ex-ft09 is far noisier than assumed -- a7 mean ~1.24, within noise of baseline; a single run is not trustworthy.",
     },
+    "20260718_114800_v12-ffa7": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + compact animation metadata",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "frame-full (ARC3_FRAME_MODE=full images) combined with the two a7 fixes (ACTION7 round-trip + always-visible compact animation metadata). all-25 1.97 -- but ft09=28.57 carried it; ex-ft09 only 0.864, below frame-full's 1.44. ACTION7 engaged (227 uses). seed 1 of 2.",
+    },
+    "20260718_114800_v12-ffa7b": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + compact animation metadata",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "seed 2 of frame-full+a7 (identical config). all-25 1.38, ex-ft09 1.437 (ft09=0.00). The two ffa7 seeds (ex-ft09 0.864 vs 1.437, 0.57 spread) fall within seed noise of frame-full / a7 / baseline -- combining ff+a7 did not clearly help; harnesses can't be ranked at 1-2 seeds.",
+    },
     "20260716_132600_v12-predict-check": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + full-frame + predict-then-check",
@@ -340,6 +362,10 @@ for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
     try:
         bench = json.load(open(bench_path))
     except Exception:
+        continue
+    # Single-game robustness ("signal") runs -- one game x N passes -- belong on the
+    # separate Signal-runs tab (see export_signal_runs.py), not the 25-game scoreboard.
+    if (bench.get("n_passes") or 1) > 1:
         continue
     games = bench.get("game_runs", [])
     n = len(games) or 1
