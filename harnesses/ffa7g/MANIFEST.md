@@ -61,13 +61,17 @@ harness rules.
 - **advance_hud end-to-end (agent actually authors + uses a model):** pending local
   qwen3.6:27b (Ollama) ls20 run.
 
-## Validated score (public 25 games, ex-`ft09`)
-Single-pass, high-variance — read the **action count**, not the noisy score delta.
-| run | all-25 | ex-`ft09` | total actions |
-|---|---|---|---|
-| `g4run-v12ffa7g-20260718-1845` (no no-impact) | 0.90 | 0.94 | 3089 |
-| `g4run-v12ffa7gn-20260718-1948` (+ no-impact) | 1.76 | 1.24 | **1332 (−57%)** |
+## Validated score (public 25 games, ex-`ft09`, 2 passes each — FINAL)
+Clean 1-variable ablation: same bundle ± the no-impact band. Both runs completed
+2026-07-18.
+| arm | pass A | pass B | **mean ex-`ft09`** | actions/pass |
+|---|---|---|---|---|
+| **without** no-impact (ffa7g, `-1845`) | 0.946 | 1.145 | **1.046** | ~3353 |
+| **with** no-impact (ffa7gn, `-1948`) | 2.061 | 1.187 | **1.624** | ~2537 (**−24%**) |
 
-Headline: no-impact roughly halves actions with no score loss (score delta is within
-single-pass noise; `sb26` alone swung 2.78→13.81). Replicate 2–3× before trusting the
-score. `ft09` excluded — it swings the all-25 mean by ±1.0 on its own.
+Headline: the no-impact band lifts ex-`ft09` **1.046 → 1.624 (+0.58, ~55%)** while
+cutting **~24%** of actions. Both with-passes beat both without-passes, and the gain is
+broad (14/24 games score >0; vc33 +4.96, r11l +3.72, tu93 +2.70, sb26 +11.0). n=2 with
+high pass-variance, so treat the magnitude as indicative, but the direction is consistent
+on both axes. `ft09` excluded — it swings the all-25 mean by ±1.0 on its own. (My earlier
+`−57%`/single-pass figures were partial-snapshot artifacts; these are the completed runs.)
