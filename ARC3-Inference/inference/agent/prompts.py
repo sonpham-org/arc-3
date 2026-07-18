@@ -13,8 +13,9 @@ GAME_OVERVIEW_ADDENDUM = (
     "- You are solving a multi-level grid puzzle game. \n"
     "- You are called repeatedly over the course of a run. Treat each turn as one observe-plan-act cycle: re-understand the current state from the newest frame, update your working world model in Python, choose the next best action or short sequence against the goal as currently understood, execute it, and expect to re-evaluate on the next turn from the updated state.\n"
     "- Your job is to solve the entire game by clearing every level, not just the current screen.\n"
-    "- Levels often build on earlier mechanics, but layouts and interactions can still change between levels.\n"
-    "- Optimize for as few in-game actions as possible while still being reliable.\n"
+    "- Levels often build on earlier mechanics, but layouts and interactions can still change between levels, and new mechanics might be introduced.\n"
+    "- Optimize for as few in-game actions as possible while still reliably clearing every level. Per level you are scored on action efficiency, `min(human_actions / agent_actions, 1.0)`, then squared, so once a level is solved every extra action hurts sharply.\n"
+    "- Use this as a test for false goals: if a value only ticks up by a fixed amount each action but never completes a level (a HUD counter, timer, or progress bar), it cannot be the objective; pursuing it means one wasted action per tick, the worst possible efficiency. The real goal is a change in the puzzle's own state that drives toward clearing the level.\n"
     "- In this environment, boards are presented as 64 x 64 color grids rendered with ARC color symbols.\n"
     f"- Color legend: {ARC_COLOR_LEGEND}.\n"
 )
