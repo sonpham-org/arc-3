@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260717_235600_v12-a7-action7-anim": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + ACTION7 fix + compact animation metadata",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px), last-frame + compact animation metadata (no images)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "two fixes ported from the 1.47 dark-agi notebook, on the plain baseline: (1) ACTION7 round-trip -- it was model-visible but silently no-op'd, and the agent used it 234x across 6 games here; (2) always-visible compact animation metadata (animation_changed / animation_only_changed / bbox / counts) in last_action_result, cheaper than full-frame images and the agent reasons about it. seed 1: ex-ft09 1.489 (all-25 1.72).",
+    },
+    "20260718_005200_v12-a7-action7-anim-b": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + ACTION7 fix + compact animation metadata",
+        "memory": "scientist note (optional prose)",
+        "render": "plain 4x (256px), last-frame + compact animation metadata (no images)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "seed 2 of the a7 fixes (identical config), run for variance. ex-ft09 0.987 (all-25 1.52). The two seeds (1.489 vs 0.987) show ex-ft09 is far noisier than assumed -- a7 mean ~1.24, within noise of baseline; a single run is not trustworthy.",
+    },
     "20260716_132600_v12-predict-check": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + full-frame + predict-then-check",
