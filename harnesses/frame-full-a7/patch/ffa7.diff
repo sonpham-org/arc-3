@@ -1,0 +1,124 @@
+--- pristine/src/ARC3-Inference/inference/agent/action_names.py	2026-07-08 22:36:34.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/action_names.py	2026-07-18 07:45:27.206995088 -0400
+@@ -11,6 +11,9 @@
+     "ACTION4": "RIGHT",
+     "ACTION5": "SPACE",
+     "ACTION6": "MOUSE",
++    # ACTION7 round-trip fix (see action7-anim harness): was model-visible but
++    # to_engine_action returned None, so it silently no-op'd.
++    "ACTION7": "ACTION7",
+     "RESET": "RESET",
+ }
+ 
+--- pristine/src/ARC3-Inference/inference/agent/prompts.py	2026-07-15 18:49:51.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/prompts.py	2026-07-18 07:47:11.587930370 -0400
+@@ -64,6 +64,8 @@
+     "- Pass `action(actions)` a list like `['LEFT']` or `[{'action': 'MOUSE', 'row': 4, 'col': 7}]`.\n"
+     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
+     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
++    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
++    "- `last_action_result` may include `animation_frame_count`, `animation_changed`, `animation_only_changed`, `animation_changed_bbox`, and `animation_transition_count`. These summarize intermediate animation frames that are not present in `current_frame`; an `animation_only_changed` result means the action displayed a real transient change even though its final board matched the pre-action board.\n"
+ )
+ 
+ MULTIMODAL_CONTEXT_ADDENDUM = (
+--- pristine/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-15 18:49:35.000000000 -0400
++++ base/src/ARC3-Inference/inference/agent/tool_agent.py	2026-07-18 07:47:02.207936150 -0400
+@@ -1459,6 +1459,12 @@
+         for timing_key in ("run_elapsed_seconds", "time_remaining_seconds"):
+             if timing_key in payload:
+                 compact[timing_key] = payload.get(timing_key)
++        # Always-visible compact animation metadata (complements full-frame images).
++        for anim_key in ("animation_frame_count", "animation_changed",
++                         "animation_only_changed", "animation_changed_cell_count",
++                         "animation_changed_bbox", "animation_transition_count"):
++            if anim_key in payload:
++                compact[anim_key] = payload.get(anim_key)
+         if payload.get("error"):
+             compact["error"] = payload.get("error")
+         return compact
+--- pristine/src/ARC3-Inference/inference/framework/solver.py	2026-07-15 18:48:45.000000000 -0400
++++ base/src/ARC3-Inference/inference/framework/solver.py	2026-07-18 07:46:49.939943725 -0400
+@@ -99,6 +99,50 @@
+     return tuple(tuple(int(cell) for cell in row) for row in rows)
+ 
+ 
++def _grid_from_frame(frame) -> tuple[tuple[int, ...], ...]:
++    data = getattr(frame, "data", frame)
++    rows = data.tolist() if hasattr(data, "tolist") else data
++    try:
++        return tuple(tuple(int(cell) for cell in row) for row in rows)
++    except (TypeError, ValueError):
++        return ()
++
++
++def _animation_summary(new_state, previous_grid, board_changed) -> dict[str, Any]:
++    """Compact scalar metadata about the intermediate animation frames, added to
++    every action result so the model always sees it -- no opt-in. Complements the
++    full-frame images (which the agent must choose to read). `animation_only_changed`
++    flags an action that flashed a real transient change but left the same final board."""
++    frames = list(getattr(new_state, "all_frames", ()) or ())
++    grids = [g for g in (_grid_from_frame(f) for f in frames) if g]
++    changed: set[tuple[int, int]] = set()
++    for g in grids:
++        for r in range(max(len(previous_grid), len(g))):
++            pr = previous_grid[r] if r < len(previous_grid) else ()
++            gr = g[r] if r < len(g) else ()
++            for c in range(max(len(pr), len(gr))):
++                pv = pr[c] if c < len(pr) else None
++                gv = gr[c] if c < len(gr) else None
++                if pv != gv:
++                    changed.add((r, c))
++    if changed:
++        rows = [x[0] for x in changed]
++        cols = [x[1] for x in changed]
++        bbox = [min(rows), min(cols), max(rows), max(cols)]
++    else:
++        bbox = None
++    seq = [previous_grid, *grids]
++    transition_count = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
++    return {
++        "animation_frame_count": len(frames),
++        "animation_changed": bool(changed),
++        "animation_only_changed": bool(changed and not board_changed),
++        "animation_changed_cell_count": len(changed),
++        "animation_changed_bbox": bbox,
++        "animation_transition_count": transition_count,
++    }
++
++
+ def _level_number(game: taaf.game.Game) -> int:
+     state = game.current_state
+     completed = int(state.levels_completed)
+@@ -659,6 +703,24 @@
+         final_payload["board_changed"] = any(
+             bool(item.get("board_changed")) for item in executed_payloads
+         )
++        # Merge animation metadata across the batch.
++        final_payload["animation_frame_count"] = sum(
++            int(it.get("animation_frame_count", 0) or 0) for it in executed_payloads)
++        final_payload["animation_changed"] = any(
++            bool(it.get("animation_changed")) for it in executed_payloads)
++        final_payload["animation_only_changed"] = bool(
++            final_payload["animation_changed"] and not final_payload["board_changed"])
++        final_payload["animation_changed_cell_count"] = max(
++            (int(it.get("animation_changed_cell_count", 0) or 0) for it in executed_payloads),
++            default=0)
++        final_payload["animation_transition_count"] = sum(
++            int(it.get("animation_transition_count", 0) or 0) for it in executed_payloads)
++        _boxes = [it.get("animation_changed_bbox") for it in executed_payloads
++                  if isinstance(it.get("animation_changed_bbox"), list)
++                  and len(it.get("animation_changed_bbox")) == 4]
++        final_payload["animation_changed_bbox"] = ([
++            min(b[0] for b in _boxes), min(b[1] for b in _boxes),
++            max(b[2] for b in _boxes), max(b[3] for b in _boxes)] if _boxes else None)
+         final_payload["stopped_early"] = len(executed_payloads) < batch_size
+         if stop_reason is not None:
+             final_payload["stop_reason"] = stop_reason
+@@ -785,6 +847,7 @@
+             "batch_size": batch_size,
+             **self.timing_payload(),
+         }
++        payload.update(_animation_summary(new_state, previous_grid, board_changed))
+         self._append_action_viewer_event(payload, current_frame)
+         if flush_viewer_payload:
+             self.write_viewer_payload()
