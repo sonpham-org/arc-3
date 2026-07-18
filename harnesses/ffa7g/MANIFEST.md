@@ -64,14 +64,17 @@ harness rules.
 ## Validated score (public 25 games, ex-`ft09`, 2 passes each — FINAL)
 Clean 1-variable ablation: same bundle ± the no-impact band. Both runs completed
 2026-07-18.
-| arm | pass A | pass B | **mean ex-`ft09`** | actions/pass |
-|---|---|---|---|---|
-| **without** no-impact (ffa7g, `-1845`) | 0.946 | 1.145 | **1.046** | ~3353 |
-| **with** no-impact (ffa7gn, `-1948`) | 2.061 | 1.187 | **1.624** | ~2537 (**−24%**) |
+| arm | pass A | pass B | **mean ex-`ft09`** | actions/pass | levels/pass |
+|---|---|---|---|---|---|
+| **without** no-impact (ffa7g, `-1845`) | 0.946 | 1.145 | **1.046** | ~3353 | 15 |
+| **with** no-impact (ffa7gn, `-1948`) | 2.061 | 1.187 | **1.624** | ~3476 | **21** |
 
-Headline: the no-impact band lifts ex-`ft09` **1.046 → 1.624 (+0.58, ~55%)** while
-cutting **~24%** of actions. Both with-passes beat both without-passes, and the gain is
-broad (14/24 games score >0; vc33 +4.96, r11l +3.72, tu93 +2.70, sb26 +11.0). n=2 with
-high pass-variance, so treat the magnitude as indicative, but the direction is consistent
-on both axes. `ft09` excluded — it swings the all-25 mean by ±1.0 on its own. (My earlier
-`−57%`/single-pass figures were partial-snapshot artifacts; these are the completed runs.)
+Headline: the no-impact band lifts ex-`ft09` **1.046 → 1.624 (+0.58, ~55%)** and clears
+**more levels (15 → 21)** at **~equal total actions** (both arms hit the ~132-min time cap,
+so the wasted-action savings are reinvested into progress rather than booked as a lower
+action count). Both with-passes beat both without-passes, and the gain is broad (14/24
+games score >0; vc33 +4.96, r11l +3.72, tu93 +2.70, sb26 +11.0). n=2 with high pass-variance,
+so treat the magnitude as indicative, but the direction is consistent. `ft09` excluded — it
+swings the all-25 mean by ±1.0 on its own. (Earlier `−24%`/`−57%` action-reduction figures
+were partial-snapshot artifacts — the with-runs were still climbing; these are the completed
+numbers.)
