@@ -421,12 +421,12 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt = "You are a coding agent solving a grid-based puzzle game."
     prompt += GAME_OVERVIEW_ADDENDUM
     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
+    if full_frame_enabled():
+        prompt += LAST_ANIMATION_ADDENDUM
     if current_grid_image_enabled():
         prompt += MULTIMODAL_CONTEXT_ADDENDUM
         if current_grid_image_style() == "outline":
             prompt += MULTIMODAL_OUTLINE_ADDENDUM
-    if full_frame_enabled():
-        prompt += LAST_ANIMATION_ADDENDUM
     prompt += VISUAL_GAME_ADDENDUM
     prompt += PYTHON_ADDENDUM
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)

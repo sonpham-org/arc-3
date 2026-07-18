@@ -75,7 +75,8 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
 )
 
 LAST_ANIMATION_ADDENDUM = (
-    "\n\nOptional per-action frames (`last_animation`, `frame_stats`):\n"
+    "- Beyond the animation summary above, two optional runtime variables expose the actual"
+    " per-action frames: `last_animation` and `frame_stats`.\n"
     "- `current_frame` is always the settled board after your last action -- on its own it is enough"
     " for a purely static reading, and you never have to look further.\n"
     "- If you want to, `last_animation` additionally exposes every frame the engine produced for each"
