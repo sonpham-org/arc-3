@@ -41,6 +41,15 @@ harness rules.
 
 ## Verification
 - All 7 files compile. Patch dry-run applies clean to a pristine baseline copy.
+- **End-to-end extraction bug (found + fixed via a live local run):** the agent emits
+  `advance_hud` inside a fenced code block, but `_extract_scientist_note` routed it through
+  the prose extractor, which `.strip()`s each line and collapses newlines to spaces — so the
+  code arrived as ONE line and `_HudCodeModel.register` raised `SyntaxError`, silently no-op'ing
+  the whole model path (permanent fallback to the band). Fixed with `_extract_hud_model_code`,
+  which pulls the fenced `def advance_hud` block raw (indentation + newlines preserved).
+  Re-tested through the real `_extract_scientist_note` → register → predict path: registers,
+  predicts, prose fields unaffected. The dry-run had missed this because it fed `register` a
+  clean code string, skipping the extractor.
 - **no-impact on ls20** (112 recorded actions, 36 true housekeeping-only, replay dry-run):
   | detector | detected | false-positive | miss |
   |---|---|---|---|
