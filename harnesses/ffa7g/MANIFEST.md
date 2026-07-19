@@ -101,6 +101,17 @@ bundle is now metadata-parametrised too (`arc3-bundle`, default `bundle-v12ffa7g
   activity in the actual run.
 - **Live A/B (2026-07-19):** `bundle-v12ffa7gnsglean.tgz` on the 7-game subset, one variable:
   arm A `arc3-g4-v12ffa7gnsglean-a` (graph ON) vs arm B `-b` (`ARC3_STATE_GRAPH=off` == ffa7gn).
+- **RESULT — graph net-negative, so DEFAULT FLIPPED to OFF (opt-in):** final mean Kaggle score
+  **1.533 (graph) vs 2.061 (no graph)**. Per game (A/B): r11l 4.76/0.27 (graph *far* more action-
+  efficient: L1 in ~18 vs 92 actions), ka59 0.41/0.00, bp35 0.51/0.18 — graph wins on efficiency;
+  but sb26 1.70/3.27 and tn36 3.36/10.71 — no-graph reached L2 on both, and depth (weight×2 + a 2nd
+  capped-115 level) outweighs one efficient L1. Mechanism: the graph makes each level cheaper but its
+  per-turn reasoning cost (~561 vs 455 gen tok/action) yields fewer total actions in the time budget
+  (2,121 vs 2,494, −15%) → less depth, and the score rewards depth. Third consistent negative (gnsg,
+  gnsg2, lean A/B). `_state_graph_enabled()` is now **opt-IN** (default OFF; `ARC3_STATE_GRAPH=on` to
+  re-enable). Graph kept behind the flag for future improvement. Input-side tax fully removed by the
+  lean surfacing; the remaining cost is the model's *reasoning* about the graph, which is the thing to
+  fix before re-enabling.
 
 ## Verification
 - All 7 files compile. Patch dry-run applies clean to a pristine baseline copy.
