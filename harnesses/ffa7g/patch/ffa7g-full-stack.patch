@@ -44,7 +44,7 @@ diff -ruN a/inference/agent/frame_mode.py b/inference/agent/frame_mode.py
 +    return frame_mode() == "full"
 diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
 --- a/inference/agent/prompts.py	2026-07-18 11:55:46.536178016 -0400
-+++ b/inference/agent/prompts.py	2026-07-19 01:16:03.104847481 -0400
++++ b/inference/agent/prompts.py	2026-07-19 08:29:41.586811559 -0400
 @@ -23,7 +23,7 @@
  VISUAL_GAME_ADDENDUM = (
      "\n\nVisual-game guidance:\n"
@@ -67,7 +67,7 @@ diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
      "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
 +    "- Each result reports `board_changed`, plus `gameplay_changed` and `no_impact`: the harness learns the game's deterministic HUD/edge band (a moves-remaining or timer bar) online and tells you whether your action changed real gameplay (`gameplay_changed`) or only advanced that band (`no_impact` -- a wasted move, e.g. pressing into a wall). `hud_band` names the learned band when one exists (e.g. `rows 61-62`).\n"
 +    "- `action(actions, intent=...)` defaults to `intent='explore'`: an explore action that turns out `no_impact` STOPS the rest of that batch (`stop_reason='no_impact_action'`) and returns so you re-ground, instead of wasting the queued actions on a plan the environment just disproved. Pass `intent='solve'` for a committed sequence you do not want interrupted by the no-impact check.\n"
-+    "- The harness keeps a per-level STATE GRAPH of the canonical (HUD-excluded) boards you have visited and the actions between them, in the `state_graph` sandbox global: `current_state_id` / `state_graph.current` (your node now), `.neighbors(id)`, `.tried_actions(id)`, `.distance(a,b)`, `.path(a,b)`, `.frontier()` (visited nodes with the fewest tried actions), and `frame_from_state(id)` which returns a FrameView (`.ascii` / `.segmentation`) for ANY node so you can inspect a state you are not currently in before planning a route to it.\n"
++    "- The harness keeps a per-level STATE GRAPH of the canonical (HUD-excluded) boards you have visited and the actions between them. EVERY action result already gives you `state_node_id` (your node now), `graph_nodes` (count), and `untried_here` (the valid actions you have NOT yet taken from this state) -- so do NOT spend a tool-call turn re-deriving your position or local frontier; act on `untried_here` directly. The `state_graph` sandbox global is for PLANNING A ROUTE only (use it sparingly, not every turn): `.neighbors(id)`, `.tried_actions(id)`, `.distance(a,b)`, `.path(a,b)`, `.frontier()`, and `frame_from_state(id)` -> a FrameView (`.ascii`/`.segmentation`) to inspect a distant node before navigating to it.\n"
 +    "- In `intent='explore'`, a whole action sequence that follows ONLY already-tried edges is REJECTED without executing (`stop_reason='known_action_rejected'`): it re-treads explored ground and reaches no new (state, action). You MAY route back through known / fully-explored states, but the plan must END with an untried action so it reaches new ground -- your frontier at a node is its `valid_actions` minus `state_graph.tried_actions(id)`. Use `intent='re-explore'` to deliberately traverse known states (the batch is only flagged, or hard-stopped in the strict A/B arm, if it reaches nothing new); `intent='solve'` bypasses the graph and no-impact checks entirely.\n"
 +    "- Optional precision upgrade for that check: if you can pin down the deterministic HUD/bar exactly, write a PURE `advance_hud(frame, action) -> frame` (frame is the `.ascii` letter grid; return it with ONLY the bar advanced one step, everything else identical) and commit it in a `HUD model:` section with a fenced python code block. The harness re-verifies it against every action and, while its bar prediction holds, uses it (`no_impact_source: model`) instead of the statistical band -- you write it ONCE and it then runs free every turn with no further tokens. It only asks you to rewrite when it mispredicts (`hud_model: stale`, e.g. a refill or a new level). No HUD in this game? Don't write one -- the statistical fallback handles it (`no_impact_source: band` or `exact`).\n"
 +    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
@@ -543,7 +543,7 @@ diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
 +    return int(anim.get("total_actions", 0) or 0), entries
 diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 --- a/inference/agent/tool_agent.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/agent/tool_agent.py	2026-07-19 01:13:49.798034407 -0400
++++ b/inference/agent/tool_agent.py	2026-07-19 08:29:22.687836420 -0400
 @@ -17,6 +17,8 @@
  from inference.agent.prompts import (
      COMPACT_TOOL_SESSION_ADDENDUM,
@@ -690,7 +690,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          batch_size = int(payload.get("requested_count") or payload.get("executed_count") or 1)
          if batch_size > 1 or bool(payload.get("stopped_early")):
              compact["requested_count"] = payload.get("requested_count", batch_size)
-@@ -1443,9 +1484,55 @@
+@@ -1443,9 +1484,58 @@
              compact["stop_reason"] = payload.get("stop_reason")
          if payload.get("stop_detail"):
              compact["stop_detail"] = payload.get("stop_detail")
@@ -699,9 +699,12 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 +        for _k in ("no_impact_source", "hud_model", "hud_model_error"):
 +            if payload.get(_k):
 +                compact[_k] = payload.get(_k)
-+        # State-graph signals (the full graph is the `state_graph` sandbox global).
++        # State-graph signals -- surfaced every turn so the agent does NOT need to query the graph
++        # for its current position / frontier (that was the main overhead).
 +        if payload.get("state_node_id") is not None:
 +            compact["state_node_id"] = payload.get("state_node_id")
++            compact["graph_nodes"] = payload.get("graph_nodes")
++            compact["untried_here"] = payload.get("untried_here")
 +        for _k in ("revisited_state", "nondeterministic_edge", "reexplore_unproductive"):
 +            if payload.get(_k):
 +                compact[_k] = True
@@ -746,7 +749,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          if payload.get("error"):
              compact["error"] = payload.get("error")
          return compact
-@@ -1479,8 +1566,23 @@
+@@ -1479,8 +1569,23 @@
                  if isinstance(last_action_result, dict)
                  else self._last_action_result
              )
@@ -770,7 +773,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
                  "history": _ascii_history_view_payload(refreshed_history),
                  "valid_actions": sanitized_actions,
                  "last_action_result": (
-@@ -1492,7 +1594,7 @@
+@@ -1492,7 +1597,7 @@
  
          terminal_action_result: dict[str, Any] | None = None
  
@@ -779,7 +782,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
              nonlocal terminal_action_result
              if self._step_env_callback is None:
                  raise RuntimeError("action(actions) is not available in this session.")
-@@ -1526,7 +1628,11 @@
+@@ -1526,7 +1631,11 @@
                          last_action_result=compact_payload,
                      ),
                  }
@@ -792,7 +795,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
              if not isinstance(raw_payload, dict):
                  raise RuntimeError("action(actions) did not return a JSON-like payload.")
              compact_payload = self._compact_action_result(raw_payload)
-@@ -1544,11 +1650,16 @@
+@@ -1544,11 +1653,16 @@
                  ),
              }
  
@@ -809,7 +812,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          )
  
          action_results = [
-@@ -1714,11 +1825,13 @@
+@@ -1714,11 +1828,13 @@
          transcript_updated: Callable[[str], None] | None = None,
          request_timeout_seconds: float | None = None,
          should_stop: Callable[[], bool] | None = None,
@@ -823,7 +826,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          self._current_valid_actions = _normalize_valid_actions(valid_actions)
  
          analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
-@@ -2018,6 +2131,7 @@
+@@ -2018,6 +2134,7 @@
              else:
                  self._history_messages = previous_history_messages
              self._step_env_callback = None
@@ -833,7 +836,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          if step_executed:
 diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 --- a/inference/framework/solver.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/framework/solver.py	2026-07-19 01:14:58.964937471 -0400
++++ b/inference/framework/solver.py	2026-07-19 08:29:09.966853163 -0400
 @@ -28,6 +28,7 @@
      to_model_action,
      to_model_actions,
@@ -1551,7 +1554,7 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
          self.history_entries.append(
              HistoryEntry(action=action_display, frame=current_frame)
          )
-@@ -700,7 +1340,57 @@
+@@ -700,7 +1340,63 @@
              1.0, float(self.game.number_of_levels)
          )
          raw_state = new_state.raw.state
@@ -1607,10 +1610,16 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +                               band_rows, band_cols, model_bar)
 +        self._state_graph_light = graph.light_view()
 +        self.write_runtime_state()  # re-write with the fresh graph so the sandbox refresh sees it
++        # Surface the frontier at the CURRENT node so the agent needn't spend a tool-call turn on
++        # tried_actions/frontier (the biggest source of graph overhead): untried_here = valid actions
++        # not yet taken from this state (mouse stays listed -- its coordinates are always unexplored).
++        _valid_names = to_model_actions(_engine_action_names(self.game))
++        _tried_here = set(graph.tried_actions(gflags["state_node_id"]))
++        untried_here = [a for a in _valid_names if a not in _tried_here]
          level_completed = bool(
              new_state.just_won_level and raw_state != arcengine.GameState.WIN
          )
-@@ -713,6 +1403,16 @@
+@@ -713,6 +1409,17 @@
              "state": raw_state.name,
              "valid_actions": to_model_actions(_engine_action_names(self.game)),
              "board_changed": board_changed,
@@ -1621,13 +1630,14 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +            "is_new_state": gflags["is_new_state"],
 +            "state_node_id": gflags["state_node_id"],
 +            "graph_nodes": gflags["graph_nodes"],
++            "untried_here": untried_here,
 +            "nondeterministic_edge": gflags["nondeterministic_edge"],
 +            "hud_band": _band_desc(band_rows, band_cols),
 +            "hud_model": hud_model_state,
              "done": raw_state == arcengine.GameState.WIN,
              "level_completed": level_completed,
              "game_over": raw_state == arcengine.GameState.GAME_OVER,
-@@ -728,6 +1428,7 @@
+@@ -728,6 +1435,7 @@
              "batch_size": batch_size,
              **self.timing_payload(),
          }
