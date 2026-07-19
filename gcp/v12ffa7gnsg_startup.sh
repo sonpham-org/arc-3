@@ -31,7 +31,9 @@ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq buil
 
 # ---- pristine code + their model + their wheelhouse -------------------------
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/c.tgz && tar xzf /tmp/c.tgz -C /opt/arc3
-mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/bundle-v12ffa7gnsg.tgz" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
+BUNDLE_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-bundle" || echo "bundle-v12ffa7gnsg.tgz")
+echo "bundle: $BUNDLE_NAME"
+mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/$BUNDLE_NAME" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
 gcloud storage cp "$BUCKET/code/v12_run.py" /opt/arc3/v12_run.py
 gcloud storage rsync -r "$SEED/model" /opt/arc3/vrfai-model
 gcloud storage rsync -r "$SEED/wheelhouse" /opt/arc3/wheelhouse
@@ -79,6 +81,9 @@ export LOCAL_ANALYZER_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_BASE_URL=http://1
 export LOCAL_ANALYZER_PROVIDER=vllm OPENAI_PROVIDER=vllm
 export LOCAL_ANALYZER_MODEL_ID=vrfai/Qwen3.6-27B-FP8 INFERENCE_ANALYZER_MODEL=vrfai/Qwen3.6-27B-FP8
 export ARC3_REEXPLORE_STRICT=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-reexplore-strict" || echo "")
+export ARC3_GAME_SUBSET=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-game-subset" || echo "")
+export ARC3_STATE_GRAPH=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-state-graph" || echo "")
+echo "subset=[$ARC3_GAME_SUBSET] state_graph=[$ARC3_STATE_GRAPH]"
 export LOCAL_ANALYZER_APP_NAME="ARC3 Agent Harness"
 export LOCAL_ANALYZER_CONTEXT_WINDOW=32768 LOCAL_ANALYZER_MAX_OUTPUT=0
 export LOCAL_ANALYZER_TOOL_STEPS=0 LOCAL_ANALYZER_TOOL_TIMEOUT=30 LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS=1024

@@ -82,7 +82,25 @@ methods for new actions"). Same 5 files.
 - **Validated:** all 5 files + sandbox bootstrap compile; patch dry-run clean; standalone unit test of
   `_StateGraph` (turn identity, `edges_here`, `chains(depth=2)` matching `[UP,LEFT]→2`/`[UP,RIGHT]→
   unexplored`, `frontier`, `distance`/`path`, `minimal_view`, `{'turn':N}` resolution). **Pending:**
-  live end-to-end sandbox round-trip (local Ollama / GCP run).
+  live end-to-end sandbox round-trip (running in the GCP A/B below).
+- **`ARC3_STATE_GRAPH` opt-out master switch** (`_state_graph_enabled()`): default ON; `off` builds no
+  graph, surfaces no graph fields, and drops the graph prompt bullets (`STATE_GRAPH_ADDENDUM` gated in
+  `_build_system_prompt`) — a clean whole-feature ablation == ffa7gn, for the "does the graph help?" A/B.
+
+## Subset-A/B iteration harness (`v12_run.py` + gcp scripts)
+`ARC3_GAME_SUBSET="r11l tn36 ..."` (space/comma list of 4-char prefixes or full ids) filters the run to
+a subset; no-op when unset (safe for every other run). Passed via GCP metadata `arc3-game-subset`; the
+bundle is now metadata-parametrised too (`arc3-bundle`, default `bundle-v12ffa7gnsg.tgz`), plus
+`arc3-state-graph`. Launch knobs: `GAME_SUBSET=`, `STATE_GRAPH=`, `BUNDLE_NAME=` in `launch_ffa7gnsg.sh`.
+- **Rationale:** full-25 (×2, 4h budget) is ~9h; token-efficiency is a per-action property visible on a
+  few games, and scoring signal is concentrated (ft09 swings the mean ±1.0; graph gains are lopsided).
+  Iterate on a graph-heavy subset, confirm on full-25 only pre-submission (a subset can't catch a
+  regression on an excluded game).
+- **Graph-heaviness ranking** (distinct nodes / revisits, from the gnsg logs) picked the subset
+  `r11l tn36 sb26 wa30 sk48 bp35 ka59` — overturning the ls20/tu93/vc33 seeds, which showed ~0 graph
+  activity in the actual run.
+- **Live A/B (2026-07-19):** `bundle-v12ffa7gnsglean.tgz` on the 7-game subset, one variable:
+  arm A `arc3-g4-v12ffa7gnsglean-a` (graph ON) vs arm B `-b` (`ARC3_STATE_GRAPH=off` == ffa7gn).
 
 ## Verification
 - All 7 files compile. Patch dry-run applies clean to a pristine baseline copy.

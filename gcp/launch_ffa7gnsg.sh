@@ -29,7 +29,7 @@ gcloud compute instance-templates create "$TEMPLATE" \
   --maintenance-policy=TERMINATE \
   --scopes=cloud-platform \
   --metadata-from-file=startup-script=gcp/v12ffa7gnsg_startup.sh,shutdown-script=gcp/shutdown.sh \
-  --metadata=arc3-bucket="$BUCKET",arc3-run-id="$RUN_ID",arc3-mig="$MIG_NAME",arc3-reexplore-strict="${REEXPLORE_STRICT:-}",install-nvidia-driver=True
+  --metadata=arc3-bucket="$BUCKET",arc3-run-id="$RUN_ID",arc3-mig="$MIG_NAME",arc3-reexplore-strict="${REEXPLORE_STRICT:-}",arc3-game-subset="${GAME_SUBSET:-}",arc3-state-graph="${STATE_GRAPH:-}",arc3-bundle="${BUNDLE_NAME:-bundle-v12ffa7gnsg.tgz}",install-nvidia-driver=True
 
 echo "== managed instance group (size 1) =="
 gcloud compute instance-groups managed describe "$MIG_NAME" --zone="$ZONE" --project="$PROJECT" >/dev/null 2>&1 && \

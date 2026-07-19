@@ -57,6 +57,14 @@ import taaf.game_api  # noqa: E402
 spec = taaf.game_api.ArcadeSpec(operation_mode=arc_agi.OperationMode.OFFLINE, environments_dir=ENV_FILES)
 arcade = arc_agi.Arcade(operation_mode=arc_agi.OperationMode.OFFLINE, environments_dir=ENV_FILES)
 game_ids = [e.game_id for e in arcade.available_environments]
+# Optional subset for fast iteration A/Bs: ARC3_GAME_SUBSET="r11l tn36 sb26 ..." (space/comma list of
+# 4-char game prefixes or full ids). No-op when unset -> full 25-game suite, so this is safe for every
+# other run that never sets it.
+_subset = os.environ.get("ARC3_GAME_SUBSET", "").strip()
+if _subset:
+    _want = {t.strip().lower() for t in _subset.replace(",", " ").split() if t.strip()}
+    game_ids = [g for g in game_ids if g[:4].lower() in _want or g.lower() in _want]
+    print(f"[subset] ARC3_GAME_SUBSET={_subset!r} -> {len(game_ids)} games: {game_ids}")
 assert game_ids, f"no offline environments under {ENV_FILES}"
 bm.games = [taaf.game_api.GameAPI(env_name=g, arcade_spec=spec) for g in game_ids]
 bm.n_passes = 1
