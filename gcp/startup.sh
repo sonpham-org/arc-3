@@ -26,7 +26,22 @@ echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/attempts"
 echo "boot attempt #$ATTEMPTS"
 if [ "$ATTEMPTS" -gt 8 ]; then
   echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
-  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
+  # Self-teardown: scale this MIG to 0 so a finished run stops burning GPU. Requires
+  # compute.instanceGroupManagers.update on the instance service account. If it 403s the VM idles
+  # FOREVER (MIG targetSize stays 1 and even recreates it), so never mask the error: retry, then
+  # leave a loud TEARDOWN_FAILED marker in GCS so it gets reaped instead of silently costing money.
+  for _t in 1 2 3; do
+    if gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE"; then
+      echo "teardown: $MIG resized to 0"; break
+    fi
+    echo "teardown attempt $_t FAILED for $MIG"
+    if [ "$_t" = 3 ]; then
+      echo "TEARDOWN FAILED $MIG at $(date -u +%FT%TZ)" | gcloud storage cp - "$BUCKET/$RUN_ID/TEARDOWN_FAILED" || true
+      echo "!!! TEARDOWN FAILED: $MIG still at targetSize>0 -- VM will idle until reaped !!!"
+    else
+      sleep 15
+    fi
+  done
   exit 1
 fi
 
@@ -99,7 +114,22 @@ echo "remaining games: $REMAINING"
 if [ "$REMAINING" = "ERROR" ]; then
   echo "resume check failed -- refusing to guess; marking FAILED and stopping"
   echo failed | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
-  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
+  # Self-teardown: scale this MIG to 0 so a finished run stops burning GPU. Requires
+  # compute.instanceGroupManagers.update on the instance service account. If it 403s the VM idles
+  # FOREVER (MIG targetSize stays 1 and even recreates it), so never mask the error: retry, then
+  # leave a loud TEARDOWN_FAILED marker in GCS so it gets reaped instead of silently costing money.
+  for _t in 1 2 3; do
+    if gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE"; then
+      echo "teardown: $MIG resized to 0"; break
+    fi
+    echo "teardown attempt $_t FAILED for $MIG"
+    if [ "$_t" = 3 ]; then
+      echo "TEARDOWN FAILED $MIG at $(date -u +%FT%TZ)" | gcloud storage cp - "$BUCKET/$RUN_ID/TEARDOWN_FAILED" || true
+      echo "!!! TEARDOWN FAILED: $MIG still at targetSize>0 -- VM will idle until reaped !!!"
+    else
+      sleep 15
+    fi
+  done
   exit 1
 elif [ "$REMAINING" = "NONE" ]; then
   echo "nothing left to play"
@@ -115,7 +145,22 @@ FINAL_REMAINING=$(./.venv/bin/python /opt/arc3/gcp/remaining_games.py /tmp/prior
 if [ "$FINAL_REMAINING" = "NONE" ]; then
   echo done | gcloud storage cp - "$BUCKET/$RUN_ID/DONE"
   echo "run complete; scaling MIG to zero"
-  gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
+  # Self-teardown: scale this MIG to 0 so a finished run stops burning GPU. Requires
+  # compute.instanceGroupManagers.update on the instance service account. If it 403s the VM idles
+  # FOREVER (MIG targetSize stays 1 and even recreates it), so never mask the error: retry, then
+  # leave a loud TEARDOWN_FAILED marker in GCS so it gets reaped instead of silently costing money.
+  for _t in 1 2 3; do
+    if gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE"; then
+      echo "teardown: $MIG resized to 0"; break
+    fi
+    echo "teardown attempt $_t FAILED for $MIG"
+    if [ "$_t" = 3 ]; then
+      echo "TEARDOWN FAILED $MIG at $(date -u +%FT%TZ)" | gcloud storage cp - "$BUCKET/$RUN_ID/TEARDOWN_FAILED" || true
+      echo "!!! TEARDOWN FAILED: $MIG still at targetSize>0 -- VM will idle until reaped !!!"
+    else
+      sleep 15
+    fi
+  done
 else
   echo "games still remaining after exit: $FINAL_REMAINING -- leaving MIG up for retry"
 fi

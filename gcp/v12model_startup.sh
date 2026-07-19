@@ -110,4 +110,19 @@ echo "vLLM server stopped (teardown parity)"
 gcloud storage rsync -r /opt/arc3/work "$BUCKET/$RUN_ID/runs"
 gcloud storage rsync -r -x '^(?!.*benchmark\.json$).*' "$BUCKET/$RUN_ID/runs" /tmp/prior >/dev/null 2>&1 || true
 echo done | gcloud storage cp - "$BUCKET/$RUN_ID/DONE"
-gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE" || true
+# Self-teardown: scale this MIG to 0 so a finished run stops burning GPU. Requires
+# compute.instanceGroupManagers.update on the instance service account. If it 403s the VM idles
+# FOREVER (MIG targetSize stays 1 and even recreates it), so never mask the error: retry, then
+# leave a loud TEARDOWN_FAILED marker in GCS so it gets reaped instead of silently costing money.
+for _t in 1 2 3; do
+  if gcloud compute instance-groups managed resize "$MIG" --size=0 --zone="$ZONE"; then
+    echo "teardown: $MIG resized to 0"; break
+  fi
+  echo "teardown attempt $_t FAILED for $MIG"
+  if [ "$_t" = 3 ]; then
+    echo "TEARDOWN FAILED $MIG at $(date -u +%FT%TZ)" | gcloud storage cp - "$BUCKET/$RUN_ID/TEARDOWN_FAILED" || true
+    echo "!!! TEARDOWN FAILED: $MIG still at targetSize>0 -- VM will idle until reaped !!!"
+  else
+    sleep 15
+  fi
+done
