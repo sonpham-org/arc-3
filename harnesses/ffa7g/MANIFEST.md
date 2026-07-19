@@ -60,6 +60,30 @@ the CURRENT rolling band (a monotonic union over-masked transient animations -> 
   shipped to sandbox, coexists with no-impact, 0 tracebacks). Files: solver.py, tool_agent.py,
   python_tool_sandbox.py, runtime_state.py, prompts.py.
 
+## State-graph LEAN surfacing revision (`sg` v2 — supersedes the shipped-graph view above)
+Motivation: the gnsg/gnsg2 runs regressed (ex-`ft09` 1.11 vs baseline 1.624) at +334 tok/action over
+baseline **with 0 graph-tool calls** — i.e. the tax was the graph being *carried*, not *queried*. The
+old `light_view` serialized up to 200 nodes + all their edges into the runtime state **every turn**.
+This revision ships only the current node's local frontier each turn and moves all deeper structure
+behind on-demand host calls (user redesign: "just show immediate explored/unexplored actions, and have
+methods for new actions"). Same 5 files.
+- **Turn co-identity:** each node also carries the TURN it was first reached (`state_turn`); node refs
+  surface as `{id, turn}` and `frame_from_state`/lookups accept `{'turn': N}`. `id_at_turn(t)` resolves
+  a state by the turn it appeared. Dedup is still by canonical board (revisits collapse); turn is a
+  label, not a key.
+- **Per turn (tiny, always in the result):** `edges_here` = the current node's immediate edge map
+  `{action: {to,turn} | 'unexplored' | {to:[ids],nondet}}`; `untried_here` = the `'unexplored'` actions
+  (local frontier). MOUSE is always `'unexplored'` (open coordinate continuum).
+- **Full graph NOT shipped.** `minimal_view()` (current id+turn, node count, immediate edges) replaces
+  `light_view()`. Deeper queries are host-computed round-trips via a generalized `graph_query` protocol
+  (`op` ∈ frame/chains/neighbors/distance/path/frontier/immediate_edges): `state_graph.chains(depth=k)`
+  (agent-chosen depth; enumerates explored action chains, each ending in a node `{to,turn}` or
+  `'unexplored'`), `.frontier()`, `.path(a,b)`/`.distance(a,b)`, `.neighbors(id)`. Cost only-when-called.
+- **Validated:** all 5 files + sandbox bootstrap compile; patch dry-run clean; standalone unit test of
+  `_StateGraph` (turn identity, `edges_here`, `chains(depth=2)` matching `[UP,LEFT]→2`/`[UP,RIGHT]→
+  unexplored`, `frontier`, `distance`/`path`, `minimal_view`, `{'turn':N}` resolution). **Pending:**
+  live end-to-end sandbox round-trip (local Ollama / GCP run).
+
 ## Verification
 - All 7 files compile. Patch dry-run applies clean to a pristine baseline copy.
 - **End-to-end extraction bug (found + fixed via a live local run):** the agent emits
