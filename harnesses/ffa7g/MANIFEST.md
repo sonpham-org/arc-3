@@ -39,6 +39,27 @@ harness rules.
      falls back to the band. Handles no-HUD games (model never registers → pure band).
      `no_impact_source` ∈ {exact, band, model, model+band}.
 
+## State-graph layer (`sg`, newest — bundle-v12ffa7gnsg)
+Per-level graph of CANONICAL (HUD-excluded) game states + the actions between them, built on the
+same HUD isolation as no-impact. Nodes = canonical boards (letter grid with the rolling housekeeping
+band masked by an out-of-band `.` sentinel — NOT colour 0, which would collide); edges =
+`(state, action_display) -> next_state` (multimap, determinism-tolerant). Reset per level; mask uses
+the CURRENT rolling band (a monotonic union over-masked transient animations -> false self-loops).
+- **Sequence-level predict-and-block** (explore): a whole plan is rejected *unexecuted*
+  (`stop_reason=known_action_rejected`) iff EVERY action follows an already-tried deterministic edge
+  (reaches no new `(state, action)`). Any untried/non-deterministic action in the plan -> allowed, so
+  the agent may route through known states as long as the plan ends somewhere new. Self-loops stay
+  with the per-action no-impact stop.
+- **Intents:** `explore` (block all-known plans), `solve` (no checks), `re-explore` (traverse known
+  states; **A/B toggle** `ARC3_REEXPLORE_STRICT` = soft flag vs hard-stop when a batch reaches nothing new).
+- **Sandbox `state_graph` global:** `.current`/`current_state_id`, `.neighbors`/`.tried_actions`/
+  `.frontier`, `.distance(a,b)`/`.path(a,b)` (BFS), and `frame_from_state(id)` -> a `FrameView`
+  (`.ascii`/`.segmentation`) for any node (new sandbox↔host protocol + `graph_query` callback).
+- **Validated:** dry-runs (0 false revisits/self-loops; mask=HUD; sequence block `[UP,UP]`→reject,
+  `[UP,UP,RIGHT-untried]`→allow) + a live ls20 run (7 nodes/8 edges tracked, `state_node_id` flows,
+  shipped to sandbox, coexists with no-impact, 0 tracebacks). Files: solver.py, tool_agent.py,
+  python_tool_sandbox.py, runtime_state.py, prompts.py.
+
 ## Verification
 - All 7 files compile. Patch dry-run applies clean to a pristine baseline copy.
 - **End-to-end extraction bug (found + fixed via a live local run):** the agent emits

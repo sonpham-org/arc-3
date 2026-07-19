@@ -44,7 +44,7 @@ diff -ruN a/inference/agent/frame_mode.py b/inference/agent/frame_mode.py
 +    return frame_mode() == "full"
 diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
 --- a/inference/agent/prompts.py	2026-07-18 11:55:46.536178016 -0400
-+++ b/inference/agent/prompts.py	2026-07-18 16:52:45.685623359 -0400
++++ b/inference/agent/prompts.py	2026-07-19 01:16:03.104847481 -0400
 @@ -23,7 +23,7 @@
  VISUAL_GAME_ADDENDUM = (
      "\n\nVisual-game guidance:\n"
@@ -54,7 +54,7 @@ diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
      "- Some games are logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, or whole-board configuration.\n"
      "- Background colors are often white or gray/black-ish large regions, but not always. Verify background hypotheses by area, stability, and object boundaries rather than assuming them.\n"
      "- In many games, a long horizontal or vertical line near an edge is a timer or remaining-steps bar. It often shrinks or changes each step. If you identify such a bar, do not get distracted by it or treat it as core gameplay state unless there is concrete evidence that it interacts with the puzzle mechanics.\n"
-@@ -59,12 +59,17 @@
+@@ -59,12 +59,19 @@
      "- `last_action_frame` is the post-action frame for `last_action`; it matches `current_frame` after a real action.\n"
      "- `transitions` is a chronological list of actual action transitions, excluding the initial seeded frame. Each transition exposes `.action`, `.before_frame`, `.after_frame`, `.frame` (alias of `.after_frame`), and `.result`.\n"
      "- `last_transition` is `transitions[-1]` or `None`. Its `.result` mirrors `last_action_result`; older transitions may have an empty `.result`. For before/after diffs, compare `last_transition.before_frame` to `last_transition.after_frame`; do not compare `current_frame` to `history[-1].frame`.\n"
@@ -67,13 +67,15 @@ diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
      "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
 +    "- Each result reports `board_changed`, plus `gameplay_changed` and `no_impact`: the harness learns the game's deterministic HUD/edge band (a moves-remaining or timer bar) online and tells you whether your action changed real gameplay (`gameplay_changed`) or only advanced that band (`no_impact` -- a wasted move, e.g. pressing into a wall). `hud_band` names the learned band when one exists (e.g. `rows 61-62`).\n"
 +    "- `action(actions, intent=...)` defaults to `intent='explore'`: an explore action that turns out `no_impact` STOPS the rest of that batch (`stop_reason='no_impact_action'`) and returns so you re-ground, instead of wasting the queued actions on a plan the environment just disproved. Pass `intent='solve'` for a committed sequence you do not want interrupted by the no-impact check.\n"
++    "- The harness keeps a per-level STATE GRAPH of the canonical (HUD-excluded) boards you have visited and the actions between them, in the `state_graph` sandbox global: `current_state_id` / `state_graph.current` (your node now), `.neighbors(id)`, `.tried_actions(id)`, `.distance(a,b)`, `.path(a,b)`, `.frontier()` (visited nodes with the fewest tried actions), and `frame_from_state(id)` which returns a FrameView (`.ascii` / `.segmentation`) for ANY node so you can inspect a state you are not currently in before planning a route to it.\n"
++    "- In `intent='explore'`, a whole action sequence that follows ONLY already-tried edges is REJECTED without executing (`stop_reason='known_action_rejected'`): it re-treads explored ground and reaches no new (state, action). You MAY route back through known / fully-explored states, but the plan must END with an untried action so it reaches new ground -- your frontier at a node is its `valid_actions` minus `state_graph.tried_actions(id)`. Use `intent='re-explore'` to deliberately traverse known states (the batch is only flagged, or hard-stopped in the strict A/B arm, if it reaches nothing new); `intent='solve'` bypasses the graph and no-impact checks entirely.\n"
 +    "- Optional precision upgrade for that check: if you can pin down the deterministic HUD/bar exactly, write a PURE `advance_hud(frame, action) -> frame` (frame is the `.ascii` letter grid; return it with ONLY the bar advanced one step, everything else identical) and commit it in a `HUD model:` section with a fenced python code block. The harness re-verifies it against every action and, while its bar prediction holds, uses it (`no_impact_source: model`) instead of the statistical band -- you write it ONCE and it then runs free every turn with no further tokens. It only asks you to rewrite when it mispredicts (`hud_model: stale`, e.g. a refill or a new level). No HUD in this game? Don't write one -- the statistical fallback handles it (`no_impact_source: band` or `exact`).\n"
 +    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
 +    "- Every action in the result's `executed_actions` carries an `animation` record summarizing its intermediate frames (which are not visible in `current_frame`): `num_frames`, `changed`, `only_changed` (a transient flash that left the same final board), `total_cells_changed`, `cells_changed_per_frame` (per frame, where 0 is a held/dwell frame), and `objects` -- one string per connected animated region, e.g. `top-left (19,27) 4x4, 16 cells, per-frame [...]`, so two things moving at once (a box resizing while a light blinks) each keep a tight bounding box.\n"
  )
  
  MULTIMODAL_CONTEXT_ADDENDUM = (
-@@ -74,6 +79,43 @@
+@@ -74,6 +81,43 @@
      "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
  )
  
@@ -117,7 +119,7 @@ diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
  PYTHON_ADDENDUM = (
      "\n\nPython tool guidance:\n"
      "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n"
-@@ -98,7 +140,7 @@
+@@ -98,7 +142,7 @@
      "- Call `action(...)` inside Python rather than returning action text in the chat.\n"
      "- `action(...)` accepts an ordered list of one or more actions. Once your code has selected a reliable sequence, it is often useful to batch it.\n"
      "- You can also call `action(...)` multiple times in one Python snippet, including inside loops. Each call updates the preloaded variables before execution continues.\n"
@@ -128,8 +130,98 @@ diff -ruN a/inference/agent/prompts.py b/inference/agent/prompts.py
  COMPACT_TOOL_SESSION_ADDENDUM = (
 diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool_sandbox.py
 --- a/inference/agent/python_tool_sandbox.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/agent/python_tool_sandbox.py	2026-07-18 15:42:21.068943244 -0400
-@@ -157,6 +157,127 @@
++++ b/inference/agent/python_tool_sandbox.py	2026-07-19 01:12:54.234112189 -0400
+@@ -145,6 +145,89 @@
+ 
+         __repr__ = __str__
+ 
++    class StateGraphView:
++        # Per-level graph of canonical (HUD-excluded) states visited so far, and the actions
++        # between them. `.current` = your node id now; `.nodes[id]` = [first_seen_step, visits,
++        # self_loops]; `.edges` = [[src, dst, action_label], ...]. Use it to avoid re-treading and
++        # to plan routes toward unvisited frontier states; fetch any node's board with
++        # frame_from_state(id). `.truncated` = True when older nodes were clipped for size.
++        def __init__(self, raw):
++            raw = raw if isinstance(raw, dict) else {}
++            self.current = raw.get("current")
++            self.nodes = {int(k): list(v) for k, v in (raw.get("nodes") or {}).items()}
++            self.edges = [list(e) for e in (raw.get("edges") or [])]
++            self.truncated = bool(raw.get("truncated"))
++            self._adj = {}
++            for e in self.edges:
++                if len(e) >= 2:
++                    self._adj.setdefault(e[0], []).append((e[1], e[2] if len(e) > 2 else None))
++
++        def neighbors(self, node_id):
++            # [(dst_id, action_label), ...] reachable in one action from node_id
++            return list(self._adj.get(node_id, []))
++
++        def tried_actions(self, node_id):
++            # action labels already tried from node_id (its recorded out-edges). Your frontier at a
++            # node = valid_actions there MINUS these; an unexplored (state, action) is where to aim.
++            return [lbl for (_dst, lbl) in self._adj.get(node_id, [])]
++
++        def frontier(self):
++            # visited nodes ordered by FEWEST tried actions first -- rough "explore here" candidates
++            # (refine with valid_actions: a node is a true frontier if it has an untried valid action)
++            return sorted(self.nodes, key=lambda n: len(self._adj.get(n, [])))
++
++        def visited(self, node_id):
++            return node_id in self.nodes
++
++        def distance(self, a, b):
++            # shortest number of actions from state a to state b (None if unreachable)
++            if a == b:
++                return 0
++            seen = {a}
++            frontier = [a]
++            depth = 0
++            while frontier:
++                depth += 1
++                nxt = []
++                for node in frontier:
++                    for dst, _lbl in self._adj.get(node, []):
++                        if dst == b:
++                            return depth
++                        if dst not in seen:
++                            seen.add(dst)
++                            nxt.append(dst)
++                frontier = nxt
++            return None
++
++        def path(self, a, b):
++            # shortest action-path as node ids [a, ..., b], or None if unreachable
++            if a == b:
++                return [a]
++            prev = {a: None}
++            frontier = [a]
++            while frontier:
++                nxt = []
++                for node in frontier:
++                    for dst, _lbl in self._adj.get(node, []):
++                        if dst not in prev:
++                            prev[dst] = node
++                            if dst == b:
++                                out = []
++                                cur = b
++                                while cur is not None:
++                                    out.append(cur)
++                                    cur = prev[cur]
++                                return list(reversed(out))
++                            nxt.append(dst)
++                frontier = nxt
++            return None
++
++        def __str__(self):
++            return (f"StateGraphView(current={self.current}, nodes={len(self.nodes)}, "
++                    f"edges={len(self.edges)}, truncated={self.truncated})")
++
++        __repr__ = __str__
++
+ 
+     class HistoryEntryView:
+         def __init__(self, *, action, frame):
+@@ -157,6 +240,127 @@
          __repr__ = __str__
  
  
@@ -257,7 +349,7 @@ diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool
      class TransitionView:
          def __init__(self, *, action, before_frame, after_frame, result):
              self.action = action
-@@ -343,6 +464,25 @@
+@@ -343,6 +547,27 @@
              runtime_globals["history"] = history
              runtime_globals["transitions"] = transitions
              runtime_globals["last_transition"] = last_transition
@@ -280,10 +372,12 @@ diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool
 +            runtime_globals["last_animation_total_actions"] = int(_anim_raw.get("total_actions", 0) or 0)
 +            _fs = state_payload.get("frame_stats")
 +            runtime_globals["frame_stats"] = dict(_fs) if isinstance(_fs, dict) else {}
++            runtime_globals["state_graph"] = StateGraphView(state_payload.get("state_graph"))
++            runtime_globals["current_state_id"] = runtime_globals["state_graph"].current
              runtime_globals["previous_frame"] = (
                  last_transition.before_frame if last_transition is not None else None
              )
-@@ -353,9 +493,9 @@
+@@ -353,9 +578,9 @@
              runtime_globals["valid_actions"] = [str(item) for item in state_payload.get("valid_actions", [])]
              runtime_globals["last_action_result"] = action_result
  
@@ -295,10 +389,24 @@ diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool
              reply = _recv()
              if reply.get("type") == "action_error":
                  raise RuntimeError(str(reply.get("error", "action failed")))
-@@ -367,6 +507,36 @@
+@@ -367,6 +592,50 @@
              return action_result
  
          runtime_globals["action"] = action
++
++        def frame_from_state(node):
++            # Reconstruct a FrameView (.ascii / .segmentation / objects) for a PAST state-graph node,
++            # so you can reason about a state you are NOT currently in ("imagine you were standing
++            # there"). `node` is a node id (int) or its canonical key. Returns a FrameView, or None
++            # if the node is unknown / has been clipped from the graph.
++            _send({"type": "frame_from_state", "node": node})
++            reply = _recv()
++            if reply.get("type") != "frame_result":
++                raise RuntimeError("Invalid frame_from_state response from sandbox host.")
++            fr = reply.get("frame")
++            return _frame_from_payload(fr) if fr else None
++
++        runtime_globals["frame_from_state"] = frame_from_state
 +
 +        def _pick_animation(action_index):
 +            anim = runtime_globals.get("last_animation") or []
@@ -332,7 +440,15 @@ diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool
          _refresh_state(initial.get("state") or {})
  
          try:
-@@ -536,7 +706,7 @@
+@@ -451,6 +720,7 @@
+     timeout_seconds: int,
+     initial_state: dict[str, Any],
+     action_handler: Callable[[list[dict[str, Any]]], dict[str, Any]],
++    frame_handler: Callable[[Any], dict[str, Any] | None] | None = None,
+ ) -> dict[str, Any]:
+     with tempfile.TemporaryDirectory(prefix="rgb_python_tool_") as sandbox_dir:
+         host_action_results: list[dict[str, Any]] = []
+@@ -536,7 +806,7 @@
              msg_type = str(message.get("type", "")).strip()
              if msg_type == "action":
                  try:
@@ -341,15 +457,33 @@ diff -ruN a/inference/agent/python_tool_sandbox.py b/inference/agent/python_tool
                  except Exception:  # noqa: BLE001
                      _send_json_line(
                          process.stdin,
+@@ -559,6 +829,16 @@
+                 )
+                 continue
+ 
++            if msg_type == "frame_from_state":
++                frame = None
++                if frame_handler is not None:
++                    try:
++                        frame = frame_handler(message.get("node"))
++                    except Exception:  # noqa: BLE001
++                        frame = None
++                _send_json_line(process.stdin, {"type": "frame_result", "frame": frame})
++                continue
++
+             if msg_type in {"final", "error"}:
+                 _wait_for_process_exit(process)
+                 return {
 diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
 --- a/inference/agent/runtime_state.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/agent/runtime_state.py	2026-07-15 18:47:37.000000000 -0400
-@@ -124,12 +124,50 @@
++++ b/inference/agent/runtime_state.py	2026-07-19 00:26:43.868979655 -0400
+@@ -124,12 +124,63 @@
      *,
      current_frame: Frame | None,
      history: list[HistoryEntry],
 +    last_animation: dict[str, Any] | None = None,
 +    frame_stats: dict[str, Any] | None = None,
++    state_graph: dict[str, Any] | None = None,
  ) -> None:
      path.parent.mkdir(parents=True, exist_ok=True)
      payload = {
@@ -362,6 +496,8 @@ diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
 +        payload["last_animation"] = last_animation
 +    if frame_stats is not None:
 +        payload["frame_stats"] = frame_stats
++    if state_graph is not None:
++        payload["state_graph"] = state_graph
      tmp_path = path.with_suffix(f"{path.suffix}.tmp")
      tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
      tmp_path.replace(path)
@@ -375,6 +511,16 @@ diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
 +    payload = json.loads(path.read_text(encoding="utf-8"))
 +    stats = payload.get("frame_stats")
 +    return stats if isinstance(stats, dict) else {}
++
++
++def load_state_graph(path: Path) -> dict[str, Any]:
++    """Per-level state graph (light view: current id, per-node stats, edges) as of the last
++    action; {} when absent so the sandbox `state_graph` global degrades to an empty graph."""
++    if not path.exists():
++        return {}
++    payload = json.loads(path.read_text(encoding="utf-8"))
++    graph = payload.get("state_graph")
++    return graph if isinstance(graph, dict) else {}
 +
 +
 +def load_last_animation(path: Path) -> tuple[int, list[tuple[str, list[Frame]]]]:
@@ -397,7 +543,7 @@ diff -ruN a/inference/agent/runtime_state.py b/inference/agent/runtime_state.py
 +    return int(anim.get("total_actions", 0) or 0), entries
 diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 --- a/inference/agent/tool_agent.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/agent/tool_agent.py	2026-07-18 17:28:58.113644674 -0400
++++ b/inference/agent/tool_agent.py	2026-07-19 01:13:49.798034407 -0400
 @@ -17,6 +17,8 @@
  from inference.agent.prompts import (
      COMPACT_TOOL_SESSION_ADDENDUM,
@@ -407,7 +553,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
      PYTHON_ADDENDUM,
      STRUCTURED_RUNTIME_STATE_ADDENDUM,
      MULTIMODAL_CONTEXT_ADDENDUM,
-@@ -24,13 +26,21 @@
+@@ -24,13 +26,22 @@
      VISUAL_GAME_ADDENDUM,
  )
  
@@ -426,11 +572,12 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 +    load_frame_stats,
 +    load_last_animation,
 +    load_runtime_state,
++    load_state_graph,
 +)
  from inference.utils.openai_compat import build_chat_payload, build_headers
  
  log = logging.getLogger(__name__)
-@@ -260,6 +270,18 @@
+@@ -260,6 +271,18 @@
      }
  
  
@@ -449,7 +596,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
  def _extract_scientist_note(content: str) -> dict[str, str]:
      if not content.strip():
          return {}
-@@ -279,6 +301,7 @@
+@@ -279,6 +302,7 @@
          ],
      )
      result = {
@@ -457,7 +604,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          "world_model": extracted.get("World model", ""),
          "goal_model": extracted.get("Goal model", ""),
          "action_model": extracted.get("Action model", ""),
-@@ -298,6 +321,7 @@
+@@ -298,6 +322,7 @@
  
  def _empty_world_model() -> dict[str, str]:
      return {
@@ -465,7 +612,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          "world_model": "",
          "goal_model": "",
          "action_model": "",
-@@ -351,6 +375,8 @@
+@@ -351,6 +376,8 @@
      prompt = "You are a coding agent solving a grid-based puzzle game."
      prompt += GAME_OVERVIEW_ADDENDUM
      prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
@@ -474,7 +621,15 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
      if current_grid_image_enabled():
          prompt += MULTIMODAL_CONTEXT_ADDENDUM
      prompt += VISUAL_GAME_ADDENDUM
-@@ -1039,7 +1065,11 @@
+@@ -951,6 +978,7 @@
+         self._session_total_tokens = 0
+         self._session_generated_tokens = 0
+         self._step_env_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None
++        self._graph_query_callback: Callable[[Any], dict[str, Any] | None] | None = None
+         self._current_valid_actions: list[str] = []
+         self._last_step_summary: dict[str, Any] | None = None
+         self._last_action_result: dict[str, Any] | None = None
+@@ -1039,7 +1067,11 @@
              total_executed += max(1, parsed)
              action_names = item.get("executed_actions")
              if isinstance(action_names, list):
@@ -487,7 +642,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
              else:
                  fallback_action = str(item.get("action_display") or "").strip()
                  if fallback_action:
-@@ -1220,7 +1250,8 @@
+@@ -1220,7 +1252,8 @@
              [
                  state_line,
                  f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
@@ -497,7 +652,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
                  "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                  "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                  "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
-@@ -1231,7 +1262,7 @@
+@@ -1231,7 +1264,7 @@
          )
          lines.append(
              "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it, "
@@ -506,7 +661,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          )
          lines.extend(self._summarized_knowledge_lines())
          lines.append("end of world model. ")
-@@ -1423,17 +1454,25 @@
+@@ -1423,17 +1456,25 @@
              "state": payload.get("state"),
              "valid_actions": payload.get("valid_actions", []),
              "board_changed": bool(payload.get("board_changed")),
@@ -535,7 +690,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          batch_size = int(payload.get("requested_count") or payload.get("executed_count") or 1)
          if batch_size > 1 or bool(payload.get("stopped_early")):
              compact["requested_count"] = payload.get("requested_count", batch_size)
-@@ -1443,9 +1482,25 @@
+@@ -1443,9 +1484,55 @@
              compact["stop_reason"] = payload.get("stop_reason")
          if payload.get("stop_detail"):
              compact["stop_detail"] = payload.get("stop_detail")
@@ -544,6 +699,16 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 +        for _k in ("no_impact_source", "hud_model", "hud_model_error"):
 +            if payload.get(_k):
 +                compact[_k] = payload.get(_k)
++        # State-graph signals (the full graph is the `state_graph` sandbox global).
++        if payload.get("state_node_id") is not None:
++            compact["state_node_id"] = payload.get("state_node_id")
++        for _k in ("revisited_state", "nondeterministic_edge", "reexplore_unproductive"):
++            if payload.get(_k):
++                compact[_k] = True
++        if payload.get("known_action_rejected"):
++            compact["known_action_rejected"] = True
++            compact["rejected_plan"] = payload.get("rejected_plan")
++            compact["terminal_node"] = payload.get("terminal_node")
 +        if payload.get("hud_model") == "stale":
 +            compact["hud_model_note"] = (
 +                "your registered HUD model mispredicted the bar (a refill / new level / rule change) -- "
@@ -553,6 +718,26 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 +            compact["note"] = (
 +                "action had no impact on the game (only the predictable HUD/edge band changed) -- re-grounding."
 +            )
++        elif compact.get("stop_reason") == "known_action_rejected":
++            compact["note"] = (
++                f"REJECTED (nothing executed): your whole planned sequence {payload.get('rejected_plan')} follows "
++                f"only already-tried edges from node {compact.get('state_node_id')} and ends back at visited node "
++                f"{payload.get('terminal_node')} -- it reaches NO new (state, action). Routing through known/"
++                "fully-explored states is fine, but the plan must END somewhere new: append an UNTRIED action so "
++                "the sequence reaches an unexplored (state, action). Use the `state_graph` global to plan -- "
++                "`.tried_actions(id)` (untried = valid_actions minus these), `.frontier()`, `.path(a,b)`, "
++                "`.distance(a,b)`, `.neighbors(id)`, and `frame_from_state(id)` to inspect a state before going."
++            )
++        elif compact.get("stop_reason") == "reexplore_no_progress":
++            compact["note"] = (
++                "re-explore stopped: this action did not reach a new state. Plan a route via `state_graph` "
++                "that ENDS on an unvisited frontier node."
++            )
++        elif payload.get("reexplore_unproductive"):
++            compact["note"] = (
++                "re-explore batch looped through known states without reaching a new one -- aim an action "
++                "(or a planned route via `state_graph`) at an unvisited frontier node."
++            )
          for timing_key in ("run_elapsed_seconds", "time_remaining_seconds"):
              if timing_key in payload:
                  compact[timing_key] = payload.get(timing_key)
@@ -561,7 +746,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
          if payload.get("error"):
              compact["error"] = payload.get("error")
          return compact
-@@ -1479,8 +1534,22 @@
+@@ -1479,8 +1566,23 @@
                  if isinstance(last_action_result, dict)
                  else self._last_action_result
              )
@@ -581,10 +766,11 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
 +                    ],
 +                },
 +                "frame_stats": load_frame_stats(state_path),
++                "state_graph": load_state_graph(state_path),
                  "history": _ascii_history_view_payload(refreshed_history),
                  "valid_actions": sanitized_actions,
                  "last_action_result": (
-@@ -1492,7 +1561,7 @@
+@@ -1492,7 +1594,7 @@
  
          terminal_action_result: dict[str, Any] | None = None
  
@@ -593,7 +779,7 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
              nonlocal terminal_action_result
              if self._step_env_callback is None:
                  raise RuntimeError("action(actions) is not available in this session.")
-@@ -1526,7 +1595,11 @@
+@@ -1526,7 +1628,11 @@
                          last_action_result=compact_payload,
                      ),
                  }
@@ -606,9 +792,48 @@ diff -ruN a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
              if not isinstance(raw_payload, dict):
                  raise RuntimeError("action(actions) did not return a JSON-like payload.")
              compact_payload = self._compact_action_result(raw_payload)
+@@ -1544,11 +1650,16 @@
+                 ),
+             }
+ 
++        def _handle_frame_from_state(node_ref: Any) -> dict[str, Any] | None:
++            cb = getattr(self, "_graph_query_callback", None)
++            return cb(node_ref) if cb is not None else None
++
+         sandbox_result = run_sandboxed_python(
+             code=code,
+             timeout_seconds=self._python_timeout,
+             initial_state=_serialized_runtime_state(),
+             action_handler=_handle_action,
++            frame_handler=_handle_frame_from_state,
+         )
+ 
+         action_results = [
+@@ -1714,11 +1825,13 @@
+         transcript_updated: Callable[[str], None] | None = None,
+         request_timeout_seconds: float | None = None,
+         should_stop: Callable[[], bool] | None = None,
++        graph_query: Callable[[Any], dict[str, Any] | None] | None = None,
+     ) -> AnalyzerTurnResult | None:
+         if not state_path.exists():
+             return None
+         self._ensure_session(state_path)
+         self._step_env_callback = step_env
++        self._graph_query_callback = graph_query
+         self._current_valid_actions = _normalize_valid_actions(valid_actions)
+ 
+         analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
+@@ -2018,6 +2131,7 @@
+             else:
+                 self._history_messages = previous_history_messages
+             self._step_env_callback = None
++            self._graph_query_callback = None
+             self._current_valid_actions = []
+ 
+         if step_executed:
 diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 --- a/inference/framework/solver.py	2026-07-08 22:36:34.000000000 -0400
-+++ b/inference/framework/solver.py	2026-07-18 16:58:43.600441930 -0400
++++ b/inference/framework/solver.py	2026-07-19 01:14:58.964937471 -0400
 @@ -28,6 +28,7 @@
      to_model_action,
      to_model_actions,
@@ -617,7 +842,7 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
  from inference.agent.runtime_state import (
      Frame,
      HistoryEntry,
-@@ -98,6 +99,320 @@
+@@ -98,6 +99,493 @@
      return tuple(tuple(int(cell) for cell in row) for row in rows)
  
  
@@ -876,6 +1101,179 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +                self.stale = True
 +
 +
++class _StateGraph:
++    """Per-level graph of CANONICAL game states (HUD/housekeeping excluded) and the actions
++    between them. Nodes = canonical boards; edges = (state, action_display) -> next_state.
++
++    The canonical key masks the deterministic HUD/edge band (band rows/cols) and any verified
++    `advance_hud` bar cells with an out-of-band sentinel char (`.`, not in the 16-colour palette,
++    so it never collides with a real colour -- masking to colour 0 WOULD collide). The mask is the
++    MONOTONIC union of all housekeeping seen this level; when it grows, every stored node/edge is
++    re-canonicalised (masked cells only increase, so keys can only merge). Reset per level.
++    """
++
++    MASK = "."
++
++    def __init__(self):
++        self.reset()
++
++    def reset(self):
++        self.nodes = {}                 # key -> {grid, node_id, first_seen_step, last_seen_step, visit_count, self_loop_count}
++        self.id_of = {}                 # key -> int id
++        self.key_of = {}                # int id -> key
++        self.next_id = 0
++        self.edges = {}                 # src_key -> {action_display -> {dst_key: count}}
++        self.current_key = None
++        self.mask_rows = set()
++        self.mask_cols = set()
++        self.mask_cells = set()
++
++    def canonical(self, grid):
++        rows = _grid_to_rows(grid)
++        mr, mc, mcells = self.mask_rows, self.mask_cols, self.mask_cells
++        out = []
++        for r, row in enumerate(rows):
++            if r in mr:
++                out.append(self.MASK * len(row))
++            elif mc or mcells:
++                out.append("".join(self.MASK if (c in mc or (r, c) in mcells) else ch
++                                   for c, ch in enumerate(row)))
++            else:
++                out.append(row)
++        return "\n".join(out)
++
++    def set_mask(self, band_rows, band_cols, model_bar):
++        """Canonical mask = the CURRENT rolling housekeeping band (rows/cols) UNION verified
++        `advance_hud` cells (kept monotonically -- those are exact). Deliberately NOT a monotonic
++        union of the band: that permanently masks TRANSIENT over-flags (e.g. a briefly-animating
++        element the band flags for a few actions), which coarsens the graph and risks false
++        revisits. With the rolling band, when the mask shrinks, re-canonicalisation makes those
++        states distinct again -- a MISSED revisit (safe) rather than an over-masked false one."""
++        new_cells = self.mask_cells | set(model_bar or ())
++        new_mr, new_mc = set(band_rows), set(band_cols)
++        if new_mr != self.mask_rows or new_mc != self.mask_cols or new_cells != self.mask_cells:
++            self.mask_rows, self.mask_cols, self.mask_cells = new_mr, new_mc, new_cells
++            if self.nodes:
++                self._recanonicalize()
++
++    def _recanonicalize(self):
++        old_nodes, old_edges, old_current = self.nodes, self.edges, self.current_key
++        self.nodes, self.edges, self.id_of, self.key_of = {}, {}, {}, {}
++        remap = {}
++        for old_key, node in old_nodes.items():
++            nk = self.canonical(node["grid"])
++            remap[old_key] = nk
++            ex = self.nodes.get(nk)
++            if ex is None:
++                self.nodes[nk] = node
++            else:  # two old states collapse into one under the wider mask -> merge
++                ex["visit_count"] += node["visit_count"]
++                ex["self_loop_count"] += node["self_loop_count"]
++                ex["first_seen_step"] = min(ex["first_seen_step"], node["first_seen_step"])
++                ex["last_seen_step"] = max(ex["last_seen_step"], node["last_seen_step"])
++                ex["node_id"] = min(ex["node_id"], node["node_id"])  # lowest id survives
++        for nk, node in self.nodes.items():
++            self.id_of[nk] = node["node_id"]
++            self.key_of[node["node_id"]] = nk
++        for src, amap in old_edges.items():
++            ns = remap[src]
++            for action, dmap in amap.items():
++                for dst, cnt in dmap.items():
++                    nd = remap[dst]
++                    d = self.edges.setdefault(ns, {}).setdefault(action, {})
++                    d[nd] = d.get(nd, 0) + cnt
++        self.current_key = remap.get(old_current) if old_current is not None else None
++
++    def plan_terminal_if_all_known(self, action_sequence):
++        """If EVERY action in the sequence follows a KNOWN deterministic edge from the current node
++        (single recorded destination), return the node id the plan ends at -- the whole plan stays
++        in already-explored territory and reaches no new (state, action), so it is pure re-treading.
++        Return None as soon as an action is untried or non-deterministic (the plan reaches new ground
++        there -> allowed). Self-loops are not stored as edges, so a self-loop action returns None here
++        and is caught per-action by the no_impact stop instead."""
++        cur = self.current_key
++        if cur is None or not action_sequence:
++            return None
++        for act in action_sequence:
++            dmap = self.edges.get(cur, {}).get(act)
++            if not dmap or len(dmap) != 1:
++                return None
++            cur = next(iter(dmap))
++        return self.id_of.get(cur)
++
++    def tried_actions(self, node_id):
++        """Action labels already tried from a node -> the agent computes the frontier as
++        valid_actions minus these (an unexplored (state, action) is where exploration should aim)."""
++        key = self.key_of.get(node_id)
++        return sorted((self.edges.get(key) or {}).keys()) if key is not None else []
++
++    def observe(self, new_grid, action_display, step, band_rows, band_cols, model_bar):
++        self.set_mask(band_rows, band_cols, model_bar)
++        prev_key = self.current_key
++        new_key = self.canonical(new_grid)
++        seen_before = new_key in self.nodes
++        self_loop = prev_key is not None and new_key == prev_key
++        if not seen_before:
++            nid = self.next_id
++            self.next_id += 1
++            self.nodes[new_key] = {"grid": new_grid, "node_id": nid, "first_seen_step": step,
++                                   "last_seen_step": step, "visit_count": 1, "self_loop_count": 0}
++            self.id_of[new_key] = nid
++            self.key_of[nid] = new_key
++        else:
++            n = self.nodes[new_key]
++            n["visit_count"] += 1
++            n["last_seen_step"] = step
++        nondeterministic = False
++        if prev_key is not None and not self_loop:
++            dmap = self.edges.setdefault(prev_key, {}).setdefault(action_display, {})
++            if dmap and new_key not in dmap:
++                nondeterministic = True  # this (state,action) previously led elsewhere
++            dmap[new_key] = dmap.get(new_key, 0) + 1
++        elif self_loop:
++            self.nodes[prev_key]["self_loop_count"] += 1
++        self.current_key = new_key
++        return {
++            "is_new_state": not seen_before,
++            "self_loop": self_loop,
++            "revisited_state": seen_before and not self_loop,
++            "nondeterministic_edge": nondeterministic,
++            "state_node_id": self.id_of[new_key],
++            "graph_nodes": len(self.nodes),
++        }
++
++    def node_grid(self, ref):
++        key = ref if isinstance(ref, str) else self.key_of.get(ref)
++        node = self.nodes.get(key)
++        return node["grid"] if node else None
++
++    def light_view(self, cap=200):
++        """Compact, grid-free view shipped to the sandbox each turn: ids, per-node stats, edges."""
++        keep = sorted(self.nodes.values(), key=lambda n: n["last_seen_step"], reverse=True)[:cap]
++        keep_ids = {n["node_id"] for n in keep}
++        nodes = {n["node_id"]: [n["first_seen_step"], n["visit_count"], n["self_loop_count"]]
++                 for n in keep}
++        edges = []
++        for src, amap in self.edges.items():
++            sid = self.id_of.get(src)
++            if sid not in keep_ids:
++                continue
++            for action, dmap in amap.items():
++                for dst in dmap:
++                    did = self.id_of.get(dst)
++                    if did in keep_ids:
++                        edges.append([sid, did, action])
++        return {"current": self.id_of.get(self.current_key), "nodes": nodes,
++                "edges": edges, "truncated": len(self.nodes) > cap}
++
++
++def _reexplore_strict() -> bool:
++    """A/B toggle: with ARC3_REEXPLORE_STRICT set, `intent='re-explore'` hard-stops the batch the
++    moment an action fails to reach a NEW state; otherwise (soft, default) it only flags an
++    unproductive batch afterwards."""
++    return os.environ.get("ARC3_REEXPLORE_STRICT", "").strip().lower() in {"1", "true", "yes"}
++
++
 +def _animation_summary(new_state, previous_grid, board_changed) -> dict[str, Any]:
 +    """Compact metadata about the intermediate animation frames, added to every action
 +    result so the model always sees it -- no opt-in. `animation_only_changed` flags an
@@ -938,7 +1336,7 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
  def _level_number(game: taaf.game.Game) -> int:
      state = game.current_state
      completed = int(state.levels_completed)
-@@ -196,6 +511,10 @@
+@@ -196,8 +684,34 @@
              self.state_path,
              current_frame=self.current_frame(),
              history=self.history_entries,
@@ -946,10 +1344,63 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +            # populates these (see _execute_action).
 +            last_animation=getattr(self, "last_batch_animations", None),
 +            frame_stats=getattr(self, "frame_stats", None),
++            state_graph=getattr(self, "_state_graph_light", None),
          )
  
++    def graph_query(self, node_ref):
++        """Reconstruct a frame payload for a state-graph node so the sandbox `frame_from_state(id)`
++        can render a state the agent is NOT currently in (its `.ascii` / `.segmentation` / objects)."""
++        graph = getattr(self, "_state_graph", None)
++        if graph is None:
++            return None
++        key = node_ref if isinstance(node_ref, str) else graph.key_of.get(node_ref)
++        node = graph.nodes.get(key)
++        if node is None:
++            return None
++        grid = node["grid"]
++        frame = Frame(grid=grid, step=int(node.get("first_seen_step", 0)),
++                      level=_level_number(self.game))
++        return {
++            "ascii": frame.ascii,
++            "step": frame.step,
++            "level": frame.level,
++            "shape": list(frame.shape),
++            "grid": [list(r) for r in grid],
++        }
++
      def seed_initial_history(self) -> None:
-@@ -596,6 +915,14 @@
+         if not self.history_entries:
+             self.history_entries.append(
+@@ -299,6 +813,7 @@
+                         analysis_step=analysis_step,
+                         request_timeout_seconds=self.request_timeout_seconds(),
+                         should_stop=self.should_stop,
++                        graph_query=self.graph_query,
+                     )
+                 finally:
+                     transcript_delta = self._transcript_delta_since(transcript_before)
+@@ -549,6 +1064,20 @@
+             **self.timing_payload(),
+         }
+ 
++    def _rejected_payload(self, plan: list[str], terminal_node: int) -> dict[str, Any]:
++        graph = getattr(self, "_state_graph", None)
++        cur = graph.id_of.get(graph.current_key) if graph and graph.current_key is not None else None
++        return {
++            "executed": False,
++            "known_action_rejected": True,
++            "rejected_plan": list(plan),
++            "terminal_node": terminal_node,
++            "state_node_id": cur,
++            "stop_reason": "known_action_rejected",
++            "valid_actions": to_model_actions(_engine_action_names(self.game)),
++            **self.timing_payload(),
++        }
++
+     def _terminal_payload(
+         self, requested_actions: list[arcengine.ActionInput]
+     ) -> dict[str, Any]:
+@@ -596,11 +1125,31 @@
          total_reward = 0.0
          stop_reason: str | None = None
          batch_size = len(requested_actions)
@@ -964,17 +1415,38 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
          requested_displays = [
              _format_action_display(action.id.name, dict(action.data))
              for action in requested_actions
-@@ -636,6 +963,9 @@
+         ]
+ 
++        # Sequence-level predict-and-block (explore): reject a whole PLAN that stays entirely on
++        # already-tried deterministic edges -- it reaches no new (state, action), so it is pure
++        # re-treading. A plan with ANY untried / non-deterministic action is allowed (that is where
++        # it reaches new ground), so the agent may route THROUGH known/fully-explored states as long
++        # as the plan knowingly ends up somewhere new. Self-loops aren't edges -> the per-action
++        # no_impact stop handles those during execution.
++        graph = getattr(self, "_state_graph", None)
++        if intent == "explore" and graph is not None:
++            terminal = graph.plan_terminal_if_all_known(requested_displays)
++            if terminal is not None:
++                return self._rejected_payload(requested_displays, terminal)
++
+         for batch_index, action in enumerate(requested_actions, start=1):
+             if self.should_stop():
+                 stop_reason = "stopped"
+@@ -636,6 +1185,13 @@
              if payload.get("level_completed"):
                  stop_reason = "level_completed"
                  break
 +            if intent == "explore" and payload.get("no_impact"):
 +                stop_reason = "no_impact_action"
 +                break
++            if (intent == "re-explore" and _reexplore_strict()
++                    and not payload.get("is_new_state")):
++                stop_reason = "reexplore_no_progress"
++                break
  
          if not executed_payloads:
              return self._error_payload("No action was executed.")
-@@ -648,12 +978,39 @@
+@@ -648,12 +1204,44 @@
          final_payload["executed_count"] = len(executed_payloads)
          final_payload["requested_actions"] = requested_displays
          final_payload["executed_actions"] = [
@@ -992,6 +1464,11 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +            bool(item.get("gameplay_changed")) for item in executed_payloads
 +        )
 +        final_payload["intent"] = intent
++        if intent == "re-explore":
++            # Soft verification (default): flag a re-explore batch that never reached a NEW state.
++            # Strict mode (ARC3_REEXPLORE_STRICT) instead hard-stops mid-batch, above.
++            final_payload["reexplore_unproductive"] = not any(
++                bool(it.get("is_new_state")) for it in executed_payloads)
 +        if hud_model_error:
 +            final_payload["hud_model_error"] = hud_model_error
 +        # Merge animation metadata across the batch.
@@ -1015,7 +1492,7 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
          final_payload["stopped_early"] = len(executed_payloads) < batch_size
          if stop_reason is not None:
              final_payload["stop_reason"] = stop_reason
-@@ -690,6 +1047,58 @@
+@@ -690,6 +1278,58 @@
              step=self.action_count,
              level=_level_number(self.game),
          )
@@ -1074,7 +1551,7 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
          self.history_entries.append(
              HistoryEntry(action=action_display, frame=current_frame)
          )
-@@ -700,7 +1109,46 @@
+@@ -700,7 +1340,57 @@
              1.0, float(self.game.number_of_levels)
          )
          raw_state = new_state.raw.state
@@ -1086,8 +1563,12 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +        band = getattr(self, "_hud_band", None)
 +        if band is None:
 +            band = self._hud_band = _HousekeepingBand()
-+        if completed > previous_completed:  # new level: the HUD may have moved
++        graph = getattr(self, "_state_graph", None)
++        if graph is None:
++            graph = self._state_graph = _StateGraph()
++        if completed > previous_completed:  # new level: the HUD may have moved; states reset too
 +            band.reset()
++            graph.reset()
 +        band_rows, band_cols = band.band()
 +        # A verified LLM `advance_hud` model contributes exactly-predicted bar cells that OVERLAY
 +        # the coarse statistical band (union, never subtract, so a partial model can't regress).
@@ -1119,22 +1600,34 @@ diff -ruN a/inference/framework/solver.py b/inference/framework/solver.py
 +                            else "model" if model_bar is not None
 +                            else "band" if (band_rows or band_cols) else "exact")
 +        no_impact = not gameplay_changed
++        # State graph: canonical (HUD-excluded) board. observe() records the edge from the current
++        # node and moves the pointer; the redundant-edge REJECTION happens pre-execution in step_env
++        # (an already-tried edge never reaches here in explore mode).
++        gflags = graph.observe(new_grid, action_display, self.action_count,
++                               band_rows, band_cols, model_bar)
++        self._state_graph_light = graph.light_view()
++        self.write_runtime_state()  # re-write with the fresh graph so the sandbox refresh sees it
          level_completed = bool(
              new_state.just_won_level and raw_state != arcengine.GameState.WIN
          )
-@@ -713,6 +1161,11 @@
+@@ -713,6 +1403,16 @@
              "state": raw_state.name,
              "valid_actions": to_model_actions(_engine_action_names(self.game)),
              "board_changed": board_changed,
 +            "gameplay_changed": gameplay_changed,
 +            "no_impact": no_impact,
 +            "no_impact_source": no_impact_source,
++            "revisited_state": gflags["revisited_state"],
++            "is_new_state": gflags["is_new_state"],
++            "state_node_id": gflags["state_node_id"],
++            "graph_nodes": gflags["graph_nodes"],
++            "nondeterministic_edge": gflags["nondeterministic_edge"],
 +            "hud_band": _band_desc(band_rows, band_cols),
 +            "hud_model": hud_model_state,
              "done": raw_state == arcengine.GameState.WIN,
              "level_completed": level_completed,
              "game_over": raw_state == arcengine.GameState.GAME_OVER,
-@@ -728,6 +1181,7 @@
+@@ -728,6 +1428,7 @@
              "batch_size": batch_size,
              **self.timing_payload(),
          }
