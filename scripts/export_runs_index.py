@@ -161,6 +161,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "7-GAME SUBSET A/B control (NOT a 25-game run -- same 7 graph-heavy games as -a). Arm B = state graph OFF (ARC3_STATE_GRAPH=off), i.e. exactly ffa7gn on this subset. Mean Kaggle 2.061 vs 1.533 for the graph-ON arm (-a). No-graph reached L2 on sb26 (3.27) and tn36 (10.71) where graph-on stalled at L1; depth (weighted x2) outweighs the graph's L1 efficiency wins. Clean one-variable ablation: identical lean bundle, only ARC3_STATE_GRAPH differs (code + prompt gated).",
     },
+    "20260726_054336_v12-ffa7gnsg-customgames17": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn)",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 (Tufa wheelhouse)",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "FIRST harness pass on the 17 in-house CUSTOM games (not the official 25) -- same validated-best config as ffa7gn/lean-b (no-impact ON, state graph OFF), single pass, ARC3_GAME_SUBSET restricted to the custom set. Not comparable to any all-25/ex-ft09 numbers above (different games, different level counts/baselines -- several had baseline_actions patched to null first, see build_gcp_customgames_bundle.py). All 17 completed (no crashes this pass); mean 7.89, 1 outright win: ps01 (Pouring Water Son, a 'live' real-time physics game) cleared its only level -- first evidence this turn-based harness can handle continuous/physics game semantics at all. Best partial: cr01 (Crumbling Route) 9/10 levels, sn02 (Sneeze) 6/7 levels.",
+    },
     "20260718_184500_v12-ffa7g": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance",
