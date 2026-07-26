@@ -31,6 +31,18 @@ OUT_THUMBS = ROOT / "docs" / "static" / "img" / "games"
 
 EXCLUDE_CUSTOM_CODES = {"ab"}  # bespoke standalone game, out of scope for now
 
+# Pulled from the catalog by request (2026-07-26) -- not a permanent cut like
+# "ab" above, just temporarily off while these get another look. Source/
+# thumbnails are left on disk; delete an entry here to bring one back.
+TEMPORARILY_REMOVED_CODES = {
+    "fd",  # Find the Difference
+    "fy",  # Flying Ace
+    "mr",  # Medieval War RT
+    "mt",  # Mortar
+    "mw",  # Medieval War
+    "pw",  # Pouring Water
+}
+
 # Canonical ARC-3 board palette (values 0-15) -- verified against a recorded
 # run's own arc_palette/color_chars (docs/data/*/run-overview.json) and
 # against the arc-agi-3 sibling repo's constants.py COLOR_MAP. Same array is
@@ -101,7 +113,8 @@ def main():
     print("\nCustom games:")
     for code_dir in sorted(SIBLING_DIR.iterdir()):
         code = code_dir.name
-        if not code_dir.is_dir() or code in official_codes or code in EXCLUDE_CUSTOM_CODES:
+        if (not code_dir.is_dir() or code in official_codes
+                or code in EXCLUDE_CUSTOM_CODES or code in TEMPORARILY_REMOVED_CODES):
             continue
         version_dirs = sorted(d for d in code_dir.iterdir() if d.is_dir() and d.name != "__pycache__")
         if not version_dirs:
