@@ -27,7 +27,11 @@ MAX_NUM_SEQS=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.int
 # DFlash speculative decoding: empty (default) = off. Set arc3-spec-model to a
 # GCS path under model-flat/ to turn it on (Pass A vs Pass B, one variable).
 SPEC_MODEL_BUCKET_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-spec-model-bucket-name" || echo "")
-echo "bucket=$BUCKET run=$RUN_ID mig=$MIG model=$MODEL_HF_ID max_num_seqs=$MAX_NUM_SEQS spec_model=$SPEC_MODEL_BUCKET_NAME"
+# Per-game runtime cap override (seconds): empty (default) = keep the bundled
+# benchmark_initial.pkl's own value (7920s). Set arc3-max-runtime-s-per-game to
+# trade concurrency for per-request latency headroom (see v12_run_maxruntime.py).
+MAX_RUNTIME_S_PER_GAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-max-runtime-s-per-game" || echo "")
+echo "bucket=$BUCKET run=$RUN_ID mig=$MIG model=$MODEL_HF_ID max_num_seqs=$MAX_NUM_SEQS spec_model=$SPEC_MODEL_BUCKET_NAME max_runtime_s_per_game=$MAX_RUNTIME_S_PER_GAME"
 
 mkdir -p /opt/arc3 && cd /opt/arc3
 gcloud storage cp "$BUCKET/code/resource_sampler.sh" /opt/arc3/resource_sampler.sh 2>/dev/null \
@@ -44,7 +48,7 @@ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq buil
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/c.tgz && tar xzf /tmp/c.tgz -C /opt/arc3
 # ---- ffa7g-textgrid bundle (ffa7gnsg + inline-ASCII patch, harnesses/ffa7g-textgrid/) --
 mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/bundle-v12ffa7gnsg-textgrid.tgz" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
-gcloud storage cp "$BUCKET/code/v12_run.py" /opt/arc3/v12_run.py
+gcloud storage cp "$BUCKET/code/v12_run_maxruntime.py" /opt/arc3/v12_run.py
 
 # ---- model: Laguna S 2.1, flat GCS dir (see custom-games-harness-integration /
 # the TPS-sweep debugging for why: gcloud storage rsync drops the HF hub
@@ -116,6 +120,9 @@ export LOCAL_ANALYZER_ENABLE_THINKING=true
 # switch. Laguna S 2.1 cannot accept images; current_grid_image_enabled()
 # only returns true for the literal string "current_grid".
 export ARC3_FRAME_MODE=full
+if [ -n "$MAX_RUNTIME_S_PER_GAME" ]; then
+  export ARC3_MAX_RUNTIME_S_PER_GAME="$MAX_RUNTIME_S_PER_GAME"
+fi
 
 ./.venv/bin/python /opt/arc3/v12_run.py 2>&1 | tee /opt/arc3/v12.log || echo "runner exited $?"
 gcloud storage cp /opt/arc3/v12.log "$BUCKET/$RUN_ID/v12-run.log" || true

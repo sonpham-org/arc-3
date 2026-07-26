@@ -5,7 +5,16 @@
 #
 # Usage: RUN_ID=g4run-v12laguna-ffa7gnsg-$(date -u +%Y%m%d-%H%M) MIG_NAME=arc3-g4-laguna-ffa7gnsg \
 #   MODEL_BUCKET_NAME=Laguna-S-2.1-INT4 MODEL_HF_ID=poolside/Laguna-S-2.1-INT4 \
-#   MAX_NUM_SEQS=28 gcp/launch_laguna_ffa7gnsg.sh
+#   MAX_NUM_SEQS=28 MAX_RUNTIME_S_PER_GAME= gcp/launch_laguna_ffa7gnsg.sh
+#
+# MAX_RUNTIME_S_PER_GAME (optional, seconds): overrides the bundled
+# benchmark_initial.pkl's per-game runtime cap (default 7920s). Use this to
+# trade concurrency for per-request latency headroom -- e.g. halving
+# MAX_NUM_SEQS (28->14) roughly doubles each request's share of the server's
+# aggregate decode throughput, so halving MAX_RUNTIME_S_PER_GAME (7920->3960)
+# keeps total wallclock for 2 waves of <=14 games close to the original single-
+# wave budget while giving individual turns more headroom under the harness's
+# fixed 900s analyzer timeout. See gcp/v12_run_maxruntime.py.
 set -euo pipefail
 PROJECT=${PROJECT:-cellensml}
 ZONE=${ZONE:-us-central1-b}
@@ -18,6 +27,7 @@ MODEL_BUCKET_NAME=${MODEL_BUCKET_NAME:?set MODEL_BUCKET_NAME}
 MODEL_HF_ID=${MODEL_HF_ID:?set MODEL_HF_ID}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-28}
 SPEC_MODEL_BUCKET_NAME=${SPEC_MODEL_BUCKET_NAME:-}
+MAX_RUNTIME_S_PER_GAME=${MAX_RUNTIME_S_PER_GAME:-}
 
 cd "$(dirname "$0")/.."
 
@@ -32,7 +42,7 @@ gcloud compute instance-templates create "$TEMPLATE" \
   --maintenance-policy=TERMINATE \
   --scopes=cloud-platform \
   --metadata-from-file=startup-script=gcp/v12laguna_ffa7gnsg_startup.sh,shutdown-script=gcp/shutdown.sh \
-  --metadata=arc3-bucket="$BUCKET",arc3-run-id="$RUN_ID",arc3-mig="$MIG_NAME",arc3-model-bucket-name="$MODEL_BUCKET_NAME",arc3-model-hf-id="$MODEL_HF_ID",arc3-max-num-seqs="$MAX_NUM_SEQS",arc3-spec-model-bucket-name="$SPEC_MODEL_BUCKET_NAME",install-nvidia-driver=True
+  --metadata=arc3-bucket="$BUCKET",arc3-run-id="$RUN_ID",arc3-mig="$MIG_NAME",arc3-model-bucket-name="$MODEL_BUCKET_NAME",arc3-model-hf-id="$MODEL_HF_ID",arc3-max-num-seqs="$MAX_NUM_SEQS",arc3-spec-model-bucket-name="$SPEC_MODEL_BUCKET_NAME",arc3-max-runtime-s-per-game="$MAX_RUNTIME_S_PER_GAME",install-nvidia-driver=True
 
 echo "== managed instance group (size 1) =="
 gcloud compute instance-groups managed describe "$MIG_NAME" --zone="$ZONE" --project="$PROJECT" >/dev/null 2>&1 && \
