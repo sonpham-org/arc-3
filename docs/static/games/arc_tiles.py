@@ -184,9 +184,16 @@ def distinct_motifs(k: int) -> list[int]:
     At k=2 most of the shape motifs alias onto each other (a 2x2 border is a
     2x2 solid), so randomising over the full set would silently hand out
     duplicate skins. Dedupe by the mask bytes and keep the first of each.
+
+    `_m_solid` is excluded: it is the identity, and a colour assigned to it
+    would render as a flat block with no texture at all. Empty space is
+    supposed to be the only flat thing on the board -- and the background gets
+    that by a separate rule, not by drawing this motif.
     """
     seen, out = set(), []
     for i, fn in enumerate(MOTIFS):
+        if fn is _m_solid:
+            continue
         key = fn(k).tobytes()
         if key not in seen:
             seen.add(key)
