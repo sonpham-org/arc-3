@@ -161,6 +161,17 @@ HARNESS = {
         "weights": "vrfai FP8 (35.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "7-GAME SUBSET A/B control (NOT a 25-game run -- same 7 graph-heavy games as -a). Arm B = state graph OFF (ARC3_STATE_GRAPH=off), i.e. exactly ffa7gn on this subset. Mean Kaggle 2.061 vs 1.533 for the graph-ON arm (-a). No-graph reached L2 on sb26 (3.27) and tn36 (10.71) where graph-on stalled at L1; depth (weighted x2) outweighs the graph's L1 efficiency wins. Clean one-variable ablation: identical lean bundle, only ARC3_STATE_GRAPH differs (code + prompt gated).",
     },
+    "20260726_221752_laguna-ffa7gnsg-halfconc": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch (inlines current_frame.ascii, no image)",
+        "memory": "scientist note (optional prose)",
+        "render": "ASCII grid inlined in prompt text (no image -- model is text-only)",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.25.1",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Laguna S 2.1 INT4 (poolside, text-only, 67 GB)", "concurrency": 14, "budget_min": 66,
+        "note": "Model swap: Laguna S 2.1 INT4 (118B total / 8B active MoE, text-only) replacing vrfai Qwen3.6-27B-FP8, same ffa7gnsg harness. First full-concurrency (28) attempt was killed after ~4.5h with 0 score: the harness's fixed 900s analyzer timeout kept firing on each game's expensive first turn (thinking-mode + inlined ASCII grid need far more tokens/turn than Qwen did -- ~6600 tok/action here vs Qwen's ~681 tok/action). This rerun halved concurrency (28->14) AND max_runtime_s_per_game (7920->3960) to fix the timeout, but max_runtime_s_per_game turned out to be a SHARED deadline from the benchmark's start, not a per-game wave budget -- confirmed via started_at (identical ~22:17:52 for all 25 games) and final_wallclock_seconds (~3960s for all 25). Net effect: all 25 games only got a slice of one 66-minute window (11 of them queued behind the 14-concurrency cap, burning wait time out of the same clock), so mean score is 0.00 across the board (state=gave_up from time exhaustion, not genuine failure) -- NOT a valid score comparison against Qwen. Timeout fix itself worked (v12.log shows near-zero analyzer failures vs 28 in the killed run), so the real lesson is: fix concurrency alone next time, leave max_runtime_s_per_game at 7920 (or raise it, since the harness doesn't wave-schedule). Kept for its transcripts/JSONL -- used to investigate why Laguna needs ~10x Qwen's tokens per action.",
+    },
     "20260726_054336_v12-ffa7gnsg-customgames17": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn)",
