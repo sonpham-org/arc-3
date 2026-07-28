@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260728_122213_gptoss-spottest-low": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch",
+        "memory": "scientist note (optional prose)",
+        "render": "ASCII grid inlined in prompt text (no image -- model is text-only)",
+        "yield_s": 60, "thinking": "reasoning_effort=low",
+        "agent_ctx": 32768, "server": "vLLM 0.25.1",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "gpt-oss-120b MXFP4 (openai, text-only, 61 GB)", "concurrency": 8, "budget_min": 132,
+        "note": "First real harness test of gpt-oss-120b (replacing Qwen3.6-27B after Laguna S 2.1 failed on token efficiency -- see laguna-model-swap memory). Uses harnesses/ffa7g-textgrid-reasoning-effort/ to pass reasoning_effort as a top-level vLLM request field (gpt-oss's harmony format ignores chat_template_kwargs entirely, unlike Qwen/Laguna). 7-game fast-iteration subset, concurrency 8. Result: 4,843 actions / 631,613 tokens = 130 tok/action -- 5.2x MORE efficient than the original Qwen3.6-27B baseline (681 tok/action), and completed a real level (r11l, score 0.26, the first level completion across the whole Laguna+gpt-oss investigation on this subset scale). Beat the medium-effort sibling run on both efficiency and score. Candidate for a full 25-game run next.",
+    },
+    "20260728_121910_gptoss-spottest-medium": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch",
+        "memory": "scientist note (optional prose)",
+        "render": "ASCII grid inlined in prompt text (no image -- model is text-only)",
+        "yield_s": 60, "thinking": "reasoning_effort=medium",
+        "agent_ctx": 32768, "server": "vLLM 0.25.1",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "gpt-oss-120b MXFP4 (openai, text-only, 61 GB)", "concurrency": 8, "budget_min": 132,
+        "note": "Sibling of the low-effort run (see that entry for full setup notes) -- same 7-game subset, reasoning_effort=medium instead of low. Result: 4,757 actions / 587,534 tokens = 123 tok/action -- still 5.5x more efficient than the Qwen3.6-27B baseline, and also completed r11l (score 0.16, vs low's 0.26 on the same game -- low used fewer actions to clear it). Slightly lower score than the low-effort arm despite similar tok/action, so low looks like the better default.",
+    },
     "20260727_033945_laguna-spottest-thinkoff": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch",
