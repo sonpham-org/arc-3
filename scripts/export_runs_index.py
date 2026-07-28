@@ -73,6 +73,17 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260728_162905_gptoss-ffa7gnsg": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch",
+        "memory": "scientist note (optional prose)",
+        "render": "ASCII grid inlined in prompt text (no image -- model is text-only)",
+        "yield_s": 60, "thinking": "reasoning_effort=low",
+        "agent_ctx": 32768, "server": "vLLM 0.25.1",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "gpt-oss-120b MXFP4 (openai, text-only, 61 GB)", "concurrency": 28, "budget_min": 132,
+        "note": "Full official 25-game run (fair comparison against the historical Qwen3.6-27B ffa7gnsg baseline: 1,791,010 tokens / 2,629 actions = 681 tok/action, mean score 1.63, 12/25 games with >=1 level completed). Same config as the winning low-effort spot-test, scaled from the 7-game subset (concurrency 8) to the full 25 (concurrency 28), proper 7920s/132min per-game budget. Result: 765,967 tokens / 6,331 actions = 121 tok/action -- 5.6x MORE token-efficient than Qwen, confirming the subset-scale finding holds at full scale. But quality collapsed: mean score 0.13 (12.5x worse than Qwen), only 3/25 games completed any level (r11l 0.31, tn36 0.14, lp85 2.78) vs Qwen's 12/25, 0/25 fully solved either way. Despite generating 2.4x more actions in the same wall-clock budget, gpt-oss-120b at reasoning_effort=low is far worse at actually choosing productive actions -- the token-efficiency win doesn't translate into more solved levels. Open question: does reasoning_effort=medium/high recover quality at full scale (the 7-game subset showed medium slightly *behind* low, but that was noise-dominated at n=7).",
+    },
     "20260728_122213_gptoss-spottest-low": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + TEXT-GRID patch",
