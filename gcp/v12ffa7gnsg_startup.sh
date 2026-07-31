@@ -2,9 +2,17 @@
 # V12FFA7: frame-full + ACTION7 fix + compact animation metadata.
 # Identical to v12_startup.sh except: bundle = bundle-v12ff3 (baseline ARC3-Inference
 # + the 6 frame-mode files, nothing else) and ARC3_FRAME_MODE=full set explicitly.
-# Agent code = pristine upstream (commit a2dddac). Server = THEIR pinned stack
-# (vllm 0.19 wheelhouse) launched with THEIR exact flags. Env = THEIR exact
-# setup_env values. Only the infra scaffolding (GCS sync, guards) is ours.
+# Agent code = pristine upstream (commit a2dddac). Env = THEIR exact setup_env
+# values. Only the infra scaffolding (GCS sync, guards) is ours.
+#
+# Server/weights (2026-07-29): RedHatAI/Qwen3.6-27B-FP8 on vLLM 0.25.1 --
+# replaces vrfai/Qwen3.6-27B-FP8 on the pinned vLLM 0.19 wheelhouse. A 5-way
+# quant-candidate A/B (see qwen-quant-candidates memory) found RedHatAI's FP8
+# build scores statistically identically to vrfai's (2-pass mean 1.925 both)
+# while avoiding vrfai's pathological kernel path on vLLM 0.25 -- a clean
+# drop-in that unblocks the newer vLLM. Same flat-GCS sourcing pattern as
+# every other post-vLLM-0.19 model (see laguna-model-swap memory for why flat,
+# not the hub/ cache convention).
 set -uo pipefail
 export HOME="${HOME:-/root}"
 exec > >(tee -a /var/log/arc3-startup.log) 2>&1
@@ -29,30 +37,31 @@ if [ "$ATTEMPTS" -gt 8 ]; then echo failed | gcloud storage cp - "$BUCKET/$RUN_I
 
 apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential ffmpeg ninja-build
 
-# ---- pristine code + their model + their wheelhouse -------------------------
+# ---- pristine code + agent bundle -------------------------------------------
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/c.tgz && tar xzf /tmp/c.tgz -C /opt/arc3
 BUNDLE_NAME=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-bundle" || echo "bundle-v12ffa7gnsg.tgz")
 echo "bundle: $BUNDLE_NAME"
 mkdir -p /opt/arc3/bundle && gcloud storage cp "$SEED/$BUNDLE_NAME" /tmp/b.tgz && tar xzf /tmp/b.tgz -C /opt/arc3/bundle
 gcloud storage cp "$BUCKET/code/v12_run.py" /opt/arc3/v12_run.py
-gcloud storage rsync -r "$SEED/model" /opt/arc3/vrfai-model
-gcloud storage rsync -r "$SEED/wheelhouse" /opt/arc3/wheelhouse
-echo "model files: $(ls /opt/arc3/vrfai-model | wc -l), wheelhouse wheels: $(ls /opt/arc3/wheelhouse/*.whl 2>/dev/null | wc -l)"
 
-# ---- server: THEIR stack, THEIR flags (mirrors setup_commands.json PYSETUP) --
+# ---- model: RedHatAI Qwen3.6-27B FP8, flat GCS dir --------------------------
+MODEL_HF_ID="RedHatAI/Qwen3.6-27B-FP8"
+mkdir -p /opt/arc3/model
+gcloud storage rsync -r "$BUCKET/model-flat/Qwen3.6-27B-FP8-redhatai" /opt/arc3/model
+echo "model files: $(ls /opt/arc3/model | wc -l) ($(du -sh /opt/arc3/model | cut -f1))"
+
+# ---- server: vLLM 0.25.1, qwen parser family --------------------------------
 curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH="$HOME/.local/bin:$PATH"
 uv venv --python 3.12.12 /opt/arc3/pysrv
-uv pip install --python /opt/arc3/pysrv/bin/python --no-index --find-links /opt/arc3/wheelhouse \
-  -r /opt/arc3/wheelhouse/requirements.lock --only-binary :all: --no-build-isolation || {
-  echo "wheelhouse install failed"; echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/serverfail"; exit 1; }
+uv pip install --python /opt/arc3/pysrv/bin/python "vllm==0.25.1" || {
+  echo "vllm install failed"; echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/serverfail"; exit 1; }
 export USE_TF=0 TRANSFORMERS_NO_TF=1 TRANSFORMERS_NO_TORCHVISION=1 VLLM_NO_USAGE_STATS=1
 nohup /opt/arc3/pysrv/bin/python -m vllm.entrypoints.openai.api_server \
-  --model /opt/arc3/vrfai-model --served-model-name vrfai/Qwen3.6-27B-FP8 \
+  --model /opt/arc3/model --served-model-name "$MODEL_HF_ID" \
   --host 127.0.0.1 --port 1234 --tensor-parallel-size 1 \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder \
-  --generation-config vllm --enable-prefix-caching \
-  --default-chat-template-kwargs '{"preserve_thinking": true}' \
-  --reasoning-parser qwen3 --max-model-len 65536 \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
+  --default-chat-template-kwargs '{"preserve_thinking":true}' \
+  --max-num-seqs 28 --max-model-len 65536 \
   > /opt/arc3/vllm.log 2>&1 &
 for i in $(seq 1 120); do curl -s -m 3 http://127.0.0.1:1234/v1/models >/dev/null && break; sleep 10; done
 if ! curl -s -m 5 http://127.0.0.1:1234/v1/models >/dev/null; then
@@ -60,7 +69,7 @@ if ! curl -s -m 5 http://127.0.0.1:1234/v1/models >/dev/null; then
   gcloud storage cp /opt/arc3/vllm.log "$BUCKET/$RUN_ID/serverlog-$(hostname)-$ATTEMPTS.log" || true
   echo "$ATTEMPTS" | gcloud storage cp - "$BUCKET/$RUN_ID/serverfail"; exit 1
 fi
-echo "vllm 0.19 server ready"
+echo "vllm 0.25.1 ready: $MODEL_HF_ID"
 
 # ---- agent: pristine harness, THEIR env values -------------------------------
 cd /opt/arc3/ARC3-Inference
@@ -79,7 +88,7 @@ mkdir -p /opt/arc3/work && rm -rf runs && ln -sfn /opt/arc3/work runs
 # Their exact setup_env (setup_commands.json), passed as real env so Make's ?= yields.
 export LOCAL_ANALYZER_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_BASE_URL=http://127.0.0.1:1234/v1
 export LOCAL_ANALYZER_PROVIDER=vllm OPENAI_PROVIDER=vllm
-export LOCAL_ANALYZER_MODEL_ID=vrfai/Qwen3.6-27B-FP8 INFERENCE_ANALYZER_MODEL=vrfai/Qwen3.6-27B-FP8
+export LOCAL_ANALYZER_MODEL_ID="$MODEL_HF_ID" INFERENCE_ANALYZER_MODEL="$MODEL_HF_ID"
 export ARC3_REEXPLORE_STRICT=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-reexplore-strict" || echo "")
 export ARC3_GAME_SUBSET=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-game-subset" || echo "")
 export ARC3_STATE_GRAPH=$(curl -sf -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/arc3-state-graph" || echo "")

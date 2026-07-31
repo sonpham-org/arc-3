@@ -41,6 +41,18 @@ OUT_THUMBS = ROOT / "docs" / "static" / "img" / "games"
 
 EXCLUDE_CUSTOM_CODES = {"ab"}  # bespoke standalone game, out of scope for now
 
+# Pulled from the catalog by request (2026-07-26) -- not a permanent cut like
+# "ab" above, just temporarily off while these get another look. Source/
+# thumbnails are left on disk; delete an entry here to bring one back.
+TEMPORARILY_REMOVED_CODES = {
+    "fd",  # Find the Difference
+    "fy",  # Flying Ace
+    "mr",  # Medieval War RT
+    "mt",  # Mortar
+    "mw",  # Medieval War
+    "pw",  # Pouring Water
+}
+
 # Canonical ARC-3 board palette (values 0-15) -- verified against a recorded
 # run's own arc_palette/color_chars (docs/data/*/run-overview.json) and
 # against the arc-agi-3 sibling repo's constants.py COLOR_MAP. Same array is
@@ -129,7 +141,7 @@ def main():
     print("\nCustom games:")
     custom = collect_source(
         SIBLING_DIR, "custom", latest=True,
-        skip_codes=official_codes | EXCLUDE_CUSTOM_CODES,
+        skip_codes=official_codes | EXCLUDE_CUSTOM_CODES | TEMPORARILY_REMOVED_CODES,
     )
     for e, _ in custom:
         print(f"  {e['id']}: {e['title']}")

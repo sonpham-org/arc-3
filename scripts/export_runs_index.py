@@ -673,6 +673,17 @@ HARNESS = {
         "weights": "official Qwen FP8 (30.9 GB)", "concurrency": 28, "budget_min": 132,
         "note": "rung 1c: modern serving validated -- statistically tied with tufa-exact",
     },
+    "20260730_hudpixel-ffa7gn-redhatai-fp8-3h": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn) + per-cell HUD pixel model (dedicated periodic call, harnesses/ffa7g-hudpixel)",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.25.1",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "RedHatAI Qwen3.6-27B FP8 (compressed-tensors, block-128, 31 GB)", "concurrency": 36, "budget_min": 180,
+        "note": "Full-25 validation of the ffa7g-hudpixel prototype (replaces the old whole-model binary active/stale _HudCodeModel gate with per-cell rolling trust + a dedicated periodic call) at an extended 3h/game budget and raised concurrency (36 vs the standard 28) so the dedicated call has real queueing headroom. Result: mean score 1.18 (median 0.00), 2367 actions -- inside the noise band of the RedHatAI FP8 ffa7gn baseline's own 2-pass mean (2.46, 1.39 -> 1.925; see 20260729_qwenquant-redhatai-fp8-p1/p2), so this is NOT a demonstrated regression, just ordinary run-to-run variance. hud_model never reached `active` in any of the 25 games (only `checking`, meaning the dedicated call fires and registers code but no cell's prediction ever earns trust) -- same outcome as an earlier 7-game subset smoke test (mean 3.07), now confirmed at full scale with the concurrency/timeout infrastructure genuinely fixed. See harnesses/ffa7g-hudpixel/MANIFEST.md for the full iteration history.",
+    },
 }
 
 runs = []
