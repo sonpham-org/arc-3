@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260809_163901_v12-ffa7gn-failed-prefix-p1": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn (state graph OFF) + exact failed action/state prefix checkpoints every 6 matching transitions",
+        "memory": "scientist note (optional prose) + most recent failed exact transition trace",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Failed-prefix guard pass 1 of 2. On GAME_OVER or deliberate RESET, records the exact action + settled-state trajectory. During an identical retry it checkpoints every 6 matching transitions and asks Qwen to re-ground; the guard disables immediately on divergence, so shared setup remains legal. Result: raw all-25 mean 2.8489 (new local public-set single-run high), 18 levels, 13/25 games positive. Important caveat: ft09 scored 38.7019; ex-ft09 is only 1.3550. The raw high is therefore outlier-driven, not evidence of a general harness win.",
+    },
+    "20260809_163901_v12-ffa7gn-failed-prefix-p2": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn (state graph OFF) + exact failed action/state prefix checkpoints every 6 matching transitions",
+        "memory": "scientist note (optional prose) + most recent failed exact transition trace",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Failed-prefix guard pass 2 of 2, identical configuration to p1. Result: raw all-25 mean 1.7791, 17 levels, 15/25 games positive; ft09=14.2857 and ex-ft09=1.2580. Pair means: all-25 2.3140, ex-ft09 1.3065. The historical ffa7gn control pair was 1.624 ex-ft09, so failed-prefix is about 19.5% lower on the less outlier-sensitive metric despite the p1 raw high.",
+    },
     "20260729_qwenquant-redhatai-fp8-p1": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "thtennant v12 (taaf_grafts) + frame-full + ACTION7 fix + animation + goal-guidance + NO-IMPACT band (state graph OFF == ffa7gn)",
@@ -728,8 +750,20 @@ for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
         "has_usage": os.path.exists(os.path.join("docs", "data", run, "usage.json")),
     })
 
+index_path = "docs/data/runs-index.json"
+# Sparse publication checkouts may intentionally materialize only the run being
+# added. Preserve already-published entries that have no local benchmark rather
+# than silently replacing the public catalog with the sparse subset.
+existing_runs = []
+try:
+    existing_payload = json.load(open(index_path))
+    existing_runs = existing_payload.get("runs", [])
+except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+    pass
+local_names = {run["run"] for run in runs}
+runs.extend(run for run in existing_runs if run.get("run") not in local_names)
 runs.sort(key=lambda r: -r["avg_score"])
 payload = {"baseline": BASELINE, "biases": BIASES, "runs": runs}
 os.makedirs("docs/data", exist_ok=True)
-json.dump(payload, open("docs/data/runs-index.json", "w"), indent=1)
+json.dump(payload, open(index_path, "w"), indent=1)
 print(f"wrote {len(runs)} runs; baseline={BASELINE}")

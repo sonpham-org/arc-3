@@ -1,0 +1,137 @@
+diff --git a/inference/framework/solver.py b/inference/framework/solver.py
+--- a/inference/framework/solver.py
++++ b/inference/framework/solver.py
+@@ -862,6 +862,13 @@ class _HarnessGameSession:
+     last_engine_action: str | None = None
+     token_baseline: int = 0
+     _viewer_events_flushed: int = field(default=0, init=False, repr=False)
++    _attempt_trace: list[tuple[str, tuple[tuple[int, ...], ...]]] = field(
++        default_factory=list, init=False, repr=False
++    )
++    _failed_trace: list[tuple[str, tuple[tuple[int, ...], ...]]] = field(
++        default_factory=list, init=False, repr=False
++    )
++    _failed_prefix_diverged: bool = field(default=False, init=False, repr=False)
+ 
+     def current_frame(self) -> Frame:
+         return Frame(
+@@ -1329,6 +1336,7 @@ class _HarnessGameSession:
+         executed_payloads: list[dict[str, Any]] = []
+         total_reward = 0.0
+         stop_reason: str | None = None
++        failed_prefix_match_length: int | None = None
+         batch_size = len(requested_actions)
+         intent = str(arguments.get("intent", "explore")).strip().lower()
+         hud_code = arguments.get("hud_model")
+@@ -1366,6 +1374,16 @@ class _HarnessGameSession:
+                     break
+                 return self._error_payload(message)
+ 
++            action_display = requested_displays[batch_index - 1]
++            is_reset = action.id.name == "RESET"
++            if is_reset:
++                # A deliberate reset is a failure boundary. Preserve the attempt that
++                # led here, then force a re-observation after the reset below.
++                if self._attempt_trace:
++                    self._failed_trace = list(self._attempt_trace)
++                self._attempt_trace = []
++                self._failed_prefix_diverged = False
++
+             try:
+                 payload = self._execute_action(
+                     action,
+@@ -1381,18 +1399,48 @@ class _HarnessGameSession:
+             executed_payloads.append(payload)
+             total_reward += float(payload.get("reward", 0.0) or 0.0)
+ 
++            if not is_reset:
++                transition = (action_display, _grid_from_state(self.game.current_state))
++                self._attempt_trace.append(transition)
++                trace_index = len(self._attempt_trace) - 1
++                if self._failed_trace and not self._failed_prefix_diverged:
++                    if (trace_index < len(self._failed_trace)
++                            and self._failed_trace[trace_index] == transition):
++                        failed_prefix_match_length = trace_index + 1
++                    else:
++                        self._failed_prefix_diverged = True
++
+             if payload.get("run_complete"):
++                self._attempt_trace = []
++                self._failed_trace = []
+                 stop_reason = "run_complete"
+                 break
+             if payload.get("game_over"):
++                self._failed_trace = list(self._attempt_trace)
++                self._attempt_trace = []
++                self._failed_prefix_diverged = False
+                 stop_reason = "game_over"
+                 break
+             if payload.get("level_completed"):
++                self._attempt_trace = []
++                self._failed_trace = []
++                self._failed_prefix_diverged = False
+                 stop_reason = "level_completed"
+                 break
++            if is_reset:
++                stop_reason = "failed_attempt_recorded"
++                break
+             if intent == "explore" and payload.get("no_impact"):
+                 stop_reason = "no_impact_action"
+                 break
++            # Every six exactly reproduced action+state transitions, checkpoint the
++            # replay. Common setup remains legal; Qwen simply has to re-observe and
++            # deliberately decide whether to continue or diverge.
++            if (failed_prefix_match_length is not None
++                    and failed_prefix_match_length % 6 == 0
++                    and failed_prefix_match_length < len(self._failed_trace)):
++                stop_reason = "failed_prefix_checkpoint"
++                break
+             if (intent == "re-explore" and _reexplore_strict()
+                     and not payload.get("is_new_state")):
+                 stop_reason = "reexplore_no_progress"
+@@ -1450,5 +1498,11 @@ class _HarnessGameSession:
+         final_payload["stopped_early"] = len(executed_payloads) < batch_size
+         if stop_reason is not None:
+             final_payload["stop_reason"] = stop_reason
++        if stop_reason == "failed_prefix_checkpoint":
++            final_payload["failed_prefix_match_length"] = failed_prefix_match_length
++            final_payload["failed_prefix_total_length"] = len(self._failed_trace)
++            final_payload["unexecuted_actions"] = requested_displays[len(executed_payloads):]
++        elif stop_reason == "failed_attempt_recorded":
++            final_payload["failed_prefix_total_length"] = len(self._failed_trace)
+         self.write_viewer_payload()
+         return final_payload
+diff --git a/inference/agent/tool_agent.py b/inference/agent/tool_agent.py
+--- a/inference/agent/tool_agent.py
++++ b/inference/agent/tool_agent.py
+@@ -1487,6 +1487,13 @@ class ToolAgent:
+             compact["stop_reason"] = payload.get("stop_reason")
+         if payload.get("stop_detail"):
+             compact["stop_detail"] = payload.get("stop_detail")
++        for _k in (
++            "failed_prefix_match_length",
++            "failed_prefix_total_length",
++            "unexecuted_actions",
++        ):
++            if payload.get(_k) is not None:
++                compact[_k] = payload.get(_k)
+         if payload.get("hud_band"):
+             compact["hud_band"] = payload.get("hud_band")
+         for _k in ("no_impact_source", "hud_model", "hud_model_error"):
+@@ -1516,6 +1523,16 @@ class ToolAgent:
+             compact["note"] = (
+                 "action had no impact on the game (only the predictable HUD/edge band changed) -- re-grounding."
+             )
++        elif compact.get("stop_reason") == "failed_prefix_checkpoint":
++            compact["note"] = (
++                f"Checkpoint: this retry exactly reproduced the first "
++                f"{compact.get('failed_prefix_match_length')} action+state transitions of a prior failed "
++                "attempt. Re-ground and either justify the shared setup or diverge before replaying the failure."
++            )
++        elif compact.get("stop_reason") == "failed_attempt_recorded":
++            compact["note"] = (
++                "RESET recorded the preceding trajectory as a failed attempt. Re-ground before beginning a retry."
++            )
+         elif compact.get("stop_reason") == "known_action_rejected":
+             compact["note"] = (
+                 f"REJECTED (nothing executed): your whole planned sequence {payload.get('rejected_plan')} follows "
