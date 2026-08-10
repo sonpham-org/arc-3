@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260810_172013_muse-glimmer-q8-noimpact-p1": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn no-impact harness (state graph OFF), model swap only",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame multimodal images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "llama.cpp d775d4acc4b5d158b5da5bb98e194a067266100c",
+        "server_max_len": 32768, "spec_decode": "off",
+        "weights": "meta-models/Muse-Glimmer-30B UD-Q8_K_XL GGUF + Q8 mmproj", "concurrency": 28, "budget_min": 132,
+        "note": "Muse Glimmer 30B Q8_K_XL model swap on the no-impact harness, one stochastic pass. Result: all-25 0.3928, ex-ft09 0.4092, 5 levels, 5/25 positive, 975 actions, 524,283 generated tokens. The reasoning trace is published for model/prompt compatibility analysis; quality was substantially below Qwen3.6-27B-FP8.",
+    },
+    "20260810_172013_muse-glimmer-q8-cap8-p1": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn (state graph OFF) + maximum 8 actions per action(...) request, model swap only",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame multimodal images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "llama.cpp d775d4acc4b5d158b5da5bb98e194a067266100c",
+        "server_max_len": 32768, "spec_decode": "off",
+        "weights": "meta-models/Muse-Glimmer-30B UD-Q8_K_XL GGUF + Q8 mmproj", "concurrency": 28, "budget_min": 132,
+        "note": "Muse Glimmer 30B Q8_K_XL model swap on the cap-8 harness, one stochastic pass. Result: all-25 0.2620, ex-ft09 0.2729, 5 levels, 5/25 positive, 1,417 actions, 552,395 generated tokens. The reasoning trace is published for model/prompt compatibility analysis; cap-8 underperformed the Muse no-impact run in both score and action efficiency.",
+    },
     "20260809_155600_v12-ffa7gn-checkpoint12-p1": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "ffa7gn (state graph OFF) + maximum 12 actions per action(...) request",
