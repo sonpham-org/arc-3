@@ -73,6 +73,17 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260812_133630_kaggle-cap8-taaf-anim": {
+        "hardware": "RTX PRO 6000 (Kaggle interactive validation)",
+        "agent_code": "ffa7gn (state graph OFF) + no-impact guard + cap-8 + compact cross-turn animation memory",
+        "memory": "scientist note + rolling four-entry animation/action summaries",
+        "render": "full-frame multimodal images + one compact animation summary per action batch",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 15,
+        "note": "Interactive pre-submission validation for Kaggle code submission 55460058. The validation soft deadline was fixed at notebook_start+900s; model setup consumed most of it, so gameplay was deliberately cancelled after about 155s/game (0 levels, 30 actions). This is not the pending competition rerun, which sets KAGGLE_IS_COMPETITION_RERUN=true and disables the soft deadline.",
+    },
     "20260812_025726_cap8-taaf-anim-p1": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "ffa7gn (state graph OFF) + no-impact guard + cap-8 + compact cross-turn animation memory",
