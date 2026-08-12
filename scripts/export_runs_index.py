@@ -73,6 +73,39 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260812_025726_cap8-taaf-anim-p1": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn (state graph OFF) + no-impact guard + cap-8 + compact cross-turn animation memory",
+        "memory": "scientist note + rolling four-entry animation/action summaries",
+        "render": "full-frame multimodal images + one compact animation summary per action batch",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Cap-8 plus the TAAF-inspired compact animation-history graft, pass 1 of 2. Result: all-25 1.1592, ex-ft09 1.2075, 16 levels, 14/25 positive, 3,160 actions, and 1,599,589 generated tokens.",
+    },
+    "20260812_025726_cap8-taaf-anim-p2": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "ffa7gn (state graph OFF) + no-impact guard + cap-8 + compact cross-turn animation memory",
+        "memory": "scientist note + rolling four-entry animation/action summaries",
+        "render": "full-frame multimodal images + one compact animation summary per action batch",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Cap-8 plus the TAAF-inspired compact animation-history graft, pass 2 of 2. Result: all-25 2.4341, ex-ft09 1.9402, 21 levels, 16/25 positive, 2,707 actions, and 1,684,033 generated tokens. Pair means: all-25 1.7966 and ex-ft09 1.5739.",
+    },
+    "20260811_141319_kaggle-cap8-all42": {
+        "hardware": "RTX PRO 6000 (Kaggle)",
+        "agent_code": "ffa7gn (state graph OFF) + maximum 8 actions per action(...) request with explicit re-ground note",
+        "memory": "scientist note (optional prose)",
+        "render": "full-frame animation images + compact animation metadata",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Downloaded directly from Kaggle kernel sonphamorg/arc3-qwen3-6-cap-8-all-42-games. The first 25 official games scored 1.9184 raw and 0.8078 ex-ft09, with 13 levels, 11/25 positive, and 3,031 actions. Across all 42 games the raw mean was 4.8506 with 40 levels and 6,674 actions; that aggregate is dominated by custom-game outliers sn02=75 and cr01=79.28.",
+    },
     "20260810_172013_muse-glimmer-q8-noimpact-p1": {
         "hardware": "RTX PRO 6000 (GCP spot)",
         "agent_code": "ffa7gn no-impact harness (state graph OFF), model swap only",
