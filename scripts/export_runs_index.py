@@ -73,6 +73,17 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260812_132546_taaf-plain-p2": {
+        "hardware": "RTX PRO 6000 (GCP spot)",
+        "agent_code": "exact author-shared plain TAAF (ARC3-Inference aa69123 + tufa framework)",
+        "memory": "TAAF reference harness memory and prompt structure; no cap-8/no-impact/TAAF grafts from our harness",
+        "render": "full-frame multimodal images using the author-shared TAAF configuration",
+        "yield_s": 60, "thinking": "on (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "vrfai/Qwen3.6-27B-FP8", "concurrency": 28, "budget_min": 132,
+        "note": "Exact plain-TAAF replica 2 of 2. Result: mean25 1.4411, ex-ft09 1.0074, 19 levels, 14/25 positive, 4,152 actions, 1,621,471 generated tokens, runtime 2h12m29s. Replica 1 was still active when this trace was first published.",
+    },
     "20260812_133630_kaggle-cap8-taaf-anim": {
         "hardware": "RTX PRO 6000 (Kaggle interactive validation)",
         "agent_code": "ffa7gn (state graph OFF) + no-impact guard + cap-8 + compact cross-turn animation memory",
