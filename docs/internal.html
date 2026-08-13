@@ -46,7 +46,23 @@
                   text-decoration: none; white-space: nowrap; }
   td.run .usage:hover { background: var(--accent-wash, rgba(59,130,246,.12)); }
   tr.best td { font-weight: 600; }
+  tr.run-group td { background-color: var(--wash, rgba(128,128,128,.07)); }
+  tr.replica-row td { background-color: var(--wash-2, rgba(128,128,128,.035)); }
+  tr.replica-row td.run { padding-left: 31px; }
   td.avg { font-weight: 600; }
+  .group-toggle { appearance: none; border: 0; background: transparent; color: inherit; font: inherit;
+                  font-weight: 650; padding: 0; cursor: pointer; text-align: left; }
+  .group-toggle:hover .group-name, .group-toggle:focus-visible .group-name { text-decoration: underline; }
+  .group-toggle:focus-visible { outline: 2px solid #1E93FF; outline-offset: 3px; border-radius: 2px; }
+  .group-chevron { display: inline-block; width: 16px; color: var(--accent, #1E93FF);
+                   transform-origin: 45% 50%; transition: transform .12s ease; }
+  .group-toggle[aria-expanded="true"] .group-chevron { transform: rotate(90deg); }
+  .replica-count { display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 999px;
+                   font-size: 10px; font-weight: 600; color: var(--text-dim, #aab3c4);
+                   background: var(--wash-2, rgba(128,128,128,.12)); }
+  .replica-tag { display: inline-block; margin-right: 6px; color: var(--accent, #1E93FF);
+                 font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .mean-mark { opacity: .55; font-size: 10px; margin-left: 3px; }
 
   /* One column per game: thumbnail + short id up top, so the id never repeats down the rows. */
   th.game { width: 36px; min-width: 36px; text-align: center; padding: 6px 3px;
@@ -72,9 +88,13 @@
 
   td.g { width: 36px; min-width: 36px; text-align: center; padding: 0; }
   td.g a { display: block; padding: 8px 2px; text-decoration: none; color: inherit; }
+  td.g button { appearance: none; display: block; width: 100%; padding: 8px 2px; border: 0;
+                background: transparent; color: inherit; font: inherit; cursor: pointer; }
   td.g.zero a { opacity: .35; }
+  td.g.zero button { opacity: .35; }
   td.g.none { color: var(--muted, #6b7789); opacity: .4; }
   td.g a:hover { outline: 2px solid #1E93FF; outline-offset: -2px; }
+  td.g button:hover, td.g button:focus-visible { outline: 2px solid #1E93FF; outline-offset: -2px; }
 
   /* Game on/off toggling: click a thumbnail header to drop that game from the averages. */
   th.game { cursor: pointer; user-select: none; }
@@ -100,8 +120,9 @@
 <div class="head">
   <h1>Run scoreboard</h1>
   <p class="sub">The 25 official Kaggle games are grouped on the left and additional games on the right;
-  each cell is that run's score on the game (shading scales with the score). Tufa's public reference
-  average: 1.6002. Click a category or game header to include or exclude it from the averages.</p>
+  replica runs are collapsed into an equal-weight average and can be expanded to inspect each trace.
+  Each game cell is the run or replica-group mean (shading scales with the score). Tufa's public
+  reference average: 1.6002. Click a category or game header to include or exclude it.</p>
 </div>
 <div class="gamesel" id="gamesel-status"></div>
 <div class="tablewrap"><table id="t"><thead></thead><tbody></tbody></table></div>
@@ -111,6 +132,58 @@ Promise.all([
   fetch("./static/games/manifest.json").then(r => r.ok ? r.json() : []).catch(() => []),
 ]).then(([payload, catalog]) => {
   const rows = payload.runs || payload;
+
+  // Conservative replica detection. Explicit -p1/-p2/-rep1/-run1 suffixes are preferred;
+  // plain -1/-2 suffixes are grouped only when at least two siblings actually exist.
+  function replicaIdentity(name) {
+    const value = String(name);
+    const explicit = value.match(/^(.*?)([-_](?:p|pass|rep|replica|run))(\d+)$/i);
+    if (explicit) return { base: explicit[1], index: +explicit[3], suffix: explicit[2] };
+    const plain = value.match(/^(.*?)([-_])(\d+)$/);
+    if (plain) return { base: plain[1], index: +plain[3], suffix: plain[2] };
+    return null;
+  }
+
+  function buildRunEntries(sourceRows) {
+    const candidates = new Map();
+    sourceRows.forEach(row => {
+      const identity = replicaIdentity(row.run);
+      if (!identity || identity.index < 1 || identity.index > 99) return;
+      const key = `${identity.base}::replica::${identity.suffix.toLowerCase()}`;
+      if (!candidates.has(key)) candidates.set(key, []);
+      candidates.get(key).push({ row, identity });
+    });
+
+    const validByRun = new Map();
+    candidates.forEach(items => {
+      const unique = new Set(items.map(item => item.identity.index));
+      if (items.length < 2 || unique.size !== items.length) return;
+      items.forEach(item => validByRun.set(item.row.run, item));
+    });
+
+    const entries = [], emitted = new Set();
+    sourceRows.forEach(row => {
+      const item = validByRun.get(row.run);
+      if (!item) {
+        entries.push({ key: `run:${row.run}`, label: row.run, members: [row], isGroup: false });
+        return;
+      }
+      const candidateKey = `${item.identity.base}::replica::${item.identity.suffix.toLowerCase()}`;
+      if (emitted.has(candidateKey)) return;
+      emitted.add(candidateKey);
+      const groupedItems = candidates.get(candidateKey).slice().sort((a, b) => a.identity.index - b.identity.index);
+      entries.push({
+        key: `replicas:${encodeURIComponent(candidateKey)}`,
+        label: item.identity.base,
+        members: groupedItems.map(candidate => candidate.row),
+        isGroup: true,
+        replicaMeta: new Map(groupedItems.map(candidate => [candidate.row.run, candidate.identity])),
+      });
+    });
+    return entries;
+  }
+
+  const entries = buildRunEntries(rows);
 
   // Canonical column order = union of game ids across runs, longest run first so we pick up the
   // full 25 even though one run only played a single game. Cells are keyed by id, not position.
@@ -144,11 +217,37 @@ Promise.all([
   } catch (e) { active = new Set(order); }
   const saveActive = () => { try { localStorage.setItem(LS_KEY, JSON.stringify([...active])); } catch (e) {} };
 
+  const EXPANDED_KEY = "arc3-scoreboard-expanded-replicas";
+  let expanded;
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]");
+    expanded = new Set(Array.isArray(saved) ? saved : []);
+  } catch (e) { expanded = new Set(); }
+  const saveExpanded = () => {
+    try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expanded])); } catch (e) {}
+  };
+
   // A run's average over the games it played that are currently active (null if none apply).
   const activeAvg = (r) => {
     const played = (r.per_game || []).filter(g => active.has(g.id));
     if (!played.length) return null;
     return played.reduce((s, g) => s + g.score, 0) / played.length;
+  };
+  const mean = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  const entryAvg = entry => mean(entry.members.map(activeAvg).filter(value => value != null));
+  const entryMetric = (entry, key) => mean(entry.members.map(row => Number(row[key])).filter(Number.isFinite));
+  const entryGame = (entry, id) => {
+    const games = entry.members
+      .map(row => (row.per_game || []).find(game => game.id === id))
+      .filter(Boolean);
+    if (!games.length) return null;
+    return {
+      score: mean(games.map(game => game.score)),
+      levels: mean(games.map(game => game.levels)),
+      levels_total: mean(games.map(game => game.levels_total)),
+      actions: mean(games.map(game => game.actions)),
+      samples: games,
+    };
   };
 
   const thead = document.querySelector("#t thead");
@@ -191,6 +290,19 @@ Promise.all([
     </td>`;
   };
 
+  const groupCell = (entry, id, game) => {
+    const off = active.has(id) ? "" : " off";
+    const groupStart = groupStarts.has(id) ? " group-start" : "";
+    if (!game) return `<td class="g none${off}${groupStart}" data-game="${id}" title="${id}: not played">·</td>`;
+    const alpha = game.score > 0 ? (0.12 + 0.5 * Math.sqrt(game.score / cap)).toFixed(2) : 0;
+    const disp = game.score > 0 ? game.score.toFixed(game.score >= 10 ? 0 : 1) : "0";
+    const scores = game.samples.map(sample => sample.score.toFixed(2)).join(", ");
+    return `<td class="g ${game.score > 0 ? "" : "zero"}${off}${groupStart}" data-game="${id}" style="background:rgba(30,147,255,${alpha})">
+      <button type="button" data-toggle-group="${entry.key}"
+        title="${id} — replica mean ${game.score.toFixed(2)} (${scores}); click to expand">${disp}</button>
+    </td>`;
+  };
+
   function toggle(id) {
     if (active.has(id)) active.delete(id);
     else active.add(id);
@@ -204,6 +316,13 @@ Promise.all([
     const allOn = group.ids.every(id => active.has(id));
     group.ids.forEach(id => allOn ? active.delete(id) : active.add(id));
     saveActive();
+    render();
+  }
+
+  function toggleReplicaGroup(key) {
+    if (expanded.has(key)) expanded.delete(key);
+    else expanded.add(key);
+    saveExpanded();
     render();
   }
 
@@ -225,9 +344,55 @@ Promise.all([
     return w.replace(/\s*\(.*\)$/, "");
   }
 
+  function entryModel(entry) {
+    const labels = [...new Set(entry.members.map(modelLabel))];
+    return labels.length === 1 ? labels[0] : "Mixed";
+  }
+
+  function formatMean(value) {
+    if (value == null) return "—";
+    return Number.isInteger(value)
+      ? value.toLocaleString()
+      : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }
+
+  function runRow(r, avg, className = "", replicaTag = "") {
+    const byId = new Map((r.per_game || []).map(g => [g.id, g]));
+    const cells = order.map(id => cell(r.run, id, byId.get(id))).join("");
+    const d = runDate(r.run);
+    return `<tr class="${className}">
+      <td class="run">${replicaTag ? `<span class="replica-tag">${replicaTag}</span>` : ""}<a href="./viewer.html#run=${encodeURIComponent(r.run)}">${r.run}</a><a class="harness" href="./harness.html#run=${encodeURIComponent(r.run)}">harness</a>${r.has_usage ? `<a class="usage" href="./usage.html#run=${encodeURIComponent(r.run)}" title="CPU / GPU / RAM / storage over this run">usage</a>` : ""}</td>
+      <td class="date" title="${d.full}">${d.short}</td>
+      <td class="model" title="${(r.harness && r.harness.weights) || ""}">${modelLabel(r)}</td>
+      <td>${r.levels}</td><td>${r.actions.toLocaleString()}</td><td>${r.tokens.toLocaleString()}</td>
+      <td class="avg">${avg == null ? "—" : avg.toFixed(3)}</td>${cells}
+    </tr>`;
+  }
+
+  function groupRow(entry, avg, isBest) {
+    const isOpen = expanded.has(entry.key);
+    const d = runDate(entry.members[0].run);
+    const levels = entryMetric(entry, "levels");
+    const actions = entryMetric(entry, "actions");
+    const tokens = entryMetric(entry, "tokens");
+    const cells = order.map(id => groupCell(entry, id, entryGame(entry, id))).join("");
+    const weights = [...new Set(entry.members.map(row => row.harness && row.harness.weights).filter(Boolean))].join("; ");
+    return `<tr class="run-group${isBest ? " best" : ""}">
+      <td class="run"><button type="button" class="group-toggle" data-toggle-group="${entry.key}" aria-expanded="${isOpen}">
+        <span class="group-chevron">▶</span><span class="group-name">${entry.label}</span><span class="replica-count">${entry.members.length} runs</span>
+      </button></td>
+      <td class="date" title="${d.full}">${d.short}</td>
+      <td class="model" title="${weights}">${entryModel(entry)}</td>
+      <td title="Mean levels per replica">${formatMean(levels)}<span class="mean-mark">Ø</span></td>
+      <td title="Mean actions per replica">${formatMean(actions)}<span class="mean-mark">Ø</span></td>
+      <td title="Mean generated tokens per replica">${formatMean(tokens)}<span class="mean-mark">Ø</span></td>
+      <td class="avg" title="Equal-weight mean of ${entry.members.length} run averages">${avg == null ? "—" : avg.toFixed(3)}</td>${cells}
+    </tr>`;
+  }
+
   function render() {
-    // Recompute each run's average over the active games, then rank by it.
-    const ranked = rows.map(r => ({ r, avg: activeAvg(r) }))
+    // Recompute each run/group average over the active games, then rank collapsed entries.
+    const ranked = entries.map(entry => ({ entry, avg: entryAvg(entry) }))
       .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
     const best = Math.max(...ranked.map(x => x.avg ?? -Infinity));
 
@@ -249,26 +414,30 @@ Promise.all([
       th.title = `${group.label} — click to ${allOn ? "exclude" : "include"} all ${group.ids.length} games`;
     });
 
-    tbody.innerHTML = ranked.map(({ r, avg }) => {
-      const byId = new Map((r.per_game || []).map(g => [g.id, g]));
-      const cells = order.map(id => cell(r.run, id, byId.get(id))).join("");
+    tbody.innerHTML = ranked.map(({ entry, avg }) => {
       const isBest = avg != null && avg === best;
-      const d = runDate(r.run);
-      return `<tr class="${isBest ? "best" : ""}">
-        <td class="run"><a href="./viewer.html#run=${encodeURIComponent(r.run)}">${r.run}</a><a class="harness" href="./harness.html#run=${encodeURIComponent(r.run)}">harness</a>${r.has_usage ? `<a class="usage" href="./usage.html#run=${encodeURIComponent(r.run)}" title="CPU / GPU / RAM / storage over this run">usage</a>` : ""}</td>
-        <td class="date" title="${d.full}">${d.short}</td>
-        <td class="model" title="${(r.harness && r.harness.weights) || ""}">${modelLabel(r)}</td>
-        <td>${r.levels}</td><td>${r.actions.toLocaleString()}</td><td>${r.tokens.toLocaleString()}</td>
-        <td class="avg">${avg == null ? "—" : avg.toFixed(3)}</td>${cells}
-      </tr>`;
+      if (!entry.isGroup) return runRow(entry.members[0], avg, isBest ? "best" : "");
+      const parent = groupRow(entry, avg, isBest);
+      if (!expanded.has(entry.key)) return parent;
+      const children = entry.members.map((row, index) => {
+        const identity = entry.replicaMeta.get(row.run);
+        const tag = identity ? `rep ${identity.index}` : `rep ${index + 1}`;
+        return runRow(row, activeAvg(row), "replica-row", tag);
+      }).join("");
+      return parent + children;
     }).join("");
 
+    tbody.querySelectorAll("[data-toggle-group]").forEach(button => {
+      button.addEventListener("click", () => toggleReplicaGroup(button.dataset.toggleGroup));
+    });
+
     const n = active.size, total = order.length;
+    const replicaGroups = entries.filter(entry => entry.isGroup).length;
     const groupSummary = groups.map(group =>
       `${group.label}: <b>${group.ids.filter(id => active.has(id)).length}/${group.ids.length}</b>`
     ).join(" · ");
     status.innerHTML = n === total
-      ? `Average over all <b>${total}</b> games. <span class="hint">Click a game thumbnail to drop it from the averages.</span>`
+      ? `Average over all <b>${total}</b> games · <b>${replicaGroups}</b> replica groups collapsed. <span class="hint">Click a group row to inspect its runs.</span>`
       : `${n ? `Average over <b>${n}</b> of ${total} games` : `<b>No games selected</b>`}
          <span class="hint">(${groupSummary})</span>. <button type="button" id="games-reset">reset all</button>`;
     const reset = document.getElementById("games-reset");
