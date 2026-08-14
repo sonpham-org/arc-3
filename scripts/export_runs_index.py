@@ -82,7 +82,18 @@ HARNESS = {
         "agent_ctx": 32768, "server": "vLLM 0.19.0",
         "server_max_len": 65536, "spec_decode": "off",
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
-        "note": "Qwen3.8 clean model swap, xhigh replica 1. Final mean25 3.8361, ex-ft09 3.4007, 24 levels across 17/25 positive games, 1,583 actions, 2,260,484 generated tokens, runtime 2h12m43s. Same native TAAF plus cap-8 harness and sampling settings as the Qwen3.6 control; Qwen3.8 defaults thinking effort to xhigh.",
+        "note": "Qwen3.8 clean model swap, xhigh replica 1 of 2. Final mean25 3.8361, ex-ft09 3.4007, 24 levels across 17/25 positive games, 1,583 actions, 2,260,484 generated tokens, runtime 2h12m43s. Two-replica xhigh mean25 is 4.8251 and ex-ft09 mean is 4.3207. Same native TAAF plus cap-8 harness and sampling settings as the Qwen3.6 control; Qwen3.8 defaults thinking effort to xhigh.",
+    },
+    "20260814_165039_qwen38-taaf-cap8-xhigh-p2": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact author-shared native TAAF plus isolated checkpoint cap-8",
+        "memory": "TAAF reference memory; no no-impact/state-graph/animation-memory graft",
+        "render": "full-frame multimodal images using native TAAF configuration",
+        "yield_s": 60, "thinking": "on, reasoning_effort=xhigh (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Qwen3.8 clean model swap, xhigh replica 2 of 2. Final mean25 5.8142, ex-ft09 5.2408, 28 levels across 16/25 positive games, 2,142 actions, 2,110,839 generated tokens, runtime 2h12m23s. Two-replica xhigh mean25 is 4.8251 and ex-ft09 mean is 4.3207. This is the highest local official-25 score observed in the campaign.",
     },
     "20260813_232321_auto-c001-noimpact-p1": {
         "hardware": "RTX PRO 6000 (single GCP Spot worker shared by four passes)",
@@ -1029,6 +1040,11 @@ index_path = "docs/data/runs-index.json"
 # Sparse publication checkouts may intentionally materialize only the run being
 # added. Preserve already-published entries that have no local benchmark rather
 # than silently replacing the public catalog with the sparse subset.
+SUPERSEDED_RUNS = {
+    # Replica 2 launched later, but shares replica 1's experiment timestamp in
+    # the viewer so the scoreboard can collapse the pair into one xhigh mean.
+    "20260814_173638_qwen38-taaf-cap8-xhigh-p2",
+}
 existing_runs = []
 try:
     existing_payload = json.load(open(index_path))
@@ -1036,7 +1052,10 @@ try:
 except (FileNotFoundError, json.JSONDecodeError, AttributeError):
     pass
 local_names = {run["run"] for run in runs}
-runs.extend(run for run in existing_runs if run.get("run") not in local_names)
+runs.extend(
+    run for run in existing_runs
+    if run.get("run") not in local_names and run.get("run") not in SUPERSEDED_RUNS
+)
 runs.sort(key=lambda r: -r["avg_score"])
 payload = {"baseline": BASELINE, "biases": BIASES, "runs": runs}
 os.makedirs("docs/data", exist_ok=True)
