@@ -73,6 +73,17 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260814_165039_qwen38-taaf-cap8-xhigh-p1": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact author-shared native TAAF plus isolated checkpoint cap-8",
+        "memory": "TAAF reference memory; no no-impact/state-graph/animation-memory graft",
+        "render": "full-frame multimodal images using native TAAF configuration",
+        "yield_s": 60, "thinking": "on, reasoning_effort=xhigh (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Qwen3.8 clean model swap, xhigh replica 1. Final mean25 3.8361, ex-ft09 3.4007, 24 levels across 17/25 positive games, 1,583 actions, 2,260,484 generated tokens, runtime 2h12m43s. Same native TAAF plus cap-8 harness and sampling settings as the Qwen3.6 control; Qwen3.8 defaults thinking effort to xhigh.",
+    },
     "20260813_232321_auto-c001-noimpact-p1": {
         "hardware": "RTX PRO 6000 (single GCP Spot worker shared by four passes)",
         "agent_code": "native TAAF plus checkpoint cap-8 plus exact proven-no-impact guard",
