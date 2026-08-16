@@ -6,9 +6,9 @@ fetchRunsIndex().then((payload) => {
   const rows = (payload && payload.runs) || payload || [];
   rows.forEach((r) => runsIndex.set(r.run, r));
 }).catch(() => {});
-import { initBoard, setPalette, showBoard, setClicks, clearPins, colorAt, redraw, view, setDiff, clearDiff } from "./board.js";
+import { initBoard, setPalette, showBoard, setClicks, clearPins, colorAt, redraw, view, setDiff, clearDiff } from "./board.js?v=20260815-frames";
 import { initCoordRefs, showTooltip } from "./coords.js";
-import { renderDecision } from "./decision.js";
+import { renderDecision } from "./decision.js?v=20260815-frames";
 import { EventLog } from "./log.js";
 import { renderOverview } from "./overview.js";
 import { Scrubber } from "./scrubber.js";

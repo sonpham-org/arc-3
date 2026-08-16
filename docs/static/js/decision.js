@@ -6,7 +6,7 @@
 // told, and diff the one part of the prompt that actually changes.
 
 import { annotateCoordRefs, MODE } from "./coords.js";
-import { paintThumb } from "./board.js";
+import { paintThumb } from "./board.js?v=20260815-frames";
 
 const NOISE = /^(MODEL CONTEXT|MODEL RESPONSE META|PROMPT LOG SNAPSHOT|ACTION_RESPONSE)$/i;
 const IS_CODE = /^TOOL CALL/i;
