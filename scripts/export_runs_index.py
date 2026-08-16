@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260815_234920_qwen38-cap8ni-taafanim-p1": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "ffa7gn plus checkpoint cap-8 plus compact TAAF animation memory",
+        "memory": "scientist note + exact no-impact/state-action tracking + rolling compact animation summaries",
+        "render": "full-frame multimodal images + compact cross-turn animation metadata",
+        "yield_s": 60, "thinking": "on, reasoning_effort=xhigh (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Qwen3.8 xhigh reverse-integration replica 1 of 2: our ffa7gn/no-impact/checkpoint-8 stack with TAAF compact animation memory grafted onto it. Final mean25 2.8163, 18 levels, 1,147 actions, 2,272,626 generated tokens, runtime 2h12m41s. Pair mean25 3.3443. Exact GCS run g4run-q38-cap8ni-taafanim-p1-20260815-234920.",
+    },
+    "20260815_234920_qwen38-cap8ni-taafanim-p2": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "ffa7gn plus checkpoint cap-8 plus compact TAAF animation memory",
+        "memory": "scientist note + exact no-impact/state-action tracking + rolling compact animation summaries",
+        "render": "full-frame multimodal images + compact cross-turn animation metadata",
+        "yield_s": 60, "thinking": "on, reasoning_effort=xhigh (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Qwen3.8 xhigh reverse-integration replica 2 of 2: our ffa7gn/no-impact/checkpoint-8 stack with TAAF compact animation memory grafted onto it. Final mean25 3.8724, 24 levels, 1,133 actions, 2,123,818 generated tokens, runtime 2h12m47s. Pair mean25 3.3443. Exact GCS run g4run-q38-cap8ni-taafanim-p2-20260816-002914.",
+    },
     "20260814_165039_qwen38-taaf-cap8-xhigh-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact author-shared native TAAF plus isolated checkpoint cap-8",
