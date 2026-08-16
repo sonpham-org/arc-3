@@ -43,6 +43,9 @@ export function setPalette(nextPalette, nextColorChars) {
 /** Decode the `board_ascii` wire format into a grid of palette indices. */
 export function decodeBoard(boardAscii) {
   if (!boardAscii) return null;
+  if (Array.isArray(boardAscii)) {
+    return boardAscii.map((row) => Array.isArray(row) ? row.map((cell) => Number(cell) || 0) : []);
+  }
   const rows = boardAscii.split("\n").filter((row) => row.length);
   if (!rows.length) return null;
   return rows.map((row) => Array.from(row, (char) => Math.max(0, colorChars.indexOf(char))));

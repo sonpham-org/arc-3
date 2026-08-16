@@ -6,6 +6,7 @@
 // told, and diff the one part of the prompt that actually changes.
 
 import { annotateCoordRefs, MODE } from "./coords.js";
+import { paintThumb } from "./board.js";
 
 const NOISE = /^(MODEL CONTEXT|MODEL RESPONSE META|PROMPT LOG SNAPSHOT|ACTION_RESPONSE)$/i;
 const IS_CODE = /^TOOL CALL/i;
@@ -35,6 +36,7 @@ export function renderDecision(root, step, { currentClick, previousStep } = {}) 
   }
 
   root.appendChild(renderHead(step, currentClick));
+  root.appendChild(renderAbsorbedFrames(step));
 
   const sections = (step.localContext?.sections || []).filter((s) => !NOISE.test(s.label || ""));
   if (!sections.length) {
@@ -67,6 +69,42 @@ export function renderDecision(root, step, { currentClick, previousStep } = {}) 
   }
 
   root.appendChild(renderRaw(step));
+}
+
+function renderAbsorbedFrames(step) {
+  const explicit = Array.isArray(step.absorbedFrames) ? step.absorbedFrames : [];
+  const fallback = step.boardEvent ? [{
+    label: "Current settled frame (attached to Qwen)",
+    board: step.boardEvent.board,
+    board_ascii: step.boardEvent.board_ascii,
+  }] : [];
+  const frames = explicit.length ? explicit : fallback;
+  const section = document.createElement("section");
+  section.className = "absorbed-frames";
+
+  const heading = document.createElement("div");
+  heading.className = "absorbed-frames-title";
+  heading.textContent = "Frames Qwen received for this reasoning step";
+  section.appendChild(heading);
+
+  if (!frames.length) {
+    section.insertAdjacentHTML("beforeend", '<div class="empty">Frame input was not recorded for this turn.</div>');
+    return section;
+  }
+
+  const gallery = document.createElement("div");
+  gallery.className = "absorbed-frames-gallery";
+  for (const frame of frames) {
+    const figure = document.createElement("figure");
+    const canvas = document.createElement("canvas");
+    const label = document.createElement("figcaption");
+    label.textContent = frame.label || "Frame seen by model";
+    figure.append(canvas, label);
+    gallery.appendChild(figure);
+    paintThumb(canvas, frame.board || frame.board_ascii, 3);
+  }
+  section.appendChild(gallery);
+  return section;
 }
 
 function renderHead(step, currentClick) {

@@ -1151,6 +1151,49 @@ def _compact_step_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
     return compact or None
 
 
+def _compact_absorbed_frames(value: Any) -> list[dict[str, Any]]:
+    frames: list[dict[str, Any]] = []
+    for raw_frame in value if isinstance(value, list) else []:
+        if not isinstance(raw_frame, dict):
+            continue
+        frame: dict[str, Any] = {
+            "label": str(raw_frame.get("label") or "Frame seen by model").strip(),
+        }
+        for key in ("frame_index", "frame_count"):
+            if raw_frame.get(key) is not None:
+                frame[key] = raw_frame.get(key)
+        board = raw_frame.get("board")
+        if isinstance(board, list) and board:
+            frame["board"] = board
+        else:
+            board_ascii = str(raw_frame.get("board_ascii") or "")
+            if board_ascii:
+                frame["board_ascii"] = board_ascii
+        if frame.get("board") or frame.get("board_ascii"):
+            frames.append(frame)
+    return frames
+
+
+def _absorbed_frames_for_analysis(
+    analysis_event: dict[str, Any] | None,
+    board_event: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    explicit = _compact_absorbed_frames(
+        analysis_event.get("absorbed_frames") if analysis_event else None
+    )
+    if explicit:
+        return explicit
+    compact_board = _compact_step_event(board_event)
+    if not compact_board:
+        return []
+    fallback = {"label": "Current settled frame (attached to Qwen)"}
+    if compact_board.get("board"):
+        fallback["board"] = compact_board["board"]
+    elif compact_board.get("board_ascii"):
+        fallback["board_ascii"] = compact_board["board_ascii"]
+    return [fallback]
+
+
 def _compact_viewer_step(step: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {
         "title": str(step.get("title") or "").strip(),
@@ -1179,6 +1222,9 @@ def _compact_viewer_step(step: dict[str, Any]) -> dict[str, Any]:
         fallback_event = _compact_step_event(step.get("event"))
         if fallback_event is not None:
             compact["event"] = fallback_event
+    absorbed_frames = _compact_absorbed_frames(step.get("absorbedFrames"))
+    if absorbed_frames:
+        compact["absorbedFrames"] = absorbed_frames
     return compact
 
 
@@ -1721,6 +1767,9 @@ def _build_analysis_frame_step(
             "sourceEventIndex": group.get("source_event_index", 0),
             "event": summary_event,
             "boardEvent": board_event,
+            "absorbedFrames": _absorbed_frames_for_analysis(
+                analysis_event, board_event
+            ),
             "context": _extract_context(
                 context_events,
                 include_system_prompt=include_system_prompt,
@@ -1801,6 +1850,9 @@ def _lightweight_analysis_step(
             "sourceEventIndex": group.get("source_event_index", 0),
             "event": _compact_lightweight_event(summary_event),
             "boardEvent": _compact_lightweight_event(board_event),
+            "absorbedFrames": _absorbed_frames_for_analysis(
+                analysis_event, board_event
+            ),
             "score": board_event.get("score") if board_event else None,
             "state": board_event.get("state") if board_event else None,
             "level": board_event.get("level") if board_event else None,
