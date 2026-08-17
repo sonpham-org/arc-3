@@ -16,15 +16,34 @@ RUN_ID=$(meta arc3-run-id)
 MIG=$(meta arc3-mig)
 BUNDLE_NAME=$(meta arc3-bundle)
 REASONING_EFFORT=$(meta arc3-reasoning-effort)
+ARC3_VARIANT=$(meta arc3-variant 2>/dev/null || printf '%s' checkpoint8)
 ZONE=$(curl -sf -H "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/instance/zone" | awk -F/ '{print $NF}')
 SEED="$BUCKET/tufa-exact"
 MODEL_ID="Qwen/Qwen3.8-27B-FP8"
 MODEL_REVISION="017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
 SERVED_MODEL_NAME="$MODEL_ID"
-EXPECTED_BUNDLE_NAME="bundle-taaf-plain-checkpoint8-20260812.tgz"
-EXPECTED_BUNDLE_SHA256="f9e12ec74f869c200210c9b44cb030361af2a62718e6ca1feb1e434ffd146ee6"
 TEARDOWN_STARTED=0
+
+case "$ARC3_VARIANT" in
+  checkpoint8)
+    EXPECTED_BUNDLE_NAME="bundle-taaf-plain-checkpoint8-20260812.tgz"
+    EXPECTED_BUNDLE_SHA256="f9e12ec74f869c200210c9b44cb030361af2a62718e6ca1feb1e434ffd146ee6"
+    MULTIMODAL_UPSCALE_VALUE=8
+    ;;
+  kaggle-203-nocap-control)
+    # One-variable control derived from Kaggle submission 55551321 / script
+    # version 342637750: pristine author TAAF removes only the 19 checkpoint
+    # lines, while the scored notebook's 4x current-grid transport is retained.
+    EXPECTED_BUNDLE_NAME="bundle-taaf-plain-author-20260812-132401.tgz"
+    EXPECTED_BUNDLE_SHA256="7d030b62d95eed54899e3a8d0abf49281230d9f1ae7dcb72831a1cff86b18ce3"
+    MULTIMODAL_UPSCALE_VALUE=4
+    ;;
+  *)
+    echo "unsupported ARC3 variant: $ARC3_VARIANT" >&2
+    exit 2
+    ;;
+esac
 
 if [ "$BUNDLE_NAME" != "$EXPECTED_BUNDLE_NAME" ]; then
   echo "refusing non-champion bundle: got $BUNDLE_NAME, expected $EXPECTED_BUNDLE_NAME" >&2
@@ -76,19 +95,23 @@ teardown() {
 }
 trap teardown EXIT TERM INT
 
-echo "=== Qwen3.8 champion model swap $(date -u +%FT%TZ) run=$RUN_ID mig=$MIG reasoning_effort=$REASONING_EFFORT ==="
+echo "=== Qwen3.8 model swap $(date -u +%FT%TZ) run=$RUN_ID mig=$MIG variant=$ARC3_VARIANT reasoning_effort=$REASONING_EFFORT upscale=$MULTIMODAL_UPSCALE_VALUE ==="
 
 mkdir -p /opt/arc3
-python3 - "$REASONING_EFFORT" <<'PYCONFIG' > /opt/arc3/reasoning-config.json
+python3 - "$REASONING_EFFORT" "$ARC3_VARIANT" "$MULTIMODAL_UPSCALE_VALUE" <<'PYCONFIG' > /opt/arc3/reasoning-config.json
 import json
 import sys
 
 effort = sys.argv[1]
+variant = sys.argv[2]
+upscale = int(sys.argv[3])
 json.dump(
     {
         "enable_thinking": True,
         "preserve_thinking": True,
         "reasoning_effort": effort,
+        "variant": variant,
+        "multimodal_upscale": upscale,
         "control_surface": "vLLM default_chat_template_kwargs",
     },
     sys.stdout,
@@ -244,7 +267,7 @@ export LOCAL_ANALYZER_APP_NAME="ARC3 Agent Harness"
 export LOCAL_ANALYZER_CONTEXT_WINDOW=32768 LOCAL_ANALYZER_MAX_OUTPUT=0
 export LOCAL_ANALYZER_TOOL_STEPS=0 LOCAL_ANALYZER_TOOL_TIMEOUT=30 LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS=1024
 export LOCAL_ANALYZER_YIELD_SECONDS=60 LOCAL_ANALYZER_TEMPERATURE=0.6 LOCAL_ANALYZER_TOP_P=0.95 LOCAL_ANALYZER_TOP_K=20
-export LOCAL_ANALYZER_ENABLE_THINKING=true MULTIMODAL_CONTEXT=current_grid MULTIMODAL_UPSCALE=8
+export LOCAL_ANALYZER_ENABLE_THINKING=true MULTIMODAL_CONTEXT=current_grid MULTIMODAL_UPSCALE="$MULTIMODAL_UPSCALE_VALUE"
 export ARC3_REEXPLORE_STRICT="" ARC3_GAME_SUBSET="" ARC3_STATE_GRAPH="" ARC3_FRAME_MODE=full
 
 set +e
