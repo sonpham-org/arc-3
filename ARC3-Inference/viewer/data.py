@@ -15,6 +15,9 @@ from inference.utils.viewer_artifacts import load_raw_events, raw_events_jsonl_s
 
 
 _SECTION_RE = re.compile(r"(?m)^\[(.+?)\]\s*$")
+_TRANSCRIPT_HEADER_RE = re.compile(
+    r"(?m)^---\s*analysis_step=.*?\|\s*action=.*?\|\s*(?P<clock>\d{2}:\d{2}:\d{2})\s*\|\s*(?P<agent>.*?)\s*---\s*$"
+)
 _KNOWN_SECTION_LABELS = {
     "ASSISTANT",
     "ACTION_RESPONSE",
@@ -1273,6 +1276,7 @@ def _load_request_snapshots(path: Path | None) -> list[dict[str, Any]]:
             "action": _normalize_positive_int(payload.get("action")),
             "request_index_within_turn": _normalize_positive_int(payload.get("request_index_within_turn")),
             "event": str(payload.get("event") or "").strip() or None,
+            "recorded_at": str(payload.get("recorded_at") or "").strip() or None,
         }
         # `response` records carry what the model actually decided, and what it cost.
         for key in ("finish_reason", "usage", "response_message", "error"):
@@ -1332,6 +1336,41 @@ def _split_labeled_sections(text: str) -> list[dict[str, str]]:
         content = text[start:end].strip()
         sections.append({"label": label, "content": content, "kind": _classify_section(label)})
     return sections
+
+
+def _literal_trace_metadata(
+    analysis_event: dict[str, Any],
+    request_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Describe how literally the viewer can represent this model exchange.
+
+    New request logs carry an exact UTC timestamp and the exact message array sent
+    to the OpenAI-compatible endpoint. Older TAAF artifacts only have the stored
+    transcript. Its section text is still literal, but whether each section was in
+    the next request must be reconstructed by the viewer.
+    """
+    recorded_at = str((request_snapshot or {}).get("recorded_at") or "").strip()
+    if recorded_at:
+        return {
+            "traceTimestamp": recorded_at,
+            "traceTimestampBasis": "exact request-log UTC timestamp",
+            "traceProvenance": "exact-request-log",
+            "traceInputExact": True,
+        }
+
+    transcript = str(analysis_event.get("transcript") or "")
+    match = _TRANSCRIPT_HEADER_RE.search(transcript)
+    payload: dict[str, Any] = {
+        "traceTimestampBasis": "stored transcript header (worker clock)",
+        "traceProvenance": "stored-transcript",
+        "traceInputExact": False,
+    }
+    if match:
+        payload["traceTimestamp"] = match.group("clock")
+        agent = match.group("agent").strip()
+        if agent:
+            payload["traceAgent"] = agent
+    return payload
 
 
 def _is_known_section_label(label: str) -> bool:
@@ -1505,6 +1544,18 @@ def _request_snapshot_sections(snapshot: dict[str, Any], *, include_system_promp
             sections.append({"label": "USER PROMPT", "content": content, "kind": "meta", "inContext": True})
             continue
         if role == "assistant":
+            reasoning = _normalize_message_text(
+                message.get("reasoning") or message.get("reasoning_content", "")
+            )
+            if reasoning:
+                sections.append(
+                    {
+                        "label": "THINKING",
+                        "content": reasoning,
+                        "kind": "reasoning",
+                        "inContext": True,
+                    }
+                )
             if content:
                 sections.append({"label": "ASSISTANT", "content": content, "kind": "reasoning", "inContext": True})
             for tool_call in message.get("tool_calls") or []:
@@ -1605,7 +1656,10 @@ def _section_signature(section: dict[str, Any]) -> tuple[str, str]:
 
 
 def _default_in_context_for_transcript_section(section: dict[str, Any]) -> bool:
-    return str(section.get("label", "")).strip() != "THINKING"
+    # Native TAAF stores parsed reasoning on the assistant message and starts
+    # vLLM with preserve_thinking=true, so THINKING is part of the carried
+    # assistant history unless a later context-trim explicitly removes it.
+    return True
 
 
 def _extract_context(
@@ -1761,7 +1815,7 @@ def _build_analysis_frame_step(
     )
     context_events = [analysis_event] if (request_snapshot is not None and analysis_event is not None) else prior_analysis_events
 
-    return _apply_action_summary(
+    step = _apply_action_summary(
         {
             "title": _build_step_title(group.get("analysis_step"), f"Turn {group.get('analysis_step')}"),
             "sourceEventIndex": group.get("source_event_index", 0),
@@ -1786,6 +1840,9 @@ def _build_analysis_frame_step(
         },
         action_summary,
     )
+    if analysis_event is not None:
+        step.update(_literal_trace_metadata(analysis_event, request_snapshot))
+    return step
 
 
 def _build_latest_state_step(
@@ -2167,6 +2224,7 @@ def _hydrate_lightweight_step(
     usage = turn_usage(request_snapshots, analysis_step=analysis_step)
     if usage is not None:
         step["llm"] = usage
+    step.update(_literal_trace_metadata(normalized_event, request_snapshot))
     return step
 
 

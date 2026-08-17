@@ -8,7 +8,7 @@ fetchRunsIndex().then((payload) => {
 }).catch(() => {});
 import { initBoard, setPalette, showBoard, setClicks, clearPins, colorAt, redraw, view, setDiff, clearDiff } from "./board.js?v=20260815-frames";
 import { initCoordRefs, showTooltip } from "./coords.js";
-import { renderDecision } from "./decision.js?v=20260815-frames";
+import { renderDecision } from "./decision.js?v=20260817-literal";
 import { EventLog } from "./log.js";
 import { renderOverview } from "./overview.js";
 import { Scrubber } from "./scrubber.js";
@@ -39,6 +39,7 @@ const el = {
   tooltip: document.querySelector("#tooltip"),
   boardMeta: document.querySelector("#board-meta"),
   boardMode: document.querySelector("#board-mode"),
+  decisionMode: document.querySelector("#decision-mode"),
 };
 
 // Which board a turn's row shows:
@@ -51,6 +52,12 @@ const BOARD_MODES = new Set(["state", "consequence", "diff"]);
 let boardMode = (() => {
   try { const m = localStorage.getItem("arc3-board-mode"); return BOARD_MODES.has(m) ? m : "consequence"; }
   catch (_) { return "consequence"; }
+})();
+
+const DECISION_MODES = new Set(["review", "literal"]);
+let decisionMode = (() => {
+  try { const m = localStorage.getItem("arc3-decision-mode"); return DECISION_MODES.has(m) ? m : "review"; }
+  catch (_) { return "review"; }
 })();
 
 const log = new EventLog(el.logBody, { onSelect: (frame) => scrubber.seek(frame, { user: true }) });
@@ -75,6 +82,23 @@ if (el.boardMode) {
     if (frame) selectFrame(scrubber.pos);
   });
   syncModeButtons();
+}
+
+function syncDecisionModeButtons() {
+  if (!el.decisionMode) return;
+  el.decisionMode.querySelectorAll("button[data-mode]").forEach((button) =>
+    button.classList.toggle("on", button.dataset.mode === decisionMode));
+}
+if (el.decisionMode) {
+  el.decisionMode.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-mode]");
+    if (!button || !DECISION_MODES.has(button.dataset.mode)) return;
+    decisionMode = button.dataset.mode;
+    try { localStorage.setItem("arc3-decision-mode", decisionMode); } catch (_) {}
+    syncDecisionModeButtons();
+    if (state.frames[scrubber.pos]) selectFrame(scrubber.pos);
+  });
+  syncDecisionModeButtons();
 }
 
 el.back.addEventListener("click", () => location.hash = "");
@@ -235,6 +259,7 @@ async function selectFrame(index) {
   renderDecision(el.decision, await loadStep(step.stepIndex), {
     currentClick: frame.click,
     previousStep: previous,
+    mode: decisionMode,
   });
 }
 

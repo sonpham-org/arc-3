@@ -7,6 +7,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse, urlunparse
@@ -889,6 +890,7 @@ def _append_request_snapshot(
     payload = {
         "messages": messages,
         "tools": tools or [],
+        "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     if event:
         payload["event"] = event

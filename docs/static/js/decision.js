@@ -28,7 +28,7 @@ function typeClass(label) {
   return "";
 }
 
-export function renderDecision(root, step, { currentClick, previousStep } = {}) {
+export function renderDecision(root, step, { currentClick, previousStep, mode = "review" } = {}) {
   root.innerHTML = "";
   if (!step) {
     root.innerHTML = '<div class="empty">No analyzer turn for this frame.</div>';
@@ -36,6 +36,10 @@ export function renderDecision(root, step, { currentClick, previousStep } = {}) 
   }
 
   root.appendChild(renderHead(step, currentClick));
+  if (mode === "literal") {
+    root.appendChild(renderLiteral(step));
+    return;
+  }
   root.appendChild(renderAbsorbedFrames(step));
 
   const sections = (step.localContext?.sections || []).filter((s) => !NOISE.test(s.label || ""));
@@ -69,6 +73,53 @@ export function renderDecision(root, step, { currentClick, previousStep } = {}) 
   }
 
   root.appendChild(renderRaw(step));
+}
+
+function renderLiteral(step) {
+  const wrap = document.createElement("section");
+  wrap.className = "literal-trace";
+  const exact = step.traceInputExact === true || step.localContext?.hasExactModelContext === true;
+  const timestamp = String(step.traceTimestamp || "timestamp unavailable in this export");
+  const basis = String(step.traceTimestampBasis || "no timestamp metadata");
+  const source = exact ? "Exact saved request context" : "Stored transcript reconstruction";
+
+  const notice = document.createElement("div");
+  notice.className = `literal-notice ${exact ? "is-exact" : "is-reconstructed"}`;
+  notice.innerHTML = `<b>${escapeHtml(source)}</b><span>${escapeHtml(timestamp)} · ${escapeHtml(basis)}</span>`;
+  if (!exact) {
+    notice.insertAdjacentHTML("beforeend", "<small>Section text is shown verbatim. Older TAAF runs did not save the exact request JSON, so input-context membership is inferred from the transcript.</small>");
+  }
+  wrap.appendChild(notice);
+
+  const sections = step.localContext?.sections || [];
+  if (!sections.length) {
+    wrap.insertAdjacentHTML("beforeend", '<div class="empty">No stored model input/output for this turn.</div>');
+    return wrap;
+  }
+
+  for (const section of sections) {
+    const direction = literalDirection(section.label);
+    const record = document.createElement("article");
+    record.className = `literal-record is-${direction}`;
+    const head = document.createElement("div");
+    head.className = "literal-record-head";
+    const contextTag = section.inContext === false
+      ? (exact ? " · not present in captured request" : " · context carry not verified")
+      : "";
+    head.innerHTML = `<b>${escapeHtml(direction.toUpperCase())}</b><span>${escapeHtml(section.label || "SECTION")}${escapeHtml(contextTag)}</span><time>${escapeHtml(timestamp)}</time>`;
+    const pre = document.createElement("pre");
+    pre.textContent = String(section.content || "");
+    record.append(head, pre);
+    wrap.appendChild(record);
+  }
+  return wrap;
+}
+
+function literalDirection(label) {
+  const value = String(label || "").toUpperCase();
+  if (value === "SYSTEM PROMPT" || value === "USER PROMPT" || value.startsWith("TOOL RESULT")) return "input";
+  if (value === "THINKING" || value === "ASSISTANT" || value === "OUTPUT" || value.startsWith("TOOL CALL")) return "output";
+  return "trace";
 }
 
 function renderAbsorbedFrames(step) {
