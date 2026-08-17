@@ -95,6 +95,17 @@ HARNESS = {
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
         "note": "No-cap control replica 2 of 2 derived from Kaggle submission 55551321. Final mean25 5.3877, ex-ft09 3.6573, 27 levels, 1,697 actions, 2,014,432 generated tokens, runtime 2h12m23s. Exact GCS run g4run-q38x-taaf-k203nc-p2-20260817-134613.",
     },
+    "20260817_153947_q38-taaf-cap8-p3": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "byte-matched historical native-TAAF checkpoint-8 reproduction",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Exact third checkpoint-8 reproduction cloned from the historical August 14 template. Final mean25 4.4358, ex-ft09 2.7159, 23 levels, 1,650 actions, 2,257,195 generated tokens, runtime 2h12m51s. Source startup and shutdown scripts matched byte-for-byte; only run/MIG metadata changed. Exact GCS run g4run-q38-taaf-cap8-p3-20260817-153947.",
+    },
     "20260816_114524_q38x-taaf-cp8hud-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "native TAAF plus checkpoint-8 and cadence-aware HUD no-impact guard",
