@@ -73,6 +73,17 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260817_132313_q38x-taaf-k203nc-p1": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact Kaggle-2.03 native TAAF control with checkpoint-8 removed",
+        "memory": "pristine author-shared native TAAF reference memory",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, reasoning_effort=xhigh (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "No-cap control replica 1 of 2 derived from Kaggle submission 55551321. Final mean25 3.5063, ex-ft09 2.7040, 24 levels, 2,134 actions, 2,309,339 generated tokens, runtime 2h12m17s. Exact GCS run g4run-q38x-taaf-k203nc-p1-20260817-132313.",
+    },
     "20260816_114524_q38x-taaf-cp8hud-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "native TAAF plus checkpoint-8 and cadence-aware HUD no-impact guard",
