@@ -1405,39 +1405,21 @@ class ToolAgent:
             [
                 state_line,
                 f"Valid actions right now: {_format_valid_action_line(valid_actions)}.",
-                "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_result`, and `action(actions)`."
-                + (LAST_ANIMATION_TOOL_CLAUSE if full_frame_enabled() else ""),
-                "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
-                "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
-                "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
-                "Use Python to inspect the evidence, refine that world model from the newest history, and search or score candidate actions or short sequences against the current goal as you currently understand it.",
-                "Maintain a compact working world model of what the current level seems to contain, what actions appear to do, what the goal seems to be, what is still uncertain, and what plan currently looks best.",
-                "Below you are provided with the current knowledge ledger from the previous turn. The default behavior is to copy it and add or remove things based on the evidence that you gathered. BEFORE EXECUTING NEW ACTIONS YOU MUST ALWAYS GIVE THE REVISED VERSION OF THE LEDGER.",
-                "Pass it as the `world_model` argument of the `python` tool call, alongside `code`. That argument is the one that carries forward, so send it on every call, even when you reply with a tool call and no assistant text.",
-                "Game-tier fields (action_semantics, object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes) persist across levels; level-tier fields (world_model, goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes) reset when a level ends. Record every unproductive probe in failed_probes so it is never repeated, and tag claims VERIFIED(step N) or HYPOTHESIS.",
             ]
         )
-        lines.append(
-            "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it, "
-            "but stop immediately if a result reports `game_over`, `run_complete`, `level_completed`, or `done`."
-        )
         lines.extend(self._summarized_knowledge_lines())
-        lines.append("end of world model. ")
+        lines.append("End of carried knowledge ledger.")
         if action_num == 0:
             lines.append(
-                "Ground yourself in `current_frame` before acting, but start with a compact structural summary rather than restating the full frame."
+                "Ground on `current_frame` in Python before acting."
             )
         else:
             lines.append(
-                "Focus on what changed most recently in `history`, update the target environment change if needed, and separate gameplay-object changes from HUD-only changes."
+                "Inspect the newest transition in Python and distinguish gameplay change from HUD-only change."
             )
-        lines.extend(
-            [
-                "When ready, call `action(actions)` from inside the `python` tool with the best valid action or ordered batch selected by your code. If your code has found a reliable short sequence, prefer batching it in one call.",
-                "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it.",
-                "The `world_model` tool argument is the reliable way to update the ledger. Assistant text is optional; if you write any, keep it short and prefix lines with `Action semantics:`, `Object taxonomy:`, `HUD map:`, `Win pattern:`, `Level log:`, `Cross-level notes:`, `World model:`, `Goal model:`, `Recent findings:`, `Open questions:`, `Plan:`, or `Failed probes:`.",
-                TOOL_CALL_FORMAT_GUIDANCE,
-            ]
+        lines.append(
+            "Call `python` with compact inspection/search code and the revised required `world_model` ledger, "
+            "then execute the shortest reliable valid action or batch via `action(actions)`. Stop on any terminal result."
         )
         if "MOUSE" in _normalize_valid_actions(valid_actions):
             lines.append("If you use MOUSE, include integer row and col arguments.")

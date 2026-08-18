@@ -107,6 +107,9 @@
   .gamesel .hint { opacity: .6; }
   .gamesel b { color: var(--text, inherit); }
   .gamesel button { font: inherit; padding: 2px 9px; }
+  .gamesel .quickfilters { display: inline-flex; gap: 5px; }
+  .gamesel .quickfilters button.active { border-color: var(--accent, #1E93FF);
+                                          background: var(--accent-wash, rgba(59,130,246,.12)); }
 </style>
 </head>
 <body>
@@ -118,11 +121,11 @@
 <nav class="topnav"><a href="./internal.html" class="active">Scoreboard</a><a href="./signals.html">Signal runs</a></nav>
 <div class="head">
   <h1>Run scoreboard</h1>
-  <p class="sub">The six-game autoresearch panel is on the far left, followed by the remaining
-  official Kaggle games, with additional games on the right;
+  <p class="sub">The 25 official Kaggle games are grouped on the left and additional games on the right;
   replica runs are collapsed into an equal-weight average and can be expanded to inspect each trace.
   Each game cell is the run or replica-group mean (shading scales with the score). Tufa's public
-  reference average: 1.6002. Click a category or game header to include or exclude it.</p>
+  reference average: 1.6002. All games are selected on every page load; use the quick filters or
+  click a category or game header to narrow the comparison.</p>
 </div>
 <div class="gamesel" id="gamesel-status"></div>
 <div class="tablewrap"><table id="t"><thead></thead><tbody></tbody></table></div>
@@ -133,12 +136,20 @@ Promise.all([
 ]).then(([payload, catalog]) => {
   const rows = payload.runs || payload;
 
-  // Conservative replica detection. Explicit -p1/-p2/-rep1/-run1 suffixes are preferred;
-  // plain -1/-2 suffixes are grouped only when at least two siblings actually exist.
+  // Conservative replica detection. Traces have used several replica spellings over time;
+  // all patterns still require at least two distinct siblings before a group is emitted.
   function replicaIdentity(name) {
     const value = String(name);
-    const explicit = value.match(/^(.*?)([-_](?:p|pass|rep|replica|run))(\d+)$/i);
+    const explicit = value.match(/^(.*?)([-_](?:p|pass|rep|replica|run|seed|trial|sample|copy|attempt|worker|shard|s))[-_]?0*(\d+)$/i);
     if (explicit) return { base: explicit[1], index: +explicit[3], suffix: explicit[2] };
+    const beforeTimestamp = value.match(/^(.*?)([-_](?:p|pass|rep|replica|run|seed|trial|sample|copy|attempt|worker|shard|s))[-_]?0*(\d+)((?:[-_]\d{8})(?:[-_]\d{6})?)$/i);
+    if (beforeTimestamp) {
+      return {
+        base: `${beforeTimestamp[1]}${beforeTimestamp[4]}`,
+        index: +beforeTimestamp[3],
+        suffix: beforeTimestamp[2],
+      };
+    }
     const plain = value.match(/^(.*?)([-_])(\d+)$/);
     if (plain) return { base: plain[1], index: +plain[3], suffix: plain[2] };
     return null;
@@ -193,20 +204,18 @@ Promise.all([
       if (!seen.has(g.id)) { seen.add(g.id); discovered.push(g.id); }
     }));
 
-  // The catalog is authoritative for the official 25. Keep them on the left in catalog order,
-  // but give the fixed autoresearch panel its own group. Preserve discovery order for extras.
+  // The catalog is authoritative for the official 25. Keep them together on the left in catalog
+  // order. The fixed autoresearch panel remains a quick filter, not a separate game category.
   const panelIds = [
     "ft09-0d8bbf25", "sb26-7fbdac44", "g50t-5849a774",
     "bp35-0a0ad940", "r11l-495a7899", "sk48-d8078629",
   ];
-  const panelSet = new Set(panelIds);
   const officialSet = new Set(catalog.filter(g => g.official).map(g => g.id));
-  const official = catalog.filter(g => g.official && seen.has(g.id) && !panelSet.has(g.id)).map(g => g.id);
+  const official = catalog.filter(g => g.official && seen.has(g.id)).map(g => g.id);
   const panel = panelIds.filter(id => officialSet.has(id) && seen.has(id));
   const additional = discovered.filter(id => !officialSet.has(id));
-  const order = [...panel, ...official, ...additional];
+  const order = [...official, ...additional];
   const groups = [
-    { key: "panel6", label: "Group of 6", ids: panel },
     { key: "official", label: "Official Kaggle games", ids: official },
     { key: "additional", label: "Additional games", ids: additional },
   ].filter(group => group.ids.length);
@@ -215,14 +224,9 @@ Promise.all([
 
   const cap = Math.max(1, ...rows.flatMap(r => (r.per_game || []).map(g => g.score)));
 
-  // Which games count toward the averages. Click a thumbnail to drop it; the choice persists.
-  const LS_KEY = "arc3-scoreboard-games";
-  let active;
-  try {
-    const saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
-    active = new Set(Array.isArray(saved) ? saved.filter(id => order.includes(id)) : order);
-  } catch (e) { active = new Set(order); }
-  const saveActive = () => { try { localStorage.setItem(LS_KEY, JSON.stringify([...active])); } catch (e) {} };
+  // Every visit starts with every game selected. Filters are intentionally session-only so an old
+  // six-game comparison can never silently become the default leaderboard on the next visit.
+  let active = new Set(order);
 
   const EXPANDED_KEY = "arc3-scoreboard-expanded-replicas";
   let expanded;
@@ -313,7 +317,6 @@ Promise.all([
   function toggle(id) {
     if (active.has(id)) active.delete(id);
     else active.add(id);
-    saveActive();
     render();
   }
 
@@ -322,7 +325,11 @@ Promise.all([
     if (!group) return;
     const allOn = group.ids.every(id => active.has(id));
     group.ids.forEach(id => allOn ? active.delete(id) : active.add(id));
-    saveActive();
+    render();
+  }
+
+  function selectGames(ids) {
+    active = new Set(ids.filter(id => order.includes(id)));
     render();
   }
 
@@ -443,12 +450,20 @@ Promise.all([
     const groupSummary = groups.map(group =>
       `${group.label}: <b>${group.ids.filter(id => active.has(id)).length}/${group.ids.length}</b>`
     ).join(" · ");
-    status.innerHTML = n === total
-      ? `Average over all <b>${total}</b> games · <b>${replicaGroups}</b> replica groups collapsed. <span class="hint">Click a group row to inspect its runs.</span>`
+    const allSelected = n === total;
+    const panelSelected = n === panel.length && panel.every(id => active.has(id));
+    const summary = allSelected
+      ? `Average over all <b>${total}</b> games · <b>${replicaGroups}</b> replica groups collapsed.`
       : `${n ? `Average over <b>${n}</b> of ${total} games` : `<b>No games selected</b>`}
-         <span class="hint">(${groupSummary})</span>. <button type="button" id="games-reset">reset all</button>`;
-    const reset = document.getElementById("games-reset");
-    if (reset) reset.addEventListener("click", () => { active = new Set(order); saveActive(); render(); });
+        <span class="hint">(${groupSummary})</span>.`;
+    status.innerHTML = `${summary}
+      <span class="quickfilters" aria-label="Scoreboard game filters">
+        <button type="button" id="games-all" class="${allSelected ? "active" : ""}" aria-pressed="${allSelected}">All games</button>
+        <button type="button" id="games-panel" class="${panelSelected ? "active" : ""}" aria-pressed="${panelSelected}">6-game panel</button>
+      </span>
+      <span class="hint">Click a replica group to inspect its runs.</span>`;
+    document.getElementById("games-all").addEventListener("click", () => selectGames(order));
+    document.getElementById("games-panel").addEventListener("click", () => selectGames(panel));
   }
 
   render();
