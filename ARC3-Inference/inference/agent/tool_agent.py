@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 import requests
 
 from inference.agent.action_names import to_engine_action, to_model_action
+from inference.agent.common_themes import render_common_themes_prompt
 from inference.agent.prompts import (
     COMPACT_TOOL_SESSION_ADDENDUM,
     GAME_OVERVIEW_ADDENDUM,
@@ -1409,6 +1410,9 @@ class ToolAgent:
         )
         lines.extend(self._summarized_knowledge_lines())
         lines.append("End of carried knowledge ledger.")
+        common_themes = render_common_themes_prompt()
+        if common_themes:
+            lines.append(common_themes)
         if action_num == 0:
             lines.append(
                 "Ground on `current_frame` in Python before acting."
