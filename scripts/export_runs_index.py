@@ -15,7 +15,7 @@ import re
 def extract_prompts(run_dir: str) -> dict:
     """First [SYSTEM PROMPT] and first [USER PROMPT] block from any transcript."""
     for t in sorted(glob.glob(os.path.join(run_dir, "transcripts", "*_p0.txt"))):
-        text = open(t, errors="replace").read(200_000)
+        text = open(t, encoding="utf-8", errors="replace").read(200_000)
         blocks = re.split(r"^\[([A-Z ]+)\]$", text, flags=re.M)
         # blocks: [pre, LABEL, content, LABEL, content, ...]
         out = {}
@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260817_234518_q38-taaf-cap8-zh-p1": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 harness with Chinese prompts",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Simplified-Chinese system and dynamic user prompts, replica 1 of 2; this is the sole causal change from the exact checkpoint-8 reference. Final mean25 2.7059, ex-ft09 2.2235, 19 levels, 1,503 actions, 2,187,203 generated tokens, runtime 2h12m55s. Exact GCS run g4run-q38-taaf-cap8-zh-p1-20260817-234518.",
+    },
+    "20260817_234518_q38-taaf-cap8-zh-p2": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 harness with Chinese prompts",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Simplified-Chinese system and dynamic user prompts, replica 2 of 2; this is the sole causal change from the exact checkpoint-8 reference. Final mean25 2.9446, ex-ft09 2.4720, 23 levels, 1,882 actions, 2,581,608 generated tokens, runtime 2h12m05s. Pair mean25 2.8252. Exact GCS run g4run-q38-taaf-cap8-zh-p2-20260817-234518.",
+    },
     "20260817_132313_q38x-taaf-k203nc-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact Kaggle-2.03 native TAAF control with checkpoint-8 removed",
