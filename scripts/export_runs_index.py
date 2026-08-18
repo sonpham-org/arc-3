@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260818_111520_q38-taaf-cap8-compact-en-p1": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 harness with compact dynamic English prompt",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Compact-English dynamic-prompt replica 1 of 2. Final mean25 3.3373, ex-ft09 3.2124, 22 levels, 2,759 actions, 2,210,144 generated tokens, runtime 2h12m43s. Pair mean25 4.5441 and ex-ft09 4.0063. The static initial dynamic prompt fell from 2,706 to 415 characters; the unchanged system prompt and tool schema retain the removed instructions. Exact GCS run g4run-q38-taaf-cap8-compact-en-p1-20260818-111520.",
+    },
+    "20260818_111520_q38-taaf-cap8-compact-en-p2": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 harness with compact dynamic English prompt",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Compact-English dynamic-prompt replica 2 of 2. Final mean25 5.7510, ex-ft09 4.8001, 30 levels, 2,296 actions, 2,217,081 generated tokens, runtime 2h12m28s. Pair mean25 4.5441 and ex-ft09 4.0063. The pair matched the historical checkpoint-8 pair's 52 levels but used 35.7% more actions, so prompt compaction did not improve score/action efficiency. Exact GCS run g4run-q38-taaf-cap8-compact-en-p2-20260818-111520.",
+    },
     "20260817_234518_q38-taaf-cap8-zh-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact historical native-TAAF checkpoint-8 harness with Chinese prompts",
