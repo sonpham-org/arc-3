@@ -259,7 +259,7 @@ async function init() {
   state.rows = (index?.runs || []).filter((row) => row.has_execution_trace).sort((a, b) => b.run.localeCompare(a.run));
   state.rows.forEach((row, indexValue) => state.colors.set(row.run, COLORS[indexValue % COLORS.length]));
   const requested = requestedRuns().filter((run) => state.rows.some((row) => row.run === run));
-  const defaults = requested.length ? requested : state.rows.slice(0, Math.min(4, state.rows.length)).map((row) => row.run);
+  const defaults = requested.length ? requested : state.rows.map((row) => row.run);
   defaults.forEach((run) => state.selected.add(run));
   renderControls();
   await Promise.all(defaults.map(loadTrace));
