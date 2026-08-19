@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -150,7 +151,21 @@ def score_curve(
     for rows in injections.values():
         rows.sort(key=lambda item: (item[0], item[1]))
 
+    def action_time(game_id: str, action_number: int, batch_index: int, analysis_step: int) -> tuple[datetime | None, str]:
+        """Place an environment action on the generating analyzer-call clock."""
+        batch_start = action_number - batch_index + 1
+        candidates = [item for item in injections.get(game_id, []) if item[0] <= batch_start]
+        if candidates:
+            best_action = max(item[0] for item in candidates)
+            at = max(item[1] for item in candidates if item[0] == best_action)
+            basis = "exact prompt-injection call start" if best_action == batch_start else "prior generated-batch call start"
+            return at, basis
+        at = main_times.get((game_id, analysis_step))
+        return at, "model-call timestamp reconstruction" if at is not None else ""
+
     completions: list[dict] = []
+    timed_actions: list[datetime] = []
+    total_actions = 0
     untimed = 0
     events_dir = artifact_root / "artifacts"
     for path in sorted(events_dir.glob("*_events.jsonl")):
@@ -166,30 +181,23 @@ def score_curve(
         for row in read_jsonl(path):
             if row.get("type") != "action":
                 continue
+            total_actions += 1
             after = int(row.get("score") or 0)
             completed = bool(row.get("level_completed"))
             level_index = after - 1 if completed else after
             if 0 <= level_index < number_of_levels:
                 actions_per_level[level_index] += 1
-            if not completed:
-                continue
-
             action_number = int(row.get("action_num") or 0)
             batch_index = int(row.get("batch_index") or 1)
-            batch_start = action_number - batch_index + 1
-            at: datetime | None = None
-            basis = ""
-            candidates = [item for item in injections.get(game_id, []) if item[0] <= batch_start]
-            if candidates:
-                best_action = max(item[0] for item in candidates)
-                at = max(item[1] for item in candidates if item[0] == best_action)
-                basis = "exact prompt-injection call start" if best_action == batch_start else "prior generated-batch call start"
+            analysis_step = int(row.get("analysis_step") or 0)
+            at, basis = action_time(game_id, action_number, batch_index, analysis_step)
+            if at is not None:
+                timed_actions.append(at)
             if at is None:
-                analysis_step = int(row.get("analysis_step") or 0)
-                at = main_times.get((game_id, analysis_step))
-                basis = "model-call timestamp reconstruction" if at is not None else ""
-            if at is None:
-                untimed += 1
+                if completed:
+                    untimed += 1
+                continue
+            if not completed:
                 continue
             game_score = live_game_score(run, actions_per_level, after)
             completions.append(
@@ -204,11 +212,13 @@ def score_curve(
             )
 
     completions.sort(key=lambda row: (row["at"], row["gameId"], row["action"]))
+    timed_actions.sort()
     game_scores: dict[str, float] = {}
     points = [
         {
             "at": iso(started),
             "elapsedSeconds": 0.0,
+            "cumulativeActions": 0,
             "meanScore": 0.0,
             "kind": "start",
         }
@@ -220,6 +230,7 @@ def score_curve(
             {
                 "at": iso(row["at"]),
                 "elapsedSeconds": round((row["at"] - started).total_seconds(), 3),
+                "cumulativeActions": bisect_right(timed_actions, row["at"]),
                 "meanScore": round(mean_score, 9),
                 "kind": "level_completion",
                 "gameId": row["gameId"],
@@ -235,6 +246,7 @@ def score_curve(
         {
             "at": iso(ended),
             "elapsedSeconds": round((ended - started).total_seconds(), 3),
+            "cumulativeActions": total_actions,
             "meanScore": round(final_mean, 9),
             "kind": "end",
         }
@@ -244,9 +256,13 @@ def score_curve(
         "completionEvents": len(completions),
         "untimedCompletions": untimed,
         "finalMeanScore": round(final_mean, 9),
+        "finalActions": total_actions,
+        "timedActions": len(timed_actions),
+        "actionTimestampCoverage": round(len(timed_actions) / total_actions, 6) if total_actions else 1.0,
         "timestampNote": (
             "Score changes are placed at the generating model-call start. "
-            "Reviewed-theme runs use exact injection timestamps; older runs use transcript/model-call reconstruction."
+            "Reviewed-theme runs use exact injection timestamps; older runs use transcript/model-call reconstruction. "
+            "The action axis counts every environment action at that same generating-call timestamp."
         ),
     }
 
