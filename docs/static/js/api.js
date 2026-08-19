@@ -11,6 +11,7 @@ export const fetchRunOverview = (run) =>
 export const fetchGame = (run, index) => json(`${r(run)}/game-${index}.json`);
 export const fetchGameFrames = (run, index) => json(`${r(run)}/game-${index}-frames.json`);
 export const fetchGameStep = (run, index, step) => json(`${r(run)}/game-${index}-step-${step}.json`);
-export const fetchRunTimeline = (run) => json(`${r(run)}/run-timeline.json`);
+export const fetchRunTimeline = (run, version = "") =>
+  json(`${r(run)}/run-timeline.json${version ? `?v=${encodeURIComponent(version)}` : ""}`);
 export const fetchViewerVersion = async () => ({ version: "static" });
 export const fetchRunsIndex = () => json("runs-index.json").catch(() => null);

@@ -159,7 +159,7 @@ async function load() {
   syncTabs();
   el.title.textContent = `Score over time — ${state.run}`;
   try {
-    state.trace = await fetchRunTimeline(state.run);
+    state.trace = await fetchRunTimeline(state.run, "score-time-v1");
     const curve = state.trace.scoreCurve || {points:[]};
     el.note.textContent = curve.timestampNote || "";
     renderStats(curve);
