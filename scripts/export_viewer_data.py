@@ -40,8 +40,12 @@ def export_run(run_dir: Path) -> None:
     # alongside startup/resource/sidecar evidence.  Preserve the stable outer
     # archive name as the public run id while pointing the viewer loader at the
     # nested gameplay root.
+    # Synced GCS archives can contain a lightweight root-level benchmark copy
+    # as well as the complete gameplay tree under ``runs/``.  Prefer the
+    # nested tree whenever it exists; the root copy alone has no viewer
+    # artifacts and would otherwise export an empty overview.
     source_dir = run_dir
-    if not (source_dir / "benchmark.json").exists() and (source_dir / "runs" / "benchmark.json").exists():
+    if (source_dir / "runs" / "benchmark.json").exists():
         source_dir = source_dir / "runs"
     out = OUT_BASE / run_dir.name
     out.mkdir(parents=True, exist_ok=True)
