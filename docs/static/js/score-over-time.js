@@ -18,6 +18,12 @@ const el = {
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
 const fmtScore = (value) => Number(value || 0).toFixed(3);
+const fmtTokens = (value) => {
+  const amount = Number(value || 0);
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(amount >= 10_000_000 ? 0 : 1)}M`;
+  if (amount >= 1_000) return `${(amount / 1_000).toFixed(amount >= 100_000 ? 0 : 1)}k`;
+  return Math.round(amount).toLocaleString();
+};
 const fmtDuration = (seconds) => {
   const value = Number(seconds || 0);
   if (value >= 3600) return `${Math.floor(value / 3600)}h ${Math.round((value % 3600) / 60)}m`;
@@ -38,9 +44,11 @@ const shortRun = (run) => {
 const curveFor = (run) => state.traces.get(run)?.scoreCurve;
 const selectedRows = () => state.rows.filter((row) => state.selected.has(row.run) && curveFor(row.run)?.points?.length > 1);
 const hashParams = () => new URLSearchParams(location.hash.replace(/^#/, ""));
-const axisSpec = () => state.axis === "actions"
-  ? {key:"cumulativeActions", title:"Cumulative gameplay actions", tick:(value) => Math.round(value).toLocaleString(), hover:(value) => `${Math.round(value).toLocaleString()} actions`}
-  : {key:"elapsedSeconds", title:"Elapsed runtime (minutes)", tick:(value) => (value / 60).toFixed(0), hover:(value) => `${fmtDuration(value)} elapsed`};
+const axisSpec = () => {
+  if (state.axis === "actions") return {key:"cumulativeActions", title:"Cumulative gameplay actions", aria:"gameplay actions", tick:(value) => Math.round(value).toLocaleString(), hover:(value) => `${Math.round(value).toLocaleString()} actions`};
+  if (state.axis === "tokens") return {key:"cumulativeGeneratedTokens", title:"Cumulative generated tokens", aria:"generated tokens", tick:fmtTokens, hover:(value) => `${Math.round(value).toLocaleString()} generated tokens`};
+  return {key:"elapsedSeconds", title:"Elapsed runtime (minutes)", aria:"elapsed runtime", tick:(value) => (value / 60).toFixed(0), hover:(value) => `${fmtDuration(value)} elapsed`};
+};
 
 function requestedRuns() {
   const value = hashParams().get("runs") || "";
@@ -48,7 +56,8 @@ function requestedRuns() {
 }
 
 function requestedAxis() {
-  return hashParams().get("axis") === "actions" ? "actions" : "time";
+  const axis = hashParams().get("axis");
+  return ["time", "actions", "tokens"].includes(axis) ? axis : "time";
 }
 
 function updateHash() {
@@ -91,7 +100,8 @@ function scoreAt(points, xValue) {
 }
 
 function firstScore(curve) {
-  return (curve?.points || []).find((point) => Number(point.meanScore) > 0);
+  const points = state.axis === "tokens" ? (curve?.tokenPoints || curve?.points || []) : (curve?.points || []);
+  return points.find((point) => Number(point.meanScore) > 0);
 }
 
 function renderSummary(rows) {
@@ -105,6 +115,7 @@ function renderSummary(rows) {
       <td>${esc(fmtScore(curve.finalMeanScore))}</td>
       <td>${esc(fmtDuration(trace.durationSeconds))}</td>
       <td>${Number(curve.finalActions ?? row.actions ?? 0).toLocaleString()}</td>
+      <td>${Number(curve.finalGeneratedTokens ?? row.tokens ?? 0).toLocaleString()}</td>
       <td>${first ? esc(spec.hover(Number(first[spec.key] || 0))) : "—"}</td>
       <td>${Number(curve.completionEvents || 0).toLocaleString()}</td>
     </tr>`;
@@ -123,7 +134,8 @@ function renderChart(rows) {
     ...row,
     color: state.colors.get(row.run),
     trace: state.traces.get(row.run),
-    points: curveFor(row.run).points.map((point) => ({...point, x:Number(point[spec.key] || 0), y:Number(point.meanScore || 0)})),
+    points: (state.axis === "tokens" ? (curveFor(row.run).tokenPoints || curveFor(row.run).points) : curveFor(row.run).points)
+      .map((point) => ({...point, x:Number(point[spec.key] || 0), y:Number(point.meanScore || 0)})),
   }));
   const width = Math.max(340, el.chart.clientWidth || 950);
   const height = width < 620 ? 360 : 510;
@@ -135,8 +147,8 @@ function renderChart(rows) {
   const yMax = Math.ceil(rawYMax * 1.12 * 2) / 2;
   const x = (value) => margin.left + Number(value) / xMax * innerW;
   const y = (value) => margin.top + innerH - Number(value) / yMax * innerH;
-  const svg = svgNode("svg", {viewBox:`0 0 ${width} ${height}`, role:"img", "aria-label":`Comparison of mean ARC3 score by ${state.axis === "actions" ? "gameplay actions" : "elapsed runtime"}`});
-  svg.append(svgNode("title", {}, `Selected ARC3 runs — score by ${state.axis === "actions" ? "gameplay actions" : "elapsed runtime"}`));
+  const svg = svgNode("svg", {viewBox:`0 0 ${width} ${height}`, role:"img", "aria-label":`Comparison of mean ARC3 score by ${spec.aria}`});
+  svg.append(svgNode("title", {}, `Selected ARC3 runs — score by ${spec.aria}`));
   svg.append(svgNode("rect", {class:"chart-frame", x:margin.left, y:margin.top, width:innerW, height:innerH, fill:"none"}));
 
   const yTicks = 5;
@@ -207,12 +219,15 @@ function render() {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
-  el.axisDescription.textContent = state.axis === "actions" ? "Cumulative environment actions" : "Elapsed runtime · minutes";
-  el.summaryFirstLabel.textContent = state.axis === "actions" ? "First score at action" : "First score at time";
+  el.axisDescription.textContent = state.axis === "actions" ? "Cumulative environment actions" : state.axis === "tokens" ? "Cumulative generated tokens" : "Elapsed runtime · minutes";
+  el.summaryFirstLabel.textContent = state.axis === "actions" ? "First score at action" : state.axis === "tokens" ? "First score at token" : "First score at time";
   if (state.axis === "actions") {
     const timed = rows.reduce((sum, row) => sum + Number(curveFor(row.run)?.timedActions || 0), 0);
     const total = rows.reduce((sum, row) => sum + Number(curveFor(row.run)?.finalActions || 0), 0);
     el.curveNote.textContent = total ? `${timed.toLocaleString()} of ${total.toLocaleString()} actions aligned to generating calls.` : "Actions are aligned to their generating model calls.";
+  } else if (state.axis === "tokens") {
+    const notes = new Set(rows.map((row) => curveFor(row.run)?.tokenNote).filter(Boolean));
+    el.curveNote.textContent = notes.size === 1 ? [...notes][0] : "Generated-token progress from exact benchmark call accounting.";
   } else {
     const notes = new Set(rows.map((row) => curveFor(row.run)?.timestampNote).filter(Boolean));
     el.curveNote.textContent = notes.size === 1 ? [...notes][0] : "Shared runtime axis; reconstructed and exact timestamps may coexist.";
@@ -247,7 +262,7 @@ el.selectAll.addEventListener("click", async () => {
   render();
 });
 el.axisButtons.forEach((button) => button.addEventListener("click", () => {
-  state.axis = button.dataset.axis === "actions" ? "actions" : "time";
+  state.axis = ["time", "actions", "tokens"].includes(button.dataset.axis) ? button.dataset.axis : "time";
   updateHash();
   render();
 }));

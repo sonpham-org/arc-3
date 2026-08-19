@@ -133,6 +133,29 @@ def score_curve(
     """
     run_by_game = {str(run.get("game_id")): run for run in benchmark.get("game_runs", [])}
     game_count = max(1, len(run_by_game))
+    token_events: list[tuple[datetime, int]] = []
+    game_call_completions: dict[str, list[datetime | None]] = {}
+    for game_id, run in run_by_game.items():
+        game_started = parse_iso(run.get("started_at")) or started
+        call_completions: list[datetime | None] = []
+        for history_row in run.get("history", []):
+            wallclock = history_row.get("wallclock_seconds")
+            completed_at = game_started + timedelta(seconds=float(wallclock)) if wallclock is not None else None
+            call_completions.append(completed_at)
+            generated = int(history_row.get("generated_tokens") or 0)
+            if completed_at is not None and generated > 0:
+                token_events.append((completed_at, generated))
+        game_call_completions[game_id] = call_completions
+    token_events.sort(key=lambda item: item[0])
+    token_times = [item[0] for item in token_events]
+    token_prefix = [0]
+    for _, generated in token_events:
+        token_prefix.append(token_prefix[-1] + generated)
+    final_generated_tokens = token_prefix[-1]
+
+    def generated_tokens_at(at: datetime) -> int:
+        return token_prefix[bisect_right(token_times, at)]
+
     main_times: dict[tuple[str, int], datetime] = {}
     for event in main_events:
         game_id = str(event.get("gameId") or "")
@@ -190,7 +213,10 @@ def score_curve(
             action_number = int(row.get("action_num") or 0)
             batch_index = int(row.get("batch_index") or 1)
             analysis_step = int(row.get("analysis_step") or 0)
+            batch_start = action_number - batch_index + 1
             at, basis = action_time(game_id, action_number, batch_index, analysis_step)
+            completions_for_game = game_call_completions.get(game_id, [])
+            completed_at = completions_for_game[batch_start - 1] if 0 < batch_start <= len(completions_for_game) else at
             if at is not None:
                 timed_actions.append(at)
             if at is None:
@@ -203,6 +229,7 @@ def score_curve(
             completions.append(
                 {
                     "at": at,
+                    "completedAt": completed_at or at,
                     "gameId": game_id,
                     "action": action_number,
                     "level": after,
@@ -251,18 +278,62 @@ def score_curve(
             "kind": "end",
         }
     )
+    token_completions = sorted(completions, key=lambda row: (row["completedAt"], row["gameId"], row["action"]))
+    token_game_scores: dict[str, float] = {}
+    token_points = [
+        {
+            "at": iso(started),
+            "elapsedSeconds": 0.0,
+            "cumulativeGeneratedTokens": 0,
+            "meanScore": 0.0,
+            "kind": "start",
+        }
+    ]
+    for row in token_completions:
+        token_game_scores[row["gameId"]] = float(row["gameScore"])
+        token_points.append(
+            {
+                "at": iso(row["completedAt"]),
+                "elapsedSeconds": round((row["completedAt"] - started).total_seconds(), 3),
+                "cumulativeGeneratedTokens": generated_tokens_at(row["completedAt"]),
+                "meanScore": round(sum(token_game_scores.values()) / game_count, 9),
+                "kind": "level_completion",
+                "gameId": row["gameId"],
+                "action": row["action"],
+                "level": row["level"],
+                "gameScore": round(float(row["gameScore"]), 9),
+                "timestampBasis": "exact benchmark call-completion wallclock",
+            }
+        )
+    token_points.append(
+        {
+            "at": iso(ended),
+            "elapsedSeconds": round((ended - started).total_seconds(), 3),
+            "cumulativeGeneratedTokens": final_generated_tokens,
+            "meanScore": round(final_mean, 9),
+            "kind": "end",
+        }
+    )
     return {
         "points": points,
+        "tokenPoints": token_points,
         "completionEvents": len(completions),
         "untimedCompletions": untimed,
         "finalMeanScore": round(final_mean, 9),
         "finalActions": total_actions,
         "timedActions": len(timed_actions),
+        "finalGeneratedTokens": final_generated_tokens,
+        "tokenEvents": len(token_events),
         "actionTimestampCoverage": round(len(timed_actions) / total_actions, 6) if total_actions else 1.0,
         "timestampNote": (
             "Score changes are placed at the generating model-call start. "
             "Reviewed-theme runs use exact injection timestamps; older runs use transcript/model-call reconstruction. "
             "The action axis counts every environment action at that same generating-call timestamp."
+        ),
+        "tokenNote": (
+            "The generated-token axis uses exact per-call generated-token counts from benchmark history, "
+            "placed at each call's recorded completion wallclock. Batched actions inherit the completion "
+            "of the model call that generated their batch."
         ),
     }
 
