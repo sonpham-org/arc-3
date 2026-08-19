@@ -95,6 +95,17 @@ HARNESS = {
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
         "note": "Reviewed-theme causal POC. Four observers consumed new ASCII frames; a fifth reviewer deduplicated and atomically published the only ledger gameplay could read. Final mean25 3.3065, ex-ft09 2.8780, 21 levels, 1,415 actions, 2,155,193 generated tokens, runtime 2h12m01s. This is 29.5% below the immediate P4 shadow control, so the result is being replicated before any promotion.",
     },
+    "20260819_092531_q38-taaf-cap8-reviewedthemes-p4": {
+        "hardware": "RTX PRO 6000 + five independent 4-core CPU sidecars (GCP Spot)",
+        "agent_code": "exact replica of reviewed-theme P3: historical native-TAAF checkpoint-8 with reviewed cross-game theme block injected each turn",
+        "memory": "author-shared native TAAF memory plus checkpoint-8 and bounded reviewer-approved theme ledger",
+        "render": "current-grid image at 4x for gameplay; letter-coded ASCII frames for observers",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 + five llama.cpp Qwen3.6-35B-A3B CPU servers",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Exact reviewed-theme causal replica. Final mean25 3.7689, ex-ft09 2.7355, 20 levels, 1,139 actions, 2,272,607 generated tokens, 14 positive games, runtime 2h12m22s. This recovered 14.0% over P3 but remained 19.6% below the immediate zero-influence shadow control. Exact GCS run g4run-q38-taaf-cap8-reviewedthemes-p4-20260819-092531.",
+    },
     "20260818_111520_q38-taaf-cap8-compact-en-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact historical native-TAAF checkpoint-8 harness with compact dynamic English prompt",
