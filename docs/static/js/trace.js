@@ -42,6 +42,7 @@ function syncTabs() {
   const hash = location.hash;
   document.querySelector("#rt-viewer").href = `./viewer.html${hash}`;
   document.querySelector("#rt-trace").href = `./trace.html${hash}`;
+  document.querySelector("#rt-score").href = `./score-time.html${hash}`;
   document.querySelector("#rt-harness").href = `./harness.html${hash}`;
 }
 

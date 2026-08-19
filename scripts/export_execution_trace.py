@@ -83,6 +83,174 @@ def usage_summary(row: dict) -> dict:
     }
 
 
+def reviewed_game_id(row: dict) -> str:
+    game_id = str(row.get("game_id") or "").strip()
+    if game_id == "artifacts" or not game_id:
+        state_name = Path(str(row.get("state_path") or "")).name
+        match = re.fullmatch(r"(.+?)(?:_p\d+)?_tool_runtime_state\.json", state_name)
+        if match:
+            game_id = match.group(1)
+    return game_id
+
+
+def live_game_score(run: dict, actions_per_level: list[int], levels_completed: int) -> float:
+    """Mirror ``GameRun._compute_final_score`` at an intermediate completion."""
+    baselines = run.get("base_actions_per_level") or []
+    number_of_levels = int(run.get("number_of_levels") or 0)
+    if not baselines or not number_of_levels:
+        return 0.0
+    total_score = 0.0
+    total_weights = 0
+    max_weights = 0
+    for level_index in range(number_of_levels):
+        weight = level_index + 1
+        total_weights += weight
+        actions = actions_per_level[level_index] if level_index < len(actions_per_level) else 0
+        if level_index < levels_completed and actions > 0:
+            level_score = min(115.0, (float(baselines[level_index]) / actions) ** 2 * 100.0)
+            total_score += level_score * weight
+            max_weights += weight
+    if not total_weights:
+        return 0.0
+    return min(total_score / total_weights, max_weights / total_weights * 100.0)
+
+
+def score_curve(
+    benchmark: dict,
+    artifact_root: Path,
+    started: datetime,
+    ended: datetime,
+    main_events: list[dict],
+    reviewed: Path,
+) -> dict:
+    """Build the cross-game mean score as a timestamped step function.
+
+    Reviewed-theme runs use the exact prompt-injection clock.  Other archived
+    runs use the already-exported model-call timestamp for the matching
+    ``analysis_step``.  A completion emitted inside a previously generated
+    action batch inherits that batch's call-start timestamp.
+    """
+    run_by_game = {str(run.get("game_id")): run for run in benchmark.get("game_runs", [])}
+    game_count = max(1, len(run_by_game))
+    main_times: dict[tuple[str, int], datetime] = {}
+    for event in main_events:
+        game_id = str(event.get("gameId") or "")
+        step_index = event.get("stepIndex")
+        at = parse_iso(event.get("start"))
+        if game_id and step_index is not None and at is not None:
+            main_times[(game_id, int(step_index))] = at
+
+    injections: dict[str, list[tuple[int, datetime]]] = {}
+    for row in read_jsonl(reviewed / "gameplay-theme-injections.jsonl"):
+        game_id = reviewed_game_id(row)
+        at = parse_iso(row.get("recorded_at"))
+        action = row.get("action")
+        if game_id and at is not None and action is not None:
+            injections.setdefault(game_id, []).append((int(action), at))
+    for rows in injections.values():
+        rows.sort(key=lambda item: (item[0], item[1]))
+
+    completions: list[dict] = []
+    untimed = 0
+    events_dir = artifact_root / "artifacts"
+    for path in sorted(events_dir.glob("*_events.jsonl")):
+        match = re.fullmatch(r"(.+?)_p\d+_events\.jsonl", path.name)
+        if not match:
+            continue
+        game_id = match.group(1)
+        run = run_by_game.get(game_id)
+        if not run:
+            continue
+        number_of_levels = int(run.get("number_of_levels") or 0)
+        actions_per_level = [0] * number_of_levels
+        for row in read_jsonl(path):
+            if row.get("type") != "action":
+                continue
+            after = int(row.get("score") or 0)
+            completed = bool(row.get("level_completed"))
+            level_index = after - 1 if completed else after
+            if 0 <= level_index < number_of_levels:
+                actions_per_level[level_index] += 1
+            if not completed:
+                continue
+
+            action_number = int(row.get("action_num") or 0)
+            batch_index = int(row.get("batch_index") or 1)
+            batch_start = action_number - batch_index + 1
+            at: datetime | None = None
+            basis = ""
+            candidates = [item for item in injections.get(game_id, []) if item[0] <= batch_start]
+            if candidates:
+                best_action = max(item[0] for item in candidates)
+                at = max(item[1] for item in candidates if item[0] == best_action)
+                basis = "exact prompt-injection call start" if best_action == batch_start else "prior generated-batch call start"
+            if at is None:
+                analysis_step = int(row.get("analysis_step") or 0)
+                at = main_times.get((game_id, analysis_step))
+                basis = "model-call timestamp reconstruction" if at is not None else ""
+            if at is None:
+                untimed += 1
+                continue
+            game_score = live_game_score(run, actions_per_level, after)
+            completions.append(
+                {
+                    "at": at,
+                    "gameId": game_id,
+                    "action": action_number,
+                    "level": after,
+                    "gameScore": game_score,
+                    "timestampBasis": basis,
+                }
+            )
+
+    completions.sort(key=lambda row: (row["at"], row["gameId"], row["action"]))
+    game_scores: dict[str, float] = {}
+    points = [
+        {
+            "at": iso(started),
+            "elapsedSeconds": 0.0,
+            "meanScore": 0.0,
+            "kind": "start",
+        }
+    ]
+    for row in completions:
+        game_scores[row["gameId"]] = float(row["gameScore"])
+        mean_score = sum(game_scores.values()) / game_count
+        points.append(
+            {
+                "at": iso(row["at"]),
+                "elapsedSeconds": round((row["at"] - started).total_seconds(), 3),
+                "meanScore": round(mean_score, 9),
+                "kind": "level_completion",
+                "gameId": row["gameId"],
+                "action": row["action"],
+                "level": row["level"],
+                "gameScore": round(float(row["gameScore"]), 9),
+                "timestampBasis": row["timestampBasis"],
+            }
+        )
+
+    final_mean = sum(float(run.get("final_score") or 0.0) for run in run_by_game.values()) / game_count
+    points.append(
+        {
+            "at": iso(ended),
+            "elapsedSeconds": round((ended - started).total_seconds(), 3),
+            "meanScore": round(final_mean, 9),
+            "kind": "end",
+        }
+    )
+    return {
+        "points": points,
+        "completionEvents": len(completions),
+        "untimedCompletions": untimed,
+        "finalMeanScore": round(final_mean, 9),
+        "timestampNote": (
+            "Score changes are placed at the generating model-call start. "
+            "Reviewed-theme runs use exact injection timestamps; older runs use transcript/model-call reconstruction."
+        ),
+    }
+
+
 def parse_process_metrics(path: Path, topology: dict[str, dict]) -> list[dict]:
     if not path.exists():
         return []
@@ -216,6 +384,7 @@ def export_run(run_dir: Path) -> None:
 
     out_dir = OUT_BASE / run_dir.name
     events = main_agent_events(out_dir, started)
+    main_events = list(events)
     lanes = [
         {
             "id": "main-model",
@@ -299,12 +468,7 @@ def export_run(run_dir: Path) -> None:
             at = parse_iso(row.get("recorded_at"))
             if at is None:
                 continue
-            game_id = str(row.get("game_id") or "").strip()
-            if game_id == "artifacts":
-                state_name = Path(str(row.get("state_path") or "")).name
-                match = re.fullmatch(r"(.+)_tool_runtime_state\.json", state_name)
-                if match:
-                    game_id = match.group(1)
+            game_id = reviewed_game_id(row)
             events.append(
                 {
                     "id": f"inject-{index}",
@@ -344,6 +508,7 @@ def export_run(run_dir: Path) -> None:
         "lanes": lanes,
         "events": events,
         "processSamples": samples,
+        "scoreCurve": score_curve(benchmark, artifact_root, started, ended, main_events, reviewed),
         "counts": {
             "mainCalls": sum(event["kind"] == "main_call" for event in events),
             "sidecarCalls": sum(event["kind"].startswith("sidecar_") for event in events),
