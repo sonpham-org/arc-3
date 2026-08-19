@@ -78,7 +78,8 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
 function renderLiteral(step) {
   const wrap = document.createElement("section");
   wrap.className = "literal-trace";
-  const exact = step.traceInputExact === true || step.localContext?.hasExactModelContext === true;
+  const modelContext = step.context || step.localContext || {};
+  const exact = step.traceInputExact === true || modelContext.hasExactModelContext === true;
   const timestamp = String(step.traceTimestamp || "timestamp unavailable in this export");
   const basis = String(step.traceTimestampBasis || "no timestamp metadata");
   const source = exact ? "Exact saved request context" : "Stored transcript reconstruction";
@@ -91,7 +92,7 @@ function renderLiteral(step) {
   }
   wrap.appendChild(notice);
 
-  const sections = step.localContext?.sections || [];
+  const sections = modelContext.sections || [];
   if (!sections.length) {
     wrap.insertAdjacentHTML("beforeend", '<div class="empty">No stored model input/output for this turn.</div>');
     return wrap;

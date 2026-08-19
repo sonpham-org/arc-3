@@ -73,6 +73,28 @@ BIASES = [
 ]
 
 HARNESS = {
+    "20260818_182633_q38-taaf-cap8-asciithemes-p4": {
+        "hardware": "RTX PRO 6000 + 20 spare host CPU cores (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 gameplay plus zero-influence ASCII theme observer",
+        "memory": "author-shared native TAAF memory plus checkpoint-8; sidecar ledger never read by gameplay",
+        "render": "current-grid image at 4x for gameplay; letter-coded ASCII frames for sidecar",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 + llama.cpp Qwen3.6-35B-A3B CPU sidecar",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Zero-influence shadow control. Four parallel Qwen3.6-35B-A3B CPU slots observed ASCII frames and wrote a theme ledger that gameplay could not read. Final mean25 4.6898, ex-ft09 4.2900, 25 levels, 1,630 actions, 2,265,512 generated tokens, runtime 2h12m54s. The sidecar completed 13 healthy four-slot cycles plus one partial cycle.",
+    },
+    "20260818_231628_q38-taaf-cap8-reviewedthemes-p3": {
+        "hardware": "RTX PRO 6000 + five independent 4-core CPU sidecars (GCP Spot)",
+        "agent_code": "exact historical native-TAAF checkpoint-8 with reviewed cross-game theme block injected each turn",
+        "memory": "author-shared native TAAF memory plus checkpoint-8 and bounded reviewer-approved theme ledger",
+        "render": "current-grid image at 4x for gameplay; letter-coded ASCII frames for observers",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 + five llama.cpp Qwen3.6-35B-A3B CPU servers",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Reviewed-theme causal POC. Four observers consumed new ASCII frames; a fifth reviewer deduplicated and atomically published the only ledger gameplay could read. Final mean25 3.3065, ex-ft09 2.8780, 21 levels, 1,415 actions, 2,155,193 generated tokens, runtime 2h12m01s. This is 29.5% below the immediate P4 shadow control, so the result is being replicated before any promotion.",
+    },
     "20260818_111520_q38-taaf-cap8-compact-en-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact historical native-TAAF checkpoint-8 harness with compact dynamic English prompt",
@@ -1237,8 +1259,15 @@ HARNESS = {
 }
 
 runs = []
-for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
-    run = os.path.basename(os.path.dirname(bench_path))
+benchmark_paths = sorted(set(glob.glob("logs/*/benchmark.json") + glob.glob("logs/*/runs/benchmark.json")))
+for bench_path in benchmark_paths:
+    benchmark_dir = os.path.dirname(bench_path)
+    if os.path.basename(benchmark_dir) == "runs":
+        run = os.path.basename(os.path.dirname(benchmark_dir))
+        artifact_dir = benchmark_dir
+    else:
+        run = os.path.basename(benchmark_dir)
+        artifact_dir = benchmark_dir
     try:
         bench = json.load(open(bench_path))
     except Exception:
@@ -1272,10 +1301,11 @@ for bench_path in sorted(glob.glob("logs/*/benchmark.json")):
         ),
         "per_game": sorted(per_game, key=lambda g: g["id"]),
         "harness": HARNESS.get(run, {}),
-        "prompts": extract_prompts(os.path.dirname(bench_path)),
+        "prompts": extract_prompts(artifact_dir),
         # A resource capture exists for this run (see export_usage.py) -> the
         # scoreboard shows a "usage" link to the visualizer.
         "has_usage": os.path.exists(os.path.join("docs", "data", run, "usage.json")),
+        "has_execution_trace": os.path.exists(os.path.join("docs", "data", run, "run-timeline.json")),
     })
 
 index_path = "docs/data/runs-index.json"

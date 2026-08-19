@@ -1122,10 +1122,16 @@ def _compact_context(context: dict[str, Any] | None) -> dict[str, Any] | None:
         }
         if raw_section.get("inContext") is False:
             section["inContext"] = False
+        if raw_section.get("source"):
+            section["source"] = str(raw_section.get("source"))
         sections.append(section)
     if not sections:
         return None
-    return {"sections": sections}
+    compact = {"sections": sections}
+    for key in ("hasExactModelContext", "requestIndexWithinTurn", "messageCount"):
+        if context.get(key) is not None:
+            compact[key] = context.get(key)
+    return compact
 
 
 def _compact_step_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1538,10 +1544,10 @@ def _request_snapshot_sections(snapshot: dict[str, Any], *, include_system_promp
         if role == "system" and content:
             if not include_system_prompt:
                 continue
-            sections.append({"label": "SYSTEM PROMPT", "content": content, "kind": "meta", "inContext": True})
+            sections.append({"label": "SYSTEM PROMPT", "content": content, "kind": "meta", "inContext": True, "source": "request"})
             continue
         if role == "user" and content:
-            sections.append({"label": "USER PROMPT", "content": content, "kind": "meta", "inContext": True})
+            sections.append({"label": "USER PROMPT", "content": content, "kind": "meta", "inContext": True, "source": "request"})
             continue
         if role == "assistant":
             reasoning = _normalize_message_text(
@@ -1554,10 +1560,11 @@ def _request_snapshot_sections(snapshot: dict[str, Any], *, include_system_promp
                         "content": reasoning,
                         "kind": "reasoning",
                         "inContext": True,
+                        "source": "request",
                     }
                 )
             if content:
-                sections.append({"label": "ASSISTANT", "content": content, "kind": "reasoning", "inContext": True})
+                sections.append({"label": "ASSISTANT", "content": content, "kind": "reasoning", "inContext": True, "source": "request"})
             for tool_call in message.get("tool_calls") or []:
                 function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
                 name = str(function.get("name", "")).strip() or "unknown"
@@ -1570,6 +1577,7 @@ def _request_snapshot_sections(snapshot: dict[str, Any], *, include_system_promp
                         "content": _render_tool_arguments(name, function.get("arguments", "{}")),
                         "kind": "tool",
                         "inContext": True,
+                        "source": "request",
                     }
                 )
             continue
@@ -1583,6 +1591,7 @@ def _request_snapshot_sections(snapshot: dict[str, Any], *, include_system_promp
                         "content": _render_tool_result(content),
                         "kind": "tool",
                         "inContext": True,
+                        "source": "request",
                     }
                 )
     return sections
@@ -1611,6 +1620,7 @@ def _transcript_sections_from_events(
                     "label": label,
                     "content": content,
                     "kind": "tool" if kind == "meta" else kind,
+                    "source": "transcript",
                 }
             )
     return sections
@@ -2212,14 +2222,35 @@ def _hydrate_lightweight_step(
 
     normalized_event = _normalize_event(analysis_event)
     request_snapshot = _latest_request_snapshot(request_snapshots, analysis_step=analysis_step)
+    # Exact request logs, when present, are authoritative for this call.  Older
+    # native-TAAF archives only retain one transcript per analyzer turn.  For
+    # those runs expose an explicit cumulative reconstruction alongside the
+    # turn-local transcript so reviewers can inspect the conversation that may
+    # have been carried forward without mistaking it for an exact request.
+    if request_snapshot is not None:
+        context_events = [normalized_event]
+    else:
+        pinned_index = summary.get("analysisEventIndex")
+        if not isinstance(pinned_index, int):
+            pinned_index = int(summary.get("sourceEventIndex") or 0)
+        context_events = [
+            _normalize_event(event)
+            for event_index, event in enumerate(events)
+            if event_index <= pinned_index and event.get("type") == "analysis"
+        ]
     context = _extract_context(
-        [normalized_event],
-        include_system_prompt=step_index == 0,
+        context_events,
+        include_system_prompt=True,
         request_snapshot=request_snapshot,
     )
     if context is not None:
-        step["localContext"] = context
         step["context"] = context
+    local_context = _extract_context(
+        [normalized_event],
+        include_system_prompt=True,
+    )
+    if local_context is not None:
+        step["localContext"] = local_context
 
     usage = turn_usage(request_snapshots, analysis_step=analysis_step)
     if usage is not None:
