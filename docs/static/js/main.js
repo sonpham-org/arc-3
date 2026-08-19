@@ -18,6 +18,7 @@ const POLL_MS = 1500;
 const state = {
   run: null,
   overview: null,
+  overviewRun: null,
   gameIndex: null,
   game: null,
   frames: [],
@@ -119,12 +120,19 @@ async function route() {
   state.run = run;
   if (game === null) return showOverview();
   if (typeof game === "string") {
-    const payload = state.overview && state.overview.selected_run === run
+    const payload = state.overview && state.overviewRun === run
       ? state.overview : await fetchRunOverview(run);
     state.overview = payload;
-    state.run = payload.selected_run;
+    // The URL identifies the data directory. Some historical exports inherited
+    // `selected_run: "runs"` from their nested artifact directory, so trusting
+    // that metadata here turns a valid deep link into /data/runs/game-N.json.
+    // Keep an explicit requested run authoritative and use selected_run only
+    // for the no-run default route.
+    state.run = run || payload.selected_run;
+    state.overviewRun = state.run;
     const index = payload.games.findIndex((g) => g.game_id === game);
-    return showGame(index >= 0 ? index : 0);
+    if (index < 0) throw new Error(`Game ${game} is not present in ${state.run}`);
+    return showGame(index);
   }
   await showGame(game);
 }
@@ -138,9 +146,11 @@ async function showOverview() {
 }
 
 async function refreshOverview() {
-  const payload = await fetchRunOverview(state.run);
+  const requestedRun = state.run;
+  const payload = await fetchRunOverview(requestedRun);
   state.overview = payload;
-  state.run = payload.selected_run;
+  state.run = requestedRun || payload.selected_run;
+  state.overviewRun = state.run;
   setPalette(payload.arc_palette, payload.color_chars);
   renderRunSelect(payload);
   el.crumb.innerHTML = `<b>${payload.run_name}</b> · ${payload.games.length} games`;
@@ -158,7 +168,7 @@ function runLabel(run) {
 function renderRunSelect(payload) {
   const runs = payload.available_runs || [];
   el.runSelect.innerHTML = runs.map((run) => `<option value="${run}">${runLabel(run)}</option>`).join("");
-  el.runSelect.value = payload.selected_run;
+  el.runSelect.value = state.run || payload.selected_run;
 }
 
 async function showGame(index) {
@@ -171,10 +181,12 @@ async function showGame(index) {
   log.rows = [];
   clearPins();
 
-  if (!state.overview) {
-    const payload = await fetchRunOverview(state.run);
+  if (!state.overview || state.overviewRun !== state.run) {
+    const requestedRun = state.run;
+    const payload = await fetchRunOverview(requestedRun);
     state.overview = payload;
-    state.run = payload.selected_run;
+    state.run = requestedRun || payload.selected_run;
+    state.overviewRun = state.run;
   }
   // Always (re)apply the palette from the overview we hold. Deep-linking with a game_id string
   // resolves the overview inside route() without ever setting the palette, so keying this off a
