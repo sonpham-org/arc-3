@@ -147,11 +147,22 @@ first — see `scripts/build_gcp_customgames_bundle.py`).
 scripts/publish_run.sh <gcs-run-id> <log-dir-name>
 ```
 
-Pulls logs from GCS → exports scoreboard + viewer JSON → commits/pushes → syncs the new data
-into the Railway volume → verifies it's live. Requires a `HARNESS` entry for the run in
-`scripts/export_runs_index.py` (that table is the single source of truth for server/weights/env
-facts, which live on the VM, not in the run artifacts) and `$ARC3_SITE_DIR` pointing at the
-railway-linked site checkout.
+Pulls logs from GCS → exports scoreboard + viewer JSON → streams the generated run and refreshed
+index directly into Railway's persistent `/srv/data` volume → verifies the internal live URL.
+Git is not used as artifact transport. Requires a `HARNESS` entry for the run in
+`scripts/export_runs_index.py` (that table is the source of truth for server/weights/env facts,
+which live on the VM, not in the run artifacts). Set `$ARC3_SITE_DIR` only when the current
+checkout is not Railway-linked.
+
+`scripts/publish_railway_data.py` refuses to overwrite an existing run by default. A deliberate
+re-export must pass `--replace`; the replaced directory is retained under `/srv/data/.rollback/`.
+Raw artifacts remain canonical in GCS, so the serving volume can always be reconstructed.
+
+The Railway image is built from the root `Dockerfile`. It contains only the site shell and game
+assets. `docs/data/`, `logs/`, and all experiment work directories are excluded from the image and
+from new Git commits; `/srv/data` is supplied exclusively by the persistent Railway volume.
+Deploy the shell with `railway up --service arc3-viewer --environment production`; the volume is
+mounted independently and is not rebuilt or copied during image deployment.
 
 Supporting exporters: `export_viewer_data.py` (per-turn frames), `export_signal_runs.py`,
 `export_usage.py`, `export_tool_calls.py`, `export_game_thumbs.py`.
@@ -177,16 +188,16 @@ See `harnesses/README.md`.
 ## Layout
 
 ```
-docs/            the site — Games (public) + Internal runs (gated), plus exported run data
+docs/            the site — Games (public) + Internal runs (gated), plus a local export cache
   static/games/  game manifest, per-game .py source, the Pyodide engine, tile shim
-  data/          per-run exported JSON (scoreboard, viewer frames, usage, signals)
+  data/          generated per-run JSON; published to Railway and ignored by Git
 harnesses/       frozen baseline + one folder per variant, each with a MANIFEST
 ARC3-Inference/  the duck harness itself (tool-using solver over TAAF); distill/ holds the
                  Phase-1 rejection-sampling SFT extractor
 tufa-arc-agi-framework/, vendor-taaf-grafts/   upstream framework + our grafts
 gcp/             spot-safe launch kit: restartable runs, GCS log sync, crash-loop guards,
                  one startup script per harness variant
-logs/            complete artifacts of finished runs (transcripts, prompts, events, benchmark.json)
+logs/            ignored local artifacts; canonical copies remain in GCS
 scripts/         catalog builder, run exporters, publish pipeline
 kaggle/          the exact upstream notebook + its launch metadata
 environment_files/  the 25 official games
