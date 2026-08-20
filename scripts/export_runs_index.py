@@ -117,6 +117,17 @@ HARNESS = {
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
         "note": "Compact-English plus reviewed-themes causal replica 1. The reviewer-approved atomic theme ledger was injected into every analyzer action prompt. Final mean25 5.6284, ex-ft09 3.8788, 25 levels, 1,252 actions, 1,989,255 generated tokens, 15 positive games, runtime 2h12m43s. Exact GCS run g4run-q38-taaf-cap8-reviewedthemes-cen-p1-20260819-100621.",
     },
+    "20260819_180639_q38-taaf-cap8-reviewedthemes-cen-singlecopy-p1": {
+        "hardware": "RTX PRO 6000 + five independent 4-core CPU sidecars (GCP Spot)",
+        "agent_code": "compact dynamic English plus one bounded current reviewed-theme block per saved model request",
+        "memory": "author-shared native TAAF memory plus checkpoint-8 and bounded reviewer-approved theme ledger",
+        "render": "current-grid image at 4x for gameplay; letter-coded ASCII frames for observers",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 + five llama.cpp Qwen3.6-35B-A3B CPU servers",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Single-copy reviewed-theme replica. Every one of 2,077 exact saved model requests contained exactly one reviewed-theme start marker and one end marker; no request contained zero or multiple copies. Four no-action recovery requests appended a later user instruction after the marked gameplay prompt, so the stricter last-user-message location invariant held for 2,073/2,077 requests. Final mean25 3.9467, ex-ft09 2.7144, 23 levels, 1,375 actions, 2,105,009 generated tokens, 17 positive games, runtime 2h12m30s. Exact GCS run g4run-q38-taaf-cap8-reviewedthemes-cen-sc-p1-20260819-180639.",
+    },
     "20260818_111520_q38-taaf-cap8-compact-en-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact historical native-TAAF checkpoint-8 harness with compact dynamic English prompt",
