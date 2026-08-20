@@ -128,6 +128,17 @@ HARNESS = {
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
         "note": "Single-copy reviewed-theme replica. Every one of 2,077 exact saved model requests contained exactly one reviewed-theme start marker and one end marker; no request contained zero or multiple copies. Four no-action recovery requests appended a later user instruction after the marked gameplay prompt, so the stricter last-user-message location invariant held for 2,073/2,077 requests. Final mean25 3.9467, ex-ft09 2.7144, 23 levels, 1,375 actions, 2,105,009 generated tokens, 17 positive games, runtime 2h12m30s. Exact GCS run g4run-q38-taaf-cap8-reviewedthemes-cen-sc-p1-20260819-180639.",
     },
+    "20260820_090901_q38-taaf-cap8-reviewedthemes-cen-singlecopy-p2": {
+        "hardware": "RTX PRO 6000 + five independent 4-core CPU sidecars (GCP Spot)",
+        "agent_code": "compact dynamic English plus one bounded current reviewed-theme block per saved model request",
+        "memory": "author-shared native TAAF memory plus checkpoint-8 and bounded reviewer-approved theme ledger",
+        "render": "current-grid image at 4x for gameplay; letter-coded ASCII frames for observers",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0 + five llama.cpp Qwen3.6-35B-A3B CPU servers",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Corrected single-copy reviewed-theme replica 2. All 1,987 saved requests contained exactly one reviewed-theme start and end marker; four no-action recovery requests appended a later corrective user message, so the stricter last-user-message placement held for 1,983/1,987 requests. Final mean25 3.1007, ex-ft09 2.6346, 19 levels, 1,426 actions, 2,092,488 generated tokens, 14 positive games, runtime 2h12m56s. Corrected P1/P2 pair mean25 3.5237, below the compact-English control pair 4.5441. Exact GCS run g4run-q38-taaf-cap8-reviewedthemes-cen-sc-p2-20260820-090901.",
+    },
     "20260819_235111_q38-taaf-cap8-ce-prec-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact compact-English native-TAAF checkpoint-8 harness; precise/current sampling profile",
