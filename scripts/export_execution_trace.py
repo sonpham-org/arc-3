@@ -94,6 +94,33 @@ def reviewed_game_id(row: dict) -> str:
     return game_id
 
 
+def world_model_block(step: dict) -> tuple[int, str] | None:
+    """Return the exact curator ledger block captured in a gameplay request.
+
+    Historical curator logs intentionally retained compact call metadata rather
+    than the full prompt/response.  Exact gameplay request logs *do* retain the
+    injected replacement ledger, so use the first captured request for each
+    revision as the curator call's observable output.
+    """
+    context = step.get("context") if isinstance(step.get("context"), dict) else {}
+    for section in context.get("sections") or []:
+        if section.get("source") != "request":
+            continue
+        content = str(section.get("content") or "")
+        start = content.find("World-model priors synthesized from other games")
+        if start < 0:
+            continue
+        end_marker = "End of synthesized cross-game world models."
+        end = content.find(end_marker, start)
+        if end < 0:
+            continue
+        block = content[start : end + len(end_marker)].strip()
+        revision_match = re.search(r"Ledger revision\s+(\d+)", block)
+        if revision_match:
+            return int(revision_match.group(1)), block
+    return None
+
+
 def live_game_score(run: dict, actions_per_level: list[int], levels_completed: int) -> float:
     """Mirror ``GameRun._compute_final_score`` at an intermediate completion."""
     baselines = run.get("base_actions_per_level") or []
@@ -122,7 +149,7 @@ def score_curve(
     started: datetime,
     ended: datetime,
     main_events: list[dict],
-    reviewed: Path,
+    influence_dir: Path,
 ) -> dict:
     """Build the cross-game mean score as a timestamped step function.
 
@@ -165,7 +192,10 @@ def score_curve(
             main_times[(game_id, int(step_index))] = at
 
     injections: dict[str, list[tuple[int, datetime]]] = {}
-    for row in read_jsonl(reviewed / "gameplay-theme-injections.jsonl"):
+    injection_path = influence_dir / "gameplay-theme-injections.jsonl"
+    if not injection_path.exists():
+        injection_path = influence_dir / "gameplay-injections.jsonl"
+    for row in read_jsonl(injection_path):
         game_id = reviewed_game_id(row)
         at = parse_iso(row.get("recorded_at"))
         action = row.get("action")
@@ -380,9 +410,10 @@ def parse_process_metrics(path: Path, topology: dict[str, dict]) -> list[dict]:
     return [sample for sample in samples if sample["processes"]]
 
 
-def main_agent_events(out_dir: Path, anchor: datetime) -> list[dict]:
+def main_agent_events(out_dir: Path, anchor: datetime) -> tuple[list[dict], dict[int, str]]:
     overview = read_json(out_dir / "run-overview.json")
     events: list[dict] = []
+    curator_outputs: dict[int, str] = {}
     for game_index, game in enumerate(overview.get("games", [])):
         step_index = 0
         while True:
@@ -391,6 +422,10 @@ def main_agent_events(out_dir: Path, anchor: datetime) -> list[dict]:
                 break
             payload = read_json(path)
             step = payload.get("step") or {}
+            captured_block = world_model_block(step)
+            if captured_block is not None:
+                revision, block = captured_block
+                curator_outputs.setdefault(revision, block)
             if step.get("stepKind") == "turn" and step.get("traceTimestamp"):
                 at = clock_on_run_date(str(step["traceTimestamp"]), anchor)
                 if at is not None:
@@ -420,7 +455,7 @@ def main_agent_events(out_dir: Path, anchor: datetime) -> list[dict]:
                         }
                     )
             step_index += 1
-    return events
+    return events, curator_outputs
 
 
 def sidecar_event(row: dict, *, kind: str, lane: str, label: str, resource: str, cores: str) -> dict | None:
@@ -470,13 +505,19 @@ def export_run(run_dir: Path) -> None:
         raise RuntimeError(f"Missing benchmark times in {artifact_root}")
 
     out_dir = OUT_BASE / run_dir.name
-    events = main_agent_events(out_dir, started)
+    events, curator_outputs = main_agent_events(out_dir, started)
     main_events = list(events)
+    model_info_path = run_dir / "model-info.json"
+    model_info = read_json(model_info_path) if model_info_path.exists() else {}
+    main_model = str(model_info.get("model_id") or "Qwen3.8-27B-FP8")
+    quantization = str(model_info.get("quantization") or "GPU")
+    for event in events:
+        event["resource"] = f"{main_model} · {quantization} inference queue"
     lanes = [
         {
             "id": "main-model",
             "label": "Main agent",
-            "resource": "Qwen3.8-27B-FP8 · GPU",
+            "resource": f"{main_model} · {quantization}",
             "cores": "GPU inference queue",
             "group": "gameplay",
         }
@@ -486,6 +527,7 @@ def export_run(run_dir: Path) -> None:
 
     shadow = run_dir / "shadow-frame-themes"
     reviewed = run_dir / "reviewed-themes"
+    curator = run_dir / "curator"
     if shadow.exists():
         metrics_path = shadow / "process-metrics.log"
         topology["1235"] = {"label": "Shared sidecar server", "cores": "CPU 28–47"}
@@ -579,6 +621,128 @@ def export_run(run_dir: Path) -> None:
                 }
             )
 
+    if curator.exists():
+        health_path = curator / "health.json"
+        health = read_json(health_path) if health_path.exists() else {}
+        curator_mode = str(health.get("mode") or "themes")
+        curator_label = "World-model curator" if curator_mode == "world_models" else "Theme curator"
+        injection_kind = "world_model_injection" if curator_mode == "world_models" else "theme_injection"
+        lanes.extend(
+            [
+                {
+                    "id": "nvfp4-curator",
+                    "label": curator_label,
+                    "resource": f"{main_model} · shared persistent request stream",
+                    "cores": "shared GPU inference queue · asynchronous single-flight",
+                    "group": "sidecar",
+                },
+                {
+                    "id": "curator-injection",
+                    "label": "Curator ledger → prompt",
+                    "resource": "gameplay prompt builder",
+                    "cores": "main harness process",
+                    "group": "influence",
+                },
+            ]
+        )
+        for index, row in enumerate(read_jsonl(curator / "curator-requests.jsonl")):
+            if row.get("event") == "request":
+                continue
+            started_at = parse_iso(row.get("started_at"))
+            completed_at = parse_iso(row.get("completed_at") or row.get("failed_at")) or started_at
+            if started_at is None or completed_at is None:
+                continue
+            status = "completed" if row.get("event") == "completed" else "error"
+            revision = row.get("revision_after", row.get("revision_before"))
+            revision_number = int(revision) if revision is not None else None
+            request_summary = {
+                "mode": row.get("mode"),
+                "evidenceGames": row.get("evidence_games") or [],
+                "evidenceCount": row.get("evidence_count"),
+                "persistentMessageCount": row.get("persistent_message_count"),
+                "promptChars": row.get("prompt_chars"),
+                "ledgerRevisionBefore": row.get("revision_before"),
+            }
+            observable_output = curator_outputs.get(revision_number or -1)
+            if observable_output is None:
+                observable_output = json.dumps(
+                    {
+                        "ledgerRevisionAfter": row.get("revision_after"),
+                        "ledgerEntryCount": row.get("entry_count"),
+                        "ledgerHashBefore": row.get("ledger_hash_before"),
+                        "ledgerHashAfter": row.get("ledger_hash_after"),
+                        "finishReason": row.get("finish_reason"),
+                        "error": row.get("error"),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            events.append(
+                {
+                    "id": f"curator-{index}",
+                    "lane": "nvfp4-curator",
+                    "kind": "curator_synthesis",
+                    "start": iso(started_at),
+                    "end": iso(completed_at),
+                    "instant": False,
+                    "label": f"{curator_label} · ledger r{revision}",
+                    "status": status,
+                    "resource": f"{main_model} · shared persistent request stream",
+                    "cores": "shared GPU inference queue · asynchronous single-flight",
+                    "durationSeconds": row.get("wall_seconds"),
+                    "games": row.get("evidence_games") or [],
+                    "evidenceCount": row.get("evidence_count"),
+                    "promptChars": row.get("prompt_chars"),
+                    "persistentMessageCount": row.get("persistent_message_count"),
+                    "ledgerRevisionBefore": row.get("revision_before"),
+                    "ledgerRevisionAfter": row.get("revision_after"),
+                    "ledgerEntryCount": row.get("entry_count"),
+                    "ledgerHashBefore": row.get("ledger_hash_before"),
+                    "ledgerHashAfter": row.get("ledger_hash_after"),
+                    "finishReason": row.get("finish_reason"),
+                    "usage": usage_summary(row),
+                    "detail": {
+                        "type": "curator_call",
+                        "input": json.dumps(request_summary, ensure_ascii=False, indent=2),
+                        "output": observable_output,
+                        "inputProvenance": "Exact timestamped curator-call metadata; the historical logger did not retain the full synthesized prompt body.",
+                        "outputProvenance": (
+                            "Exact replacement ledger observed in the first saved gameplay request carrying this revision."
+                            if revision_number in curator_outputs
+                            else "Exact curator completion metadata; no downstream gameplay request captured this revision body."
+                        ),
+                        "record": row,
+                    },
+                }
+            )
+        for index, row in enumerate(read_jsonl(curator / "gameplay-injections.jsonl")):
+            at = parse_iso(row.get("recorded_at"))
+            if at is None:
+                continue
+            game_id = reviewed_game_id(row)
+            events.append(
+                {
+                    "id": f"curator-inject-{index}",
+                    "lane": "curator-injection",
+                    "kind": injection_kind,
+                    "start": iso(at),
+                    "end": iso(at + timedelta(milliseconds=250)),
+                    "instant": True,
+                    "label": f"{game_id or 'unknown game'} · action {row.get('action')} · ledger r{row.get('ledger_revision')}",
+                    "status": row.get("status") or "injected",
+                    "resource": f"{curator_label.lower()} ledger → main-agent user prompt",
+                    "cores": "main harness process",
+                    "gameId": game_id or None,
+                    "action": row.get("action"),
+                    "ledgerRevision": row.get("ledger_revision"),
+                    "ledgerUpdatedAt": row.get("ledger_updated_at"),
+                    "injectedThemeIds": row.get("injected_theme_ids") or [],
+                    "promptBlockChars": row.get("prompt_block_chars"),
+                    "promptBlockSha256": row.get("prompt_block_sha256"),
+                    "detail": {"type": "metadata", "record": row},
+                }
+            )
+
     events.sort(key=lambda event: (event["start"], event["lane"], event["id"]))
     samples = parse_process_metrics(metrics_path, topology) if metrics_path else []
     payload = {
@@ -595,11 +759,23 @@ def export_run(run_dir: Path) -> None:
         "lanes": lanes,
         "events": events,
         "processSamples": samples,
-        "scoreCurve": score_curve(benchmark, artifact_root, started, ended, main_events, reviewed),
+        "scoreCurve": score_curve(
+            benchmark,
+            artifact_root,
+            started,
+            ended,
+            main_events,
+            reviewed if reviewed.exists() else curator,
+        ),
         "counts": {
             "mainCalls": sum(event["kind"] == "main_call" for event in events),
-            "sidecarCalls": sum(event["kind"].startswith("sidecar_") for event in events),
+            "sidecarCalls": sum(
+                event["kind"].startswith("sidecar_") or event["kind"] == "curator_synthesis"
+                for event in events
+            ),
+            "curatorCalls": sum(event["kind"] == "curator_synthesis" for event in events),
             "themeInjections": sum(event["kind"] == "theme_injection" for event in events),
+            "worldModelInjections": sum(event["kind"] == "world_model_injection" for event in events),
             "processSamples": len(samples),
         },
     }

@@ -5,13 +5,17 @@ const KIND_LABEL = {
   main_call: "Main model",
   sidecar_observer: "Observer",
   sidecar_reviewer: "Reviewer",
+  curator_synthesis: "World-model curator",
   theme_injection: "Ledger injection",
+  world_model_injection: "World-model injection",
 };
 const KIND_COLOR = {
   main_call: "var(--trace-main)",
   sidecar_observer: "var(--trace-observer)",
   sidecar_reviewer: "var(--trace-reviewer)",
+  curator_synthesis: "var(--trace-curator)",
   theme_injection: "var(--trace-injection)",
+  world_model_injection: "var(--trace-world-injection)",
 };
 
 const state = {
@@ -100,7 +104,8 @@ function renderStats() {
     [fmtDuration(state.trace.durationSeconds), "wall time"],
     [Number(counts.mainCalls || 0).toLocaleString(), "main calls"],
     [Number(counts.sidecarCalls || 0).toLocaleString(), "sidecar calls"],
-    [Number(counts.themeInjections || 0).toLocaleString(), "prompt injections"],
+    [Number(counts.curatorCalls || 0).toLocaleString(), "curator calls"],
+    [Number((counts.themeInjections || 0) + (counts.worldModelInjections || 0)).toLocaleString(), "prompt injections"],
     [Number(counts.processSamples || 0).toLocaleString(), "resource samples"],
   ];
   el.stats.innerHTML = cards.map(([value, label]) => `<div class="stat"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`).join("");
@@ -220,9 +225,16 @@ async function renderDetail(event) {
   if (event.detail?.type === "inline_call") {
     input = event.detail.input || "";
     output = event.detail.output || "";
+  } else if (event.detail?.type === "curator_call") {
+    input = event.detail.input || "";
+    output = event.detail.output || "";
+    exact = false;
+    provenance = `${event.detail.inputProvenance || "Curator input metadata."} ${event.detail.outputProvenance || "Curator output metadata."}`;
   } else if (event.detail?.type === "metadata") {
     input = JSON.stringify(event.detail.record || {}, null, 2);
-    output = "This marker records a ledger block injected into a gameplay prompt; it is not a model call.";
+    output = event.kind === "world_model_injection"
+      ? "This marker records a world-model ledger block injected into a gameplay prompt; it is not a model call."
+      : "This marker records a ledger block injected into a gameplay prompt; it is not a model call.";
   } else if (event.detail?.type === "game_step") {
     const payload = await fetchGameStep(state.run, event.detail.gameIndex, event.detail.stepIndex);
     const step = payload.step || {};
@@ -260,19 +272,34 @@ async function renderDetail(event) {
     link = `<a class="detail-link" href="./viewer.html#run=${encodeURIComponent(state.run)}&game=${event.gameIndex}">Open this game in the frame viewer →</a>`;
   }
 
-  const badge = event.kind === "main_call" ? `<span class="badge ${exact ? "exact" : "reconstructed"}">${exact ? "exact input" : "reconstructed context"}</span>` : '<span class="badge exact">exact call log</span>';
+  const badge = event.kind === "main_call"
+    ? `<span class="badge ${exact ? "exact" : "reconstructed"}">${exact ? "exact input" : "reconstructed context"}</span>`
+    : event.kind === "curator_synthesis"
+      ? '<span class="badge reconstructed">exact metadata + observed ledger</span>'
+      : '<span class="badge exact">exact event log</span>';
   const usage = event.usage || {};
+  const inputHeading = event.kind === "main_call"
+    ? "Context at selected call"
+    : event.kind === "curator_synthesis"
+      ? "Captured call metadata"
+      : "Exact input";
+  const outputHeading = event.kind === "main_call"
+    ? "Current call output / tool activity"
+    : event.kind === "curator_synthesis"
+      ? "Observed replacement ledger"
+      : "Exact output";
   el.detail.innerHTML = `<div class="detail-wrap">
     <div class="detail-title"><h2>${escapeHtml(event.label)}</h2>${badge}</div>
     ${metaGrid([
       ["Start", fmtDateTime(event.start)], ["Duration", event.instant ? "point event" : fmtDuration(event.durationSeconds ?? duration)],
       ["Span type", KIND_LABEL[event.kind] || event.kind], ["Status", event.status], ["Resource", event.resource], ["CPU / affinity", event.cores],
-      ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Game", event.gameId], ["Ledger revision", event.ledgerRevision],
+      ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Game", event.gameId],
+      ["Ledger revision", event.ledgerRevision ?? event.ledgerRevisionAfter], ["Evidence games", event.evidenceCount], ["Ledger entries", event.ledgerEntryCount],
     ])}
     <div class="provenance-note${exact ? " exact" : ""}">${escapeHtml(provenance)}</div>
     <div class="io-grid">
-      <section class="io-panel"><h3>${event.kind === "main_call" ? "Context at selected call" : "Exact input"}</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section>
-      <section class="io-panel"><h3>${event.kind === "main_call" ? "Current call output / tool activity" : "Exact output"}</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section>
+      <section class="io-panel"><h3>${inputHeading}</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section>
+      <section class="io-panel"><h3>${outputHeading}</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section>
     </div>
     ${link}
     ${processTable(event)}
