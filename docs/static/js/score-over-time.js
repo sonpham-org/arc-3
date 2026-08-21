@@ -1,4 +1,4 @@
-import { fetchRunsIndex, fetchRunTimeline } from "./api.js?v=score-compare-v2";
+import { fetchRunsIndex, fetchRunTimeline } from "./api.js?v=score-compare-v3";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COLORS = ["#3b82f6", "#f59e0b", "#22c55e", "#a78bfa", "#ef4444", "#06b6d4", "#ec4899", "#eab308"];
