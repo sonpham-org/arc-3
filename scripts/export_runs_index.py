@@ -194,6 +194,17 @@ HARNESS = {
         "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
         "note": "Tail-trimmed replica 1: temperature 1.0, top_p 0.90, top_k 20. Final mean25 4.9235, ex-ft09 4.5334, 28 levels, 2,446 actions, 2,058,334 generated tokens, 18 positive games, runtime 2h12m22.5s. Exact GCS run g4run-q38-taaf-cap8-ce-trim-p1-20260820-175740.",
     },
+    "20260820_203516_q38-taaf-cap8-ce-trim-p2": {
+        "hardware": "RTX PRO 6000 (GCP Spot)",
+        "agent_code": "exact compact-English native-TAAF checkpoint-8 harness; tail-trimmed sampling profile",
+        "memory": "author-shared native TAAF reference memory plus host checkpoint after 8 actions",
+        "render": "current-grid image at 4x; full engine frame mode",
+        "yield_s": 60, "thinking": "on, historical preserve_thinking=true (uncapped)",
+        "agent_ctx": 32768, "server": "vLLM 0.19.0",
+        "server_max_len": 65536, "spec_decode": "off",
+        "weights": "Qwen/Qwen3.8-27B-FP8@017b9c7a", "concurrency": 28, "budget_min": 132,
+        "note": "Tail-trimmed replica 2: temperature 1.0, top_p 0.90, top_k 20. Final mean25 5.3566, ex-ft09 5.5798, 33 levels, 2,393 actions, 2,246,589 generated tokens, 20 positive games, runtime 2h12m36.7s. Tail-trimmed pair mean25 5.1400. Exact GCS run g4run-q38-taaf-cap8-ce-trim-p2-20260820-203516.",
+    },
     "20260819_235111_q38-taaf-cap8-ce-prec-p1": {
         "hardware": "RTX PRO 6000 (GCP Spot)",
         "agent_code": "exact compact-English native-TAAF checkpoint-8 harness; precise/current sampling profile",
