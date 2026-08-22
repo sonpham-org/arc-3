@@ -56,7 +56,10 @@ def validate_catalog_consistency(
         raise ValueError("timestamped score curve must contain at least start and end points")
     final_score = float(curve.get("finalMeanScore") or points[-1].get("meanScore") or 0)
     index_score = float(entry.get("avg_score") or 0)
-    if round(final_score, 3) != round(index_score, 3):
+    # The catalog averages per-game scores after rounding each game to three
+    # decimals, while the timeline preserves raw game scores. Their final
+    # means can therefore straddle a display-rounding boundary by < 0.001.
+    if abs(final_score - index_score) >= 0.001:
         raise ValueError(
             f"score mismatch: catalog={index_score:.9f}, score curve={final_score:.9f}"
         )

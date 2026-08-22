@@ -68,6 +68,14 @@ class RunCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "score mismatch"):
             validate_catalog_consistency("run-1", entry, self.timeline())
 
+    def test_accepts_sub_millipoint_rounding_difference(self) -> None:
+        entry = self.entry()
+        entry["avg_score"] = 6.884
+        timeline = self.timeline()
+        timeline["scoreCurve"]["finalMeanScore"] = 6.883480144
+        timeline["scoreCurve"]["points"][-1]["meanScore"] = 6.883480144
+        validate_catalog_consistency("run-1", entry, timeline)
+
     def test_submission_and_sql_cover_every_catalog_table(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
