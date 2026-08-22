@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Publish one generated ARC3 viewer run directly to Railway's data volume.
+"""Publish one complete ARC3 run to Railway volume storage and Postgres.
 
-Git is deliberately not involved. The uploader streams a tar archive over
-``railway ssh`` into a unique staging directory, verifies every file, installs
-the run directory, and atomically replaces ``runs-index.json``.
+The run files are staged and verified first. The remote finalizer then installs
+the files and executes one Postgres transaction that replaces the run row,
+per-game scores, score events, artifact inventory, and publication receipt.
+If the database transaction fails, the previous volume copy is restored.
 """
 
 from __future__ import annotations
@@ -20,6 +21,11 @@ import sys
 import tarfile
 import time
 from pathlib import Path
+
+try:
+    from .run_catalog import build_catalog_sql, prepare_run_submission
+except ImportError:  # Direct script execution adds scripts/ to sys.path.
+    from run_catalog import build_catalog_sql, prepare_run_submission
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -43,7 +49,11 @@ def sha256_file(path: Path) -> str:
 
 
 def run_files(run_dir: Path) -> list[Path]:
-    files = sorted(path for path in run_dir.rglob("*") if path.is_file())
+    files = sorted(
+        path
+        for path in run_dir.rglob("*")
+        if path.is_file() and path.name != "PUBLISH_RECEIPT.json"
+    )
     if not files:
         raise ValueError(f"viewer export is empty: {run_dir}")
     for path in files:
@@ -52,15 +62,20 @@ def run_files(run_dir: Path) -> list[Path]:
     return files
 
 
-def build_manifest(run_dir: Path, run_name: str, index_path: Path) -> tuple[str, int]:
+def build_manifest(
+    run_dir: Path,
+    run_name: str,
+    extra_files: dict[str, bytes] | None = None,
+) -> tuple[str, int]:
     lines: list[str] = []
     total_bytes = 0
     for path in run_files(run_dir):
         relative = path.relative_to(run_dir).as_posix()
         lines.append(f"{sha256_file(path)}  {run_name}/{relative}")
         total_bytes += path.stat().st_size
-    lines.append(f"{sha256_file(index_path)}  runs-index.json")
-    total_bytes += index_path.stat().st_size
+    for relative, payload in sorted((extra_files or {}).items()):
+        lines.append(f"{hashlib.sha256(payload).hexdigest()}  {relative}")
+        total_bytes += len(payload)
     return "\n".join(lines) + "\n", total_bytes
 
 
@@ -100,36 +115,22 @@ def railway_run(
 def stream_archive(
     args: argparse.Namespace,
     run_dir: Path,
-    index_path: Path,
     manifest: str,
+    extra_files: dict[str, bytes],
     stage: str,
-    source: str,
 ) -> None:
     command = railway_base(args) + ["tar", "-xzf", "-", "-C", stage]
     process = subprocess.Popen(command, cwd=args.railway_cwd, stdin=subprocess.PIPE)
     if process.stdin is None:
         raise RuntimeError("failed to open Railway upload stream")
-
-    receipt = json.dumps(
-        {
-            "run": args.run_name,
-            "source": source,
-            "published_at_unix": int(time.time()),
-            "manifest_sha256": hashlib.sha256(manifest.encode()).hexdigest(),
-        },
-        indent=2,
-        sort_keys=True,
-    ).encode() + b"\n"
-
     try:
         with tarfile.open(fileobj=process.stdin, mode="w|gz") as archive:
             archive.add(run_dir, arcname=args.run_name, recursive=True)
-            archive.add(index_path, arcname="runs-index.json", recursive=False)
+            for relative, payload in sorted(extra_files.items()):
+                add_bytes(archive, relative, payload)
             add_bytes(archive, "MANIFEST.sha256", manifest.encode())
-            add_bytes(archive, f"{args.run_name}/PUBLISH_RECEIPT.json", receipt)
     finally:
         process.stdin.close()
-
     return_code = process.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, command)
@@ -145,13 +146,18 @@ run='{run_name}'
 data_root='{data_root}'
 final="$data_root/$run"
 backup="$data_root/.rollback/$run.{nonce}"
+failed="$data_root/.failed/$run.{nonce}"
 cd "$stage"
 sha256sum -cs MANIFEST.sha256
 test -s "$run/run-overview.json"
-grep -Fq "\\\"$run\\\"" runs-index.json
+test -s "$run/run-timeline.json"
+test -s "$run/run-submission.json"
+test -s CATALOG.sql
+command -v psql >/dev/null
+test -n "${{DATABASE_URL:-}}"
 lock="$data_root/.publish-lock"
 if ! mkdir "$lock"; then
-  echo "REFUSED: another Railway data publication is active" >&2
+  echo "REFUSED: another Railway run publication is active" >&2
   exit 45
 fi
 trap 'rmdir "$lock" 2>/dev/null || true' EXIT
@@ -167,16 +173,19 @@ if ! mv "$stage/$run" "$final"; then
   if [ -e "$backup" ]; then mv "$backup" "$final"; fi
   exit 43
 fi
-cp "$stage/runs-index.json" "$data_root/.runs-index.{nonce}"
-if ! mv "$data_root/.runs-index.{nonce}" "$data_root/runs-index.json"; then
-  mv "$final" "$stage/$run"
+if ! psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$stage/CATALOG.sql"; then
+  mkdir -p "$data_root/.failed"
+  mv "$final" "$failed"
   if [ -e "$backup" ]; then mv "$backup" "$final"; fi
-  exit 44
+  echo "FAILED_COPY=$failed" >&2
+  exit 46
 fi
-rm -f "$stage/MANIFEST.sha256" "$stage/runs-index.json"
+rm -f "$stage/MANIFEST.sha256" "$stage/CATALOG.sql"
 rmdir "$stage"
+wget -q -O /dev/null "http://127.0.0.1:8082/api/healthz"
 wget -q -O /dev/null "http://127.0.0.1:8081/data/$run/run-overview.json"
 echo "PUBLISHED_RUN=$run"
+echo "CATALOG_BACKEND=railway-postgres"
 if [ -e "$backup" ]; then echo "ROLLBACK_COPY=$backup"; fi
 """
     return script.encode()
@@ -190,7 +199,9 @@ run='{run_name}'
 cd "$stage"
 sha256sum -cs MANIFEST.sha256
 test -s "$run/run-overview.json"
-grep -Fq "\\\"$run\\\"" runs-index.json
+test -s "$run/run-timeline.json"
+test -s "$run/run-submission.json"
+test -s CATALOG.sql
 cd /
 rm -rf "$stage"
 echo "UPLOAD_VALIDATED=$run"
@@ -228,20 +239,49 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     run_dir = args.repo_root / "docs" / "data" / args.run_name
     index_path = args.repo_root / "docs" / "data" / "runs-index.json"
-    if not (run_dir / "run-overview.json").is_file():
-        raise SystemExit(f"missing viewer export: {run_dir / 'run-overview.json'}")
+    schema_path = args.repo_root / "railway" / "catalog_schema.sql"
     if not index_path.is_file():
-        raise SystemExit(f"missing run index: {index_path}")
-    if args.run_name not in index_path.read_text(encoding="utf-8"):
-        raise SystemExit(f"run is absent from {index_path}")
+        raise SystemExit(f"missing local catalog export: {index_path}")
+    if not schema_path.is_file():
+        raise SystemExit(f"missing catalog schema: {schema_path}")
 
-    manifest, total_bytes = build_manifest(run_dir, args.run_name, index_path)
+    submission = prepare_run_submission(run_dir, index_path, args.source)
+    artifact_manifest, artifact_bytes = build_manifest(run_dir, args.run_name)
+    artifact_manifest_sha256 = hashlib.sha256(artifact_manifest.encode()).hexdigest()
+    receipt = (
+        json.dumps(
+            {
+                "run": args.run_name,
+                "source": args.source,
+                "published_at_unix": int(time.time()),
+                "artifact_manifest_sha256": artifact_manifest_sha256,
+                "catalog_backend": "railway-postgres",
+            },
+            indent=2,
+            sort_keys=True,
+        ).encode()
+        + b"\n"
+    )
+    catalog_sql = build_catalog_sql(
+        schema_path.read_text(encoding="utf-8"),
+        submission,
+        artifact_manifest_sha256,
+        len(artifact_manifest.splitlines()) + 1,
+        artifact_bytes + len(receipt),
+    )
+    extra_files = {
+        "CATALOG.sql": catalog_sql,
+        f"{args.run_name}/PUBLISH_RECEIPT.json": receipt,
+    }
+    upload_manifest, total_bytes = build_manifest(run_dir, args.run_name, extra_files)
     summary = {
         "run": args.run_name,
-        "files": len(manifest.splitlines()),
+        "files": len(upload_manifest.splitlines()),
         "bytes": total_bytes,
-        "manifest_sha256": hashlib.sha256(manifest.encode()).hexdigest(),
+        "upload_manifest_sha256": hashlib.sha256(upload_manifest.encode()).hexdigest(),
+        "artifact_manifest_sha256": artifact_manifest_sha256,
         "source": args.source,
+        "catalog_backend": "railway-postgres",
     }
     print(json.dumps(summary, sort_keys=True))
     if args.dry_run:
@@ -250,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     nonce = f"{int(time.time())}-{secrets.token_hex(4)}"
     stage = f"{DEFAULT_DATA_ROOT}/.incoming/{args.run_name}.{nonce}"
     railway_run(args, ["mkdir", "-p", stage])
-    stream_archive(args, run_dir, index_path, manifest, stage, args.source)
+    stream_archive(args, run_dir, upload_manifest, extra_files, stage)
     if args.validate_upload_only:
         railway_run(args, ["sh", "-s"], input_bytes=validate_upload_script(args, stage))
         return 0

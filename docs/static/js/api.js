@@ -1,7 +1,14 @@
-// Static-mode API: reads pre-exported JSON from ./data instead of a live server.
+// Large immutable viewer artifacts stay on the Railway volume. The mutable
+// run catalog and score curves are served from Railway Postgres.
 const DATA = new URL("../../data/", import.meta.url);
+const SITE = new URL("../../", import.meta.url);
 async function json(rel) {
   const response = await fetch(new URL(rel, DATA), { cache: "no-store" });
+  if (!response.ok) throw new Error(`${rel}: ${response.status}`);
+  return response.json();
+}
+async function api(rel) {
+  const response = await fetch(new URL(rel, SITE), { cache: "no-store" });
   if (!response.ok) throw new Error(`${rel}: ${response.status}`);
   return response.json();
 }
@@ -13,9 +20,9 @@ export const fetchGameFrames = (run, index) => json(`${r(run)}/game-${index}-fra
 export const fetchGameStep = (run, index, step) => json(`${r(run)}/game-${index}-step-${step}.json`);
 export const fetchRunTimeline = (run, version = "") =>
   json(`${r(run)}/run-timeline.json${version ? `?v=${encodeURIComponent(version)}` : ""}`);
+export const fetchRunScoreCurve = (run) =>
+  api(`api/runs/${r(run)}/score-curve.json?v=${Date.now()}`);
 export const fetchViewerVersion = async () => ({ version: "static" });
-// The index is mutable on Railway's persistent volume. Give every dashboard
-// load a unique URL as well as bypassing the browser cache so a just-published
-// run cannot appear in the scoreboard while remaining absent from comparisons.
+// Keep the legacy URL contract; Caddy routes this endpoint to Postgres.
 export const fetchRunsIndex = () =>
   json(`runs-index.json?v=${Date.now()}`).catch(() => null);

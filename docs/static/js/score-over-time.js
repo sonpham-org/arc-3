@@ -1,4 +1,4 @@
-import { fetchRunsIndex, fetchRunTimeline } from "./api.js?v=score-compare-v3";
+import { fetchRunsIndex, fetchRunScoreCurve } from "./api.js?v=postgres-catalog-v1";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COLORS = ["#3b82f6", "#f59e0b", "#22c55e", "#a78bfa", "#ef4444", "#06b6d4", "#ec4899", "#eab308"];
@@ -84,7 +84,7 @@ async function loadTrace(run) {
   if (state.traces.has(run)) return;
   state.traces.set(run, null);
   try {
-    state.traces.set(run, await fetchRunTimeline(run, "score-compare-v1"));
+    state.traces.set(run, await fetchRunScoreCurve(run));
   } catch (error) {
     state.traces.set(run, {error:error.message, scoreCurve:{points:[]}});
   }

@@ -147,20 +147,23 @@ first — see `scripts/build_gcp_customgames_bundle.py`).
 scripts/publish_run.sh <gcs-run-id> <log-dir-name>
 ```
 
-Pulls logs from GCS → exports scoreboard + viewer JSON → streams the generated run and refreshed
-index directly into Railway's persistent `/srv/data` volume → verifies the internal live URL.
-Git is not used as artifact transport. Requires a `HARNESS` entry for the run in
-`scripts/export_runs_index.py` (that table is the source of truth for server/weights/env facts,
-which live on the VM, not in the run artifacts). Set `$ARC3_SITE_DIR` only when the current
-checkout is not Railway-linked.
+This is the single supported submission path. It pulls logs from GCS, exports the viewer and
+execution trace, validates the final score against the timestamped score curve, stages and
+verifies the run files on the Railway volume, and commits the run, per-game scores, score
+events, artifact hashes, and publication receipt to Railway Postgres in one transaction.
+The scoreboard and both score-over-time pages read that database-backed catalog, so there is
+no separate index upload to remember. Set `$ARC3_SITE_DIR` only when the current checkout is
+not Railway-linked.
 
 `scripts/publish_railway_data.py` refuses to overwrite an existing run by default. A deliberate
 re-export must pass `--replace`; the replaced directory is retained under `/srv/data/.rollback/`.
-Raw artifacts remain canonical in GCS, so the serving volume can always be reconstructed.
+If the Postgres transaction fails, the newly installed directory is moved to `/srv/data/.failed/`
+and the prior volume copy is restored. Raw artifacts remain canonical in GCS.
 
-The Railway image is built from the root `Dockerfile`. It contains only the site shell and game
-assets. `docs/data/`, `logs/`, and all experiment work directories are excluded from the image and
-from new Git commits; `/srv/data` is supplied exclusively by the persistent Railway volume.
+The Railway image is built from the root `Dockerfile`. It contains the site shell, game assets,
+and a small read-only catalog API. Run metadata lives in Railway Postgres; large immutable viewer
+and trace payloads live under `/srv/data`. `docs/data/`, `logs/`, and experiment work directories
+remain excluded from the image and from new Git commits.
 Deploy the shell with `railway up --service arc3-viewer --environment production`; the volume is
 mounted independently and is not rebuilt or copied during image deployment.
 

@@ -3,6 +3,8 @@ FROM caddy:2.11.4-alpine
 ARG TARGETARCH
 ARG OAUTH2_PROXY_VERSION=7.7.1
 
+RUN apk add --no-cache postgresql-client python3 py3-psycopg2
+
 RUN set -eux; \
     case "$TARGETARCH" in \
       amd64|arm64) oauth_arch="$TARGETARCH" ;; \
@@ -18,6 +20,8 @@ RUN set -eux; \
 
 COPY railway/Caddyfile /etc/caddy/Caddyfile
 COPY railway/entrypoint.sh /entrypoint.sh
+COPY railway/catalog_server.py /catalog_server.py
+COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY docs/*.html /srv/
 COPY docs/static/ /srv/static/
 

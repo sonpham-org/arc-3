@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import sys
 
 
 def extract_prompts(run_dir: str) -> dict:
@@ -1438,7 +1439,18 @@ runs = []
 # A GCS sync may contain both a lightweight root benchmark and the complete
 # benchmark under ``runs/``.  Index each run once and prefer the complete tree.
 benchmark_by_run = {}
-for candidate in sorted(set(glob.glob("logs/*/benchmark.json") + glob.glob("logs/*/runs/benchmark.json"))):
+benchmark_candidates = set(
+    glob.glob("logs/*/benchmark.json") + glob.glob("logs/*/runs/benchmark.json")
+)
+for explicit in sys.argv[1:]:
+    explicit_dir = os.path.abspath(explicit)
+    for candidate in (
+        os.path.join(explicit_dir, "benchmark.json"),
+        os.path.join(explicit_dir, "runs", "benchmark.json"),
+    ):
+        if os.path.isfile(candidate):
+            benchmark_candidates.add(candidate)
+for candidate in sorted(benchmark_candidates):
     candidate_dir = os.path.dirname(candidate)
     nested = os.path.basename(candidate_dir) == "runs"
     candidate_run = os.path.basename(os.path.dirname(candidate_dir)) if nested else os.path.basename(candidate_dir)

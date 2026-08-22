@@ -1,4 +1,4 @@
-import { fetchRunsIndex, fetchRunTimeline } from "./api.js?v=score-time-v3";
+import { fetchRunsIndex, fetchRunScoreCurve } from "./api.js?v=postgres-catalog-v1";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const state = { run: "", trace: null };
@@ -159,7 +159,7 @@ async function load() {
   syncTabs();
   el.title.textContent = `Score over time — ${state.run}`;
   try {
-    state.trace = await fetchRunTimeline(state.run, "score-time-v1");
+    state.trace = await fetchRunScoreCurve(state.run);
     const curve = state.trace.scoreCurve || {points:[]};
     el.note.textContent = curve.timestampNote || "";
     renderStats(curve);

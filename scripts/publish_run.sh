@@ -4,10 +4,8 @@
 # Usage: scripts/publish_run.sh <gcs-run-id> <log-dir-name>
 #   e.g. scripts/publish_run.sh g4run-v12-20260714-1505 20260714_150500_v12-corrected-grafts
 #
-# Steps: pull logs from GCS -> export scoreboard + viewer JSON -> stream the
-# generated run directly into Railway's persistent data volume.
-# Requires: a HARNESS entry for <log-dir-name> in scripts/export_runs_index.py,
-# plus a Railway-linked checkout (defaults to this repository).
+# Steps: pull logs from GCS -> export every website artifact -> stage and verify
+# the volume payload -> commit the complete run catalog to Railway Postgres.
 set -euo pipefail
 
 RUN_GCS_ID=$1
@@ -18,15 +16,15 @@ RAILWAY_CWD=${ARC3_SITE_DIR:-$REPO_DIR}
 
 cd "$REPO_DIR"
 mkdir -p "logs/$RUN_NAME"
-gcloud storage rsync -r "$BUCKET/$RUN_GCS_ID/runs" "logs/$RUN_NAME"
+gcloud storage rsync -r \
+  -x '(^|/)movies/|.*\.mp4$|.*\.html$|.*\.pkl$|^vllm\.log$|^startup-.*\.log$' \
+  "$BUCKET/$RUN_GCS_ID" "logs/$RUN_NAME"
 
-grep -q "\"$RUN_NAME\"" scripts/export_runs_index.py \
-  || { echo "ERROR: add a HARNESS entry for $RUN_NAME to scripts/export_runs_index.py first"; exit 1; }
-python3 scripts/export_runs_index.py
-python3 scripts/export_viewer_data.py "logs/$RUN_NAME"
-
-python3 scripts/publish_railway_data.py "$RUN_NAME" \
+python3 scripts/publish_complete_run.py "$RUN_NAME" \
+  --log-dir "logs/$RUN_NAME" \
   --railway-cwd "$RAILWAY_CWD" \
   --source "$BUCKET/$RUN_GCS_ID"
 
-echo "LIVE: https://arc3.sonpham.net/viewer.html#run=$RUN_NAME"
+echo "LIVE: https://arc3.sonpham.net/internal.html"
+echo "TRACE: https://arc3.sonpham.net/trace.html#run=$RUN_NAME"
+echo "SCORE: https://arc3.sonpham.net/score-time.html#run=$RUN_NAME"

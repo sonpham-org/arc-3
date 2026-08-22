@@ -5,6 +5,7 @@ set -eu
 : "${OAUTH2_PROXY_CLIENT_ID:?set OAUTH2_PROXY_CLIENT_ID}"
 : "${OAUTH2_PROXY_CLIENT_SECRET:?set OAUTH2_PROXY_CLIENT_SECRET}"
 : "${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET (32-byte)}"
+: "${DATABASE_URL:?set DATABASE_URL to the Railway Postgres private URL}"
 
 printf '%s\n' "$ALLOWED_EMAILS" \
   | tr ', ' '\n\n' \
@@ -12,6 +13,24 @@ printf '%s\n' "$ALLOWED_EMAILS" \
   > /tmp/emails.txt
 
 echo "oauth2-proxy: allowlisting $(wc -l < /tmp/emails.txt) email(s)"
+python3 /catalog_server.py --bootstrap-root /srv/data &
+catalog_pid=$!
+catalog_ready=0
+for _attempt in $(seq 1 30); do
+  if wget -q -O /dev/null http://127.0.0.1:8082/api/healthz; then
+    catalog_ready=1
+    break
+  fi
+  if ! kill -0 "$catalog_pid" 2>/dev/null; then
+    echo "catalog server exited during startup" >&2
+    exit 1
+  fi
+  sleep 1
+done
+if [ "$catalog_ready" != "1" ]; then
+  echo "catalog server did not become ready" >&2
+  exit 1
+fi
 caddy start --config /etc/caddy/Caddyfile --adapter caddyfile
 
 exec oauth2-proxy \
