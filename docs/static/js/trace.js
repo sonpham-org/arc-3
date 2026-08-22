@@ -1,47 +1,27 @@
 import { fetchGameStep, fetchRunsIndex, fetchRunTimeline } from "./api.js";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 const KIND_LABEL = {
-  main_call: "Main model",
+  main_call: "Gameplay call",
   sidecar_observer: "Observer",
   sidecar_reviewer: "Reviewer",
   curator_synthesis: "World-model curator",
   theme_injection: "Ledger injection",
   world_model_injection: "World-model injection",
 };
-const KIND_COLOR = {
-  main_call: "var(--trace-main)",
-  sidecar_observer: "var(--trace-observer)",
-  sidecar_reviewer: "var(--trace-reviewer)",
-  curator_synthesis: "var(--trace-curator)",
-  theme_injection: "var(--trace-injection)",
-  world_model_injection: "var(--trace-world-injection)",
-};
+const PHASE_LABEL = { input: "Input", reasoning: "Reasoning", tool_call: "Tool call", compact: "Compact" };
 
 const state = {
-  run: null,
-  trace: null,
-  selected: null,
-  kinds: new Set(Object.keys(KIND_LABEL)),
-  search: "",
+  run: null, trace: null, pinned: null, preview: null,
+  kinds: new Set(Object.keys(KIND_LABEL)), search: "", detailRequest: 0, stepCache: new Map(),
 };
-
 const el = {
-  run: document.querySelector("#trace-run"),
-  runSelect: document.querySelector("#run-select"),
-  stats: document.querySelector("#trace-stats"),
-  toolbar: document.querySelector("#trace-toolbar"),
-  range: document.querySelector("#timeline-range"),
-  stage: document.querySelector("#timeline-stage"),
-  search: document.querySelector("#event-search"),
-  list: document.querySelector("#event-list"),
-  detail: document.querySelector("#event-detail"),
+  run: document.querySelector("#trace-run"), runSelect: document.querySelector("#run-select"),
+  stats: document.querySelector("#trace-stats"), toolbar: document.querySelector("#trace-toolbar"),
+  range: document.querySelector("#timeline-range"), heading: document.querySelector("#timeline-heading"), stage: document.querySelector("#timeline-stage"),
+  search: document.querySelector("#event-search"), detail: document.querySelector("#event-detail"),
 };
 
-function hashRun() {
-  return new URLSearchParams(location.hash.replace(/^#/, "")).get("run") || "";
-}
-
+function hashRun() { return new URLSearchParams(location.hash.replace(/^#/, "")).get("run") || ""; }
 function syncTabs() {
   const hash = location.hash;
   document.querySelector("#rt-viewer").href = `./viewer.html${hash}`;
@@ -49,44 +29,28 @@ function syncTabs() {
   document.querySelector("#rt-score").href = `./score-time.html${hash}`;
   document.querySelector("#rt-harness").href = `./harness.html${hash}`;
 }
-
-function svgNode(tag, attributes = {}, text = "") {
-  const node = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-  if (text) node.textContent = text;
-  return node;
-}
-
 function fmtDuration(seconds) {
   const value = Number(seconds || 0);
   if (value >= 3600) return `${Math.floor(value / 3600)}h ${Math.round((value % 3600) / 60)}m`;
   if (value >= 60) return `${Math.floor(value / 60)}m ${Math.round(value % 60)}s`;
   return `${value.toFixed(value < 10 ? 1 : 0)}s`;
 }
-
 function fmtClock(value, seconds = false) {
-  const date = new Date(value);
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "UTC", hour: "2-digit", minute: "2-digit",
-    second: seconds ? "2-digit" : undefined, hour12: false,
-  }).format(date);
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", second: seconds ? "2-digit" : undefined, hour12: false }).format(new Date(value));
 }
-
 function fmtDateTime(value) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "UTC", month: "short", day: "2-digit", hour: "2-digit",
-    minute: "2-digit", second: "2-digit", hour12: false,
-  }).format(new Date(value)) + " UTC";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value)) + " UTC";
 }
-
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[char]);
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
-
-function visibleEvents() {
-  return (state.trace?.events || []).filter((event) => state.kinds.has(event.kind));
+function searchableText(event) {
+  return [event.kind, event.label, event.resource, event.cores, event.gameId, event.action, event.ledgerRevision, ...(event.games || [])].join(" ").toLowerCase();
+}
+function eventVisible(event) {
+  if (!state.kinds.has(event.kind)) return false;
+  const query = state.search.trim().toLowerCase();
+  return !query || searchableText(event).includes(query);
 }
 
 async function populateRunSelect() {
@@ -98,246 +62,216 @@ async function populateRunSelect() {
   el.runSelect.value = fallback || rows[0]?.run || "";
 }
 
+function normalizeLegacyTrace(trace) {
+  if (Number(trace.schemaVersion || 1) >= 2 || !(trace.lanes || []).some((lane) => lane.id === "main-model")) return trace;
+  const gameplayEvents = (trace.events || []).filter((event) => event.kind === "main_call");
+  const games = [...new Map(gameplayEvents.map((event) => [String(event.gameId || event.gameIndex), event])).values()];
+  const concurrency = Number(trace.topology?.gameplayConcurrency || games.length || 1);
+  const gameLane = new Map(games.map((event, index) => [String(event.gameId || event.gameIndex), `gameplay-${index}`]));
+  const gameplayLanes = Array.from({ length: concurrency }, (_, index) => {
+    const event = games[index]; const gameId = event?.gameId || "";
+    return { id: `gameplay-${index}`, label: `Thread ${String(index + 1).padStart(2, "0")} · ${gameId || "idle"}`, resource: "Gameplay inference queue", cores: "shared GPU inference queue", group: "gameplay", games: gameId ? [gameId] : [] };
+  });
+  trace.events.forEach((event) => {
+    const lane = gameLane.get(String(event.gameId || event.gameIndex));
+    if (lane && (event.kind === "main_call" || /injection$/.test(event.kind))) event.lane = lane;
+  });
+  trace.lanes = [
+    ...(trace.lanes || []).filter((lane) => lane.id !== "main-model" && /curator/i.test(lane.id)),
+    ...(trace.lanes || []).filter((lane) => lane.id !== "main-model" && !/curator|injection/i.test(lane.id)),
+    ...gameplayLanes,
+  ];
+  return trace;
+}
+
 function renderStats() {
   const counts = state.trace.counts || {};
+  const gameplay = (state.trace.lanes || []).filter((lane) => lane.group === "gameplay").length;
   const cards = [
-    [fmtDuration(state.trace.durationSeconds), "wall time"],
-    [Number(counts.mainCalls || 0).toLocaleString(), "main calls"],
-    [Number(counts.sidecarCalls || 0).toLocaleString(), "sidecar calls"],
-    [Number(counts.curatorCalls || 0).toLocaleString(), "curator calls"],
+    [fmtDuration(state.trace.durationSeconds), "wall time"], [gameplay.toLocaleString(), "gameplay threads"],
+    [Number(counts.mainCalls || 0).toLocaleString(), "gameplay calls"], [Number(counts.curatorCalls || 0).toLocaleString(), "curator calls"],
     [Number((counts.themeInjections || 0) + (counts.worldModelInjections || 0)).toLocaleString(), "prompt injections"],
     [Number(counts.processSamples || 0).toLocaleString(), "resource samples"],
   ];
   el.stats.innerHTML = cards.map(([value, label]) => `<div class="stat"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`).join("");
 }
 
+function phaseSummary(event) {
+  if (Array.isArray(event.phaseSummary) && event.phaseSummary.length) return event.phaseSummary;
+  if (event.instant || /injection$/.test(event.kind)) return [];
+  return [{ phase: "reasoning", charCount: 1, sectionCount: 1, labels: [KIND_LABEL[event.kind] || event.kind] }];
+}
+function phaseTitle(event, phase) {
+  const labels = (phase.labels || []).join(", ");
+  return `${PHASE_LABEL[phase.phase] || phase.phase} · ${Number(phase.charCount || 0).toLocaleString()} captured characters${labels ? ` · ${labels}` : ""}\n${event.label}`;
+}
+function activeSelection(event, phase = null) {
+  const selected = state.pinned || state.preview;
+  return selected?.event?.id === event.id && (selected.phase || null) === (phase || null);
+}
+
 function renderTimeline() {
-  const allLanes = state.trace.lanes || [];
-  const events = visibleEvents();
-  const laneIds = new Set(events.map((event) => event.lane));
-  const lanes = allLanes.filter((lane) => laneIds.has(lane.id));
+  const lanes = state.trace.lanes || [];
+  const events = (state.trace.events || []).filter(eventVisible);
   const start = new Date(state.trace.startedAt).getTime();
   const end = new Date(state.trace.endedAt).getTime();
-  const labelWidth = 230;
-  const chartWidth = 1050;
-  const rowHeight = 54;
-  const top = 34;
-  const bottom = 24;
-  const height = top + lanes.length * rowHeight + bottom;
-  const totalWidth = labelWidth + chartWidth;
-  const x = (value) => labelWidth + Math.max(0, Math.min(1, (new Date(value).getTime() - start) / Math.max(1, end - start))) * chartWidth;
-  const svg = svgNode("svg", { viewBox: `0 0 ${totalWidth} ${height}`, role: "img", "aria-label": "Aligned execution timeline" });
+  const duration = Math.max(1, end - start);
+  const chartWidth = Math.max(1180, Math.min(2600, Math.round(duration / 60000) * 14));
+  const position = (value) => Math.max(0, Math.min(100, ((new Date(value).getTime() - start) / duration) * 100));
+  el.heading.textContent = `${lanes.length}-lane execution timeline`;
+  const grid = document.createElement("div");
+  grid.className = "lane-grid";
+  grid.style.setProperty("--chart-width", `${chartWidth}px`);
 
-  const tickCount = 7;
-  for (let index = 0; index < tickCount; index += 1) {
-    const fraction = index / (tickCount - 1);
-    const at = start + fraction * (end - start);
-    const pos = labelWidth + fraction * chartWidth;
-    svg.appendChild(svgNode("line", { x1: pos, x2: pos, y1: top - 8, y2: height - bottom, class: "axis-line" }));
-    svg.appendChild(svgNode("text", { x: pos, y: 16, class: "axis-text", "text-anchor": index === 0 ? "start" : index === tickCount - 1 ? "end" : "middle" }, fmtClock(at)));
+  const header = document.createElement("div");
+  header.className = "time-row";
+  header.innerHTML = '<div class="lane-heading">Threads</div><div class="time-track"></div>';
+  const tickTrack = header.querySelector(".time-track");
+  for (let index = 0; index < 7; index += 1) {
+    const fraction = index / 6;
+    const tick = document.createElement("span");
+    tick.className = "time-tick"; tick.style.left = `${fraction * 100}%`; tick.textContent = fmtClock(start + fraction * duration);
+    tickTrack.appendChild(tick);
   }
+  grid.appendChild(header);
 
+  const laneEvents = new Map(lanes.map((lane) => [lane.id, []]));
+  events.forEach((event) => { if (!laneEvents.has(event.lane)) laneEvents.set(event.lane, []); laneEvents.get(event.lane).push(event); });
   lanes.forEach((lane, laneIndex) => {
-    const y = top + laneIndex * rowHeight;
-    svg.appendChild(svgNode("rect", { x: 0, y, width: totalWidth, height: rowHeight, class: `lane-bg${laneIndex % 2 ? " alt" : ""}` }));
-    svg.appendChild(svgNode("line", { x1: 0, x2: totalWidth, y1: y + rowHeight, y2: y + rowHeight, class: "lane-line" }));
-    svg.appendChild(svgNode("text", { x: 12, y: y + 21, class: "lane-label" }, lane.label));
-    svg.appendChild(svgNode("text", { x: 12, y: y + 38, class: "lane-meta" }, lane.cores || lane.resource || ""));
-    const laneEvents = events.filter((event) => event.lane === lane.id);
-    for (const event of laneEvents) {
-      const startX = x(event.start);
-      const endX = x(event.end || event.start);
-      const width = event.instant ? 3 : Math.max(5, endX - startX);
-      const rect = svgNode("rect", {
-        x: startX - (event.instant ? 1.5 : 0), y: y + 12, width, height: 30, rx: event.instant ? 1 : 4,
-        class: `trace-event kind-${event.kind} status-${event.status || "completed"}${state.selected?.id === event.id ? " selected" : ""}`,
-        tabindex: 0, role: "button", "aria-label": `${KIND_LABEL[event.kind] || event.kind}: ${event.label}`,
-      });
-      rect.appendChild(svgNode("title", {}, `${fmtDateTime(event.start)}\n${event.label}\n${event.cores || event.resource || ""}`));
-      const choose = () => selectEvent(event);
-      rect.addEventListener("click", choose);
-      rect.addEventListener("keydown", (keyEvent) => {
-        if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); choose(); }
-      });
-      svg.appendChild(rect);
+    const row = document.createElement("div");
+    row.className = `lane-row${lane.group === "curator" ? " curator-row" : ""}`;
+    const games = lane.games || [];
+    row.innerHTML = `<div class="lane-sidebar"><b>${escapeHtml(lane.label)}</b><span>${escapeHtml(games.length > 1 ? games.join(" → ") : lane.cores || lane.resource || "")}</span></div><div class="lane-track"></div>`;
+    const track = row.querySelector(".lane-track"); track.dataset.laneIndex = String(laneIndex);
+    for (const event of laneEvents.get(lane.id) || []) {
+      const eventStart = position(event.start); const eventEnd = position(event.end || event.start);
+      const bar = document.createElement("div"); const isPoint = Boolean(event.instant);
+      bar.className = `event-bar kind-${event.kind} status-${event.status || "completed"}${isPoint ? " point-event" : ""}`;
+      bar.style.left = `${eventStart}%`; if (!isPoint) bar.style.width = `${Math.max(.16, eventEnd - eventStart)}%`;
+      bar.tabIndex = 0; bar.setAttribute("role", "button"); bar.setAttribute("aria-label", `${KIND_LABEL[event.kind] || event.kind}: ${event.label}`);
+      bar.title = `${fmtDateTime(event.start)}\n${event.label}`;
+      const phases = phaseSummary(event);
+      if (phases.length) {
+        phases.forEach((phase) => {
+          const segment = document.createElement("span");
+          segment.className = `event-phase phase-${phase.phase}${activeSelection(event, phase.phase) ? " selected" : ""}`;
+          segment.style.flexGrow = String(Math.max(1, Number(phase.charCount || 1))); segment.title = phaseTitle(event, phase);
+          segment.addEventListener("mouseenter", () => previewEvent(event, phase.phase));
+          segment.addEventListener("click", (clickEvent) => { clickEvent.stopPropagation(); pinEvent(event, phase.phase); });
+          segment.addEventListener("focus", () => previewEvent(event, phase.phase));
+          bar.appendChild(segment);
+        });
+      } else if (activeSelection(event)) bar.classList.add("selected");
+      bar.addEventListener("mouseenter", () => { if (!phases.length) previewEvent(event, null); });
+      bar.addEventListener("mouseleave", clearPreview); bar.addEventListener("click", () => pinEvent(event, null));
+      bar.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); pinEvent(event, null); } });
+      track.appendChild(bar);
     }
+    grid.appendChild(row);
   });
-  el.stage.replaceChildren(svg);
+  el.stage.replaceChildren(grid);
   el.range.textContent = `${fmtDateTime(state.trace.startedAt)} → ${fmtDateTime(state.trace.endedAt)} · ${events.length.toLocaleString()} visible spans`;
-}
-
-function searchableText(event) {
-  return [event.kind, event.label, event.resource, event.cores, event.gameId, event.action, event.ledgerRevision, ...(event.games || [])].join(" ").toLowerCase();
-}
-
-function renderEventList() {
-  const query = state.search.trim().toLowerCase();
-  const matches = visibleEvents().filter((event) => !query || searchableText(event).includes(query));
-  const rows = matches.slice(0, 400).map((event) => `
-    <button class="event-row${state.selected?.id === event.id ? " selected" : ""}" data-event-id="${escapeHtml(event.id)}">
-      <time>${escapeHtml(fmtClock(event.start, true))}</time>
-      <span class="dot" style="background:${KIND_COLOR[event.kind] || "var(--text-dim)"}"></span>
-      <span class="row-label"><b>${escapeHtml(event.label)}</b><small>${escapeHtml(KIND_LABEL[event.kind] || event.kind)} · ${escapeHtml(event.cores || event.resource || "")}</small></span>
-    </button>`).join("");
-  el.list.innerHTML = rows + (matches.length > 400 ? `<div class="event-cap">Showing 400 of ${matches.length.toLocaleString()} matches. Narrow the filter to select later spans.</div>` : "");
-  el.list.querySelectorAll("[data-event-id]").forEach((button) => {
-    button.addEventListener("click", () => selectEvent(state.trace.events.find((event) => event.id === button.dataset.eventId)));
-  });
 }
 
 function metaGrid(entries) {
   return `<div class="detail-meta">${entries.filter(([, value]) => value !== undefined && value !== null && value !== "").map(([label, value]) => `<div><b>${escapeHtml(label)}</b><span title="${escapeHtml(value)}">${escapeHtml(value)}</span></div>`).join("")}</div>`;
 }
-
 function formatSections(sections) {
-  return (sections || []).map((section, index) => {
-    const context = section.inContext === false ? " · not in captured context" : "";
-    return `#${index + 1} [${section.label || "SECTION"}]${context}\n${section.content || ""}`;
-  }).join("\n\n".repeat(2));
+  return (sections || []).map((section, index) => `#${index + 1} [${section.label || "SECTION"}]${section.inContext === false ? " · not in captured context" : ""}\n${section.content || ""}`).join("\n\n");
 }
-
+function sectionPhase(section) {
+  const label = String(section?.label || "").toUpperCase(); const kind = String(section?.kind || "").toLowerCase();
+  if (label.includes("COMPACT") || ["compact", "compaction"].includes(kind)) return "compact";
+  if (label.includes("TOOL CALL") || kind === "tool_call") return "tool_call";
+  if (/^(THINKING|ASSISTANT)/.test(label) || kind === "reasoning") return "reasoning";
+  return "input";
+}
 function nearestSample(event) {
-  const samples = state.trace.processSamples || [];
-  if (!samples.length) return null;
+  const samples = state.trace.processSamples || []; if (!samples.length) return null;
   const target = new Date(event.start).getTime();
   return samples.reduce((best, sample) => Math.abs(new Date(sample.at).getTime() - target) < Math.abs(new Date(best.at).getTime() - target) ? sample : best, samples[0]);
 }
-
 function processTable(event) {
-  const sample = nearestSample(event);
-  if (!sample) return "";
+  const sample = nearestSample(event); if (!sample) return "";
   const rows = (sample.processes || []).map((process) => `<tr><td>${escapeHtml(process.label)}</td><td>${escapeHtml(process.cores)}</td><td>${process.currentLogicalCpu}</td><td>${process.cpuPercent.toFixed(1)}%</td><td>${process.rssMiB.toLocaleString()} MiB</td></tr>`).join("");
-  return `<table class="process-table"><thead><tr><th>Nearest sample · ${escapeHtml(fmtClock(sample.at, true))} UTC</th><th>Affinity</th><th>On CPU</th><th>CPU</th><th>RSS*</th></tr></thead><tbody>${rows}</tbody></table><div class="provenance-note">* RSS includes shared memory-mapped model pages and therefore must not be summed across servers as physical RAM.</div>`;
+  return `<table class="process-table"><thead><tr><th>Nearest sample · ${escapeHtml(fmtClock(sample.at, true))} UTC</th><th>Affinity</th><th>On CPU</th><th>CPU</th><th>RSS*</th></tr></thead><tbody>${rows}</tbody></table><div class="provenance-note">* RSS includes shared memory-mapped pages and must not be summed as physical RAM.</div>`;
+}
+async function cachedStep(gameIndex, stepIndex) {
+  const key = `${state.run}:${gameIndex}:${stepIndex}`;
+  if (!state.stepCache.has(key)) state.stepCache.set(key, fetchGameStep(state.run, gameIndex, stepIndex));
+  return state.stepCache.get(key);
+}
+async function capturedInput(event, step, exact) {
+  const context = step.context || step.localContext || {};
+  if (exact) return (context.sections || []).filter((section) => section.source === "request");
+  if (step.contextReconstruction?.kind !== "prior_step_transcripts") return context.sections || [];
+  const throughStep = Number(step.contextReconstruction.throughStep ?? event.detail.stepIndex);
+  const payloads = await Promise.all(Array.from({ length: throughStep + 1 }, (_, index) => cachedStep(event.detail.gameIndex, index)));
+  const sections = []; let systemPromptIncluded = false;
+  payloads.forEach((payload) => (payload.step?.localContext?.sections || []).forEach((section) => {
+    const isSystem = /^SYSTEM PROMPT$/i.test(section.label || ""); if (isSystem && systemPromptIncluded) return;
+    if (isSystem) systemPromptIncluded = true; sections.push(section);
+  }));
+  return sections;
 }
 
-async function renderDetail(event) {
+async function renderDetail(event, selectedPhase = null) {
+  const request = ++state.detailRequest;
   if (!event) {
-    el.detail.innerHTML = '<div class="detail-empty">Select any call or marker in the timeline.</div>';
-    return;
+    el.detail.innerHTML = '<div class="detail-empty"><b>Token inspector</b><span>Hover a colored phase to preview it. Click a phase to pin it.</span></div>'; return;
   }
+  el.detail.innerHTML = '<div class="detail-loading">Loading captured tokens…</div>';
   const duration = Math.max(0, (new Date(event.end).getTime() - new Date(event.start).getTime()) / 1000);
-  let input = "";
-  let output = "";
-  let provenance = "Exact timestamped record";
-  let exact = true;
-  let link = "";
-
+  let input = ""; let output = ""; let focus = ""; let provenance = "Exact timestamped record"; let exact = true; let link = "";
   if (event.detail?.type === "inline_call") {
-    input = event.detail.input || "";
-    output = event.detail.output || "";
+    input = event.detail.input || ""; output = event.detail.output || ""; focus = selectedPhase === "input" ? input : output;
   } else if (event.detail?.type === "curator_call") {
-    input = event.detail.input || "";
-    output = event.detail.output || "";
-    exact = false;
+    input = event.detail.input || ""; output = event.detail.output || ""; focus = selectedPhase === "input" ? input : output; exact = false;
     provenance = `${event.detail.inputProvenance || "Curator input metadata."} ${event.detail.outputProvenance || "Curator output metadata."}`;
   } else if (event.detail?.type === "metadata") {
-    input = JSON.stringify(event.detail.record || {}, null, 2);
-    output = event.kind === "world_model_injection"
-      ? "This marker records a world-model ledger block injected into a gameplay prompt; it is not a model call."
-      : "This marker records a ledger block injected into a gameplay prompt; it is not a model call.";
+    input = JSON.stringify(event.detail.record || {}, null, 2); output = "This point records a ledger block injected into the gameplay request; it is not a separate model call."; focus = input;
   } else if (event.detail?.type === "game_step") {
-    const payload = await fetchGameStep(state.run, event.detail.gameIndex, event.detail.stepIndex);
-    const step = payload.step || {};
-    const context = step.context || step.localContext || {};
-    const local = step.localContext || {};
+    const payload = await cachedStep(event.detail.gameIndex, event.detail.stepIndex); const step = payload.step || {};
+    const context = step.context || step.localContext || {}; const local = step.localContext || {};
     exact = Boolean(step.traceInputExact || context.hasExactModelContext);
-    provenance = exact
-      ? "Exact saved request context"
-      : "Cumulative transcript reconstruction. Historical direct-run TAAF did not save each request JSON, so model-side trimming or omission cannot be proven.";
-    let capturedRequestSections;
-    if (exact) {
-      capturedRequestSections = (context.sections || []).filter((section) => section.source === "request");
-    } else if (step.contextReconstruction?.kind === "prior_step_transcripts") {
-      const throughStep = Number(step.contextReconstruction.throughStep ?? event.detail.stepIndex);
-      const priorPayloads = await Promise.all(
-        Array.from({ length: throughStep + 1 }, (_, index) => fetchGameStep(state.run, event.detail.gameIndex, index)),
-      );
-      capturedRequestSections = [];
-      let systemPromptIncluded = false;
-      priorPayloads.forEach((priorPayload) => {
-        const priorSections = priorPayload.step?.localContext?.sections || [];
-        priorSections.forEach((section) => {
-          const isSystemPrompt = /^SYSTEM PROMPT$/i.test(section.label || "");
-          if (isSystemPrompt && systemPromptIncluded) return;
-          if (isSystemPrompt) systemPromptIncluded = true;
-          capturedRequestSections.push(section);
-        });
-      });
-    } else {
-      capturedRequestSections = context.sections || [];
-    }
-    input = formatSections(capturedRequestSections);
-    const generated = (local.sections || []).filter((section) => /^(THINKING|ASSISTANT|TOOL CALL|ERROR)/i.test(section.label || ""));
-    output = formatSections(generated.length ? generated : local.sections || []);
+    provenance = exact ? "Exact saved request context. Phase widths are character-weighted composition, not synthetic token timestamps." : "Cumulative transcript reconstruction. Historical model-side trimming or omission cannot be proven.";
+    const inputSections = await capturedInput(event, step, exact); const localSections = local.sections || [];
+    const lastUser = Math.max(-1, ...localSections.map((section, index) => /^USER PROMPT$/i.test(section.label || "") ? index : -1));
+    const generated = localSections.slice(lastUser + 1).filter((section) => /^(THINKING|ASSISTANT|TOOL CALL|ERROR|COMPACT)/i.test(section.label || "") || ["reasoning", "tool_call", "compact", "compaction"].includes(section.kind));
+    input = formatSections(inputSections); output = formatSections(generated.length ? generated : localSections);
+    focus = selectedPhase === "input" ? input : selectedPhase ? formatSections(generated.filter((section) => sectionPhase(section) === selectedPhase)) : "";
     link = `<a class="detail-link" href="./viewer.html#run=${encodeURIComponent(state.run)}&game=${event.gameIndex}">Open this game in the frame viewer →</a>`;
   }
-
-  const badge = event.kind === "main_call"
-    ? `<span class="badge ${exact ? "exact" : "reconstructed"}">${exact ? "exact input" : "reconstructed context"}</span>`
-    : event.kind === "curator_synthesis"
-      ? '<span class="badge reconstructed">exact metadata + observed ledger</span>'
-      : '<span class="badge exact">exact event log</span>';
+  if (request !== state.detailRequest) return;
   const usage = event.usage || {};
-  const inputHeading = event.kind === "main_call"
-    ? "Context at selected call"
-    : event.kind === "curator_synthesis"
-      ? "Captured call metadata"
-      : "Exact input";
-  const outputHeading = event.kind === "main_call"
-    ? "Current call output / tool activity"
-    : event.kind === "curator_synthesis"
-      ? "Observed replacement ledger"
-      : "Exact output";
-  el.detail.innerHTML = `<div class="detail-wrap">
-    <div class="detail-title"><h2>${escapeHtml(event.label)}</h2>${badge}</div>
-    ${metaGrid([
-      ["Start", fmtDateTime(event.start)], ["Duration", event.instant ? "point event" : fmtDuration(event.durationSeconds ?? duration)],
-      ["Span type", KIND_LABEL[event.kind] || event.kind], ["Status", event.status], ["Resource", event.resource], ["CPU / affinity", event.cores],
-      ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Game", event.gameId],
-      ["Ledger revision", event.ledgerRevision ?? event.ledgerRevisionAfter], ["Evidence games", event.evidenceCount], ["Ledger entries", event.ledgerEntryCount],
-    ])}
-    <div class="provenance-note${exact ? " exact" : ""}">${escapeHtml(provenance)}</div>
-    <div class="io-grid">
-      <section class="io-panel"><h3>${inputHeading}</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section>
-      <section class="io-panel"><h3>${outputHeading}</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section>
-    </div>
-    ${link}
-    ${processTable(event)}
-  </div>`;
+  const badge = event.kind === "main_call" ? `<span class="badge ${exact ? "exact" : "reconstructed"}">${exact ? "exact input" : "reconstructed context"}</span>` : event.kind === "curator_synthesis" ? '<span class="badge reconstructed">exact call metadata + observed ledger</span>' : '<span class="badge exact">exact event log</span>';
+  const phaseBadge = selectedPhase ? `<span class="phase-badge phase-${selectedPhase}">${escapeHtml(PHASE_LABEL[selectedPhase] || selectedPhase)}</span>` : "";
+  const focusBody = focus || `(no ${PHASE_LABEL[selectedPhase] || selectedPhase || "selected"} text recorded for this span)`;
+  const body = selectedPhase ? `<section class="focus-panel phase-border-${selectedPhase}"><h3>${escapeHtml(PHASE_LABEL[selectedPhase] || selectedPhase)} tokens in process</h3><pre>${escapeHtml(focusBody)}</pre></section>` : `<div class="io-grid"><section class="io-panel"><h3>Input / context</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section><section class="io-panel"><h3>Output / activity</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section></div>`;
+  el.detail.innerHTML = `<div class="detail-wrap"><div class="detail-title"><h2>${escapeHtml(event.label)}</h2>${phaseBadge}${badge}</div>
+    ${metaGrid([["Start", fmtDateTime(event.start)], ["Duration", event.instant ? "point event" : fmtDuration(event.durationSeconds ?? duration)], ["Span type", KIND_LABEL[event.kind] || event.kind], ["Status", event.status], ["Game", event.gameId], ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Ledger revision", event.ledgerRevision ?? event.ledgerRevisionAfter], ["Evidence games", event.evidenceCount], ["Ledger entries", event.ledgerEntryCount]])}
+    <div class="provenance-note${exact ? " exact" : ""}">${escapeHtml(provenance)}</div>${body}${link}${processTable(event)}</div>`;
 }
 
-async function selectEvent(event) {
-  if (!event) return;
-  state.selected = event;
-  renderTimeline();
-  renderEventList();
-  await renderDetail(event);
-}
+function previewEvent(event, phase) { if (state.pinned) return; state.preview = { event, phase }; renderDetail(event, phase); }
+function clearPreview() { if (state.pinned) return; state.preview = null; renderDetail(null); }
+function pinEvent(event, phase) { state.pinned = { event, phase }; state.preview = null; renderTimeline(); renderDetail(event, phase); }
 
 async function loadRun(run) {
-  state.run = run;
-  state.selected = null;
-  state.trace = await fetchRunTimeline(run);
-  document.title = `${run} — execution trace`;
-  el.run.textContent = run;
-  el.runSelect.value = run;
-  renderStats();
-  renderTimeline();
-  renderEventList();
-  renderDetail(null);
+  state.run = run; state.pinned = null; state.preview = null; state.stepCache.clear();
+  state.trace = normalizeLegacyTrace(await fetchRunTimeline(run));
+  document.title = `${run} — execution trace`; el.run.textContent = run; el.runSelect.value = run;
+  renderStats(); renderTimeline(); renderDetail(null);
 }
 
 el.toolbar.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-kind]");
-  if (!button) return;
-  const kind = button.dataset.kind;
-  if (state.kinds.has(kind)) state.kinds.delete(kind); else state.kinds.add(kind);
-  button.classList.toggle("on", state.kinds.has(kind));
-  renderTimeline();
-  renderEventList();
+  const button = event.target.closest("button[data-kind]"); if (!button) return;
+  const kind = button.dataset.kind; if (state.kinds.has(kind)) state.kinds.delete(kind); else state.kinds.add(kind);
+  button.classList.toggle("on", state.kinds.has(kind)); renderTimeline();
 });
-el.search.addEventListener("input", () => { state.search = el.search.value; renderEventList(); });
+el.search.addEventListener("input", () => { state.search = el.search.value; renderTimeline(); });
 el.runSelect.addEventListener("change", () => { location.hash = `#run=${encodeURIComponent(el.runSelect.value)}`; });
+window.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.pinned) { state.pinned = null; renderTimeline(); renderDetail(null); } });
 window.addEventListener("hashchange", async () => { syncTabs(); await loadRun(hashRun()); });
 
 syncTabs();

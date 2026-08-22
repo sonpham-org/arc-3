@@ -121,6 +121,143 @@ def world_model_block(step: dict) -> tuple[int, str] | None:
     return None
 
 
+def section_phase(section: dict) -> str:
+    """Map a saved context section onto the four trace colors.
+
+    The exporter deliberately records composition, not synthetic token timing.
+    A tool result is new model input; only an emitted tool invocation is orange.
+    """
+    label = str(section.get("label") or "").upper()
+    kind = str(section.get("kind") or "").lower()
+    if "COMPACT" in label or kind in {"compact", "compaction"}:
+        return "compact"
+    if "TOOL CALL" in label or kind == "tool_call":
+        return "tool_call"
+    if label.startswith(("THINKING", "ASSISTANT")) or kind == "reasoning":
+        return "reasoning"
+    return "input"
+
+
+def call_phase_summary(step: dict) -> list[dict]:
+    """Return ordered character-weighted phases for a gameplay turn.
+
+    Exact request sections are counted once as input.  Generated transcript
+    sections are taken only after the last user prompt so historical reasoning
+    is not mislabelled as work performed by the selected call.
+    """
+    context = step.get("context") if isinstance(step.get("context"), dict) else {}
+    local = step.get("localContext") if isinstance(step.get("localContext"), dict) else {}
+    request_sections = [
+        section
+        for section in (context.get("sections") or [])
+        if section.get("source") == "request"
+    ]
+    local_sections = list(local.get("sections") or [])
+    last_user = max(
+        (index for index, section in enumerate(local_sections) if str(section.get("label") or "").upper().startswith("USER PROMPT")),
+        default=-1,
+    )
+    generated_sections = local_sections[last_user + 1 :] if last_user >= 0 else []
+    ordered: list[tuple[str, str, int]] = []
+    if request_sections:
+        ordered.append(
+            (
+                "input",
+                "Request context",
+                sum(len(str(section.get("content") or "")) for section in request_sections),
+            )
+        )
+    elif last_user >= 0:
+        ordered.append(
+            (
+                "input",
+                "Request context",
+                sum(len(str(section.get("content") or "")) for section in local_sections[: last_user + 1]),
+            )
+        )
+    for section in generated_sections:
+        ordered.append(
+            (
+                section_phase(section),
+                str(section.get("label") or "Model section"),
+                len(str(section.get("content") or "")),
+            )
+        )
+    collapsed: list[dict] = []
+    for phase, label, chars in ordered:
+        chars = max(1, chars)
+        if collapsed and collapsed[-1]["phase"] == phase:
+            collapsed[-1]["charCount"] += chars
+            collapsed[-1]["sectionCount"] += 1
+            if label not in collapsed[-1]["labels"] and len(collapsed[-1]["labels"]) < 4:
+                collapsed[-1]["labels"].append(label)
+        else:
+            collapsed.append(
+                {
+                    "phase": phase,
+                    "charCount": chars,
+                    "sectionCount": 1,
+                    "labels": [label],
+                }
+            )
+    return collapsed
+
+
+def gameplay_concurrency(run_dir: Path, game_count: int) -> int:
+    """Read the requested worker count without inventing idle lanes for archives."""
+    for path in sorted(run_dir.glob("LAUNCH_STATE*.json")):
+        try:
+            state = read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidates = [
+            state.get("gameplay_concurrency"),
+            (state.get("gameplay") or {}).get("concurrency") if isinstance(state.get("gameplay"), dict) else None,
+            (state.get("gameplay_fixed") or {}).get("concurrency") if isinstance(state.get("gameplay_fixed"), dict) else None,
+        ]
+        for candidate in candidates:
+            if candidate is not None and int(candidate) > 0:
+                return int(candidate)
+    return max(1, game_count)
+
+
+def assign_gameplay_slots(benchmark: dict, started: datetime, ended: datetime, concurrency: int) -> tuple[dict[str, int], list[list[str]]]:
+    """Reconstruct stable worker slots from non-overlapping game intervals."""
+    intervals: list[tuple[datetime, datetime, str]] = []
+    for run in benchmark.get("game_runs", []):
+        game_id = str(run.get("game_id") or "")
+        if not game_id:
+            continue
+        game_started = parse_iso(run.get("started_at")) or started
+        game_ended = parse_iso(run.get("ended_at"))
+        wallclocks = [
+            float(row.get("wallclock_seconds"))
+            for row in run.get("history", [])
+            if row.get("wallclock_seconds") is not None
+        ]
+        if game_ended is None and wallclocks:
+            game_ended = game_started + timedelta(seconds=max(wallclocks))
+        intervals.append((game_started, game_ended or ended, game_id))
+    intervals.sort(key=lambda row: (row[0], row[2]))
+    slot_ends = [started - timedelta(seconds=1) for _ in range(concurrency)]
+    slot_games: list[list[str]] = [[] for _ in range(concurrency)]
+    mapping: dict[str, int] = {}
+    for game_started, game_ended, game_id in intervals:
+        available = [index for index, slot_end in enumerate(slot_ends) if slot_end <= game_started]
+        if available:
+            slot = available[0]
+        else:
+            # More overlapping games than the recorded concurrency is data drift;
+            # preserve every game visibly instead of silently merging calls.
+            slot = len(slot_ends)
+            slot_ends.append(started - timedelta(seconds=1))
+            slot_games.append([])
+        mapping[game_id] = slot
+        slot_games[slot].append(game_id)
+        slot_ends[slot] = max(slot_ends[slot], game_ended)
+    return mapping, slot_games
+
+
 def live_game_score(run: dict, actions_per_level: list[int], levels_completed: int) -> float:
     """Mirror ``GameRun._compute_final_score`` at an intermediate completion."""
     baselines = run.get("base_actions_per_level") or []
@@ -410,12 +547,19 @@ def parse_process_metrics(path: Path, topology: dict[str, dict]) -> list[dict]:
     return [sample for sample in samples if sample["processes"]]
 
 
-def main_agent_events(out_dir: Path, anchor: datetime) -> tuple[list[dict], dict[int, str]]:
+def main_agent_events(out_dir: Path, anchor: datetime, benchmark: dict) -> tuple[list[dict], dict[int, str]]:
     overview = read_json(out_dir / "run-overview.json")
     events: list[dict] = []
     curator_outputs: dict[int, str] = {}
+    game_ends: dict[str, datetime] = {}
+    for run in benchmark.get("game_runs", []):
+        game_id = str(run.get("game_id") or "")
+        ended_at = parse_iso(run.get("ended_at"))
+        if game_id and ended_at is not None:
+            game_ends[game_id] = ended_at
     for game_index, game in enumerate(overview.get("games", [])):
         step_index = 0
+        call_index = 0
         while True:
             path = out_dir / f"game-{game_index}-step-{step_index}.json"
             if not path.exists():
@@ -429,15 +573,17 @@ def main_agent_events(out_dir: Path, anchor: datetime) -> tuple[list[dict], dict
             if step.get("stepKind") == "turn" and step.get("traceTimestamp"):
                 at = clock_on_run_date(str(step["traceTimestamp"]), anchor)
                 if at is not None:
+                    game_id = str(game.get("game_id") or "")
+                    completed_at = at + timedelta(seconds=1)
                     exact = bool(step.get("traceInputExact") or (step.get("context") or {}).get("hasExactModelContext"))
                     events.append(
                         {
                             "id": f"main-{game_index}-{step_index}",
-                            "lane": "main-model",
+                            "lane": f"game-{game_index}",
                             "kind": "main_call",
                             "start": iso(at),
-                            "end": iso(at + timedelta(seconds=1)),
-                            "instant": True,
+                            "end": iso(completed_at),
+                            "instant": False,
                             "label": f"{game.get('display_name') or game.get('game_id')} · {step.get('title') or f'Step {step_index + 1}'}",
                             "status": "recorded",
                             "resource": "Qwen3.8-27B-FP8 · GPU inference queue",
@@ -445,16 +591,33 @@ def main_agent_events(out_dir: Path, anchor: datetime) -> tuple[list[dict], dict
                             "gameId": game.get("game_id"),
                             "gameIndex": game_index,
                             "stepIndex": step_index,
+                            "callIndex": call_index,
                             "score": step.get("score"),
                             "level": step.get("level"),
                             "action": step.get("actionDisplay"),
                             "contextExact": exact,
                             "contextProvenance": "exact saved request" if exact else "cumulative transcript reconstruction",
                             "timestampBasis": step.get("traceTimestampBasis"),
+                            "durationSeconds": round((completed_at - at).total_seconds(), 3),
+                            "phaseSummary": call_phase_summary(step),
+                            "phaseProvenance": "Ordered saved context sections; widths are character-weighted composition, not token timestamps.",
+                            "durationProvenance": "Next saved model-call start, or benchmark game end for the final call.",
                             "detail": {"type": "game_step", "gameIndex": game_index, "stepIndex": step_index},
                         }
                     )
+                    call_index += 1
             step_index += 1
+    by_game: dict[str, list[dict]] = {}
+    for event in events:
+        by_game.setdefault(str(event.get("gameId") or ""), []).append(event)
+    for game_id, game_events in by_game.items():
+        game_events.sort(key=lambda event: event["start"])
+        for index, event in enumerate(game_events):
+            event_start = parse_iso(event["start"]) or anchor
+            next_start = parse_iso(game_events[index + 1]["start"]) if index + 1 < len(game_events) else game_ends.get(game_id)
+            event_end = next_start if next_start is not None and next_start > event_start else event_start + timedelta(seconds=1)
+            event["end"] = iso(event_end)
+            event["durationSeconds"] = round((event_end - event_start).total_seconds(), 3)
     return events, curator_outputs
 
 
@@ -505,23 +668,40 @@ def export_run(run_dir: Path) -> None:
         raise RuntimeError(f"Missing benchmark times in {artifact_root}")
 
     out_dir = OUT_BASE / run_dir.name
-    events, curator_outputs = main_agent_events(out_dir, started)
-    main_events = list(events)
+    events, curator_outputs = main_agent_events(out_dir, started, benchmark)
+    game_runs = list(benchmark.get("game_runs") or [])
+    concurrency = gameplay_concurrency(run_dir, len(game_runs))
+    game_to_slot, slot_games = assign_gameplay_slots(benchmark, started, ended, concurrency)
     model_info_path = run_dir / "model-info.json"
     model_info = read_json(model_info_path) if model_info_path.exists() else {}
     main_model = str(model_info.get("model_id") or "Qwen3.8-27B-FP8")
     quantization = str(model_info.get("quantization") or "GPU")
     for event in events:
         event["resource"] = f"{main_model} · {quantization} inference queue"
-    lanes = [
-        {
-            "id": "main-model",
-            "label": "Main agent",
-            "resource": f"{main_model} · {quantization}",
-            "cores": "GPU inference queue",
-            "group": "gameplay",
-        }
-    ]
+        game_id = str(event.get("gameId") or "")
+        if game_id in game_to_slot:
+            event["lane"] = f"gameplay-{game_to_slot[game_id]}"
+    main_events = list(events)
+    gameplay_lanes: list[dict] = []
+    for slot, games in enumerate(slot_games):
+        if len(games) == 1:
+            label = f"Thread {slot + 1:02d} · {games[0]}"
+        elif games:
+            label = f"Thread {slot + 1:02d} · {len(games)} games"
+        else:
+            label = f"Thread {slot + 1:02d} · idle"
+        gameplay_lanes.append(
+            {
+                "id": f"gameplay-{slot}",
+                "label": label,
+                "resource": f"{main_model} · {quantization}",
+                "cores": "shared GPU inference queue",
+                "group": "gameplay",
+                "slot": slot,
+                "games": games,
+            }
+        )
+    lanes: list[dict] = []
     topology: dict[str, dict] = {}
     metrics_path: Path | None = None
 
@@ -570,15 +750,6 @@ def export_run(run_dir: Path) -> None:
                     "group": "sidecar",
                 }
             )
-        lanes.append(
-            {
-                "id": "theme-injection",
-                "label": "Ledger → prompt",
-                "resource": "gameplay prompt builder",
-                "cores": "main harness process",
-                "group": "influence",
-            }
-        )
         for filename, kind in (("observer-responses.jsonl", "sidecar_observer"), ("reviewer-responses.jsonl", "sidecar_reviewer")):
             for row in read_jsonl(reviewed / filename):
                 slot = int(row.get("slot", 4 if kind == "sidecar_reviewer" else 0))
@@ -598,10 +769,21 @@ def export_run(run_dir: Path) -> None:
             if at is None:
                 continue
             game_id = reviewed_game_id(row)
+            lane = f"gameplay-{game_to_slot[game_id]}" if game_id in game_to_slot else "theme-injection"
+            if lane == "theme-injection" and not any(item["id"] == lane for item in lanes):
+                lanes.append(
+                    {
+                        "id": lane,
+                        "label": "Ledger → prompt",
+                        "resource": "gameplay prompt builder",
+                        "cores": "main harness process",
+                        "group": "influence",
+                    }
+                )
             events.append(
                 {
                     "id": f"inject-{index}",
-                    "lane": "theme-injection",
+                    "lane": lane,
                     "kind": "theme_injection",
                     "start": iso(at),
                     "end": iso(at + timedelta(milliseconds=250)),
@@ -627,23 +809,15 @@ def export_run(run_dir: Path) -> None:
         curator_mode = str(health.get("mode") or "themes")
         curator_label = "World-model curator" if curator_mode == "world_models" else "Theme curator"
         injection_kind = "world_model_injection" if curator_mode == "world_models" else "theme_injection"
-        lanes.extend(
-            [
-                {
-                    "id": "nvfp4-curator",
-                    "label": curator_label,
-                    "resource": f"{main_model} · shared persistent request stream",
-                    "cores": "shared GPU inference queue · asynchronous single-flight",
-                    "group": "sidecar",
-                },
-                {
-                    "id": "curator-injection",
-                    "label": "Curator ledger → prompt",
-                    "resource": "gameplay prompt builder",
-                    "cores": "main harness process",
-                    "group": "influence",
-                },
-            ]
+        lanes.append(
+            {
+                "id": "nvfp4-curator",
+                "label": curator_label,
+                "resource": f"{main_model} · shared persistent request stream",
+                "cores": "shared GPU inference queue · asynchronous single-flight",
+                "group": "curator",
+                "games": [],
+            }
         )
         for index, row in enumerate(read_jsonl(curator / "curator-requests.jsonl")):
             if row.get("event") == "request":
@@ -701,6 +875,21 @@ def export_run(run_dir: Path) -> None:
                     "ledgerHashAfter": row.get("ledger_hash_after"),
                     "finishReason": row.get("finish_reason"),
                     "usage": usage_summary(row),
+                    "phaseSummary": [
+                        {
+                            "phase": "input",
+                            "charCount": max(1, int(row.get("prompt_chars") or len(json.dumps(request_summary, ensure_ascii=False)))),
+                            "sectionCount": 1,
+                            "labels": ["Curator evidence + persistent ledger"],
+                        },
+                        {
+                            "phase": "reasoning",
+                            "charCount": max(1, len(observable_output)),
+                            "sectionCount": 1,
+                            "labels": ["Curator synthesis"],
+                        },
+                    ],
+                    "phaseProvenance": "Character-weighted curator input/output composition; the historical logger retained exact call metadata but not the complete prompt body.",
                     "detail": {
                         "type": "curator_call",
                         "input": json.dumps(request_summary, ensure_ascii=False, indent=2),
@@ -720,10 +909,11 @@ def export_run(run_dir: Path) -> None:
             if at is None:
                 continue
             game_id = reviewed_game_id(row)
+            lane = f"gameplay-{game_to_slot[game_id]}" if game_id in game_to_slot else "nvfp4-curator"
             events.append(
                 {
                     "id": f"curator-inject-{index}",
-                    "lane": "curator-injection",
+                    "lane": lane,
                     "kind": injection_kind,
                     "start": iso(at),
                     "end": iso(at + timedelta(milliseconds=250)),
@@ -743,15 +933,27 @@ def export_run(run_dir: Path) -> None:
                 }
             )
 
+    lanes = (
+        [lane for lane in lanes if lane.get("group") == "curator"]
+        + [lane for lane in lanes if lane.get("group") == "sidecar"]
+        + gameplay_lanes
+        + [lane for lane in lanes if lane.get("group") == "influence"]
+    )
     events.sort(key=lambda event: (event["start"], event["lane"], event["id"]))
     samples = parse_process_metrics(metrics_path, topology) if metrics_path else []
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "run": run_dir.name,
         "title": "Execution trace",
         "startedAt": iso(started),
         "endedAt": iso(ended),
         "durationSeconds": round((ended - started).total_seconds(), 3),
+        "topology": {
+            "gameplayConcurrency": concurrency,
+            "gameplayLaneCount": len(gameplay_lanes),
+            "assignment": "Stable worker slots reconstructed from non-overlapping benchmark game intervals.",
+            "curatorFirst": any(lane.get("group") == "curator" for lane in lanes),
+        },
         "contextPolicy": {
             "exactWhenRequestLogExists": True,
             "fallback": "Cumulative transcript reconstruction; model-side trimming and retention cannot be proven for this historical archive.",
