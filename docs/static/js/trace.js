@@ -1,4 +1,5 @@
-import { fetchGameStep, fetchRunsIndex, fetchRunTimeline } from "./api.js";
+import { fetchGameStep, fetchRunOverview, fetchRunsIndex, fetchRunTimeline } from "./api.js";
+import { paintThumb, setPalette } from "./board.js?v=20260815-frames";
 
 const KIND_LABEL = {
   main_call: "Gameplay call",
@@ -11,8 +12,9 @@ const KIND_LABEL = {
 const PHASE_LABEL = { input: "Input", reasoning: "Reasoning", tool_call: "Tool call", compact: "Compact" };
 
 const state = {
-  run: null, trace: null, pinned: null, preview: null,
-  kinds: new Set(Object.keys(KIND_LABEL)), search: "", detailRequest: 0, stepCache: new Map(),
+  run: null, trace: null, overview: null, pinned: null, preview: null, activeScrub: null,
+  kinds: new Set(Object.keys(KIND_LABEL)), search: "", detailRequest: 0, stepCache: new Map(), gameById: new Map(),
+  segmentMap: new Map(), timelineBody: null, marker: null, previewTimer: null,
 };
 const el = {
   run: document.querySelector("#trace-run"), runSelect: document.querySelector("#run-select"),
@@ -105,9 +107,10 @@ function phaseTitle(event, phase) {
   const labels = (phase.labels || []).join(", ");
   return `${PHASE_LABEL[phase.phase] || phase.phase} · ${Number(phase.charCount || 0).toLocaleString()} captured characters${labels ? ` · ${labels}` : ""}\n${event.label}`;
 }
-function activeSelection(event, phase = null) {
+function activeSelection(event, phase = null, segmentIndex = null) {
   const selected = state.pinned || state.preview;
-  return selected?.event?.id === event.id && (selected.phase || null) === (phase || null);
+  return selected?.event?.id === event.id && (selected.phase || null) === (phase || null)
+    && (selected.segmentIndex ?? null) === (segmentIndex ?? null);
 }
 
 function renderTimeline() {
@@ -116,61 +119,133 @@ function renderTimeline() {
   const start = new Date(state.trace.startedAt).getTime();
   const end = new Date(state.trace.endedAt).getTime();
   const duration = Math.max(1, end - start);
-  const chartWidth = Math.max(1180, Math.min(2600, Math.round(duration / 60000) * 14));
+  const chartHeight = Math.max(1200, Math.min(3600, Math.round(duration / 60000) * 14));
   const position = (value) => Math.max(0, Math.min(100, ((new Date(value).getTime() - start) / duration) * 100));
-  el.heading.textContent = `${lanes.length}-lane execution timeline`;
+  el.heading.textContent = `${lanes.length}-lane vertical execution timeline`;
+  state.segmentMap.clear();
   const grid = document.createElement("div");
-  grid.className = "lane-grid";
-  grid.style.setProperty("--chart-width", `${chartWidth}px`);
+  grid.className = "vertical-grid";
+  grid.style.setProperty("--lane-count", String(lanes.length));
+  grid.style.setProperty("--chart-height", `${chartHeight}px`);
 
   const header = document.createElement("div");
-  header.className = "time-row";
-  header.innerHTML = '<div class="lane-heading">Threads</div><div class="time-track"></div>';
-  const tickTrack = header.querySelector(".time-track");
-  for (let index = 0; index < 7; index += 1) {
-    const fraction = index / 6;
-    const tick = document.createElement("span");
-    tick.className = "time-tick"; tick.style.left = `${fraction * 100}%`; tick.textContent = fmtClock(start + fraction * duration);
-    tickTrack.appendChild(tick);
-  }
+  header.className = "thread-head-row";
+  const corner = document.createElement("div");
+  corner.className = "time-corner";
+  corner.innerHTML = "<b>UTC</b><span>time ↓</span>";
+  header.appendChild(corner);
+  lanes.forEach((lane, laneIndex) => {
+    const head = document.createElement("div");
+    head.className = `thread-head${lane.group === "curator" ? " curator-head" : ""}`;
+    const game = (lane.games || []).map((gameId) => state.gameById.get(String(gameId))).find(Boolean);
+    const threadName = String(lane.label || `Lane ${laneIndex + 1}`).split("·")[0].trim();
+    if (lane.group === "gameplay" && game) {
+      const extra = (lane.games || []).length > 1 ? ` · +${lane.games.length - 1} later` : "";
+      head.innerHTML = `<canvas aria-hidden="true"></canvas><div><b>${escapeHtml(threadName)}</b><span title="${escapeHtml(game.display_name || game.game_id)}">${escapeHtml(game.display_name || game.game_id)}</span><small>${escapeHtml(game.status || "recorded")}${escapeHtml(extra)}</small></div>`;
+      setTimeout(() => paintThumb(head.querySelector("canvas"), game.board_ascii, 1), 0);
+    } else if (lane.group === "gameplay") {
+      head.innerHTML = `<div class="idle-thumb">—</div><div><b>${escapeHtml(threadName)}</b><span>Idle worker</span><small>No assigned game</small></div>`;
+    } else {
+      head.innerHTML = `<div class="curator-thumb">WM</div><div><b>${escapeHtml(lane.label || "Curator")}</b><span>${escapeHtml(lane.resource || "Persistent world model")}</span><small>Asynchronous request stream</small></div>`;
+    }
+    header.appendChild(head);
+  });
   grid.appendChild(header);
 
   const laneEvents = new Map(lanes.map((lane) => [lane.id, []]));
   events.forEach((event) => { if (!laneEvents.has(event.lane)) laneEvents.set(event.lane, []); laneEvents.get(event.lane).push(event); });
+  const body = document.createElement("div");
+  body.className = "vertical-timeline-body";
+  state.timelineBody = body;
+
+  const axis = document.createElement("div");
+  axis.className = "vertical-time-axis";
+  body.appendChild(axis);
+  for (let index = 0; index <= 8; index += 1) {
+    const fraction = index / 8;
+    const gridLine = document.createElement("div");
+    gridLine.className = "vertical-time-grid";
+    gridLine.style.top = `${fraction * 100}%`;
+    body.appendChild(gridLine);
+    const tick = document.createElement("span");
+    tick.className = "vertical-time-tick";
+    tick.style.top = `${fraction * 100}%`;
+    tick.textContent = fmtClock(start + fraction * duration, true);
+    axis.appendChild(tick);
+  }
+
   lanes.forEach((lane, laneIndex) => {
-    const row = document.createElement("div");
-    row.className = `lane-row${lane.group === "curator" ? " curator-row" : ""}`;
-    const games = lane.games || [];
-    row.innerHTML = `<div class="lane-sidebar"><b>${escapeHtml(lane.label)}</b><span>${escapeHtml(games.length > 1 ? games.join(" → ") : lane.cores || lane.resource || "")}</span></div><div class="lane-track"></div>`;
-    const track = row.querySelector(".lane-track"); track.dataset.laneIndex = String(laneIndex);
+    const track = document.createElement("div");
+    track.className = `thread-column${lane.group === "curator" ? " curator-column" : ""}`;
+    track.dataset.laneIndex = String(laneIndex);
     for (const event of laneEvents.get(lane.id) || []) {
       const eventStart = position(event.start); const eventEnd = position(event.end || event.start);
       const bar = document.createElement("div"); const isPoint = Boolean(event.instant);
       bar.className = `event-bar kind-${event.kind} status-${event.status || "completed"}${isPoint ? " point-event" : ""}`;
-      bar.style.left = `${eventStart}%`; if (!isPoint) bar.style.width = `${Math.max(.16, eventEnd - eventStart)}%`;
+      bar.style.top = `${eventStart}%`; if (!isPoint) bar.style.height = `${Math.max(.16, eventEnd - eventStart)}%`;
       bar.tabIndex = 0; bar.setAttribute("role", "button"); bar.setAttribute("aria-label", `${KIND_LABEL[event.kind] || event.kind}: ${event.label}`);
       bar.title = `${fmtDateTime(event.start)}\n${event.label}`;
       const phases = phaseSummary(event);
       if (phases.length) {
-        phases.forEach((phase) => {
+        phases.forEach((phase, segmentIndex) => {
           const segment = document.createElement("span");
-          segment.className = `event-phase phase-${phase.phase}${activeSelection(event, phase.phase) ? " selected" : ""}`;
+          segment.className = `event-phase phase-${phase.phase}${activeSelection(event, phase.phase, segmentIndex) ? " selected" : ""}`;
           segment.style.flexGrow = String(Math.max(1, Number(phase.charCount || 1))); segment.title = phaseTitle(event, phase);
-          segment.addEventListener("mouseenter", () => previewEvent(event, phase.phase));
-          segment.addEventListener("click", (clickEvent) => { clickEvent.stopPropagation(); pinEvent(event, phase.phase); });
-          segment.addEventListener("focus", () => previewEvent(event, phase.phase));
+          state.segmentMap.set(`${event.id}:${segmentIndex}`, segment);
+          segment.addEventListener("pointerenter", () => previewEvent(event, phase.phase, segmentIndex, .5));
+          segment.addEventListener("pointermove", (pointerEvent) => scrubFromElement(event, phase.phase, segmentIndex, segment, pointerEvent));
+          segment.addEventListener("click", (clickEvent) => { clickEvent.stopPropagation(); pinEvent(event, phase.phase, segmentIndex); });
+          segment.addEventListener("focus", () => previewEvent(event, phase.phase, segmentIndex, .5));
           bar.appendChild(segment);
         });
-      } else if (activeSelection(event)) bar.classList.add("selected");
-      bar.addEventListener("mouseenter", () => { if (!phases.length) previewEvent(event, null); });
-      bar.addEventListener("mouseleave", clearPreview); bar.addEventListener("click", () => pinEvent(event, null));
-      bar.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); pinEvent(event, null); } });
+      } else {
+        state.segmentMap.set(`${event.id}:event`, bar);
+        if (activeSelection(event)) bar.classList.add("selected");
+      }
+      bar.addEventListener("pointerenter", () => { if (!phases.length) previewEvent(event, null, null, .5); });
+      bar.addEventListener("pointermove", (pointerEvent) => { if (!phases.length) scrubFromElement(event, null, null, bar, pointerEvent); });
+      bar.addEventListener("pointerleave", scheduleClearPreview); bar.addEventListener("click", () => pinEvent(event, null, null));
+      bar.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); pinEvent(event, null, null); } });
       track.appendChild(bar);
     }
-    grid.appendChild(row);
+    body.appendChild(track);
   });
+  const marker = document.createElement("div");
+  marker.className = "timeline-marker";
+  marker.hidden = true;
+  marker.innerHTML = "<span></span>";
+  body.appendChild(marker);
+  state.marker = marker;
+  grid.appendChild(body);
   el.stage.replaceChildren(grid);
   el.range.textContent = `${fmtDateTime(state.trace.startedAt)} → ${fmtDateTime(state.trace.endedAt)} · ${events.length.toLocaleString()} visible spans`;
+  const selected = state.pinned || state.preview;
+  if (selected) updateScrub(selected.event, selected.phase, selected.segmentIndex, selected.ratio ?? .5, false);
+}
+
+function scrubFromElement(event, phase, segmentIndex, segment, pointerEvent) {
+  const bounds = segment.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (pointerEvent.clientY - bounds.top) / Math.max(1, bounds.height)));
+  updateScrub(event, phase, segmentIndex, ratio, false);
+}
+
+function updateScrub(event, phase, segmentIndex, ratio, fromText) {
+  const selected = state.pinned?.event?.id === event.id && state.pinned?.segmentIndex === segmentIndex ? state.pinned : state.preview;
+  if (selected) selected.ratio = ratio;
+  state.activeScrub = { event, phase, segmentIndex, ratio };
+  const key = `${event.id}:${segmentIndex ?? "event"}`;
+  const segment = state.segmentMap.get(key);
+  if (segment && state.timelineBody && state.marker) {
+    const segmentBounds = segment.getBoundingClientRect();
+    const bodyBounds = state.timelineBody.getBoundingClientRect();
+    const top = segmentBounds.top - bodyBounds.top + ratio * segmentBounds.height;
+    const bodyRatio = Math.max(0, Math.min(1, top / Math.max(1, state.timelineBody.clientHeight)));
+    const at = new Date(state.trace.startedAt).getTime() + bodyRatio * (new Date(state.trace.endedAt).getTime() - new Date(state.trace.startedAt).getTime());
+    state.marker.style.top = `${top}px`;
+    state.marker.querySelector("span").textContent = fmtClock(at, true);
+    state.marker.hidden = false;
+  }
+  updateReasoningCursor(ratio, !fromText);
 }
 
 function metaGrid(entries) {
@@ -185,6 +260,47 @@ function sectionPhase(section) {
   if (label.includes("TOOL CALL") || kind === "tool_call") return "tool_call";
   if (/^(THINKING|ASSISTANT)/.test(label) || kind === "reasoning") return "reasoning";
   return "input";
+}
+function groupAdjacentSections(sections) {
+  return (sections || []).reduce((groups, section) => {
+    const phase = sectionPhase(section); const prior = groups[groups.length - 1];
+    if (prior?.phase === phase) prior.sections.push(section);
+    else groups.push({ phase, sections: [section] });
+    return groups;
+  }, []);
+}
+function scrubTextHtml(text) {
+  let offset = 0;
+  return String(text || "").split("\n").map((line) => {
+    const start = offset; const end = start + line.length; offset = end + 1;
+    return `<span class="scrub-line" data-start="${start}" data-end="${end}">${escapeHtml(line) || " "}</span>`;
+  }).join("\n");
+}
+function installReasoningScrubber(event, phase, segmentIndex, text) {
+  const pre = el.detail.querySelector(".scrubbable-text"); if (!pre) return;
+  pre.addEventListener("pointermove", (pointerEvent) => {
+    const line = pointerEvent.target.closest(".scrub-line"); if (!line) return;
+    const start = Number(line.dataset.start || 0); const end = Number(line.dataset.end || start);
+    const bounds = line.getBoundingClientRect();
+    const withinLine = Math.max(0, Math.min(1, (pointerEvent.clientX - bounds.left) / Math.max(1, bounds.width)));
+    const charPosition = start + withinLine * Math.max(1, end - start);
+    updateScrub(event, phase, segmentIndex, charPosition / Math.max(1, text.length), true);
+  });
+}
+function updateReasoningCursor(ratio, shouldScroll) {
+  const pre = el.detail.querySelector(".scrubbable-text"); if (!pre) return;
+  const total = Number(pre.dataset.totalChars || 0); const target = ratio * Math.max(1, total);
+  const lines = [...pre.querySelectorAll(".scrub-line")];
+  const current = lines.find((line) => target <= Number(line.dataset.end || 0)) || lines[lines.length - 1];
+  const prior = pre.querySelector(".scrub-line.at-marker");
+  if (prior !== current) { prior?.classList.remove("at-marker"); current?.classList.add("at-marker"); }
+  const status = el.detail.querySelector(".scrub-status");
+  if (status) status.textContent = `${Math.round(ratio * 100)}% through captured ${PHASE_LABEL[state.activeScrub?.phase] || "phase"} text · character-weighted position`;
+  if (shouldScroll && current && pre.dataset.activeLine !== current.dataset.start) {
+    pre.dataset.activeLine = current.dataset.start;
+    const nextTop = current.offsetTop - pre.clientHeight * .42;
+    pre.scrollTop = Math.max(0, nextTop);
+  }
 }
 function nearestSample(event) {
   const samples = state.trace.processSamples || []; if (!samples.length) return null;
@@ -215,10 +331,10 @@ async function capturedInput(event, step, exact) {
   return sections;
 }
 
-async function renderDetail(event, selectedPhase = null) {
+async function renderDetail(event, selectedPhase = null, selectedSegmentIndex = null) {
   const request = ++state.detailRequest;
   if (!event) {
-    el.detail.innerHTML = '<div class="detail-empty"><b>Token inspector</b><span>Hover a colored phase to preview it. Click a phase to pin it.</span></div>'; return;
+    el.detail.innerHTML = '<div class="detail-empty"><b>Reasoning inspector</b><span>Hover a colored phase to preview it. Move across either pane to scrub the same moment; click to pin.</span></div>'; return;
   }
   el.detail.innerHTML = '<div class="detail-loading">Loading captured tokens…</div>';
   const duration = Math.max(0, (new Date(event.end).getTime() - new Date(event.start).getTime()) / 1000);
@@ -239,7 +355,9 @@ async function renderDetail(event, selectedPhase = null) {
     const lastUser = Math.max(-1, ...localSections.map((section, index) => /^USER PROMPT$/i.test(section.label || "") ? index : -1));
     const generated = localSections.slice(lastUser + 1).filter((section) => /^(THINKING|ASSISTANT|TOOL CALL|ERROR|COMPACT)/i.test(section.label || "") || ["reasoning", "tool_call", "compact", "compaction"].includes(section.kind));
     input = formatSections(inputSections); output = formatSections(generated.length ? generated : localSections);
-    focus = selectedPhase === "input" ? input : selectedPhase ? formatSections(generated.filter((section) => sectionPhase(section) === selectedPhase)) : "";
+    const phaseGroups = [{ phase: "input", sections: inputSections }, ...groupAdjacentSections(generated)];
+    const selectedGroup = phaseGroups[selectedSegmentIndex] || phaseGroups.find((group) => group.phase === selectedPhase);
+    focus = selectedPhase ? formatSections(selectedGroup?.phase === selectedPhase ? selectedGroup.sections : generated.filter((section) => sectionPhase(section) === selectedPhase)) : "";
     link = `<a class="detail-link" href="./viewer.html#run=${encodeURIComponent(state.run)}&game=${event.gameIndex}">Open this game in the frame viewer →</a>`;
   }
   if (request !== state.detailRequest) return;
@@ -247,31 +365,56 @@ async function renderDetail(event, selectedPhase = null) {
   const badge = event.kind === "main_call" ? `<span class="badge ${exact ? "exact" : "reconstructed"}">${exact ? "exact input" : "reconstructed context"}</span>` : event.kind === "curator_synthesis" ? '<span class="badge reconstructed">exact call metadata + observed ledger</span>' : '<span class="badge exact">exact event log</span>';
   const phaseBadge = selectedPhase ? `<span class="phase-badge phase-${selectedPhase}">${escapeHtml(PHASE_LABEL[selectedPhase] || selectedPhase)}</span>` : "";
   const focusBody = focus || `(no ${PHASE_LABEL[selectedPhase] || selectedPhase || "selected"} text recorded for this span)`;
-  const body = selectedPhase ? `<section class="focus-panel phase-border-${selectedPhase}"><h3>${escapeHtml(PHASE_LABEL[selectedPhase] || selectedPhase)} tokens in process</h3><pre>${escapeHtml(focusBody)}</pre></section>` : `<div class="io-grid"><section class="io-panel"><h3>Input / context</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section><section class="io-panel"><h3>Output / activity</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section></div>`;
+  const body = selectedPhase ? `<section class="focus-panel phase-border-${selectedPhase}"><h3>${escapeHtml(PHASE_LABEL[selectedPhase] || selectedPhase)} captured text</h3><div class="scrub-status">Move through this text to scrub the timeline marker</div><pre class="scrubbable-text" data-total-chars="${focusBody.length}">${scrubTextHtml(focusBody)}</pre></section>` : `<div class="io-grid"><section class="io-panel"><h3>Input / context</h3><pre>${escapeHtml(input || "(no input body recorded)")}</pre></section><section class="io-panel"><h3>Output / activity</h3><pre>${escapeHtml(output || "(no output body recorded)")}</pre></section></div>`;
   el.detail.innerHTML = `<div class="detail-wrap"><div class="detail-title"><h2>${escapeHtml(event.label)}</h2>${phaseBadge}${badge}</div>
     ${metaGrid([["Start", fmtDateTime(event.start)], ["Duration", event.instant ? "point event" : fmtDuration(event.durationSeconds ?? duration)], ["Span type", KIND_LABEL[event.kind] || event.kind], ["Status", event.status], ["Game", event.gameId], ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Ledger revision", event.ledgerRevision ?? event.ledgerRevisionAfter], ["Evidence games", event.evidenceCount], ["Ledger entries", event.ledgerEntryCount]])}
     <div class="provenance-note${exact ? " exact" : ""}">${escapeHtml(provenance)}</div>${body}${link}${processTable(event)}</div>`;
+  if (selectedPhase) {
+    installReasoningScrubber(event, selectedPhase, selectedSegmentIndex, focusBody);
+    const selected = state.pinned || state.preview;
+    updateReasoningCursor(selected?.ratio ?? .5, true);
+  }
 }
 
-function previewEvent(event, phase) { if (state.pinned) return; state.preview = { event, phase }; renderDetail(event, phase); }
-function clearPreview() { if (state.pinned) return; state.preview = null; renderDetail(null); }
-function pinEvent(event, phase) { state.pinned = { event, phase }; state.preview = null; renderTimeline(); renderDetail(event, phase); }
+function cancelClearPreview() { if (state.previewTimer) clearTimeout(state.previewTimer); state.previewTimer = null; }
+function previewEvent(event, phase, segmentIndex, ratio = .5) {
+  cancelClearPreview(); if (state.pinned) return;
+  const changed = state.preview?.event?.id !== event.id || state.preview?.segmentIndex !== segmentIndex;
+  state.preview = { event, phase, segmentIndex, ratio };
+  updateScrub(event, phase, segmentIndex, ratio, false);
+  if (changed) renderDetail(event, phase, segmentIndex);
+}
+function clearPreview() {
+  cancelClearPreview(); if (state.pinned) return;
+  state.preview = null; state.activeScrub = null;
+  if (state.marker) state.marker.hidden = true;
+  renderDetail(null);
+}
+function scheduleClearPreview() {
+  if (state.pinned) return; cancelClearPreview();
+  state.previewTimer = setTimeout(clearPreview, 900);
+}
+function pinEvent(event, phase, segmentIndex) {
+  const ratio = state.activeScrub?.event?.id === event.id && state.activeScrub?.segmentIndex === segmentIndex ? state.activeScrub.ratio : .5;
+  state.pinned = { event, phase, segmentIndex, ratio }; state.preview = null;
+  renderTimeline(); renderDetail(event, phase, segmentIndex);
+}
 
 async function loadRun(run) {
-  state.run = run; state.pinned = null; state.preview = null; state.stepCache.clear();
-  state.trace = normalizeLegacyTrace(await fetchRunTimeline(run));
+  state.run = run; state.pinned = null; state.preview = null; state.activeScrub = null; state.stepCache.clear();
+  const [trace, overview] = await Promise.all([fetchRunTimeline(run), fetchRunOverview(run).catch(() => ({ games: [] }))]);
+  state.trace = normalizeLegacyTrace(trace); state.overview = overview || { games: [] };
+  state.gameById = new Map((state.overview.games || []).map((game) => [String(game.game_id), game]));
+  setPalette(state.overview.arc_palette, state.overview.color_chars);
   document.title = `${run} — execution trace`; el.run.textContent = run; el.runSelect.value = run;
   renderStats(); renderTimeline(); renderDetail(null);
 }
 
-el.toolbar.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-kind]"); if (!button) return;
-  const kind = button.dataset.kind; if (state.kinds.has(kind)) state.kinds.delete(kind); else state.kinds.add(kind);
-  button.classList.toggle("on", state.kinds.has(kind)); renderTimeline();
-});
 el.search.addEventListener("input", () => { state.search = el.search.value; renderTimeline(); });
 el.runSelect.addEventListener("change", () => { location.hash = `#run=${encodeURIComponent(el.runSelect.value)}`; });
-window.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.pinned) { state.pinned = null; renderTimeline(); renderDetail(null); } });
+el.detail.addEventListener("pointerenter", cancelClearPreview);
+el.detail.addEventListener("pointerleave", scheduleClearPreview);
+window.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.pinned) { state.pinned = null; state.activeScrub = null; renderTimeline(); renderDetail(null); } });
 window.addEventListener("hashchange", async () => { syncTabs(); await loadRun(hashRun()); });
 
 syncTabs();
