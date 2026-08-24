@@ -14,12 +14,14 @@ const PHASE_LABEL = { input: "Input", reasoning: "Reasoning", tool_call: "Tool c
 const state = {
   run: null, trace: null, overview: null, pinned: null, preview: null, activeScrub: null,
   kinds: new Set(Object.keys(KIND_LABEL)), search: "", detailRequest: 0, stepCache: new Map(), gameById: new Map(),
-  segmentMap: new Map(), timelineBody: null, marker: null, previewTimer: null,
+  segmentMap: new Map(), timelineBody: null, timelineGrid: null, marker: null, previewTimer: null,
+  zoom: 1, baseChartHeight: 1200,
 };
 const el = {
   run: document.querySelector("#trace-run"), runSelect: document.querySelector("#run-select"),
   stats: document.querySelector("#trace-stats"), toolbar: document.querySelector("#trace-toolbar"),
-  range: document.querySelector("#timeline-range"), heading: document.querySelector("#timeline-heading"), stage: document.querySelector("#timeline-stage"),
+  range: document.querySelector("#timeline-range"), heading: document.querySelector("#timeline-heading"), zoom: document.querySelector("#timeline-zoom"),
+  scroll: document.querySelector(".timeline-scroll"), stage: document.querySelector("#timeline-stage"),
   search: document.querySelector("#event-search"), detail: document.querySelector("#event-detail"),
 };
 
@@ -29,7 +31,6 @@ function syncTabs() {
   document.querySelector("#rt-viewer").href = `./viewer.html${hash}`;
   document.querySelector("#rt-trace").href = `./trace.html${hash}`;
   document.querySelector("#rt-score").href = `./score-time.html${hash}`;
-  document.querySelector("#rt-harness").href = `./harness.html${hash}`;
 }
 function fmtDuration(seconds) {
   const value = Number(seconds || 0);
@@ -119,7 +120,8 @@ function renderTimeline() {
   const start = new Date(state.trace.startedAt).getTime();
   const end = new Date(state.trace.endedAt).getTime();
   const duration = Math.max(1, end - start);
-  const chartHeight = Math.max(1200, Math.min(3600, Math.round(duration / 60000) * 14));
+  state.baseChartHeight = Math.max(1200, Math.min(3600, Math.round(duration / 60000) * 14));
+  const chartHeight = Math.round(state.baseChartHeight * state.zoom);
   const position = (value) => Math.max(0, Math.min(100, ((new Date(value).getTime() - start) / duration) * 100));
   el.heading.textContent = `${lanes.length}-lane vertical execution timeline`;
   state.segmentMap.clear();
@@ -127,6 +129,8 @@ function renderTimeline() {
   grid.className = "vertical-grid";
   grid.style.setProperty("--lane-count", String(lanes.length));
   grid.style.setProperty("--chart-height", `${chartHeight}px`);
+  state.timelineGrid = grid;
+  el.zoom.textContent = `${Math.round(state.zoom * 100)}% · Ctrl+scroll to zoom`;
 
   const header = document.createElement("div");
   header.className = "thread-head-row";
@@ -138,15 +142,15 @@ function renderTimeline() {
     const head = document.createElement("div");
     head.className = `thread-head${lane.group === "curator" ? " curator-head" : ""}`;
     const game = (lane.games || []).map((gameId) => state.gameById.get(String(gameId))).find(Boolean);
-    const threadName = String(lane.label || `Lane ${laneIndex + 1}`).split("·")[0].trim();
+    const threadMatch = String(lane.label || "").match(/Thread\s+(\d+)/i);
+    const threadCode = threadMatch ? `T${String(threadMatch[1]).padStart(2, "0")}` : `T${String(laneIndex).padStart(2, "0")}`;
     if (lane.group === "gameplay" && game) {
-      const extra = (lane.games || []).length > 1 ? ` · +${lane.games.length - 1} later` : "";
-      head.innerHTML = `<canvas aria-hidden="true"></canvas><div><b>${escapeHtml(threadName)}</b><span title="${escapeHtml(game.display_name || game.game_id)}">${escapeHtml(game.display_name || game.game_id)}</span><small>${escapeHtml(game.status || "recorded")}${escapeHtml(extra)}</small></div>`;
+      head.innerHTML = `<b>${escapeHtml(threadCode)}</b><canvas aria-hidden="true"></canvas><span title="${escapeHtml(game.display_name || game.game_id)}">${escapeHtml(game.game_id || game.display_name)}</span>`;
       setTimeout(() => paintThumb(head.querySelector("canvas"), game.board_ascii, 1), 0);
     } else if (lane.group === "gameplay") {
-      head.innerHTML = `<div class="idle-thumb">—</div><div><b>${escapeHtml(threadName)}</b><span>Idle worker</span><small>No assigned game</small></div>`;
+      head.innerHTML = `<b>${escapeHtml(threadCode)}</b><div class="idle-thumb">—</div><span>idle</span>`;
     } else {
-      head.innerHTML = `<div class="curator-thumb">WM</div><div><b>${escapeHtml(lane.label || "Curator")}</b><span>${escapeHtml(lane.resource || "Persistent world model")}</span><small>Asynchronous request stream</small></div>`;
+      head.innerHTML = `<b>CUR</b><div class="curator-thumb">WM</div><span>Curator</span>`;
     }
     header.appendChild(head);
   });
@@ -246,6 +250,28 @@ function updateScrub(event, phase, segmentIndex, ratio, fromText) {
     state.marker.hidden = false;
   }
   updateReasoningCursor(ratio, !fromText);
+}
+
+function zoomTimeline(nextZoom, clientY) {
+  const zoom = Math.max(1, Math.min(8, nextZoom));
+  if (!state.timelineBody || !state.timelineGrid || Math.abs(zoom - state.zoom) < .001) return;
+  const oldHeight = state.timelineBody.clientHeight;
+  const bodyBounds = state.timelineBody.getBoundingClientRect();
+  const anchor = Math.max(0, Math.min(1, (clientY - bodyBounds.top) / Math.max(1, oldHeight)));
+  state.zoom = zoom;
+  const newHeight = Math.round(state.baseChartHeight * state.zoom);
+  state.timelineGrid.style.setProperty("--chart-height", `${newHeight}px`);
+  el.scroll.scrollTop += (newHeight - oldHeight) * anchor;
+  el.zoom.textContent = `${Math.round(state.zoom * 100)}% · Ctrl+scroll to zoom`;
+  const selected = state.pinned || state.preview;
+  if (selected) updateScrub(selected.event, selected.phase, selected.segmentIndex, selected.ratio ?? .5, false);
+}
+
+function handleTimelineZoom(event) {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  const delta = event.deltaMode === 1 ? event.deltaY * 24 : event.deltaY;
+  zoomTimeline(state.zoom * Math.exp(-delta * .0025), event.clientY);
 }
 
 function metaGrid(entries) {
@@ -401,7 +427,7 @@ function pinEvent(event, phase, segmentIndex) {
 }
 
 async function loadRun(run) {
-  state.run = run; state.pinned = null; state.preview = null; state.activeScrub = null; state.stepCache.clear();
+  state.run = run; state.pinned = null; state.preview = null; state.activeScrub = null; state.zoom = 1; state.stepCache.clear();
   const [trace, overview] = await Promise.all([fetchRunTimeline(run), fetchRunOverview(run).catch(() => ({ games: [] }))]);
   state.trace = normalizeLegacyTrace(trace); state.overview = overview || { games: [] };
   state.gameById = new Map((state.overview.games || []).map((game) => [String(game.game_id), game]));
@@ -411,6 +437,7 @@ async function loadRun(run) {
 }
 
 el.search.addEventListener("input", () => { state.search = el.search.value; renderTimeline(); });
+el.scroll.addEventListener("wheel", handleTimelineZoom, { passive: false });
 el.runSelect.addEventListener("change", () => { location.hash = `#run=${encodeURIComponent(el.runSelect.value)}`; });
 el.detail.addEventListener("pointerenter", cancelClearPreview);
 el.detail.addEventListener("pointerleave", scheduleClearPreview);
