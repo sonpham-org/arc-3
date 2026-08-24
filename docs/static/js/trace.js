@@ -108,6 +108,25 @@ function phaseTitle(event, phase) {
   const labels = (phase.labels || []).join(", ");
   return `${PHASE_LABEL[phase.phase] || phase.phase} · ${Number(phase.charCount || 0).toLocaleString()} captured characters${labels ? ` · ${labels}` : ""}\n${event.label}`;
 }
+function blockTokenInfo(event) {
+  const usage = event.usage || {};
+  const raw = event.tokenCount ?? usage.totalTokens ?? usage.completionTokens;
+  const value = Number(raw);
+  if (Number.isFinite(value) && value > 0) {
+    return { count: Math.round(value), estimated: false, basis: event.tokenBasis || "reported total" };
+  }
+  const capturedChars = (event.phaseSummary || []).reduce((sum, phase) => sum + Number(phase.charCount || 0), 0);
+  if (capturedChars > 0) {
+    return { count: Math.max(1, Math.round(capturedChars / 4)), estimated: true, basis: "estimated from captured text at four characters per token" };
+  }
+  return null;
+}
+function fmtBlockTokens(value) {
+  if (value < 1_000) return value.toLocaleString();
+  if (value < 10_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
+  return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
 function activeSelection(event, phase = null, segmentIndex = null) {
   const selected = state.pinned || state.preview;
   return selected?.event?.id === event.id && (selected.phase || null) === (phase || null)
@@ -184,11 +203,14 @@ function renderTimeline() {
     track.dataset.laneIndex = String(laneIndex);
     for (const event of laneEvents.get(lane.id) || []) {
       const eventStart = position(event.start); const eventEnd = position(event.end || event.start);
+      const tokenInfo = blockTokenInfo(event);
+      const tokenCount = tokenInfo?.count ?? null;
       const bar = document.createElement("div"); const isPoint = Boolean(event.instant);
       bar.className = `event-bar kind-${event.kind} status-${event.status || "completed"}${isPoint ? " point-event" : ""}`;
       bar.style.top = `${eventStart}%`; if (!isPoint) bar.style.height = `${Math.max(.16, eventEnd - eventStart)}%`;
-      bar.tabIndex = 0; bar.setAttribute("role", "button"); bar.setAttribute("aria-label", `${KIND_LABEL[event.kind] || event.kind}: ${event.label}`);
-      bar.title = `${fmtDateTime(event.start)}\n${event.label}`;
+      const tokenText = tokenCount === null ? "" : ` · ${tokenInfo.estimated ? "about " : ""}${tokenCount.toLocaleString()} tokens`;
+      bar.tabIndex = 0; bar.setAttribute("role", "button"); bar.setAttribute("aria-label", `${KIND_LABEL[event.kind] || event.kind}: ${event.label}${tokenText}`);
+      bar.title = `${fmtDateTime(event.start)}\n${event.label}${tokenCount === null ? "" : `\n${tokenInfo.estimated ? "~" : ""}${tokenCount.toLocaleString()} tokens · ${tokenInfo.basis}`}`;
       const phases = phaseSummary(event);
       if (phases.length) {
         phases.forEach((phase, segmentIndex) => {
@@ -211,6 +233,14 @@ function renderTimeline() {
       bar.addEventListener("pointerleave", scheduleClearPreview); bar.addEventListener("click", () => pinEvent(event, null, null));
       bar.addEventListener("keydown", (keyEvent) => { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); pinEvent(event, null, null); } });
       track.appendChild(bar);
+      if (tokenCount !== null) {
+        const label = document.createElement("span");
+        label.className = `event-token-label${tokenInfo.estimated ? " estimated" : ""}`;
+        label.style.top = `${isPoint ? eventStart : (eventStart + eventEnd) / 2}%`;
+        label.textContent = `${tokenInfo.estimated ? "~" : ""}${fmtBlockTokens(tokenCount)}`;
+        label.setAttribute("aria-hidden", "true");
+        track.appendChild(label);
+      }
     }
     body.appendChild(track);
   });

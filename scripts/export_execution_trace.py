@@ -552,9 +552,21 @@ def main_agent_events(out_dir: Path, anchor: datetime, benchmark: dict) -> tuple
     events: list[dict] = []
     curator_outputs: dict[int, str] = {}
     game_ends: dict[str, datetime] = {}
+    game_token_completions: dict[str, list[tuple[datetime, int]]] = {}
     for run in benchmark.get("game_runs", []):
         game_id = str(run.get("game_id") or "")
+        started_at = parse_iso(run.get("started_at")) or anchor
         ended_at = parse_iso(run.get("ended_at"))
+        if game_id:
+            completions: list[tuple[datetime, int]] = []
+            for history_row in run.get("history") or []:
+                generated_tokens = int(history_row.get("generated_tokens") or 0)
+                wallclock_seconds = history_row.get("wallclock_seconds")
+                if generated_tokens > 0 and wallclock_seconds is not None:
+                    completions.append(
+                        (started_at + timedelta(seconds=float(wallclock_seconds)), generated_tokens)
+                    )
+            game_token_completions[game_id] = sorted(completions)
         if game_id and ended_at is not None:
             game_ends[game_id] = ended_at
     for game_index, game in enumerate(overview.get("games", [])):
@@ -612,12 +624,23 @@ def main_agent_events(out_dir: Path, anchor: datetime, benchmark: dict) -> tuple
         by_game.setdefault(str(event.get("gameId") or ""), []).append(event)
     for game_id, game_events in by_game.items():
         game_events.sort(key=lambda event: event["start"])
+        token_completions = game_token_completions.get(game_id, [])
+        token_index = 0
         for index, event in enumerate(game_events):
             event_start = parse_iso(event["start"]) or anchor
             next_start = parse_iso(game_events[index + 1]["start"]) if index + 1 < len(game_events) else game_ends.get(game_id)
             event_end = next_start if next_start is not None and next_start > event_start else event_start + timedelta(seconds=1)
             event["end"] = iso(event_end)
             event["durationSeconds"] = round((event_end - event_start).total_seconds(), 3)
+            event_tokens = 0
+            while token_index < len(token_completions) and token_completions[token_index][0] <= event_end + timedelta(seconds=2):
+                completed_at, generated_tokens = token_completions[token_index]
+                if completed_at >= event_start - timedelta(seconds=2):
+                    event_tokens += generated_tokens
+                token_index += 1
+            if event_tokens:
+                event["tokenCount"] = event_tokens
+                event["tokenBasis"] = "exact benchmark generated-token count"
     return events, curator_outputs
 
 

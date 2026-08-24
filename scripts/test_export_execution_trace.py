@@ -4,7 +4,13 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.export_execution_trace import assign_gameplay_slots, call_phase_summary, gameplay_concurrency, section_phase
+from scripts.export_execution_trace import (
+    assign_gameplay_slots,
+    call_phase_summary,
+    gameplay_concurrency,
+    main_agent_events,
+    section_phase,
+)
 
 
 class ExecutionTraceTopologyTests(unittest.TestCase):
@@ -47,6 +53,44 @@ class ExecutionTraceTopologyTests(unittest.TestCase):
             path = Path(directory) / "LAUNCH_STATE.json"
             path.write_text(json.dumps({"gameplay_concurrency": 28}), encoding="utf-8")
             self.assertEqual(28, gameplay_concurrency(Path(directory), 25))
+
+    def test_main_event_includes_exact_generated_token_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            (out_dir / "run-overview.json").write_text(
+                json.dumps({"games": [{"game_id": "g1", "display_name": "Game one"}]}),
+                encoding="utf-8",
+            )
+            (out_dir / "game-0-step-0.json").write_text(
+                json.dumps(
+                    {
+                        "step": {
+                            "stepKind": "turn",
+                            "traceTimestamp": "10:00:01",
+                            "title": "Step 1",
+                            "context": {"sections": [{"content": "prompt"}]},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            benchmark = {
+                "game_runs": [
+                    {
+                        "game_id": "g1",
+                        "started_at": "2026-08-22T10:00:00Z",
+                        "ended_at": "2026-08-22T10:01:00Z",
+                        "history": [{"generated_tokens": 2235, "wallclock_seconds": 4}],
+                    }
+                ]
+            }
+            events, _ = main_agent_events(
+                out_dir,
+                datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc),
+                benchmark,
+            )
+            self.assertEqual(2235, events[0]["tokenCount"])
+            self.assertEqual("exact benchmark generated-token count", events[0]["tokenBasis"])
 
 
 if __name__ == "__main__":
