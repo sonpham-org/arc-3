@@ -2,7 +2,7 @@ import { fetchRunsIndex, fetchRunScoreCurve } from "./api.js?v=postgres-catalog-
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COLORS = ["#3b82f6", "#f59e0b", "#22c55e", "#a78bfa", "#ef4444", "#06b6d4", "#ec4899", "#eab308"];
-const state = { rows: [], selected: new Set(), traces: new Map(), colors: new Map(), axis: "time" };
+const state = { rows: [], selected: new Set(), traces: new Map(), colors: new Map(), axis: "time", lockedRun: null };
 const el = {
   runList: document.querySelector("#run-list"),
   selectAll: document.querySelector("#select-all"),
@@ -99,6 +99,51 @@ function scoreAt(points, xValue) {
   return Number(selected?.meanScore || 0);
 }
 
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function distributionMarkup(scores, selectedScore, color) {
+  if (!scores.length) return "";
+  const observedMin = Math.min(...scores);
+  const observedMax = Math.max(...scores);
+  const padding = observedMin === observedMax ? Math.max(.25, Math.abs(observedMin) * .08) : 0;
+  const domainMin = Math.max(0, observedMin - padding);
+  const domainMax = Math.max(domainMin + .001, observedMax + padding);
+  const binsCount = Math.min(18, Math.max(6, Math.ceil(Math.sqrt(scores.length) * 2)));
+  const bins = Array.from({length:binsCount}, () => 0);
+  for (const score of scores) {
+    const ratio = (score - domainMin) / (domainMax - domainMin);
+    bins[Math.max(0, Math.min(bins.length - 1, Math.floor(ratio * bins.length)))] += 1;
+  }
+  const smooth = bins.map((count, index) => (
+    (bins[index - 1] || 0) + count * 2 + (bins[index + 1] || 0)
+  ) / 4);
+  const peak = Math.max(1, ...smooth);
+  const width = 286, plotTop = 5, plotBottom = 36, left = 5, right = 281;
+  const x = (value) => left + (value - domainMin) / (domainMax - domainMin) * (right - left);
+  const points = smooth.map((count, index) => {
+    const xx = left + (index + .5) / binsCount * (right - left);
+    const yy = plotBottom - count / peak * (plotBottom - plotTop);
+    return [xx, yy];
+  });
+  const line = points.map(([xx, yy], index) => `${index ? "L" : "M"} ${xx.toFixed(1)} ${yy.toFixed(1)}`).join(" ");
+  const area = `${line} L ${points.at(-1)[0].toFixed(1)} ${plotBottom} L ${points[0][0].toFixed(1)} ${plotBottom} Z`;
+  const markerX = x(Math.max(domainMin, Math.min(domainMax, selectedScore))).toFixed(1);
+  const rugs = scores.map((score) => `<line class="tooltip-dist-rug" x1="${x(score).toFixed(1)}" x2="${x(score).toFixed(1)}" y1="37" y2="41"></line>`).join("");
+  return `<svg class="tooltip-distribution" viewBox="0 0 ${width} 55" role="img" aria-label="Distribution of current scores from ${fmtScore(observedMin)} to ${fmtScore(observedMax)}">
+    <path class="tooltip-dist-area" d="${area}"></path>
+    <path class="tooltip-dist-line" d="${line}"></path>
+    ${rugs}
+    <line class="tooltip-dist-marker" style="--series-color:${color}" x1="${markerX}" x2="${markerX}" y1="3" y2="42"></line>
+    <circle class="tooltip-dist-marker-dot" style="--series-color:${color}" cx="${markerX}" cy="4" r="2.7"></circle>
+    <text x="5" y="53">${fmtScore(observedMin)}</text>
+    <text x="281" y="53" text-anchor="end">${fmtScore(observedMax)}</text>
+  </svg>`;
+}
+
 function firstScore(curve) {
   const points = state.axis === "tokens" ? (curve?.tokenPoints || curve?.points || []) : (curve?.points || []);
   return points.find((point) => Number(point.meanScore) > 0);
@@ -168,13 +213,26 @@ function renderChart(rows) {
   svg.append(svgNode("text", {class:"chart-axis-title", x:margin.left+innerW/2, y:height-12, "text-anchor":"middle"}, spec.title));
   svg.append(svgNode("text", {class:"chart-axis-title", transform:`translate(16 ${margin.top+innerH/2}) rotate(-90)`, "text-anchor":"middle"}, "Mean score across games"));
 
+  const paths = [];
+  const endpoints = [];
+  const endLabels = [];
   for (const item of series) {
     let path = `M ${x(item.points[0].x)} ${y(item.points[0].y)}`;
     for (let i = 1; i < item.points.length; i += 1) path += ` H ${x(item.points[i].x)} V ${y(item.points[i].y)}`;
-    svg.append(svgNode("path", {class:"compare-line", d:path, stroke:item.color}));
+    const pathNode = svgNode("path", {class:"compare-line", d:path, stroke:item.color});
+    svg.append(pathNode);
+    paths.push(pathNode);
     const final = item.points[item.points.length - 1];
-    svg.append(svgNode("circle", {class:"compare-endpoint", cx:x(final.x), cy:y(final.y), r:4, fill:item.color}));
-    if (width >= 620) svg.append(svgNode("text", {class:"compare-end-label", x:x(final.x)+8, y:y(final.y)+3, fill:item.color}, fmtScore(final.y)));
+    const endpoint = svgNode("circle", {class:"compare-endpoint", cx:x(final.x), cy:y(final.y), r:4, fill:item.color});
+    svg.append(endpoint);
+    endpoints.push(endpoint);
+    if (width >= 620) {
+      const label = svgNode("text", {class:"compare-end-label", x:x(final.x)+8, y:y(final.y)+3, fill:item.color}, fmtScore(final.y));
+      svg.append(label);
+      endLabels.push(label);
+    } else {
+      endLabels.push(null);
+    }
   }
 
   const guide = svgNode("line", {class:"cursor-guide", x1:0, x2:0, y1:margin.top, y2:margin.top+innerH, visibility:"hidden"});
@@ -184,30 +242,102 @@ function renderChart(rows) {
     svg.append(dot);
     return dot;
   });
-  const overlay = svgNode("rect", {x:margin.left, y:margin.top, width:innerW, height:innerH, fill:"transparent"});
-  overlay.addEventListener("pointermove", (event) => {
+  const overlay = svgNode("rect", {
+    class:"chart-overlay",
+    x:margin.left,
+    y:margin.top,
+    width:innerW,
+    height:innerH,
+    fill:"transparent",
+    tabindex:0,
+    role:"application",
+    "aria-label":"Interactive score chart. Hover to inspect a run, click to lock it, and press Escape to unlock."
+  });
+  const pointerState = (event) => {
     const bounds = svg.getBoundingClientRect();
     const px = (event.clientX - bounds.left) * width / bounds.width;
+    const py = (event.clientY - bounds.top) * height / bounds.height;
     const xValue = Math.max(0, Math.min(xMax, (px - margin.left) / innerW * xMax));
     const xx = x(xValue);
-    guide.setAttribute("x1", xx); guide.setAttribute("x2", xx); guide.setAttribute("visibility", "visible");
     const values = series.map((item, index) => {
       const score = scoreAt(item.points, xValue);
-      dots[index].setAttribute("cx", xx); dots[index].setAttribute("cy", y(score)); dots[index].setAttribute("visibility", "visible");
-      return {item, score};
+      return {item, index, score, distance:Math.abs(y(score) - py)};
     });
-    el.tooltip.innerHTML = `<span class="tooltip-time">${esc(spec.hover(xValue))}</span>${values.map(({item, score}) => `<div class="tooltip-row" style="--series-color:${item.color}"><i></i><span>${esc(shortRun(item.run))}</span><b>${esc(fmtScore(score))}</b></div>`).join("")}`;
-    el.tooltip.hidden = false;
-    const displayX = xx / width * el.chart.clientWidth;
-    el.tooltip.style.left = `${Math.max(10, Math.min(el.chart.clientWidth - 345, displayX + 14))}px`;
-    el.tooltip.style.top = "74px";
-  });
-  overlay.addEventListener("pointerleave", () => {
+    const nearest = values.reduce((best, value) => !best || value.distance < best.distance ? value : best, null);
+    return {xValue, xx, values, nearest};
+  };
+  const focusSeries = (index, locked = false) => {
+    paths.forEach((path, pathIndex) => {
+      path.classList.toggle("is-hovered", pathIndex === index);
+      path.classList.toggle("is-locked", locked && pathIndex === index);
+      path.classList.toggle("is-muted", pathIndex !== index);
+    });
+    svg.insertBefore(paths[index], guide);
+    endpoints.forEach((endpoint, endpointIndex) => endpoint.classList.toggle("is-muted", endpointIndex !== index));
+    endLabels.forEach((label, labelIndex) => label?.classList.toggle("is-muted", labelIndex !== index));
+  };
+  const clearInspection = () => {
     guide.setAttribute("visibility", "hidden");
     dots.forEach((dot) => dot.setAttribute("visibility", "hidden"));
+    paths.forEach((path) => path.classList.remove("is-hovered", "is-locked", "is-muted"));
+    endpoints.forEach((endpoint) => endpoint.classList.remove("is-muted"));
+    endLabels.forEach((label) => label?.classList.remove("is-muted"));
     el.tooltip.hidden = true;
+  };
+  const inspect = ({xValue, xx, values, nearest}) => {
+    const lockedIndex = state.lockedRun ? series.findIndex((item) => item.run === state.lockedRun) : -1;
+    const closest = lockedIndex >= 0 ? values[lockedIndex] : nearest;
+    const locked = lockedIndex >= 0;
+    guide.setAttribute("x1", xx); guide.setAttribute("x2", xx); guide.setAttribute("visibility", "visible");
+    const allScores = values.map((value) => value.score);
+    const rangeMin = Math.min(...allScores);
+    const rangeMax = Math.max(...allScores);
+    const runScores = closest.item.points.map((point) => point.y);
+    const runMin = Math.min(...runScores);
+    const runMax = Math.max(...runScores);
+    focusSeries(closest.index, locked);
+    dots.forEach((dot, index) => {
+      dot.setAttribute("cx", xx);
+      dot.setAttribute("cy", y(values[index].score));
+      dot.setAttribute("visibility", index === closest.index ? "visible" : "hidden");
+    });
+    el.tooltip.innerHTML = `<span class="tooltip-time"><span>${esc(spec.hover(xValue))}</span><em class="${locked ? "is-locked" : ""}">${locked ? "Locked · click to release" : "Click to lock"}</em></span>
+      <div class="tooltip-focus" style="--series-color:${closest.item.color}">
+        <i></i><span><strong>${esc(shortRun(closest.item.run))}</strong><small>${esc(closest.item.run)}</small></span><b>${esc(fmtScore(closest.score))}</b>
+      </div>
+      <div class="tooltip-range"><span>This run</span><b>${fmtScore(runMin)}–${fmtScore(runMax)}</b></div>
+      <div class="tooltip-range"><span>All runs now · median ${fmtScore(median(allScores))}</span><b>${fmtScore(rangeMin)}–${fmtScore(rangeMax)}</b></div>
+      ${distributionMarkup(allScores, closest.score, closest.item.color)}`;
+    el.tooltip.hidden = false;
+    const displayX = xx / width * el.chart.clientWidth;
+    const tooltipWidth = Math.min(330, el.chart.clientWidth - 24);
+    const rightX = displayX + 14;
+    const leftX = displayX - tooltipWidth - 14;
+    el.tooltip.style.left = `${Math.max(10, rightX + tooltipWidth <= el.chart.clientWidth - 10 ? rightX : leftX)}px`;
+    el.tooltip.style.top = "64px";
+  };
+  overlay.addEventListener("pointermove", (event) => {
+    inspect(pointerState(event));
+  });
+  overlay.addEventListener("click", (event) => {
+    const pointer = pointerState(event);
+    state.lockedRun = state.lockedRun === pointer.nearest.item.run ? null : pointer.nearest.item.run;
+    inspect(pointer);
+    overlay.focus({preventScroll:true});
+  });
+  overlay.addEventListener("pointerleave", () => {
+    if (!state.lockedRun) clearInspection();
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !state.lockedRun) return;
+    state.lockedRun = null;
+    clearInspection();
+    event.preventDefault();
   });
   svg.append(overlay);
+  const initialLockedIndex = state.lockedRun ? series.findIndex((item) => item.run === state.lockedRun) : -1;
+  if (initialLockedIndex >= 0) focusSeries(initialLockedIndex, true);
+  else if (state.lockedRun) state.lockedRun = null;
   el.chart.append(svg);
 }
 
