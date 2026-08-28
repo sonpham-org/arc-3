@@ -440,9 +440,15 @@ function buildLevelStrip() {
 
 function checkEnd() {
   const st = state.state;
-  if (st !== "WIN" && st !== "GAME_OVER") return;
-  stopLiveIfRunning();
   const overlay = $("endOverlay");
+  // Hide the banner again whenever we are back in a playable state -- otherwise a reset
+  // after GAME_OVER restores the game underneath but leaves the overlay covering it,
+  // which reads as "reset is broken" in every game on the site.
+  if (st !== "WIN" && st !== "GAME_OVER") {
+    overlay.hidden = true;
+    return;
+  }
+  stopLiveIfRunning();
   overlay.textContent = st === "WIN" ? "🎉 YOU WIN!" : "GAME OVER";
   overlay.className = "end-overlay " + (st === "WIN" ? "win" : "gameover");
   overlay.hidden = false;

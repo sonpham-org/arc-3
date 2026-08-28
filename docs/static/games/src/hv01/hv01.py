@@ -34,13 +34,12 @@ GRID_H = 13
 OX = 2                       # playfield origin x
 OY = 10                      # playfield origin y (HUD occupies rows 0..9)
 
-BAR_Y, BAR_X0, BAR_X1 = 0, 1, 42          # action-budget bar
+BAR_Y, BAR_X0, BAR_X1 = 0, 1, 63          # action-budget bar
 SWATCH_Y, SWATCH_SIZE = 3, 5              # node palette
 SWATCH_X = (2, 9, 16)
 PIP_Y = 8                                 # remaining-stock pips
-BANK_X, BANK_Y = 24, 3                    # banked-organism pips
-RUN_RECT = (45, 1, 56, 8)                 # x0, y0, x1, y1  (inclusive)
-CLEAR_RECT = (58, 1, 62, 8)
+BANK_X, BANK_Y = 26, 3                    # banked-organism pips
+VENT_HALF = 1                             # source vent extends this far above/below
 
 # ---------------------------------------------------------------------------
 # Colours (ARC-3 palette indices -- 12 is Orange, 8 is Red, 5 is Black)
@@ -63,6 +62,12 @@ SINK_COLOR = {O_NORMAL: C_LBLUE, O_INVERT: C_LMAGENTA}
 
 NODE_K = 10.0                # node field strength (gives a useful reach of ~5 cells)
 TURN_THRESHOLD = 0.30        # vertical force needed to bend the swarm one cell
+
+# Placing a node is cheap; releasing the swarm to see what happens is expensive. Thinking
+# about where the nodes go should be free, running the experiment should not be. Without
+# this a blind policy simply releases every other action and brute-forces placements --
+# measured at 1 in 12 on level 2 when a release cost the same as a click.
+RELEASE_COST = 3
 
 # ---------------------------------------------------------------------------
 # Levels -- each introduces exactly one new rule and keeps every earlier one.
@@ -154,7 +159,7 @@ LEVELS = [
 # leave a human several full attempts while starving brute-force search: this is a
 # place-and-test game, so a loose budget lets a random policy simply try placements until
 # one sticks. The tutorial is generous because the mechanic is still unknown.
-BUDGETS = (30, 10, 12, 14, 14, 20, 14, 14)
+BUDGETS = (30, 12, 16, 16, 16, 22, 16, 20)
 for _ldef, _budget in zip(LEVELS, BUDGETS):
     _ldef["budget"] = _budget
 
@@ -206,12 +211,15 @@ class Hv01Display(RenderableUserDisplay):
                 frame[py + 2, px] = C_ORANGE
                 frame[py + 3, px + 2] = C_ORANGE
 
-        # Source: a hive mouth -- bright rim, dark opening the swarm pours out of.
-        sx, sy = g.source
-        px, py = self._cell_px(sx, sy)
-        if 0 <= px and 0 <= py and px + CELL <= 64 and py + CELL <= 64:
+        # Source: a vent as tall as the swarm that leaves it, so the opening matches what
+        # actually comes out instead of three organisms overlapping a one-cell hole.
+        for cell in sorted(g._vent_cells()):
+            px, py = self._cell_px(*cell)
+            if px < 0 or py < 0 or px + CELL > 64 or py + CELL > 64:
+                continue
             frame[py:py + CELL, px:px + CELL] = C_GREEN
-            frame[py + 1:py + 3, px + 2:px + CELL] = C_BLACK
+            frame[py + 1:py + 3, px + 2:px + CELL] = C_BLACK   # mouth, opening rightward
+            frame[py:py + CELL, px] = C_LGRAY                  # rim on the closed side
 
         # Sinks recolour their centre once their own quota is met -- colour as affordance.
         for kind, (gx, gy) in g.sinks.items():
@@ -278,17 +286,6 @@ class Hv01Display(RenderableUserDisplay):
             frame[BANK_Y:BANK_Y + 3, hx:hx + 2] = (
                 C_GREEN if i < g.banked_total else C_DGRAY)
 
-        # RUN button: a green triangle pointing right. CLEAR: a grey block with a notch.
-        rx0, ry0, rx1, ry1 = RUN_RECT
-        frame[ry0:ry1 + 1, rx0:rx1 + 1] = C_DGRAY
-        height = ry1 - ry0 + 1
-        for row in range(height):
-            reach = int((rx1 - rx0) * (1 - abs(row - (height - 1) / 2) / ((height - 1) / 2)))
-            if reach > 0:
-                frame[ry0 + row, rx0 + 1:rx0 + 1 + reach] = C_GREEN
-        cx0, cy0, cx1, cy1 = CLEAR_RECT
-        frame[cy0:cy1 + 1, cx0:cx1 + 1] = C_GRAY
-        frame[cy0 + 2:cy1 - 1, cx0 + 1:cx1] = C_BLACK
         return frame
 
 
@@ -312,6 +309,7 @@ class Hv01(ARCBaseGame):
         self.selected = None
         self.nodes = {}
         self.organisms = []
+        self._spawns = []
         self.banked_by_kind = {}
         self.need_by_kind = {}
         self.banked_total = 0
@@ -329,7 +327,7 @@ class Hv01(ARCBaseGame):
             Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
             False,
             len(levels),
-            [6],                 # click only -- every control is an on-screen target
+            [5, 6],              # 5 = release the swarm, 6 = click to place/remove/select
         )
 
     # -- level setup --------------------------------------------------------
@@ -351,22 +349,33 @@ class Hv01(ARCBaseGame):
         self.need_by_kind = {}
         for kind, count in self.spawn_plan:
             self.need_by_kind[kind] = self.need_by_kind.get(kind, 0) + count
+        self._spawns = self._compute_spawns()
         self._reset_run()
+
+    def _compute_spawns(self):
+        """Fixed spawn slots, stacked outward from the source row. The vent is drawn to
+        exactly these cells so the opening always matches what comes out of it."""
+        sx, sy = self.source
+        slots = []
+        for off in (0, -1, 1, -2, 2, -3, 3):
+            gy = sy + off
+            if 0 <= gy < GRID_H and (sx, gy) not in self.walls:
+                slots.append((sx, gy))
+        spawns, i = [], 0
+        for kind, count in self.spawn_plan:
+            for _ in range(count):
+                if i < len(slots):
+                    spawns.append((slots[i], kind))
+                    i += 1
+        return spawns
+
+    def _vent_cells(self):
+        return {cell for cell, _kind in self._spawns}
 
     def _reset_run(self):
         """Rewind the swarm to the source. Placed nodes are deliberately kept."""
-        self.organisms = []
-        sx, sy = self.source
-        offsets = [0, -1, 1, -2, 2, -3, 3]
-        for kind, count in self.spawn_plan:
-            placed = 0
-            for off in offsets:
-                if placed >= count:
-                    break
-                gy = sy + off
-                if 0 <= gy < GRID_H and (sx, gy) not in self.walls:
-                    self.organisms.append({"pos": (sx, gy), "kind": kind, "alive": True})
-                    placed += 1
+        self.organisms = [{"pos": cell, "kind": kind, "alive": True}
+                          for cell, kind in self._spawns]
         self.banked_by_kind = {k: 0 for k in self.sinks}
         self.banked_total = 0
         self._running = False
@@ -455,11 +464,6 @@ class Hv01(ARCBaseGame):
 
     # -- input --------------------------------------------------------------
 
-    @staticmethod
-    def _in_rect(x, y, rect):
-        x0, y0, x1, y1 = rect
-        return x0 <= x <= x1 and y0 <= y <= y1
-
     def _palette_hit(self, x, y):
         if not (SWATCH_Y <= y < SWATCH_Y + SWATCH_SIZE):
             return None
@@ -474,22 +478,6 @@ class Hv01(ARCBaseGame):
         return (x - OX) // CELL, (y - OY) // CELL
 
     def _handle_click(self, x, y):
-        """Returns True if the click started a simulation run."""
-        if self._in_rect(x, y, RUN_RECT):
-            self._reset_run()
-            self._running = True
-            self._sim_tick()
-            if self._run_over():
-                self._finish_run()
-                return False
-            return True
-
-        if self._in_rect(x, y, CLEAR_RECT):
-            for cell, kind in list(self.nodes.items()):
-                self.stock_left[kind] = self.stock_left.get(kind, 0) + 1
-            self.nodes = {}
-            return False
-
         kind = self._palette_hit(x, y)
         if kind is not None:
             self.selected = kind
@@ -497,19 +485,18 @@ class Hv01(ARCBaseGame):
 
         cell = self._board_cell(x, y)
         if cell is None:
-            return False
+            return
         if cell in self.nodes:                        # click a node to take it back
             removed = self.nodes.pop(cell)
             self.stock_left[removed] = self.stock_left.get(removed, 0) + 1
-            return False
+            return
         if (cell in self.walls or cell in self.hazards
-                or cell == self.source or cell in self.sinks.values()):
-            return False
+                or cell in self._vent_cells() or cell in self.sinks.values()):
+            return
         if self.selected is None or self.stock_left.get(self.selected, 0) <= 0:
-            return False
+            return
         self.nodes[cell] = self.selected
         self.stock_left[self.selected] -= 1
-        return False
 
     # -- engine entry point -------------------------------------------------
 
@@ -522,10 +509,20 @@ class Hv01(ARCBaseGame):
                 self.complete_action()
             return
 
-        if self.action.id.value == 6:
+        aid = self.action.id.value
+
+        if aid == 6:
             self.budget_left -= 1
-            if self._handle_click(int(self.action.data.get("x", 0)),
-                                  int(self.action.data.get("y", 0))):
+            self._handle_click(int(self.action.data.get("x", 0)),
+                               int(self.action.data.get("y", 0)))
+        elif aid == 5:                                 # release the swarm
+            self.budget_left -= RELEASE_COST
+            self._reset_run()
+            self._running = True
+            self._sim_tick()
+            if self._run_over():
+                self._finish_run()
+            else:
                 return                                 # animate: withhold completion
 
         if self.budget_left <= 0 and not self._running:
