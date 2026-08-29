@@ -159,7 +159,7 @@ LEVELS = [
 # leave a human several full attempts while starving brute-force search: this is a
 # place-and-test game, so a loose budget lets a random policy simply try placements until
 # one sticks. The tutorial is generous because the mechanic is still unknown.
-BUDGETS = (30, 12, 16, 16, 16, 22, 16, 20)
+BUDGETS = (36, 20, 26, 26, 26, 34, 26, 32)
 for _ldef, _budget in zip(LEVELS, BUDGETS):
     _ldef["budget"] = _budget
 

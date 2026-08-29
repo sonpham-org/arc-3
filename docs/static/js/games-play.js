@@ -3,7 +3,10 @@
 // repo's human.js/human-game.js/human-input.js/human-render.js: pick a game,
 // play it now, no login, no recording, no leaderboard.
 
-import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js";
+// The ?v= is load-bearing: index.html serves this module uncached-busted otherwise, and
+// a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
+// overlay looked broken for a whole session because of exactly this). Bump on release.
+import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260826-overlay";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
