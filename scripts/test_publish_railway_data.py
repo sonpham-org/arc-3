@@ -1,13 +1,17 @@
 import hashlib
+import io
+import os
 import tarfile
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 from scripts.publish_railway_data import (
     build_archive,
     build_manifest,
     parse_args,
+    railway_executable,
     validate_run_name,
 )
 
@@ -62,10 +66,15 @@ class PublishRailwayDataTests(unittest.TestCase):
             self.assertEqual(args.service, "arc3-viewer")
             self.assertTrue(args.dry_run)
 
+    def test_resolves_windows_npm_cli_shim(self) -> None:
+        resolved = railway_executable("railway")
+        if os.name == "nt":
+            self.assertTrue(resolved.lower().endswith("railway.cmd"))
+
     def test_replacement_requires_a_valid_expected_manifest_if_supplied(self) -> None:
         args = parse_args(["run-1", "--replace", "--expected-manifest", "none"])
         self.assertEqual(args.expected_manifest, "none")
-        with self.assertRaises(SystemExit):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             parse_args(["run-1", "--replace", "--expected-manifest", "bad"])
 
 

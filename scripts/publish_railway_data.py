@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -112,10 +113,18 @@ def build_archive(run_dir: Path, run_name: str, manifest: str, destination: Path
         add_bytes(archive, "MANIFEST.sha256", manifest.encode("utf-8"))
 
 
+def railway_executable(command: str) -> str:
+    """Resolve npm-installed Railway CLI shims on Windows without a shell."""
+
+    if os.name == "nt" and not Path(command).suffix:
+        return shutil.which(f"{command}.cmd") or shutil.which(command) or command
+    return shutil.which(command) or command
+
+
 def railway_variables(args: argparse.Namespace) -> dict[str, str]:
     completed = subprocess.run(
         [
-            args.railway_bin,
+            railway_executable(args.railway_bin),
             "variable",
             "list",
             "--service",
