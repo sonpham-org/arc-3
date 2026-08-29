@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only HTTP facade for the Railway-backed ARC3 run catalog."""
+"""HTTP API for Railway-backed ARC3 run publication and catalog reads."""
 
 from __future__ import annotations
 
@@ -8,13 +8,25 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import shutil
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import psycopg2
 from psycopg2.extras import Json
+
+from publication_store import (
+    PublicationProblem,
+    load_package,
+    publish_package,
+    receive_body,
+    validate_run_id,
+    validate_sha256,
+)
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -232,9 +244,16 @@ def migrate_and_bootstrap(schema_path: Path, data_root: Path) -> int:
 
 
 class CatalogHandler(BaseHTTPRequestHandler):
-    server_version = "ARC3Catalog/1"
+    server_version = "ARC3Catalog/2"
+    data_root = Path("/srv/data")
+    publish_token = ""
+    max_upload_bytes = 4 * 1024 * 1024 * 1024
+    max_unpacked_bytes = 12 * 1024 * 1024 * 1024
+    max_files = 200_000
 
-    def send_json(self, status: HTTPStatus, payload: str) -> None:
+    def send_json(self, status: HTTPStatus | int, payload: str | dict) -> None:
+        if not isinstance(payload, str):
+            payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         body = payload.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -243,6 +262,15 @@ class CatalogHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def require_publish_auth(self) -> None:
+        if not self.publish_token:
+            raise PublicationProblem(503, "publisher_disabled", "publication API is not configured")
+        authorization = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        supplied_token = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
+        if not supplied_token or not secrets.compare_digest(supplied_token, self.publish_token):
+            raise PublicationProblem(401, "unauthorized", "invalid publication token")
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         try:
@@ -250,9 +278,12 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 with connect() as connection, connection.cursor() as cursor:
                     cursor.execute("SELECT count(*) FROM arc3_runs WHERE status = 'published'")
                     count = cursor.fetchone()[0]
-                self.send_json(HTTPStatus.OK, json.dumps({"ok": True, "publishedRuns": count}))
+                self.send_json(
+                    HTTPStatus.OK,
+                    {"ok": True, "apiVersion": 1, "publishedRuns": count},
+                )
                 return
-            if path == "/data/runs-index.json":
+            if path in ("/data/runs-index.json", "/api/v1/catalog"):
                 with connect() as connection, connection.cursor() as cursor:
                     cursor.execute(
                         "SELECT catalog_json::text FROM arc3_catalog_state WHERE singleton = true"
@@ -263,12 +294,69 @@ class CatalogHandler(BaseHTTPRequestHandler):
                     return
                 self.send_json(HTTPStatus.OK, row[0])
                 return
-            match = re.fullmatch(r"/api/runs/([^/]+)/score-curve\.json", path)
+            match = re.fullmatch(r"/api/v1/runs/([^/]+)/publication", path)
+            if match:
+                self.require_publish_auth()
+                run_id = validate_run_id(unquote(match.group(1)))
+                with connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT artifact_manifest_sha256, source, published_at
+                        FROM arc3_runs
+                        WHERE run_id = %s AND status = 'published'
+                        """,
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+                if not row:
+                    self.send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
+                    return
+                self.send_json(
+                    HTTPStatus.OK,
+                    {
+                        "apiVersion": 1,
+                        "run": run_id,
+                        "artifactManifestSha256": row[0],
+                        "source": row[1],
+                        "publishedAt": row[2].isoformat() if row[2] else None,
+                    },
+                )
+                return
+            match = re.fullmatch(r"/api/v1/runs/([^/]+)", path)
             if match:
                 run_id = unquote(match.group(1))
-                if not RUN_NAME_RE.fullmatch(run_id):
-                    self.send_json(HTTPStatus.BAD_REQUEST, '{"error":"invalid run"}')
+                validate_run_id(run_id)
+                with connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT jsonb_build_object(
+                            'apiVersion', 1,
+                            'run', run_id,
+                            'status', status,
+                            'artifactManifestSha256', artifact_manifest_sha256,
+                            'source', source,
+                            'publishedAt', published_at,
+                            'updatedAt', updated_at,
+                            'artifactBaseUrl', '/data/' || run_id || '/'
+                        )::text
+                        FROM arc3_runs
+                        WHERE run_id = %s AND status = 'published'
+                        """,
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+                if not row:
+                    self.send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
                     return
+                self.send_json(HTTPStatus.OK, row[0])
+                return
+            match = re.fullmatch(
+                r"/(?:api/runs/([^/]+)/score-curve\.json|api/v1/runs/([^/]+)/score-curve)",
+                path,
+            )
+            if match:
+                run_id = unquote(match.group(1) or match.group(2))
+                validate_run_id(run_id)
                 with connect() as connection, connection.cursor() as cursor:
                     cursor.execute(
                         """
@@ -289,9 +377,99 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 self.send_json(HTTPStatus.OK, row[0])
                 return
             self.send_json(HTTPStatus.NOT_FOUND, '{"error":"not found"}')
+        except PublicationProblem as exc:
+            self.send_json(exc.status, {"error": exc.code, "message": exc.message})
         except Exception as exc:  # Keep the public failure small; full detail goes to Railway logs.
             print(f"catalog request failed for {path}: {exc}", flush=True)
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, '{"error":"catalog unavailable"}')
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        match = re.fullmatch(r"/api/v1/runs/([^/]+)/publication", parsed.path)
+        if not match:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        request_id = uuid.uuid4().hex
+        stage_root: Path | None = None
+        try:
+            self.require_publish_auth()
+            run_id = validate_run_id(unquote(match.group(1)))
+            if self.headers.get("Content-Type", "").split(";", 1)[0].strip() not in (
+                "application/gzip",
+                "application/x-gzip",
+            ):
+                raise PublicationProblem(415, "unsupported_media_type", "expected application/gzip")
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+            except ValueError as exc:
+                raise PublicationProblem(400, "invalid_content_length", "invalid Content-Length") from exc
+            archive_sha256 = validate_sha256(
+                self.headers.get("X-ARC3-Archive-SHA256"), "archive_hash"
+            )
+            manifest_sha256 = validate_sha256(
+                self.headers.get("X-ARC3-Manifest-SHA256"), "manifest_hash"
+            )
+            query = parse_qs(parsed.query)
+            replace = query.get("replace") == ["1"]
+            expected_previous = self.headers.get("X-ARC3-Expected-Manifest-SHA256")
+            if replace and expected_previous is None:
+                raise PublicationProblem(
+                    428,
+                    "precondition_required",
+                    "replacement requires the currently published manifest SHA-256",
+                )
+            if expected_previous not in (None, "none"):
+                expected_previous = validate_sha256(expected_previous, "expected_manifest_hash")
+
+            stage_root = self.data_root / ".incoming" / f"{run_id}.{request_id}"
+            stage_root.mkdir(parents=True, exist_ok=False)
+            archive_path = stage_root / "publication.tgz"
+            receive_body(
+                self.rfile,
+                archive_path,
+                content_length,
+                archive_sha256,
+                self.max_upload_bytes,
+            )
+            package = load_package(
+                stage_root,
+                archive_path,
+                run_id,
+                archive_sha256,
+                manifest_sha256,
+                self.max_files,
+                self.max_unpacked_bytes,
+            )
+            result = publish_package(
+                connect,
+                self.data_root,
+                package,
+                replace,
+                expected_previous,
+            )
+            result["apiVersion"] = 1
+            result["requestId"] = request_id
+            status = HTTPStatus.CREATED if result["status"] in ("published", "replaced") else HTTPStatus.OK
+            self.send_json(status, result)
+            print(
+                f"publication {result['status']} run={run_id} "
+                f"manifest={manifest_sha256} request={request_id}",
+                flush=True,
+            )
+        except PublicationProblem as exc:
+            self.send_json(
+                exc.status,
+                {"error": exc.code, "message": exc.message, "requestId": request_id},
+            )
+        except Exception as exc:
+            print(f"publication failed request={request_id}: {exc}", flush=True)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "publication_failed", "requestId": request_id},
+            )
+        finally:
+            if stage_root is not None:
+                shutil.rmtree(stage_root, ignore_errors=True)
 
     def log_message(self, format_string: str, *args) -> None:
         print(f"catalog: {format_string % args}", flush=True)
@@ -309,7 +487,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     inserted = migrate_and_bootstrap(args.schema, args.bootstrap_root)
-    print(f"catalog database ready; legacy runs inserted={inserted}", flush=True)
+    CatalogHandler.data_root = args.bootstrap_root
+    CatalogHandler.publish_token = os.environ.get("ARC3_PUBLISH_TOKEN", "")
+    CatalogHandler.max_upload_bytes = int(
+        os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))
+    )
+    CatalogHandler.max_unpacked_bytes = int(
+        os.environ.get("ARC3_MAX_UNPACKED_BYTES", str(12 * 1024 * 1024 * 1024))
+    )
+    CatalogHandler.max_files = int(os.environ.get("ARC3_MAX_PUBLICATION_FILES", "200000"))
+    print(
+        f"catalog database ready; api=v1 legacy runs inserted={inserted} "
+        f"publisher={'enabled' if CatalogHandler.publish_token else 'disabled'}",
+        flush=True,
+    )
     server = ThreadingHTTPServer((args.host, args.port), CatalogHandler)
     server.serve_forever()
     return 0

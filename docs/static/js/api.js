@@ -21,8 +21,11 @@ export const fetchGameStep = (run, index, step) => json(`${r(run)}/game-${index}
 export const fetchRunTimeline = (run, version = "") =>
   json(`${r(run)}/run-timeline.json${version ? `?v=${encodeURIComponent(version)}` : ""}`);
 export const fetchRunScoreCurve = (run) =>
-  api(`api/runs/${r(run)}/score-curve.json?v=${Date.now()}`);
+  api(`api/v1/runs/${r(run)}/score-curve?v=${Date.now()}`).catch(() =>
+    api(`api/runs/${r(run)}/score-curve.json?v=${Date.now()}`)
+  );
 export const fetchViewerVersion = async () => ({ version: "static" });
-// Keep the legacy URL contract; Caddy routes this endpoint to Postgres.
 export const fetchRunsIndex = () =>
-  json(`runs-index.json?v=${Date.now()}`).catch(() => null);
+  api(`api/v1/catalog?v=${Date.now()}`)
+    .catch(() => json(`runs-index.json?v=${Date.now()}`))
+    .catch(() => null);

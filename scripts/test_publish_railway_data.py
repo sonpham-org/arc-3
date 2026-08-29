@@ -1,13 +1,14 @@
 import hashlib
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.publish_railway_data import (
+    build_archive,
     build_manifest,
     parse_args,
     validate_run_name,
-    validate_upload_script,
 )
 
 
@@ -20,53 +21,52 @@ class PublishRailwayDataTests(unittest.TestCase):
 
     def test_manifest_is_sorted_and_complete(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            run = root / "docs" / "data" / "run-1"
-            run.mkdir(parents=True)
+            run = Path(temp) / "run-1"
+            run.mkdir()
             (run / "z.json").write_text("z", encoding="utf-8")
             (run / "a.json").write_text("a", encoding="utf-8")
-            manifest, total = build_manifest(
-                run, "run-1", {"CATALOG.sql": b"SELECT 1;"}
-            )
+            manifest, total = build_manifest(run, "run-1")
 
             expected_a = hashlib.sha256(b"a").hexdigest()
             expected_z = hashlib.sha256(b"z").hexdigest()
-            lines = manifest.splitlines()
-            self.assertEqual(lines[0], f"{expected_a}  run-1/a.json")
-            self.assertEqual(lines[1], f"{expected_z}  run-1/z.json")
             self.assertEqual(
-                lines[2],
-                f"{hashlib.sha256(b'SELECT 1;').hexdigest()}  CATALOG.sql",
+                manifest.splitlines(),
+                [
+                    f"{expected_a}  run-1/a.json",
+                    f"{expected_z}  run-1/z.json",
+                ],
             )
-            self.assertEqual(total, 2 + len(b"SELECT 1;"))
+            self.assertEqual(total, 2)
 
-    def test_parse_args_defaults_railway_directory_to_repo(self) -> None:
+    def test_archive_contains_run_and_manifest_but_no_generated_sql(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            run = root / "run-1"
+            run.mkdir()
+            (run / "run-overview.json").write_text("{}", encoding="utf-8")
+            manifest, _ = build_manifest(run, "run-1")
+            archive_path = root / "run.tgz"
+            build_archive(run, "run-1", manifest, archive_path)
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = set(archive.getnames())
+            self.assertIn("run-1/run-overview.json", names)
+            self.assertIn("MANIFEST.sha256", names)
+            self.assertNotIn("CATALOG.sql", names)
+
+    def test_parse_args_defaults_to_api_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             args = parse_args(["run-1", "--repo-root", temp, "--dry-run"])
             self.assertEqual(args.repo_root, Path(temp).resolve())
             self.assertEqual(args.railway_cwd, Path(temp).resolve())
+            self.assertEqual(args.api_url, "https://arc3.sonpham.net")
+            self.assertEqual(args.service, "arc3-viewer")
             self.assertTrue(args.dry_run)
 
-    def test_validate_upload_is_scoped_to_unique_stage(self) -> None:
-        args = parse_args(["run-1", "--validate-upload-only"])
-        script = validate_upload_script(args, "/srv/data/.incoming/run-1.1234").decode()
-        self.assertIn("rm -rf \"$stage\"", script)
-        self.assertIn("stage='/srv/data/.incoming/run-1.1234'", script)
-        self.assertNotIn("rm -rf /srv/data", script)
-
-    def test_finalize_uses_lock_and_fixed_data_root(self) -> None:
-        from scripts.publish_railway_data import finalize_script
-
-        args = parse_args(["run-1"])
-        script = finalize_script(
-            args, "/srv/data/.incoming/run-1.1234", "1234"
-        ).decode()
-        self.assertIn("lock=\"$data_root/.publish-lock\"", script)
-        self.assertIn("data_root='/srv/data'", script)
-        self.assertIn("sha256sum -cs MANIFEST.sha256", script)
-        self.assertIn('psql "$DATABASE_URL"', script)
-        self.assertIn('failed="$data_root/.failed/$run.1234"', script)
-        self.assertNotIn("runs-index.json", script)
+    def test_replacement_requires_a_valid_expected_manifest_if_supplied(self) -> None:
+        args = parse_args(["run-1", "--replace", "--expected-manifest", "none"])
+        self.assertEqual(args.expected_manifest, "none")
+        with self.assertRaises(SystemExit):
+            parse_args(["run-1", "--replace", "--expected-manifest", "bad"])
 
 
 if __name__ == "__main__":

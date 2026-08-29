@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +109,10 @@ def prepare_run_submission(
         "schemaVersion": 1,
         "run": run_name,
         "source": source,
-        "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        # Publication retries must produce the same artifact manifest. The run's
+        # own terminal timestamp is stable; wall-clock publication time belongs
+        # in the server-generated receipt instead of this submitted artifact.
+        "createdAt": timeline.get("endedAt") or timeline.get("startedAt"),
         "catalogSettings": {
             "schemaVersion": int(index.get("schemaVersion") or 1),
             "baseline": index.get("baseline") or {},
@@ -131,169 +133,3 @@ def prepare_run_submission(
         encoding="utf-8",
     )
     return payload
-
-
-def sql_json(value: Any) -> str:
-    body = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    tag = f"arc3_{hashlib.sha256(body.encode()).hexdigest()[:12]}"
-    marker = f"${tag}$"
-    if marker in body:
-        raise ValueError("unexpected SQL dollar-quote collision")
-    return f"{marker}{body}{marker}::jsonb"
-
-
-def sql_text(value: str | None) -> str:
-    if value is None:
-        return "NULL"
-    return "'" + value.replace("'", "''") + "'"
-
-
-def sql_timestamp(value: str | None) -> str:
-    return "NULL" if not value else f"{sql_text(value)}::timestamptz"
-
-
-def build_catalog_sql(
-    schema_sql: str,
-    submission: dict[str, Any],
-    artifact_manifest_sha256: str,
-    file_count: int,
-    byte_count: int,
-) -> bytes:
-    if len(artifact_manifest_sha256) != 64:
-        raise ValueError("artifact manifest SHA256 must be 64 hexadecimal characters")
-    run_name = submission["run"]
-    source = submission["source"]
-    entry = submission["catalogEntry"]
-    timeline = submission["timeline"]
-    curve = submission["scoreCurve"]
-    settings = submission["catalogSettings"]
-    publication_id = f"{run_name}:{artifact_manifest_sha256[:24]}"
-    statements = [schema_sql.rstrip(), "BEGIN;", "SELECT pg_advisory_xact_lock(hashtextextended('arc3-catalog', 0));"]
-    statements.append(
-        """
-UPDATE arc3_catalog_state
-SET schema_version = CASE WHEN schema_version = 1 THEN {schema_version} ELSE schema_version END,
-    baseline = CASE WHEN baseline = '{{}}'::jsonb THEN {baseline} ELSE baseline END,
-    biases = CASE WHEN biases = '{{}}'::jsonb THEN {biases} ELSE biases END
-WHERE singleton = true;
-        """.format(
-            schema_version=int(settings.get("schemaVersion") or 1),
-            baseline=sql_json(settings.get("baseline") or {}),
-            biases=sql_json(settings.get("biases") or {}),
-        ).strip()
-    )
-    statements.append(
-        f"""
-INSERT INTO arc3_runs (
-    run_id, schema_version, status, avg_score, game_count, level_count,
-    action_count, generated_tokens, duration_seconds, started_at, ended_at,
-    catalog_entry, score_curve, artifact_manifest_sha256, source,
-    published_at, updated_at
-) VALUES (
-    {sql_text(run_name)}, {int(timeline.get('schemaVersion') or 1)}, 'published',
-    {float(entry.get('avg_score') or 0)}, {int(entry.get('games') or 0)},
-    {int(entry.get('levels') or 0)}, {int(entry.get('actions') or 0)},
-    {int(entry.get('tokens') or 0)}, {float(timeline.get('durationSeconds') or 0)},
-    {sql_timestamp(timeline.get('startedAt'))}, {sql_timestamp(timeline.get('endedAt'))},
-    {sql_json(entry)}, {sql_json(curve)}, {sql_text(artifact_manifest_sha256)},
-    {sql_text(source)}, now(), now()
-)
-ON CONFLICT (run_id) DO UPDATE SET
-    schema_version = EXCLUDED.schema_version,
-    status = 'published',
-    avg_score = EXCLUDED.avg_score,
-    game_count = EXCLUDED.game_count,
-    level_count = EXCLUDED.level_count,
-    action_count = EXCLUDED.action_count,
-    generated_tokens = EXCLUDED.generated_tokens,
-    duration_seconds = EXCLUDED.duration_seconds,
-    started_at = EXCLUDED.started_at,
-    ended_at = EXCLUDED.ended_at,
-    catalog_entry = EXCLUDED.catalog_entry,
-    score_curve = EXCLUDED.score_curve,
-    artifact_manifest_sha256 = EXCLUDED.artifact_manifest_sha256,
-    source = EXCLUDED.source,
-    published_at = now(),
-    updated_at = now();
-        """.strip()
-    )
-    statements.extend(
-        [
-            f"DELETE FROM arc3_game_scores WHERE run_id = {sql_text(run_name)};",
-            f"DELETE FROM arc3_score_events WHERE run_id = {sql_text(run_name)};",
-            f"DELETE FROM arc3_run_artifacts WHERE run_id = {sql_text(run_name)};",
-        ]
-    )
-    for game in entry.get("per_game") or []:
-        statements.append(
-            f"""
-INSERT INTO arc3_game_scores (
-    run_id, game_id, score, levels_completed, levels_total, actions, payload
-) VALUES (
-    {sql_text(run_name)}, {sql_text(str(game.get('id') or 'unknown'))},
-    {float(game.get('score') or 0)}, {int(game.get('levels') or 0)},
-    {int(game.get('levels_total') or 0)}, {int(game.get('actions') or 0)},
-    {sql_json(game)}
-);
-            """.strip()
-        )
-    for series, key in (("time", "points"), ("tokens", "tokenPoints")):
-        for sequence, point in enumerate(curve.get(key) or []):
-            statements.append(
-                f"""
-INSERT INTO arc3_score_events (
-    run_id, series, sequence, recorded_at, elapsed_seconds,
-    cumulative_actions, cumulative_generated_tokens, mean_score, kind,
-    game_id, action, level, game_score, timestamp_basis, payload
-) VALUES (
-    {sql_text(run_name)}, {sql_text(series)}, {sequence},
-    {sql_timestamp(point.get('at'))}, {float(point.get('elapsedSeconds') or 0)},
-    {int(point['cumulativeActions']) if point.get('cumulativeActions') is not None else 'NULL'},
-    {int(point['cumulativeGeneratedTokens']) if point.get('cumulativeGeneratedTokens') is not None else 'NULL'},
-    {float(point.get('meanScore') or 0)}, {sql_text(str(point.get('kind') or 'unknown'))},
-    {sql_text(point.get('gameId'))},
-    {int(point['action']) if point.get('action') is not None else 'NULL'},
-    {int(point['level']) if point.get('level') is not None else 'NULL'},
-    {float(point['gameScore']) if point.get('gameScore') is not None else 'NULL'},
-    {sql_text(point.get('timestampBasis'))}, {sql_json(point)}
-);
-                """.strip()
-            )
-    for artifact in submission.get("artifacts") or []:
-        statements.append(
-            f"""
-INSERT INTO arc3_run_artifacts (
-    run_id, relative_path, artifact_kind, sha256, byte_count
-) VALUES (
-    {sql_text(run_name)}, {sql_text(artifact['path'])}, {sql_text(artifact['kind'])},
-    {sql_text(artifact['sha256'])}, {int(artifact['bytes'])}
-);
-            """.strip()
-        )
-    receipt_payload = {
-        "run": run_name,
-        "source": source,
-        "artifactManifestSha256": artifact_manifest_sha256,
-        "catalogSchemaVersion": 1,
-    }
-    statements.append(
-        f"""
-INSERT INTO arc3_publications (
-    publication_id, run_id, source, artifact_manifest_sha256,
-    file_count, byte_count, published_at, payload
-) VALUES (
-    {sql_text(publication_id)}, {sql_text(run_name)}, {sql_text(source)},
-    {sql_text(artifact_manifest_sha256)}, {int(file_count)}, {int(byte_count)},
-    now(), {sql_json(receipt_payload)}
-)
-ON CONFLICT (publication_id) DO NOTHING;
-        """.strip()
-    )
-    statements.extend(
-        [
-            "SELECT arc3_refresh_catalog_snapshot();",
-            "COMMIT;",
-            f"SELECT 'CATALOG_COMMITTED={run_name}';",
-        ]
-    )
-    return ("\n\n".join(statements) + "\n").encode("utf-8")

@@ -6,6 +6,7 @@ set -eu
 : "${OAUTH2_PROXY_CLIENT_SECRET:?set OAUTH2_PROXY_CLIENT_SECRET}"
 : "${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET (32-byte)}"
 : "${DATABASE_URL:?set DATABASE_URL to the Railway Postgres private URL}"
+: "${ARC3_PUBLISH_TOKEN:?set ARC3_PUBLISH_TOKEN for the trace publication API}"
 
 printf '%s\n' "$ALLOWED_EMAILS" \
   | tr ', ' '\n\n' \
@@ -47,4 +48,5 @@ exec oauth2-proxy \
   --skip-provider-button=false \
   --skip-auth-route="^/$" \
   --skip-auth-route="^/static/" \
+  --skip-auth-route="^/api/v1/runs/[A-Za-z0-9._-]+/publication$" \
   --whitelist-domain="arc3.sonpham.net"

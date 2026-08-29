@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 from scripts.run_catalog import (
-    build_catalog_sql,
     prepare_run_submission,
     validate_catalog_consistency,
 )
@@ -76,7 +75,7 @@ class RunCatalogTests(unittest.TestCase):
         timeline["scoreCurve"]["points"][-1]["meanScore"] = 6.883480144
         validate_catalog_consistency("run-1", entry, timeline)
 
-    def test_submission_and_sql_cover_every_catalog_table(self) -> None:
+    def test_submission_contains_validated_catalog_and_artifact_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             run_dir = root / "run-1"
@@ -100,20 +99,11 @@ class RunCatalogTests(unittest.TestCase):
             submission = prepare_run_submission(run_dir, index_path, "unit-test")
             self.assertTrue((run_dir / "run-submission.json").is_file())
             self.assertEqual(submission["scoreCurve"]["finalMeanScore"], 1.25)
-            sql = build_catalog_sql(
-                "SELECT 1;", submission, "a" * 64, 3, 100
-            ).decode()
-            for table in (
-                "arc3_runs",
-                "arc3_game_scores",
-                "arc3_score_events",
-                "arc3_run_artifacts",
-                "arc3_publications",
-            ):
-                self.assertIn(table, sql)
-            self.assertIn("arc3_refresh_catalog_snapshot", sql)
-            self.assertIn("BEGIN;", sql)
-            self.assertIn("COMMIT;", sql)
+            self.assertEqual(submission["createdAt"], "2026-08-21T00:01:00Z")
+            self.assertEqual(
+                {row["path"] for row in submission["artifacts"]},
+                {"run-overview.json", "run-timeline.json"},
+            )
 
 
 if __name__ == "__main__":

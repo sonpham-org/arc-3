@@ -3,7 +3,8 @@
 
 This is the only supported submission command. It creates the viewer export,
 execution trace, local catalog row, and score curve, then publishes the files
-and all normalized catalog records through the Railway Postgres transaction.
+and all normalized catalog records through the Railway publication API. It
+does not commit generated data or start a deployment.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--railway-cwd", type=Path)
     parser.add_argument("--railway-bin", default="railway")
+    parser.add_argument("--api-url", default="https://arc3.sonpham.net")
     parser.add_argument("--replace", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -74,6 +76,8 @@ def main() -> int:
         args.railway_bin,
         "--source",
         args.source,
+        "--api-url",
+        args.api_url,
     ]
     if args.replace:
         command.append("--replace")

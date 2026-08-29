@@ -22,6 +22,8 @@ COPY railway/Caddyfile /etc/caddy/Caddyfile
 COPY railway/entrypoint.sh /entrypoint.sh
 COPY railway/catalog_server.py /catalog_server.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
+COPY railway/publication_store.py /publication_store.py
+COPY scripts/run_catalog.py /run_catalog.py
 COPY templates/ /etc/oauth2-proxy/templates/
 COPY docs/*.html /srv/
 COPY docs/static/ /srv/static/
@@ -31,6 +33,8 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -q "Internal runs are private" /etc/oauth2-proxy/templates/sign_in.html \
     && grep -q "ARC-3" /etc/oauth2-proxy/templates/error.html \
     && grep -q -- "--custom-templates-dir=/etc/oauth2-proxy/templates" /entrypoint.sh \
+    && grep -q "ARC3_PUBLISH_TOKEN" /entrypoint.sh \
+    && grep -q "publication_store" /catalog_server.py \
     && chmod 0755 /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

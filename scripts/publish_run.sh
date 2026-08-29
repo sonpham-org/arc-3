@@ -4,8 +4,9 @@
 # Usage: scripts/publish_run.sh <gcs-run-id> <log-dir-name>
 #   e.g. scripts/publish_run.sh g4run-v12-20260714-1505 20260714_150500_v12-corrected-grafts
 #
-# Steps: pull logs from GCS -> export every website artifact -> stage and verify
-# the volume payload -> commit the complete run catalog to Railway Postgres.
+# Steps: pull logs from GCS -> export every website artifact -> upload one
+# verified archive through the API -> commit the complete Railway catalog.
+# This command does not modify Git or start a Railway deployment.
 set -euo pipefail
 
 RUN_GCS_ID=$1
