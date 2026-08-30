@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirty-eight production waves now contain three hundred eighty cross-mechanic prototypes in addition
+The first thirty-nine production waves now contain three hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch38-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch39-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -726,6 +726,19 @@ Batch 38:
 - `q430 Orchard Season` — observation itself advances the calendar;
 - `q461 Gallery Provenance` — creators persist independently from frames;
 - `q493 Aqueduct Scaffold` — channel dependencies require remapped braces.
+
+Batch 39:
+
+- `q214 Gravity Lantern` — rotated controls combine with automatic gravity drift;
+- `q245 Trust Auction` — bids rewrite capital while role and trust remain latent;
+- `q276 Catalyst Garden` — intervention pulses retain refractory causal memory;
+- `q307 Alchemy Ledger` — unequal token weights survive reversible reactions;
+- `q338 Survey Drone` — mobile, phased observations consume rechargeable capacity;
+- `q369 Circuit Weaver` — installed components rewrite phase and latch state;
+- `q400 Ant Relay` — directional relays erase each local scent memory;
+- `q431 Tide Statute` — observation itself advances the tide boundary;
+- `q462 Mask Custody` — actors persist independently from changing masks;
+- `q494 Tower Dependency` — floor dependencies require remapped support permits.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
