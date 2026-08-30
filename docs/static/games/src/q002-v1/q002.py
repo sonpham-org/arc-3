@@ -7,7 +7,7 @@ import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
 CELL, OX, OY, W, H = 6, 14, 15, 6, 6
-BG, FIELD, GRID, BRONZE, GOLD, CYAN, PALE, RED, GREEN, INK = 5, 4, 3, 12, 11, 9, 10, 8, 14, 0
+BG, FIELD, GRID, BRONZE, GOLD, CYAN, PALE, RED, GREEN, INK = 13, 4, 12, 3, 11, 9, 10, 8, 14, 0
 DIRS = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}
 
 

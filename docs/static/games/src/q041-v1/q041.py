@@ -6,7 +6,7 @@ import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
 CELL, OX, OY = 6, 8, 8
-BG, UNKNOWN, FLOOR, WALL, PLAYER, GOAL, REVEAL, FRAGILE, KEY, DOOR, BAD = 5, 4, 3, 2, 10, 14, 9, 12, 11, 6, 8
+BG, UNKNOWN, FLOOR, WALL, PLAYER, GOAL, REVEAL, FRAGILE, KEY, DOOR, BAD = 12, 13, 10, 3, 15, 14, 11, 7, 9, 6, 8
 DIRS = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}
 LEVELS = [
     {"name": "First Glimpse", "map": ["########", "#S....G#", "########", "########", "########", "########", "########", "########"], "looks": 2, "steps": 8},

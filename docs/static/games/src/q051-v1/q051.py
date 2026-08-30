@@ -6,7 +6,7 @@ from math import hypot
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, VOID, FAINT, THIN, THICK, NODE, LOAD, OK, BAD = 5, 4, 3, 10, 12, 0, 11, 14, 8
+BG, VOID, FAINT, THIN, THICK, NODE, LOAD, OK, BAD = 11, 9, 10, 0, 12, 5, 13, 14, 8
 
 
 def spec(name, nodes, edges, source, sink, load, stock, budget):

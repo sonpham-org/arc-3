@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, PLINTH, SHELLS, CORE, SOCKET, SELECT, SHUFFLE, BAD = 5, 3, [9, 11, 6, 12, 10, 14], [14, 10, 12, 9, 11, 6], 2, 0, 4, 8
+BG, PLINTH, SHELLS, CORE, SOCKET, SELECT, SHUFFLE, BAD = 7, 1, [9, 11, 6, 12, 10, 14], [14, 10, 12, 9, 11, 6], 3, 5, 15, 8
 
 
 def event(kind, a, b): return (kind, a, b)

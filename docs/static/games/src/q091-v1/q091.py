@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, BENCH, SLOT, COLORS, SELECT, TOOL, TARGET, BAD = 5, 4, 3, [15, 7, 13, 10, 12, 14], 0, 2, 8, 8
+BG, BENCH, SLOT, COLORS, SELECT, TOOL, TARGET, BAD = 6, 1, 13, [11, 7, 9, 10, 12, 14], 5, 3, 8, 8
 
 
 def recipe(a, b, out, tool=0): return (a, b, out, tool)

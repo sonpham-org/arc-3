@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, GLASS, EMPTY, LIQUID, TARGET, ACTIVE, PIPE, BAD = 5, 9, 4, 10, 14, 11, 2, 8
+BG, GLASS, EMPTY, LIQUID, TARGET, ACTIVE, PIPE, BAD = 0, 9, 1, 10, 14, 12, 3, 8
 LEVELS = [
     {"name": "Equal Glass", "start": [4, 0], "target": [2, 2], "ops": ["half01"], "budget": 3},
     {"name": "Third Cup", "start": [6, 0, 0], "target": [3, 2, 1], "ops": ["half01", "pour12"], "budget": 5},

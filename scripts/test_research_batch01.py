@@ -312,6 +312,17 @@ def test_batch01_seeded_action_fuzz():
             frame = game.perform_action(ActionInput(id=GameAction.from_id(aid), data=data), raw=True); validate_frame(frame)
 
 
+def test_batch01_backgrounds_are_varied_and_not_black_dominant():
+    corner_signatures = set()
+    for code in CODES:
+        module = load(code); game = getattr(module, code.upper())(); result = game.perform_action(ActionInput(id=GameAction.RESET), raw=True); grid = result.frame[-1]
+        signature = (int(grid[0, 0]), int(grid[0, -1]), int(grid[-1, 0]), int(grid[-1, -1]))
+        assert signature != (5, 5, 5, 5), code
+        assert float((grid == 5).sum()) / grid.size < 0.1, code
+        corner_signatures.add(signature)
+    assert len(corner_signatures) == len(CODES)
+
+
 def test_batch01_committed_recordings_hashes_and_diversity():
     batch = json.loads((ROOT / "research" / "gpt-batch01-v1.json").read_text(encoding="utf-8"))
     assert [item["game_id"] for item in batch["games"]] == CODES

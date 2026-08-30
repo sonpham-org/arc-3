@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, PANEL, WIRE, LEVER, ON, OFF, TARGET, BAD, WHITE = 4, 3, 2, 12, 11, 5, 9, 8, 0
+BG, PANEL, WIRE, LEVER, ON, OFF, TARGET, BAD, WHITE = 15, 1, 3, 12, 11, 4, 9, 8, 0
 LEVELS = [
     {"name": "One Wire", "masks": [0b1], "initial": 0, "target": 0b1, "tests": 2},
     {"name": "Separate Wires", "masks": [0b01, 0b10], "initial": 0, "target": 0b11, "tests": 3},

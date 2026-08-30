@@ -6,7 +6,7 @@ import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
 CELL, OX, OY = 6, 8, 9
-BG, FLOOR, WALL, PLAYER, GOAL, WARM, COLD, CHANGE, FRAGILE, DEAD, WHITE = 5, 4, 3, 12, 14, 11, 9, 6, 10, 8, 0
+BG, FLOOR, WALL, PLAYER, GOAL, WARM, COLD, CHANGE, FRAGILE, DEAD, WHITE = 14, 1, 13, 12, 0, 11, 9, 15, 10, 3, 0
 DIRS = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}
 LEVELS = [
     {"name": "Green Season", "map": ["########", "#SaaaG##", "########", "########", "########", "########", "########", "########"], "period": 6, "budget": 10},

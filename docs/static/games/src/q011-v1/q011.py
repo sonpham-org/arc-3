@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 
-BG, STREET, CURB = 5, 4, 3
+BG, STREET, CURB = 10, 1, 11
 AGENT = [9, 11, 6, 12, 10, 14]
 SELECT, REVERSE, GOAL, BAD = 0, 8, 2, 8
 RANK = {0: 2, 1: 0, 2: 4, 3: 1, 4: 5, 5: 3}
