@@ -211,9 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first nine production waves now contain ninety cross-mechanic prototypes in addition
+The first ten production waves now contain one hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch09-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch10-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -332,6 +332,19 @@ Batch 09:
 - `q075 Betrayal Gate` — wear-triggered inversion of a learned rule;
 - `q085 Identity Trail` — footprint-grounded identity after convergence;
 - `q095 Closure Graph` — nested cycle completion and graph closure.
+
+Batch 10:
+
+- `q105 Orbiting Board` — local exchange under global orbital alignment;
+- `q115 Partial Demonstration` — reconstruction of omitted subgoal trajectories;
+- `q125 Escalation Ladder` — controlled alternation against adaptive aggression;
+- `q135 Parity Signals` — grouped two-channel parity communication;
+- `q145 Parallel Sandboxes` — paired counterfactual tests before irreversible action;
+- `q155 Mirror Roles` — symmetry transfer from shapes to social roles;
+- `q165 Hypothesis Stack` — uncertainty retention under sequential evidence;
+- `q175 Pendulum Phase` — transfers timed by position and momentum;
+- `q185 Promise Tokens` — identity-bound delayed obligations;
+- `q195 Tempo Transfer` — rhythm scaling across mechanisms.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
