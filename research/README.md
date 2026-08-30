@@ -211,9 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first two production waves now contain twenty cross-mechanic prototypes in addition
+The first three production waves now contain thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` and
-`research/gpt-batch02-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch02-v1.json` and `research/gpt-batch03-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -241,6 +241,19 @@ Batch 02:
 - `q171 Elastic Balance` — coupled continuous-looking tension;
 - `q181 Affordance Debt` — shortcut consequences delayed across rooms;
 - `q191 Event Compression` — causal event boundaries within long cycles.
+
+Batch 03:
+
+- `q003 Blind Growth` — observer-directed branching under self-avoidance;
+- `q012 Private Appetites` — preference inference and fair allocation;
+- `q022 Counterweight Lab` — signed, ratio-coupled platform intervention;
+- `q032 Parity Forge` — pairwise transformations under a global invariant;
+- `q042 Sonar Pips` — scarce distance-only localization;
+- `q052 Lens Bench` — functional optical-tool construction;
+- `q062 Relay Shadows` — body/shadow integration across observation panes;
+- `q072 Honest Liar` — visible state-conditioned signal inversion;
+- `q082 Borrowed Color` — role identity through repeated recoloring;
+- `q092 Nesting Rooms` — inner solutions that transform outer subgoals.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
