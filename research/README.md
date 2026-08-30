@@ -211,10 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first four production waves now contain forty cross-mechanic prototypes in addition
-to `q001 Quiet Field`. `research/gpt-batch01-v1.json` and
-`research/gpt-batch02-v1.json`, `research/gpt-batch03-v1.json`, and
-`research/gpt-batch04-v1.json` are the content-hashed batch manifests. Each wave samples
+The first five production waves now contain fifty cross-mechanic prototypes in addition
+to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
+`research/gpt-batch05-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -268,6 +267,19 @@ Batch 04:
 - `q172 Fluid Blend` — two-component conserved mixture reasoning;
 - `q182 Borrowed Floor` — cross-room consumable path material;
 - `q192 Nested Clocks` — fast/slow temporal synchronization.
+
+Batch 05:
+
+- `q004 Witness Queue` — watched commitment alternating with unseen transit;
+- `q013 Signal Camp` — grounded partner-policy inference from spatial demonstrations;
+- `q023 Broken Symmetry` — causal intervention on visually symmetric machines;
+- `q033 Color Exchange` — global component conservation through pairwise swaps;
+- `q043 Sampling Cart` — finite active-perception allocation during safe routing;
+- `q053 Bridge Loom` — persistent tool construction over a support graph;
+- `q063 Two Rooms One Switch` — remote causal state across alternating views;
+- `q073 Phase Change` — threshold-triggered revision of the traversal law;
+- `q083 Unmarked Lineage` — persistent identity reconstructed from ancestry;
+- `q093 Milestone Garden` — hierarchical subgoals that unlock new operations.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
