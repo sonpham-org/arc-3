@@ -209,6 +209,29 @@ The 63 external ideas seed the Anthropic lineage. They do not count toward the G
 The remaining Anthropic-side concepts must be created and implemented on the isolated
 Anthropic side.
 
+## GPT implementation status
+
+The first production wave now contains ten cross-mechanic prototypes in addition to
+`q001 Quiet Field`. `research/gpt-batch01-v1.json` is the content-hashed batch manifest.
+The wave deliberately samples ten capability families instead of implementing the next
+nine adjacent observer-dynamics ideas:
+
+- `q002 Afterimage Mill` — observation-written hidden programs;
+- `q011 Courtesy Lines` — stable yielding-preference inference;
+- `q021 Switchboard Diagnosis` — intervention-efficient causal diagnosis;
+- `q031 Split Vessel` — exact conserved-quantity transformation;
+- `q041 Keyhole Budget` — priced spatial observation;
+- `q051 Scaffold` — finite-material load-bearing construction;
+- `q061 Split Couriers` — distributed partial observation and remote latches;
+- `q071 Season Shift` — phase-conditioned terrain and visible rule reversal;
+- `q081 Shell Identity` — persistent identity under independent transformations;
+- `q091 Workshop Orders` — latent subassembly dependencies and reusable fixtures.
+
+Each game has six levels, a distinct visual grammar, a known-win recording, a known-loss
+recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
+engine prototypes, not sealed benchmark releases: random-policy resistance, human
+calibration, and the paired default-versus-Tufa diagnostic runs remain open gates.
+
 ## Evaluation plan
 
 ### Stage 0: deterministic qualification
@@ -310,11 +333,9 @@ of disconnected cards.
 
 ## Immediate production order
 
-1. Finish the source-plus-play semantic layer of the official-25 mechanic audit; the
-   reproducible static source-surface layer is complete.
-2. Import and deduplicate the external 63-idea ledger as Anthropic lineage.
-3. Freeze the schema and generate the GPT 200 concept ledger.
-4. Build one GPT game all the way through deterministic qualification.
-5. Validate the packaging path into the browser, ARC3 default harness, and Tufa harness.
-6. Only then run the game factory in small waves. Keep three or four games at different
-   production stages, matching the throughput lesson reported by the ARC Prize studio.
+1. Complete random-policy resistance and static semantic audits for Batch 01.
+2. Run first-exposure human calibration before changing any mechanics or budgets.
+3. Execute paired ARC3-default and Tufa diagnostic runs on the immutable Batch 01 hashes.
+4. Promote only passing games from `prototype` to `qualified`; preserve failed versions.
+5. Use the failure report—not contiguous ledger order—to select the ten capability-diverse
+   games in Batch 02.

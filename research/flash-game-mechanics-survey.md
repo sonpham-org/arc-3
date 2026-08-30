@@ -352,12 +352,12 @@ Flash is a source of design energy, not a content library for us to copy.
 
 ## Immediate build order
 
-`q001 Quiet Field` remains the first GPT-partition implementation. Its core claim—seeing
-an object changes whether it advances—is adjacent to Flash's interface experimentation but
-is not copied from one of the surveyed games. We should finish its deterministic
-qualification before starting `q002`.
+`q001 Quiet Field` was completed first and deterministically qualified. The next production
+wave intentionally selected ten games across ten different capability families rather
+than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
+batch. The immutable wave inventory and hashes live in `gpt-batch01-v1.json`.
 
-For `q002` and later games, mechanic selection should follow this sequence:
+For later games, mechanic selection follows this sequence:
 
 1. choose a research demand from the coverage-gap study;
 2. retrieve relevant Flash lineage cards and all 463 existing concepts;
