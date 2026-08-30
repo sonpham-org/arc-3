@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirteen production waves now contain one hundred thirty cross-mechanic prototypes in addition
+The first fourteen production waves now contain one hundred forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch13-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch14-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -401,6 +401,19 @@ Batch 13:
 - `q078 Rotating Contract` — arrangement-signaled cycles of social response policies;
 - `q088 Mask Debt` — transferable affordances with identity-bound obligations;
 - `q098 Rescue Order` — prerequisite discovery among capability-granting rescues.
+
+Batch 14:
+
+- `q010 Shared Blindspot` — Boolean geometry formed by two independent observers;
+- `q019 Apprentice Path` — demonstrations adapted to a learner's transformation rule;
+- `q029 Fuse Map` — irreversible diagnostic cuts that preserve one live circuit;
+- `q039 Charge Pairs` — opposite-charge creation and consumption under net conservation;
+- `q049 Confidence Door` — evidence-sensitive stopping before destructive commitment;
+- `q059 Sieve` — bidirectional size-selective mesh construction;
+- `q069 Echo Windows` — integration of immediate and delayed complementary panes;
+- `q079 Exception Signal` — local marked exceptions without abandoning a general rule;
+- `q089 Persistent Passenger` — identity tracking across changing visible carriers;
+- `q099 Waypoint Memory` — reusable local waypoints assembled into a global route.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

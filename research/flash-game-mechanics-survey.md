@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 13 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 14 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch13-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch14-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -371,6 +371,9 @@ capability exchange, and production scheduling.
 Batch 13 adds movable attention boundaries, cyclic trades, causal segmentation,
 capacity-limited load webs, permanent reveal paint, tuned antennas, observer-to-captain
 signals, rotating social policies, identity-bound debt, and rescue dependencies.
+Batch 14 extends the ninth cross-axis pass with dual-observer Boolean control, adapted lessons,
+irreversible fuse diagnosis, paired charges, confidence stopping, reversible-flow sieves,
+delayed echo panes, marked exceptions, passenger identity, and waypoint abstraction.
 
 For later games, mechanic selection follows this sequence:
 
