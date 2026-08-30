@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 43 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 44 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch43-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch44-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -483,6 +483,9 @@ alternating relay, costly sampling, macro interruption, or partial-controller ev
 Batch 43 advances the same cross-axis diagonal with stored-view attention, reset-persistent social
 evidence, repair-rewired causality, dual conservation, complement-aware surveys, two-system assembly,
 sample-efficient delegation, revision-plus-macro timing, reciprocal lineage, and cross-frame dependencies.
+Batch 44 adds reset-persistent attention, route-rewiring social offers, dual-quantity causal probes,
+wear-complemented conservation, two-system surveys, exact-cost construction, controller-aware macro timing,
+reciprocal rule revision, distributed lineage, and fault-selected dependency planning.
 
 For later games, mechanic selection follows this sequence:
 
