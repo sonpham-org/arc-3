@@ -211,9 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eight production waves now contain eighty cross-mechanic prototypes in addition
+The first nine production waves now contain ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch08-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch09-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -319,6 +319,19 @@ Batch 08:
 - `q174 Resonant Steps` — phase-aligned accumulation of oscillation amplitude;
 - `q184 Seeded Weather` — early placements with delayed seasonal hazards;
 - `q194 Interrupt Window` — state-timed interruption of autonomous routines.
+
+Batch 09:
+
+- `q006 Shadow Cargo` — visibility-locked transfer among storage pockets;
+- `q015 Reciprocal Hands` — short-memory social reciprocity;
+- `q025 Latent Gearbox` — causal intervention over hidden clutches;
+- `q035 Momentum Bank` — collision-driven conservation and storage;
+- `q045 Scout Drones` — disposable sensing under a map-information budget;
+- `q055 Funnel Forge` — functional particle-sorter construction;
+- `q065 Asymmetric Twins` — complementary color and shape observers;
+- `q075 Betrayal Gate` — wear-triggered inversion of a learned rule;
+- `q085 Identity Trail` — footprint-grounded identity after convergence;
+- `q095 Closure Graph` — nested cycle completion and graph closure.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
