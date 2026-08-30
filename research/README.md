@@ -34,6 +34,12 @@ Primary references:
 - [ARC-AGI-3 launch](https://arcprize.org/blog/arc-agi-3-launch)
 - [ARC-AGI game-authoring documentation](https://github.com/arcprize/docs/blob/main/add_game.mdx)
 
+The historical mechanic prior-art pass is documented in
+[`flash-game-mechanics-survey.md`](flash-game-mechanics-survey.md). It enumerates 129,019
+Flash game records from a content-hashed Flashpoint snapshot and converts 48 reviewed
+lineages into mechanic atoms with explicit anti-cloning guardrails. The snapshot itself is
+an external input and is not committed.
+
 ## Corpus snapshot
 
 | Corpus | Count | Role in this study | Included in new benchmark? |
