@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-two production waves now contain two hundred twenty cross-mechanic prototypes in addition
+The first twenty-three production waves now contain two hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch22-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch23-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -518,6 +518,19 @@ Batch 22:
 - `q429 Reedbed Revision` — wear-shifted rules coupled to connectivity construction;
 - `q460 Vault Lineage` — causal identity with two conserved shared stores;
 - `q491 Pollen Dependency` — a prerequisite DAG spanning a visible rule complement.
+
+Batch 23:
+
+- `q521 Pollen Frame` — moving local controls complemented after visible wear;
+- `q552 Semaphore Lesson` — conditional policy inference from noisy miniature relay tests;
+- `q583 Impeller Counter` — shaping a stable opponent tactic before stopping samples;
+- `q614 Tessera Grammar` — relay-transformed chunks around an interrupt window;
+- `q645 Vivarium Sandbox` — fair reset experiments before one irreversible policy;
+- `q676 Crossing Analogy` — dock structure transferred through alternating observer marks;
+- `q707 Spectrum Evidence` — reliability algebra transferred from geometry to agents;
+- `q738 Escapement Gradient` — fault-diagnosed conservation over nested gear phases;
+- `q769 Monsoon Obligation` — identity debt repaid after sparse unequal-cycle rewards;
+- `q800 Workbench Rhythm` — event-chunked interruption with helper-bound debt.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
