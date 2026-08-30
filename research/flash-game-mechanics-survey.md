@@ -34,8 +34,16 @@ This is complete **metadata enumeration**, not a claim that we manually played 1
 games. Tags and descriptions are discovery aids. A game becomes prior art only after a
 human source/play review confirms the mechanic.
 
+The live Flashpoint index is larger than this reproducible 2024 snapshot. On 30 August
+2026 its exact `Games` + `Flash` filter returned 132,582 records, a net difference of
+3,563. Flashpoint's broader headline count was 220,619 games and animations across more
+than one hundred supported web technologies. These numbers are not interchangeable: the
+first is the relevant live Flash-game universe, while the second also includes animations
+and non-Flash platforms.
+
 Primary corpus references:
 
+- [Flashpoint live `Games` + `Flash` filtered index](https://flashpointarchive.org/search?advanced=true&field=library&filter=exactWhitelist&value=arcade&field=platforms&filter=whitelist&value=Flash)
 - [Flashpoint collection search and downloadable master-list documentation](https://flashpointarchive.org/datahub/Searching_the_Collection)
 - [Flashpoint tag taxonomy](https://flashpointarchive.org/datahub/Tags)
 - [Flashpoint database API](https://github.com/FlashpointProject/flashpoint-database-api)
@@ -98,10 +106,10 @@ swamp the game queue. The query and its exact database hash are recorded in
 `flash-long-tail-audit-v1.json`; the ordered records are in
 `flash-long-tail-queue-v1.tsv`.
 
-The source-checked long-tail review now contains 60 lineage decisions in
-`flash-long-tail-reviewed-lineages-v1.tsv`: 37 promoted mechanic families, seven families
-that require a modality or objective adaptation, nine adjacent cases that need a sharper
-novelty argument, and seven covered cases retained as negative evidence. Promising
+The source-checked long-tail review now contains 80 lineage decisions in
+`flash-long-tail-reviewed-lineages-v1.tsv`: 45 promoted mechanic families, eight families
+that require a modality or objective adaptation, 15 adjacent cases that need a sharper
+novelty argument, and 12 covered cases retained as negative evidence. Promising
 additions include:
 
 - one command broadcast over all active branch tips (*Rings and Sticks*);
@@ -137,12 +145,58 @@ additions include:
   forms of persistent world material (*Spewer*);
 - allowing preparation actions to construct the exact audit applied in a later phase (*A
   Subtle Kind of Murder*);
+- demonstrating a hostile looping policy and then proving it solvable by fighting the
+  authored behavior (*Cathode Raybots*);
+- navigating a hierarchy in which entering a central cell zooms that embedded maze into
+  the new local world (*Fracuum*);
+- spending a finite global time budget across cyclic seasons and irreversible decades of
+  biological or civic development (*400 Years*);
+- acquiring an inventory of incompatible perceptual world models and learning the stable
+  affordances of each (*Vision by Proxy*);
+- toggling a semantic involution in which hazards become resources and moving enemies
+  become manipulable terrain (*Perspective*);
+- using one trajectory to program a persistent anchor for repeated remote position
+  exchange (*D-Star*);
+- constructing two fully covering power networks whose typed streams may cross spatially
+  but may never connect electrically (*GRIDZ*);
+- applying one reversible scale operator to heterogeneous entities whose affordances
+  change differently (*Alter*);
 - globally exchanging the behavior of two object classes (*changeType()*);
 - causal effects that cross between spatially coexisting rule systems (*Mega Mash*);
 - explicit one-gate-per-tick signal propagation in an interactive circuit demonstration.
 
 This is still a review queue, not an automatic novelty oracle. Lexical distance from our
 463 concepts is useful for routing attention but cannot establish a structural difference.
+
+### Scaling the review without manufacturing duplicates
+
+The target is not one idea row per archived game. Portals contain mirrors, translations,
+sequels, asset swaps, tutorial variants, and thousands of games built on the same stable
+template. Treating those as independent concepts would exaggerate coverage while making
+the benchmark less diverse. The scalable unit is a **mechanic lineage**: one causal rule
+family with its copies and cosmetic variants collapsed behind it.
+
+The working funnel is therefore:
+
+1. enumerate all 132,582 currently indexed Flash games and retain an immutable local
+   snapshot for reproducibility;
+2. update and deduplicate metadata by UUID, launch URL, title/developer, description
+   signature, and obvious series relationships;
+3. route the 5,342 mechanic-bearing records already recovered by phrase and rare-tag
+   retrieval, refreshing the delta from the live index separately;
+4. review the interleaved 1,281-record queue by mechanic family rather than popularity;
+5. source-check at least one representative plus a disconfirming neighbor for every
+   proposed lineage;
+6. promote only concepts whose nearest prior comparison states a structural difference
+   and a concrete ARC3 research question.
+
+The 80-row ledger is a checkpoint, not a stopping point. The next source-review checkpoint
+is 100 decisions; after that, review continues in blocks of 50 while preserving quotas
+across perception, dynamics, topology, agency, resource, communication, construction,
+time, and objective-inference families. Covered and rejected rows remain in the ledger so
+later reviewers do not repeatedly rediscover the same attractive but already represented
+games.
+
 Every promoted row therefore names the nearest existing idea or lineage and states the
 specific difference that would have to survive implementation.
 
@@ -323,7 +377,7 @@ For `q002` and later games, mechanic selection should follow this sequence:
   metadata snapshot and interleaved for human review;
 - `flash-long-tail-audit-v1.json` — exact retrieval counts, caps, phrase families, corpus
   hash, and interpretation boundary;
-- `flash-long-tail-reviewed-lineages-v1.tsv` — 60 source-checked long-tail decisions with
+- `flash-long-tail-reviewed-lineages-v1.tsv` — 80 source-checked long-tail decisions with
   nearest-prior comparisons and ARC3 research questions;
 - `scripts/analyze_flashpoint_corpus.py` — deterministic regeneration command.
 - `scripts/mine_flashpoint_long_tail.py` — deterministic queue construction and nearest-
