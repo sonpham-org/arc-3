@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-four production waves now contain four hundred forty cross-mechanic prototypes in addition
+The first forty-five production waves now contain four hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch44-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch45-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -804,6 +804,19 @@ Batch 44:
 - `q435 Vivarium Revision` — partner favor follows a revised law;
 - `q466 Crossing Lineage` — alternating controllers integrate passenger ancestry;
 - `q498 Escapement Dependency` — one fault intervention unlocks nested gears.
+
+Batch 45:
+
+- `q219 Reedbed Veil` — attention scheduling changes salinity and causeway connectivity;
+- `q250 Vault Pact` — hidden offer conventions share two conserved resources;
+- `q281 Pollen Probe` — causal signatures complement after a visible wear boundary;
+- `q312 Semaphore Ledger` — global stock survives two miniature relay tests;
+- `q343 Impeller Survey` — only nonredundant wake samples fit the evidence budget;
+- `q374 Tessera Rig` — dual-effect components feed a state-window macro interrupt;
+- `q405 Vivarium Delegation` — alternating partial views leave marks and reciprocal help;
+- `q436 Crossing Revision` — disjoint controllers recalibrate a visibly worn ferry law;
+- `q467 Spectrum Lineage` — ancestry persists through splits, merges, and appearance swaps;
+- `q499 Monsoon Dependency` — shared weather prerequisites unlock at unequal-cycle phase pairs.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

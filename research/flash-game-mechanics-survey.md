@@ -486,6 +486,11 @@ sample-efficient delegation, revision-plus-macro timing, reciprocal lineage, and
 Batch 44 adds reset-persistent attention, route-rewiring social offers, dual-quantity causal probes,
 wear-complemented conservation, two-system surveys, exact-cost construction, controller-aware macro timing,
 reciprocal rule revision, distributed lineage, and fault-selected dependency planning.
+Batch 45 moves the diagonal into ten bright visual settings while coupling attention to connectivity,
+social convention to dual conservation, causal evidence to complemented wear, conservation to miniature
+policy tests, evidence value to redundancy cost, construction to interruptible macros, delegation to
+reciprocity, revision to controller-specific marks, identity to appearance exchange, and hierarchy to
+unequal-cycle phase pairs.
 
 For later games, mechanic selection follows this sequence:
 
