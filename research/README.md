@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-seven production waves now contain two hundred seventy cross-mechanic prototypes in addition
+The first twenty-eight production waves now contain two hundred eighty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch27-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch28-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -583,6 +583,19 @@ Batch 27:
 - `q420 Spore Revision` — wear-boundary recalibration at sparse shared events;
 - `q451 Tapestry Lineage` — ancestry tracking across a graph rewrite;
 - `q483 Murmuration Dependency` — reusable prerequisites with a mislead-correcting parity audit.
+
+Batch 28:
+
+- `q504 Honeycomb Frame` — moving local controls composed with nested scent clocks;
+- `q535 Alloy Lesson` — conditional demonstrations under a rotating force frame;
+- `q566 Palimpsest Counter` — exact causal-pattern opponent shaping;
+- `q597 Canopy Grammar` — grouped relay language through a bounded store;
+- `q628 Breakwater Sandbox` — persistent miniature evidence with a dormant first effect;
+- `q659 Strata Analogy` — relational transfer after reversible probing;
+- `q690 Spore Evidence` — weighted safe stopping at sparse dual-clock events;
+- `q721 Tapestry Gradient` — conserved routing across an adjacency rewrite;
+- `q752 Lockwater Obligation` — causal-identity debt after appearance exchange;
+- `q783 Murmuration Rhythm` — macro-time alignment with a parity audit.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
