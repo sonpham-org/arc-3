@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-one production waves now contain two hundred ten cross-mechanic prototypes in addition
+The first twenty-two production waves now contain two hundred twenty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch21-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch22-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -505,6 +505,19 @@ Batch 21:
 - `q728 Asterism Gradient` — conserved phased influence with evidence-preserving reset;
 - `q759 Reedbed Obligation` — identity-bound debt delayed through tool construction;
 - `q790 Vault Rhythm` — dual conservation and event-chunked interrupt timing.
+
+Batch 22:
+
+- `q212 Lockwater Veil` — hidden identities updating beneath exchanged appearances;
+- `q243 Murmuration Pact` — parity-checked convention inference with one misleading response;
+- `q274 Moraine Probe` — budgeted causal diagnosis coupled to outer progress;
+- `q305 Waystation Ledger` — conserved supply routing against a repetition counter;
+- `q336 Backstage Survey` — rotating sightline coverage with directed influence;
+- `q367 Catalyst Rig` — orientation memory executing a constructed reusable device;
+- `q398 Asterism Delegation` — complementary evidence persisting across physical reset;
+- `q429 Reedbed Revision` — wear-shifted rules coupled to connectivity construction;
+- `q460 Vault Lineage` — causal identity with two conserved shared stores;
+- `q491 Pollen Dependency` — a prerequisite DAG spanning a visible rule complement.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
