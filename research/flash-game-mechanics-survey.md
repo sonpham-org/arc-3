@@ -337,13 +337,14 @@ Large parts of Flash history are poor benchmark material even when they were fun
 
 Flash is a source of design energy, not a content library for us to copy.
 
-## Consequences for the 400-game program
+## Consequences for the 1,000-game production program
 
 1. Add a structured inspiration record to each game specification: lineage IDs, the
    portable atom, the transformation that makes it a different research instrument, and
    the assets/layouts explicitly excluded from reuse.
 2. Treat the 48 lineage cards as retrieval vocabulary during novelty review, not as 48 new
-   game concepts. Several are already represented in the external 63 or our 400 queues.
+   game concepts. Several are already represented in the external 63 or our production
+   and sealed-evaluation queues.
 3. Reject a game whose novelty claim is only “classic Flash mechanic in ARC3 graphics.”
 4. Require a program-compression comparison: if the historical mechanic plus cosmetic
    substitutions explains the whole game, the game is not new enough.

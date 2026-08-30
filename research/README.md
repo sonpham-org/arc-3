@@ -8,7 +8,8 @@ ARC-AGI-3-compatible environments. It deliberately separates:
 1. the 25 ARC Prize public demonstration environments;
 2. the 22 bespoke Cellens environments currently in the ARC3 browser;
 3. the 252 imported `arc-interactive` environments currently in that browser;
-4. the new 400-environment authorship-controlled research collection.
+4. the new 1,000-environment production collection, with a provenance-controlled
+   400-environment cross-provider evaluation subset.
 
 The fourth collection is not a relabeling of the existing 299-game catalog. A game only
 enters it after provenance, novelty, deterministic qualification, solution replay, visual
@@ -49,8 +50,9 @@ an external input and is not committed.
 | Red Blue Pill catalog | 252 | broad prior-art/dedup corpus | no, unless requalified |
 | External idea ledger | 63 | Anthropic-side seed concepts | only after independent review |
 | Anthropic implementation queue | 200 | GPT-seeded commissioning briefs | development only; concept-exposed to GPT |
-| New GPT partition | 200 | held-out games for Anthropic evaluation | yes |
-| New Anthropic partition | 200 | independently authored games for GPT evaluation | yes; still requires a sealed authoring pass |
+| Consolidated GPT design ledger | 800 | production inventory across 20 capability axes | yes; 200 form the original evaluation partition |
+| Strict GPT evaluation subset | 200 | held-out games for Anthropic evaluation | yes |
+| Strict Anthropic evaluation subset | 200 | independently authored games for GPT evaluation | yes; still requires a sealed authoring pass |
 
 The external 63-idea source is pinned to:
 
@@ -76,6 +78,21 @@ and all 299 current browser-manifest entries. The deterministic audit in
 primary-axis reuse, no thresholded within-queue duplicates, and no thresholded lexical
 matches to the prior corpus. `scripts/validate_idea_diversity.py` regenerates that audit.
 Lexical retrieval is a review aid, not proof of semantic novelty.
+
+### Expanded 1,000-design production ledger
+
+`gpt-ideas-v2.tsv` preserves all 200 rows of `gpt-ideas-v1.tsv` byte-for-byte at the
+record level and adds `q201` through `q800`. The additions cross 30 domain families with
+30 structural variants per capability axis; each of the 20 axes therefore has 40 GPT
+concepts. Combined with the 200 Anthropic implementation briefs, the production inventory
+contains exactly 1,000 designs.
+
+`scripts/build_gpt_ideas_v2.py` deterministically regenerates the consolidated ledger and
+`gpt-ideas-v2.audit.json`. The audit pins both source and output hashes and checks ID,
+title, concept, axis-balance, legacy-preservation, domain-family, and structural-variant
+invariants. This expansion changes the production target, not the contamination claim:
+only the original sealed 200-by-200 subset is eligible for strict cross-provider held-out
+evaluation.
 
 This provenance distinction matters: because GPT produced these briefs, games implemented
 directly from them are **concept-exposed to GPT**. They can be used for development and for
@@ -430,7 +447,8 @@ The staging article should be one continuous narrative with live figures, not a 
 of disconnected cards.
 
 1. **The observable island.** An interactive map places 25 official games, 22 Cellens
-   games, 252 imported games, and the proposed 400-game study in separate rings. Hovering
+   games, 252 imported games, and the 1,000-game production program in separate rings,
+   with the 400-game sealed evaluation subset visibly marked. Hovering
    a game reveals a thumbnail, action vocabulary, level count, and audited mechanics.
 2. **What does a game measure?** A scroll-linked causal diagram separates perception,
    intervention, belief update, planning, execution, and transfer. Trace excerpts animate
