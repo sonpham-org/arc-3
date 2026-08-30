@@ -6,7 +6,7 @@
 // The ?v= is load-bearing: index.html serves this module uncached-busted otherwise, and
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
-import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260826-overlay";
+import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-ai-generated";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -18,13 +18,14 @@ const COLORS = [
 const ACTION_NAMES = { 0: "RESET", 1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT", 5: "ACTION5", 6: "CLICK", 7: "ACTION7" };
 const KEY_MAP = { w: 1, ArrowUp: 1, s: 2, ArrowDown: 2, a: 3, ArrowLeft: 3, d: 4, ArrowRight: 4, r: 0, z: 5, x: 7, c: 7 };
 
-// The catalog runs to ~300 games, so every section is paged and the whole
+// The catalog runs to hundreds of games, so every section is paged and the whole
 // thing is filterable; the sidebar shows one page of the current game's
 // category at a time.
 const PAGE_SIZE = 30;
 const CATEGORIES = [
   { key: "official", label: "Official", grid: "browseOfficial", pager: "pagerOfficial", count: "countOfficial" },
   { key: "custom", label: "Custom", grid: "browseCustom", pager: "pagerCustom", count: "countCustom" },
+  { key: "ai-generated", label: "AI-Generated games", grid: "browseAiGenerated", pager: "pagerAiGenerated", count: "countAiGenerated" },
   { key: "redbluepill", label: "Red Blue Pill", grid: "browseRedblue", pager: "pagerRedblue", count: "countRedblue" },
 ];
 
@@ -34,7 +35,7 @@ let currentSource = null;   // cached .py text, so re-selecting a game skips the
 let state = {};             // {grid, state, levels_completed, win_levels, available_actions, tile_scale}
 let stepCount = 0;
 let query = "";
-const pageOf = { official: 0, custom: 0, redbluepill: 0 };
+const pageOf = Object.fromEntries(CATEGORIES.map((category) => [category.key, 0]));
 let sidebarPage = 0;
 let tileMode = "solid";     // "solid" | "tiles" | "random" -- see games/arc_tiles.py
 let tileSeed = 1;
@@ -71,7 +72,7 @@ const canvas = () => $("gameCanvas");
 async function init() {
   onEngineProgress(({ stage, percent }) => updateLoadingUI(stage, percent));
   try {
-    games = await fetch("./static/games/manifest.json").then((r) => r.json());
+    games = await fetch("./static/games/manifest.json?v=20260830-ai-generated").then((r) => r.json());
   } catch (e) {
     $("browseOfficial").textContent = "Failed to load game catalog.";
     return;

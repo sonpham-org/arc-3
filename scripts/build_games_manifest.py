@@ -25,6 +25,10 @@ script (and the Games page) assumes.
 
 Usage: /home/son/anaconda3/bin/python scripts/build_games_manifest.py
 (needs the `arcengine` package for thumbnails and tile_scale detection)
+
+After rebuilding the three imported catalogs, run
+``python scripts/build_ai_generated_catalog.py`` to restore the research games
+from their repository-local metadata and verified artifacts.
 """
 
 import ast
