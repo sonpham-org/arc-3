@@ -211,9 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first six production waves now contain sixty cross-mechanic prototypes in addition
+The first seven production waves now contain seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch06-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch07-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -293,6 +293,19 @@ Batch 06:
 - `q173 Density Drift` — conserved distribution shaping through gradients;
 - `q183 Delayed Escort` — early assistance with delayed policy effects;
 - `q193 Routine Builder` — action macros that preserve exceptional branches.
+
+Batch 07:
+
+- `q005 Lantern Census` — observer-conditioned population growth and merging;
+- `q014 Flock Vote` — latent aggregation rules over social gestures;
+- `q024 Last Probe` — finite experiment design before irreversible commitment;
+- `q034 Area Keeper` — filled-area conservation under silhouette change;
+- `q044 Memory Camera` — selective evidence capture for ordered later recall;
+- `q054 Gear Teeth` — finite mechanical-resource allocation;
+- `q064 Scout Gestures` — grounding reports from remote autonomous observers;
+- `q074 Drift Law` — sparse calibration under a rotating action mapping;
+- `q084 Control Transfer` — controller identity separated from body objectives;
+- `q094 Delivery Tree` — branching upstream dependencies revealed by requests.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
