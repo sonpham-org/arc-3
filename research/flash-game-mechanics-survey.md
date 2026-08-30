@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 37 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 38 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch37-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch38-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -460,6 +460,10 @@ Batch 37 adds an explicitly spatial observer-frame task alongside token-rewritin
 ecological carryover, reversible bead fusion, rotating coastal bearings, self-modifying marionette
 assembly, destructive semaphore relays, observation-driven thaw, postmark-independent authorship,
 and dependency-constrained orchard terraces.
+Batch 38 compounds rotation with reflection in a spatial ferry task, then adds nonlinear rumor
+rewriting, atmospheric carryover, crystal cleavage, remapped fossil scans, self-modifying kitchen
+assembly, destructive cloud relays, observation-driven seasons, frame-independent provenance, and
+dependency-constrained aqueduct channels.
 
 For later games, mechanic selection follows this sequence:
 
