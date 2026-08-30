@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-six production waves now contain four hundred sixty cross-mechanic prototypes in addition
+The first forty-seven production waves now contain four hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch46-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch47-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -830,6 +830,19 @@ Batch 46:
 - `q437 Spectrum Revision` — a worn relational rule transfers across visual domains;
 - `q468 Escapement Lineage` — ancestry tracking composes with fault-discriminating probes;
 - `q500 Workbench Dependency` — shared fixtures create helper-identity obligations that must be repaid.
+
+Batch 47:
+
+- `q221 Pollen Veil` — attention-frozen bloom dynamics complement after visible wear;
+- `q252 Semaphore Pact` — one social convention is inferred across two signal courts;
+- `q283 Impeller Probe` — redundant wake interventions consume a strict evidence budget;
+- `q314 Tessera Ledger` — conserved stock passes through an interruptible seam macro;
+- `q345 Vivarium Survey` — bounded temperature samples interact with partner favor;
+- `q376 Crossing Rig` — ferry hardware construction requires alternating controller marks;
+- `q407 Spectrum Delegation` — partial prism views integrate across relational domains;
+- `q438 Escapement Revision` — a worn gear law is recalibrated by fault intervention;
+- `q469 Monsoon Lineage` — rain-seed ancestry must meet a sparse phase pair;
+- `q502 Tide Frame` — moving local shell coordinates precede an evidence-gated exchange.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

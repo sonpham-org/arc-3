@@ -495,6 +495,10 @@ Batch 46 advances those pairings with dual-conserved hidden circulation, wear-re
 two-system causal probes, redundancy-priced conserved transfers, evidence-gated seam macros,
 reciprocity-bound habitat tools, disjoint ferry projections, cross-domain relational revision,
 fault-intervened ancestry, and helper-identity debt over shared prerequisite graphs.
+Batch 47 adds wear-complemented attention, two-court conventions, redundancy-priced interventions,
+conserved macro stock, reciprocity-conditioned evidence, controller-marked construction,
+cross-domain delegation, intervention-guided revision, phase-gated ancestry, and moving local frames
+whose irreversible exchange is delayed until visible evidence is sufficient.
 
 For later games, mechanic selection follows this sequence:
 
