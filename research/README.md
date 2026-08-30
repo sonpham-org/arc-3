@@ -211,9 +211,10 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first three production waves now contain thirty cross-mechanic prototypes in addition
+The first four production waves now contain forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` and
-`research/gpt-batch02-v1.json` and `research/gpt-batch03-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch02-v1.json`, `research/gpt-batch03-v1.json`, and
+`research/gpt-batch04-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -254,6 +255,19 @@ Batch 03:
 - `q072 Honest Liar` — visible state-conditioned signal inversion;
 - `q082 Borrowed Color` — role identity through repeated recoloring;
 - `q092 Nesting Rooms` — inner solutions that transform outer subgoals.
+
+Batch 04:
+
+- `q102 Walking Room` — navigation across nested mobile reference frames;
+- `q112 Negative Demonstration` — policy inference from success/failure contrasts;
+- `q122 Feint` — two-stage displayed intent and adversary manipulation;
+- `q132 Shape-Free Code` — relative-position communication;
+- `q142 Ghost Alternatives` — scarce counterfactual action previews;
+- `q152 Shadows to Forces` — structural transfer from offsets to attraction;
+- `q162 Claim or Explore` — confidence-sensitive evidence stopping;
+- `q172 Fluid Blend` — two-component conserved mixture reasoning;
+- `q182 Borrowed Floor` — cross-room consumable path material;
+- `q192 Nested Clocks` — fast/slow temporal synchronization.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

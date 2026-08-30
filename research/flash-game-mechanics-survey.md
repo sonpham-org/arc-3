@@ -355,9 +355,9 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 and 03 repeated that cross-family strategy across the second ten axes
-and then a second pass through the first ten. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json`, `gpt-batch02-v1.json`, and `gpt-batch03-v1.json`.
+batch. Batches 02 through 04 repeated that cross-family strategy across the second ten
+axes and then a second pass through both groups. The immutable wave inventories and hashes
+live in `gpt-batch01-v1.json` through `gpt-batch04-v1.json`.
 
 For later games, mechanic selection follows this sequence:
 
