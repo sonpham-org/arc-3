@@ -1,6 +1,6 @@
 # Flash-game mechanics survey for ARC3 environment design
 
-Status: corpus audit and first synthesis pass, 29 August 2026
+Status: corpus audit and continuing synthesis pass, 30 August 2026
 
 ## Scope and honesty
 
@@ -98,10 +98,10 @@ swamp the game queue. The query and its exact database hash are recorded in
 `flash-long-tail-audit-v1.json`; the ordered records are in
 `flash-long-tail-queue-v1.tsv`.
 
-The first source-checked long-tail batch contains 49 lineage decisions in
-`flash-long-tail-reviewed-lineages-v1.tsv`: 34 promoted mechanic families, four families
-that require a modality or objective adaptation, seven adjacent cases that need a sharper
-novelty argument, and four covered cases retained as negative evidence. Promising
+The source-checked long-tail review now contains 60 lineage decisions in
+`flash-long-tail-reviewed-lineages-v1.tsv`: 37 promoted mechanic families, seven families
+that require a modality or objective adaptation, nine adjacent cases that need a sharper
+novelty argument, and seven covered cases retained as negative evidence. Promising
 additions include:
 
 - one command broadcast over all active branch tips (*Rings and Sticks*);
@@ -127,6 +127,16 @@ additions include:
 - hidden collision geometry exposed only in a spatially transformed companion view
   (*noitcelfeR*);
 - movement that also broadcasts typed motion to responsive obstacles (*Nudge*);
+- decomposing a controlled body into persistent tools while each removed part also
+  subtracts an embodied capability (*Pursuit of Hat*);
+- relocating scene state through a bounded capture-and-paste frame (*I Wish I Were the
+  Moon*);
+- swapping into a continuously maintained reflected embodiment (*Red Warrior*);
+- monotonically shrinking the available operator set as progress continues (*Persist*);
+- moving one conserved resource between an internal body reservoir and several typed
+  forms of persistent world material (*Spewer*);
+- allowing preparation actions to construct the exact audit applied in a later phase (*A
+  Subtle Kind of Murder*);
 - globally exchanging the behavior of two object classes (*changeType()*);
 - causal effects that cross between spatially coexisting rule systems (*Mega Mash*);
 - explicit one-gate-per-tick signal propagation in an interactive circuit demonstration.
@@ -135,6 +145,35 @@ This is still a review queue, not an automatic novelty oracle. Lexical distance 
 463 concepts is useful for routing attention but cannot establish a structural difference.
 Every promoted row therefore names the nearest existing idea or lineage and states the
 specific difference that would have to survive implementation.
+
+### Current implementation shortlist from the new batch
+
+These are mechanic sketches, not additional prototypes. Their working names, visual
+languages, entities, and level structures deliberately do not reuse the source games.
+
+1. **Frame Ferry** — a fixed-size frame captures one connected object arrangement into a
+   visible buffer and pastes it elsewhere. Later levels make capture size, orientation,
+   gravity state, and one-slot storage jointly matter. This is the cleanest direct ARC3
+   transfer in the batch.
+2. **Module Body** — the controlled machine is assembled from typed modules. Ejecting a
+   module turns it into a persistent actuator or support, but immediately removes its
+   grip, insulation, stride, or sensing affordance from the remaining controller.
+3. **Mirror Relay** — each traversable cell has a reflected partner and the controlled
+   token can enter its maintained counterpart with one involutive swap. Asymmetric
+   blockers make a safe route alternate between the two frames.
+4. **Audit Echo** — a preparation room records only causally relevant traces. The second
+   phase constructs a small visual audit from the objects changed or left inconsistent,
+   testing whether the agent anticipated the evaluator it was creating.
+5. **Gate of Less** — several gates permanently remove different operators. The player
+   chooses a route through them while ensuring the surviving action set can solve every
+   downstream chamber.
+6. **Reservoir Skin** — cells from a finite internal reservoir can be emitted as one of
+   several discrete materials and reclaimed later. Emission changes both the board and
+   the controller's remaining mass or mobility; no continuous fluid physics is used.
+
+The first three are ready for an eight-level causal specification. The latter three need
+one more paper-design pass to prevent scripted solutions, language dependence, or
+continuous-simulation noise.
 
 ## The mechanic atoms worth carrying forward
 
@@ -284,7 +323,7 @@ For `q002` and later games, mechanic selection should follow this sequence:
   metadata snapshot and interleaved for human review;
 - `flash-long-tail-audit-v1.json` — exact retrieval counts, caps, phrase families, corpus
   hash, and interpretation boundary;
-- `flash-long-tail-reviewed-lineages-v1.tsv` — 49 source-checked long-tail decisions with
+- `flash-long-tail-reviewed-lineages-v1.tsv` — 60 source-checked long-tail decisions with
   nearest-prior comparisons and ARC3 research questions;
 - `scripts/analyze_flashpoint_corpus.py` — deterministic regeneration command.
 - `scripts/mine_flashpoint_long_tail.py` — deterministic queue construction and nearest-
