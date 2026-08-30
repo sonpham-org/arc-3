@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 35 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 36 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch35-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch36-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -452,6 +452,10 @@ Batch 35 moves the same capability axes into biological and infrastructural sett
 mosaics, diplomatic masks, flood interventions, conserved crop cycles, lamp-limited microscopy,
 pressure-bound balloon assembly, firefly communication, monsoon revisions, shell provenance, and
 permit-driven skybridge construction.
+Batch 36 introduces stronger path dependence and destructive state updates through polar aurora
+frames, history-sensitive public replies, causal hysteresis, LIFO dye unbraiding, orbital sensor
+remapping, self-modifying instrument assembly, destructive coral relays, observation-driven eclipse
+boundaries, independently moving ownership seals, and remapped cavern keystones.
 
 For later games, mechanic selection follows this sequence:
 
