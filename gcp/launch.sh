@@ -24,6 +24,8 @@ tar czf "$TARDIR/arc3-code.tgz" \
   --exclude='reports' --exclude='__pycache__' --exclude='*.pyc' \
   ARC3-Inference tufa-arc-agi-framework gcp environment_files
 gcloud storage cp "$TARDIR/arc3-code.tgz" "$BUCKET/$CODE_OBJECT" --project="$PROJECT"
+gcloud storage cp gcp/arc3_minute_score_observer.py \
+  "$BUCKET/code/arc3_minute_score_observer.py" --project="$PROJECT"
 
 echo "== instance template =="
 TEMPLATE="$MIG_NAME-$(date -u +%Y%m%d%H%M)"

@@ -17,6 +17,9 @@ MIG=$(meta arc3-mig)
 BUNDLE_NAME=$(meta arc3-bundle)
 REASONING_EFFORT=$(meta arc3-reasoning-effort)
 ARC3_VARIANT=$(meta arc3-variant 2>/dev/null || printf '%s' checkpoint8)
+SCORE_OBSERVER_OBJECT=$(meta arc3-score-observer-object 2>/dev/null || \
+  printf '%s' "$BUCKET/code/arc3_minute_score_observer.py")
+EXPECTED_SCORE_OBSERVER_SHA256="f76518ccf21d911b9e8f6e26b65402f2738c71afd7d34e5e83d01e783ad39a0e"
 ZONE=$(curl -sf -H "Metadata-Flavor: Google" \
   "http://metadata.google.internal/computeMetadata/v1/instance/zone" | awk -F/ '{print $NF}')
 SEED="$BUCKET/tufa-exact"
@@ -81,6 +84,8 @@ teardown() {
   [ "$TEARDOWN_STARTED" = 1 ] && return
   TEARDOWN_STARTED=1
   trap - EXIT TERM INT
+  pkill -TERM -f arc3_minute_score_observer.py 2>/dev/null || true
+  sleep 1
   sync_all
   pkill -TERM -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
   for attempt in 1 2 3; do
@@ -159,6 +164,8 @@ gcloud storage cp "$SEED/$BUNDLE_NAME" /tmp/bundle.tgz
 echo "$EXPECTED_BUNDLE_SHA256  /tmp/bundle.tgz" | sha256sum -c -
 tar xzf /tmp/bundle.tgz -C /opt/arc3/bundle
 gcloud storage cp "$BUCKET/code/v12_run.py" /opt/arc3/v12_run.py
+gcloud storage cp "$SCORE_OBSERVER_OBJECT" /opt/arc3/arc3_minute_score_observer.py
+echo "$EXPECTED_SCORE_OBSERVER_SHA256  /opt/arc3/arc3_minute_score_observer.py" | sha256sum -c -
 gcloud storage rsync -r "$SEED/wheelhouse" /opt/arc3/wheelhouse
 
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -270,10 +277,21 @@ export LOCAL_ANALYZER_YIELD_SECONDS=60 LOCAL_ANALYZER_TEMPERATURE=0.6 LOCAL_ANAL
 export LOCAL_ANALYZER_ENABLE_THINKING=true MULTIMODAL_CONTEXT=current_grid MULTIMODAL_UPSCALE="$MULTIMODAL_UPSCALE_VALUE"
 export ARC3_REEXPLORE_STRICT="" ARC3_GAME_SUBSET="" ARC3_STATE_GRAPH="" ARC3_FRAME_MODE=full
 
+mkdir -p /opt/arc3/work/score-observer
+nice -n 19 ionice -c3 /opt/arc3/pysrv/bin/python /opt/arc3/arc3_minute_score_observer.py \
+  --artifacts-dir /opt/arc3/work/artifacts \
+  --output-dir /opt/arc3/work/score-observer \
+  --interval-seconds 60 \
+  > /opt/arc3/work/score-observer/observer.log 2>&1 &
+SCORE_OBSERVER_PID=$!
+echo "$SCORE_OBSERVER_PID" > /opt/arc3/work/score-observer/observer.pid
+
 set +e
 ./.venv/bin/python /opt/arc3/v12_run.py 2>&1 | tee /opt/arc3/v12.log
 RUN_STATUS=${PIPESTATUS[0]}
 set -e
+kill -TERM "$SCORE_OBSERVER_PID" 2>/dev/null || true
+wait "$SCORE_OBSERVER_PID" 2>/dev/null || true
 sync_all
 if [ "$RUN_STATUS" -ne 0 ]; then
   echo "runner failed with status $RUN_STATUS" | gcloud storage cp - "$BUCKET/$RUN_ID/FAILED"
