@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-four production waves now contain two hundred forty cross-mechanic prototypes in addition
+The first twenty-five production waves now contain two hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch24-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch25-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -544,6 +544,19 @@ Batch 24:
 - `q439 Monsoon Revision` — wear-shifted rules ending at an unequal-cycle pair;
 - `q470 Workbench Lineage` — helper identity recovered through reversible transforms;
 - `q481 Tapestry Dependency` — prerequisite solving across an adjacency rewrite.
+
+Batch 25:
+
+- `q501 Aurora Frame` — local motion composed with translating, rotating, hysteretic frames;
+- `q532 Tide Lesson` — conditional policy learning with irrelevant demonstration gestures;
+- `q563 Ember Counter` — recent-action opponent shaping under a shared resource budget;
+- `q594 Honeycomb Grammar` — grouped relay language under nested local and outer clocks;
+- `q625 Alloy Sandbox` — persistent miniature evidence across moving-frame resets;
+- `q656 Palimpsest Analogy` — relational transfer with a visible near-miss counterexample;
+- `q687 Canopy Evidence` — bounded weighted evidence with provably safe early stopping;
+- `q718 Breakwater Gradient` — conserved routing with a dormant early intervention;
+- `q749 Strata Obligation` — identity-bound debt surviving physical causal undo;
+- `q780 Spore Rhythm` — dual-clock alignment through interruptible macro-time.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
