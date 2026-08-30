@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-three production waves now contain two hundred thirty cross-mechanic prototypes in addition
+The first twenty-four production waves now contain two hundred forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch23-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch24-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -531,6 +531,19 @@ Batch 23:
 - `q738 Escapement Gradient` — fault-diagnosed conservation over nested gear phases;
 - `q769 Monsoon Obligation` — identity debt repaid after sparse unequal-cycle rewards;
 - `q800 Workbench Rhythm` — event-chunked interruption with helper-bound debt.
+
+Batch 24:
+
+- `q222 Semaphore Veil` — occluded updates scheduled after two miniature tests;
+- `q253 Impeller Pact` — convention inference with optimal sample stopping;
+- `q284 Tessera Probe` — seam diagnosis around an autonomous interrupt;
+- `q315 Vivarium Ledger` — conserved population routing with reciprocal fairness;
+- `q346 Crossing Survey` — marked observers covering disjoint dock attributes;
+- `q377 Spectrum Rig` — prism-tool geometry transferred to agent relations;
+- `q408 Escapement Delegation` — fault-probed complementary gear views;
+- `q439 Monsoon Revision` — wear-shifted rules ending at an unequal-cycle pair;
+- `q470 Workbench Lineage` — helper identity recovered through reversible transforms;
+- `q481 Tapestry Dependency` — prerequisite solving across an adjacency rewrite.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
