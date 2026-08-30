@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventeen production waves now contain one hundred seventy cross-mechanic prototypes in addition
+The first eighteen production waves now contain one hundred eighty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch17-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch18-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -453,6 +453,19 @@ Batch 17:
 - `q177 Pressure Web` — capacity-safe gradient control across connected chambers;
 - `q187 Echo Cost` — early repetition changing an action's later effect;
 - `q197 Phase Landmark` — long-cycle synchronization anchored by a distinctive phase.
+
+Batch 18:
+
+- `q109 Body-Centric Maze` — body-centered commands converted under repeated world rotation;
+- `q118 Distributed Lesson` — separate tutor components composed into a final policy;
+- `q128 Adaptive Patrol` — route diversity under recent-visit patrol adaptation;
+- `q138 Command Composition` — typed object, direction, and timing primitives;
+- `q148 Delayed Commit` — whole-path queuing and preview before irreversible execution;
+- `q158 Causal Rhyme` — cause-effect order transferred across unrelated mechanisms;
+- `q168 Calibration Orchard` — resource allocation according to stable noisy likelihoods;
+- `q178 Wave Junction` — modular phase alignment across reflected pulse sources;
+- `q188 Future Walls` — an early route remembered as a later obstacle pattern;
+- `q198 Action Chunking` — a learned action macro reused inside novel plans.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
