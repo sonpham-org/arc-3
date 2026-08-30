@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighteen production waves now contain one hundred eighty cross-mechanic prototypes in addition
+The first nineteen production waves now contain one hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch18-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch19-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -466,6 +466,19 @@ Batch 18:
 - `q178 Wave Junction` — modular phase alignment across reflected pulse sources;
 - `q188 Future Walls` — an early route remembered as a later obstacle pattern;
 - `q198 Action Chunking` — a learned action macro reused inside novel plans.
+
+Batch 19:
+
+- `q110 Moving Portal Frame` — portal exits fixed to moving carriers rather than the board;
+- `q119 Analog Lesson` — causal policies transferred from flows to moving blocks;
+- `q129 Decoy Learner` — teaching an adaptive guard a false preference before commitment;
+- `q139 Clock-Skew Messages` — content addressed to asynchronous sender/receiver phases;
+- `q149 Model Tokens` — competing possible worlds eliminated through observation intersections;
+- `q159 Cross-Scale Transfer` — causal order preserved from small tiles to large regions;
+- `q169 Uncertainty Routing` — ambiguous cargo preserved at a reversible hub;
+- `q179 Field Alignment` — local vector alignment controlling integrated global drift;
+- `q189 Inheritance` — resources and structural damage passed to a successor;
+- `q199 Slow Consequence` — pending causes separated from later completed effects.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
