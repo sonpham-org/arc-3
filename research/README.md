@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twelve production waves now contain one hundred twenty cross-mechanic prototypes in addition
+The first thirteen production waves now contain one hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch12-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch13-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -388,6 +388,19 @@ Batch 12:
 - `q077 Aging Tools` — plans composed around use-count-dependent affordance changes;
 - `q087 Body Exchange` — identity-bound goals with swappable physical capabilities;
 - `q097 Factory Plan` — scheduling over an unlabeled production dependency graph.
+
+Batch 13:
+
+- `q009 Peripheral Current` — focus-radius freezing used to align peripheral flows;
+- `q018 Exchange Circle` — preference probing and mutually acceptable trade cycles;
+- `q028 Causal Quilt` — sparse intervention to recover local-law boundaries;
+- `q038 Balance Web` — conserved load routing through capacity-limited networks;
+- `q048 Reveal Paint` — permanent spatial evidence allocated under a paint budget;
+- `q058 Antenna` — construction of frequency-tuned conductive spans;
+- `q068 Blind Captain` — scarce observer signals guiding an instrument-only controller;
+- `q078 Rotating Contract` — arrangement-signaled cycles of social response policies;
+- `q088 Mask Debt` — transferable affordances with identity-bound obligations;
+- `q098 Rescue Order` — prerequisite discovery among capability-granting rescues.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
