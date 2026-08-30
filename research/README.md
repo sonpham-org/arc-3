@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirty-two production waves now contain three hundred twenty cross-mechanic prototypes in addition
+The first thirty-three production waves now contain three hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch32-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch33-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -648,6 +648,19 @@ Batch 32:
 - `q423 Frostline Amendment` — wear-triggered rule revision across carrier exchange;
 - `q454 Masquerade Thread` — persistent lineage beneath independent mask rewrites;
 - `q486 Cloudport Dependency` — weather-remapped resources across nested subgoals.
+
+Batch 33:
+
+- `q207 Shadow Orchard` — observer-relative shadows reveal hidden fruit motion;
+- `q238 Signal Banquet` — ordered invitations identify a social convention;
+- `q269 Mycelium Override` — temporal nutrient pulses discriminate causal networks;
+- `q300 Aquifer Tithe` — water remains conserved through pumping and phase change;
+- `q331 Lantern Census` — persistent evidence survives sensor remapping at base;
+- `q362 Kitewright` — ordered components require coupled wind and tension;
+- `q393 Submarine Chorus` — partial tones become ordered acoustic relays;
+- `q424 Bloom Calendar` — archived evidence spans a seasonal rule revision;
+- `q455 Puppet Provenance` — lineage persists beneath costume and position changes;
+- `q487 Archive Staircase` — ordered subgoals use a shifting glyph dictionary.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
