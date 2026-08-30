@@ -211,10 +211,12 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first production wave now contains ten cross-mechanic prototypes in addition to
-`q001 Quiet Field`. `research/gpt-batch01-v1.json` is the content-hashed batch manifest.
-The wave deliberately samples ten capability families instead of implementing the next
-nine adjacent observer-dynamics ideas:
+The first two production waves now contain twenty cross-mechanic prototypes in addition
+to `q001 Quiet Field`. `research/gpt-batch01-v1.json` and
+`research/gpt-batch02-v1.json` are the content-hashed batch manifests. Each wave samples
+ten capability families instead of filling one adjacent family at a time.
+
+Batch 01:
 
 - `q002 Afterimage Mill` — observation-written hidden programs;
 - `q011 Courtesy Lines` — stable yielding-preference inference;
@@ -227,7 +229,20 @@ nine adjacent observer-dynamics ideas:
 - `q081 Shell Identity` — persistent identity under independent transformations;
 - `q091 Workshop Orders` — latent subassembly dependencies and reusable fixtures.
 
-Each game has six levels, a distinct visual grammar, a known-win recording, a known-loss
+Batch 02:
+
+- `q101 Carousel Coordinates` — moving local and global reference frames;
+- `q111 Silent Tutor` — transformed policy learning from demonstration;
+- `q121 Habit Hunter` — legible adaptation to recent player behavior;
+- `q131 Pulse Language` — grounded compositional communication;
+- `q141 Branch Ledger` — persistent counterfactual branch evidence;
+- `q151 Pipes to Roads` — structural analogy across visual embodiments;
+- `q161 Wager Gate` — evidence-sensitive claim timing;
+- `q171 Elastic Balance` — coupled continuous-looking tension;
+- `q181 Affordance Debt` — shortcut consequences delayed across rooms;
+- `q191 Event Compression` — causal event boundaries within long cycles.
+
+Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
 engine prototypes, not sealed benchmark releases: random-policy resistance, human
 calibration, and the paired default-versus-Tufa diagnostic runs remain open gates.

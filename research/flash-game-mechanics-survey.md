@@ -355,14 +355,16 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. The immutable wave inventory and hashes live in `gpt-batch01-v1.json`.
+batch. Batch 02 repeated that cross-family strategy for the next ten capability axes. The
+immutable wave inventories and hashes live in `gpt-batch01-v1.json` and
+`gpt-batch02-v1.json`.
 
 For later games, mechanic selection follows this sequence:
 
 1. choose a research demand from the coverage-gap study;
 2. retrieve relevant Flash lineage cards and all 463 existing concepts;
 3. state the closest prior art and the exact structural difference;
-4. define the eight-level causal progression before drawing assets;
+4. define the six-or-more-level causal progression before drawing assets;
 5. implement one game completely, including known win/loss traces and random resistance;
 6. only then advance the next concept into implementation.
 
