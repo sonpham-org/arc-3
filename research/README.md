@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirty-one production waves now contain three hundred ten cross-mechanic prototypes in addition
+The first thirty-two production waves now contain three hundred twenty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch31-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch32-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -635,6 +635,19 @@ Batch 31:
 - `q422 Lockwater Revision` — canal-law identification after carrier exchange;
 - `q453 Murmuration Lineage` — ancestry tracking with a parity gate;
 - `q485 Waystation Dependency` — dependency solving against repetition counters.
+
+Batch 32:
+
+- `q206 Prism Tide` — three-body parallax through a moving observation lens;
+- `q237 Lantern Accord` — coalition inference coupled to a shared pledge;
+- `q268 Rootline Injection` — chosen valve trials distinguish parent and polarity;
+- `q299 Glasshouse Balance` — conserved thermal routing through phase valves;
+- `q330 Echo Cartography` — rechargeable probes with persistent map knowledge;
+- `q361 Reef Assembly` — ordered tool welding at compatible tide phases;
+- `q392 Observatory Relay` — directional transforms over two partial memories;
+- `q423 Frostline Amendment` — wear-triggered rule revision across carrier exchange;
+- `q454 Masquerade Thread` — persistent lineage beneath independent mask rewrites;
+- `q486 Cloudport Dependency` — weather-remapped resources across nested subgoals.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
