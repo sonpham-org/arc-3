@@ -10,10 +10,11 @@
 #   the CLI agent, and the duck-harness bundle.
 # SRP/DRY check: Pass -- self-contained environment. Only 4 of ~300 catalogued games use
 #   polar geometry at all and none is a rotational-alignment game, so nothing to reuse.
-"""Wheel -- clear the green arcs by striking when the sweeping bar crosses them.
+"""Wheel -- line the bar up with the green arcs and strike.
 
-ACTION5 waits one step. ACTION6 (click anywhere) strikes. Every action advances the
-wheel one step, so the whole game is deterministic and fully predictable in advance.
+LEFT / RIGHT turn the bar one step. Clicking strikes whatever the bar currently crosses.
+Every action also advances the orbiting arcs one step, so the targets keep moving while
+you aim: you are intercepting, not waiting.
 
 8 levels. No RNG. Lose by running out of lives or budget.
 """
@@ -32,7 +33,7 @@ CX, CY = 32, 38              # wheel centre (pushed down; HUD occupies the top r
 RINGS = (11, 16, 21)         # radii the arcs may occupy
 BAR_INNER, BAR_OUTER = 3, 24 # the sweeping bar spans these radii
 
-WAIT_COST = 1
+TURN_COST = 1
 STRIKE_COST = 3
 
 # ---------------------------------------------------------------------------
@@ -63,56 +64,57 @@ LIFE_Y, LIFE_X = 3, 2
 
 LEVELS = [
     {
-        "name": "First Strike",                 # NEW: strike when the bar crosses green
-        "bar_speed": 1, "lives": 5, "budget": 40,
-        "arcs": [(1, 15, 14, 0, GREEN)],
+        "name": "First Turn",                   # NEW: turn the bar, strike the green
+        "lives": 5, "budget": 40,
+        "arcs": [(1, 15, 12, 0, GREEN)],
     },
     {
-        # NEW: red arcs cost a life. Three greens rather than one, because with a single
-        # target a blind striker hits it roughly one try in six and cleared this level
-        # 1 time in 8. Needing three clean hits before three lives run out collapses that.
+        # NEW: red arcs cost a life. Three greens rather than one: with a single target a
+        # blind striker hits it roughly one try in six, which is not a measurement.
         "name": "Hot Metal",
-        "bar_speed": 1, "lives": 3, "budget": 64,
-        "arcs": [(1, 8, 5, 0, GREEN), (1, 24, 5, 0, GREEN), (1, 40, 5, 0, GREEN),
-                 (2, 14, 9, 0, RED), (2, 30, 9, 0, RED)],
+        "lives": 4, "budget": 60,
+        "arcs": [(1, 6, 5, 0, GREEN), (1, 22, 5, 0, GREEN), (1, 38, 5, 0, GREEN),
+                 (1, 13, 6, 0, RED), (1, 29, 6, 0, RED)],
     },
     {
-        "name": "Drift",                        # NEW: the arcs move too
-        "bar_speed": 1, "lives": 3, "budget": 48,
-        "arcs": [(1, 8, 9, -1, GREEN), (2, 30, 9, 0, RED)],
+        "name": "Drift",                        # NEW: the arcs orbit while you aim
+        "lives": 3, "budget": 60,
+        "arcs": [(1, 8, 7, 1, GREEN), (1, 30, 7, 1, GREEN), (1, 48, 7, 1, RED)],
     },
     {
-        "name": "Crosswind",                    # NEW: differing speeds and directions
-        "bar_speed": 1, "lives": 3, "budget": 84,
-        "arcs": [(0, 5, 8, 2, GREEN), (2, 25, 8, -1, GREEN), (1, 40, 8, 1, RED)],
+        "name": "Two Rings",                    # NEW: a second radius, opposing directions
+        "lives": 3, "budget": 76,
+        "arcs": [(0, 5, 6, 1, GREEN), (2, 25, 6, -1, GREEN), (0, 33, 6, -1, GREEN),
+                 (2, 47, 7, 1, RED)],
     },
     {
-        # NEW: every clear speeds the bar up, so later shots need a re-derived period.
-        "name": "Wind Up",
-        "bar_speed": 1, "lives": 3, "budget": 96, "speed_up": True,
-        # bar walks 1 -> 2 -> 3, so both greens stay negative and can never match it
-        "arcs": [(0, 6, 8, -2, GREEN), (1, 26, 8, -1, GREEN), (2, 46, 8, 0, RED)],
-    },
-    {
-        # NEW: two greens sweep together, so one strike can take both -- and the budget
-        # only closes if it does.
+        # NEW: two greens hold the same angle on different rings, so one strike takes both
+        # -- and the budget only closes if it does.
         "name": "Double Tap",
-        "bar_speed": 1, "lives": 3, "budget": 72,
-        "arcs": [(0, 20, 9, -1, GREEN), (2, 20, 9, -1, GREEN), (1, 45, 7, 0, RED)],
+        "lives": 3, "budget": 56,
+        "arcs": [(0, 20, 7, -1, GREEN), (2, 20, 7, -1, GREEN),
+                 (1, 40, 6, 0, RED), (1, 8, 6, 0, RED)],
     },
     {
-        # NEW: every clear reverses the bar's direction.
-        "name": "Backlash",
-        "bar_speed": 1, "lives": 3, "budget": 96, "reverse": True,
-        # bar flips between +1 and -1, so greens use magnitude 2 and never match either
-        "arcs": [(0, 8, 8, 2, GREEN), (1, 28, 8, -2, GREEN), (2, 48, 8, 1, RED)],
+        "name": "Three Rings",                  # NEW: the third radius joins in
+        "lives": 3, "budget": 96,
+        "arcs": [(0, 4, 6, 2, GREEN), (1, 20, 6, -1, GREEN), (2, 36, 6, 1, GREEN),
+                 (0, 28, 6, -2, RED), (2, 52, 6, -1, RED)],
     },
     {
-        "name": "Gauntlet",                     # everything at once, three rings
-        "bar_speed": 1, "lives": 3, "budget": 130, "speed_up": True, "reverse": True,
-        # bar reaches magnitudes 1..3 in both signs; greens are stationary or magnitude 4
-        "arcs": [(0, 4, 7, 0, GREEN), (1, 22, 7, 4, GREEN), (2, 40, 7, -4, GREEN),
-                 (1, 12, 6, 1, RED), (2, 52, 6, -3, RED)],
+        # NEW: reds sit immediately beside greens, so the bar must land in a narrow window
+        # rather than anywhere on the arc.
+        "name": "Needle",
+        "lives": 3, "budget": 96,
+        "arcs": [(0, 10, 4, 1, GREEN), (1, 26, 4, -1, GREEN), (2, 42, 4, 1, GREEN),
+                 (0, 15, 8, 1, RED), (1, 31, 8, -1, RED), (2, 47, 8, 1, RED)],
+    },
+    {
+        "name": "Gauntlet",                     # five greens, three reds, all three rings
+        "lives": 3, "budget": 140,
+        "arcs": [(0, 3, 5, 2, GREEN), (0, 30, 5, 2, GREEN), (1, 17, 5, -1, GREEN),
+                 (2, 33, 5, 3, GREEN), (2, 50, 5, 3, GREEN),
+                 (1, 40, 7, 1, RED), (2, 10, 7, -2, RED), (0, 45, 6, -3, RED)],
     },
 ]
 
@@ -147,27 +149,40 @@ class Wh01Display(RenderableUserDisplay):
         g = self.game
         frame[:, :] = C_BLACK
 
+        # Sampling has to scale with radius or the curve comes out dotted: an outer ring is
+        # ~132 px around, so a fixed sample count leaves visible gaps. Two samples per
+        # pixel of arc length keeps every stroke solid.
+        def samples_for(radius, span_steps):
+            return max(2, int(2 * 2 * math.pi * radius * span_steps / STEPS) + 1)
+
         # Faint guide rings, so the radii the arcs live on are visible even when empty.
         for r in RINGS:
-            for s in range(STEPS * 2):
-                x, y = self._polar(r, s / 2.0)
+            n = samples_for(r, STEPS)
+            for s in range(n):
+                x, y = self._polar(r, STEPS * s / n)
                 self._plot(frame, x, y, C_VDGRAY)
 
-        # Arcs. Drawn two pixels thick so a thin ring still reads as an object.
+        # Arcs, three pixels thick so a thin ring still reads as a solid object.
         for arc in g.arcs:
             color = ARC_COLOR[arc["kind"]]
             radius = RINGS[arc["ring"]]
-            for i in range(arc["len"] * 3):
-                step = arc["start"] + i / 3.0
+            n = samples_for(radius + 1, arc["len"])
+            for i in range(n + 1):
+                step = arc["start"] + arc["len"] * i / n
                 for dr in (-1, 0, 1):
                     x, y = self._polar(radius + dr, step)
                     self._plot(frame, x, y, color)
 
-        # The sweeping bar.
-        for i in range((BAR_OUTER - BAR_INNER) * 3):
-            radius = BAR_INNER + i / 3.0
+        # The bar the player turns.
+        n = (BAR_OUTER - BAR_INNER) * 3
+        for i in range(n + 1):
+            radius = BAR_INNER + (BAR_OUTER - BAR_INNER) * i / n
             x, y = self._polar(radius, g.bar_angle)
             self._plot(frame, x, y, C_WHITE)
+            # widen the tip so the aiming end is unmistakable
+            if radius > BAR_OUTER - 4:
+                self._plot(frame, x + 1, y, C_WHITE)
+                self._plot(frame, x, y + 1, C_WHITE)
         # Hub: recoloured by what the bar is currently over -- colour as affordance, and
         # the one cue that makes "strike now" learnable without being told.
         hub = C_LGRAY
@@ -209,13 +224,10 @@ class Wh01(ARCBaseGame):
         # on_set_level() runs inside super().__init__(), so these must all exist first.
         self.arcs = []
         self.bar_angle = 0
-        self.bar_speed = 1
         self.lives = 0
         self.lives_max = 0
         self.budget_max = 0
         self.budget_left = 0
-        self.speed_up = False
-        self.reverse = False
         self.greens_at_start = 0
 
         levels = [Level(sprites=[], grid_size=(64, 64), data=ldef, name=ldef["name"])
@@ -227,7 +239,7 @@ class Wh01(ARCBaseGame):
             Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
             False,
             len(levels),
-            [5, 6],              # 5 = wait one step, 6 = strike (click anywhere)
+            [3, 4, 6],           # 3/4 = turn the bar, 6 = strike (click anywhere)
         )
 
     # -- level setup --------------------------------------------------------
@@ -237,11 +249,8 @@ class Wh01(ARCBaseGame):
         self.arcs = [{"ring": r, "start": s, "len": ln, "speed": sp, "kind": k}
                      for (r, s, ln, sp, k) in ldef["arcs"]]
         self.bar_angle = 0
-        self.bar_speed = ldef["bar_speed"]
         self.lives = self.lives_max = ldef["lives"]
         self.budget_max = self.budget_left = ldef["budget"]
-        self.speed_up = ldef.get("speed_up", False)
-        self.reverse = ldef.get("reverse", False)
         self.greens_at_start = sum(1 for a in self.arcs if a["kind"] == GREEN)
 
     # -- queries ------------------------------------------------------------
@@ -262,39 +271,36 @@ class Wh01(ARCBaseGame):
     # -- simulation ---------------------------------------------------------
 
     def _advance(self):
-        """Every action moves the wheel exactly one step. This is what replaces real time."""
-        self.bar_angle = _norm(self.bar_angle + self.bar_speed)
+        """The arcs orbit one step per action. The bar only moves when the player turns it,
+        so the world keeps moving while you aim -- interception, not waiting."""
         for arc in self.arcs:
             arc["start"] = _norm(arc["start"] + arc["speed"])
 
     def _strike(self):
         greens = self._greens_under_bar()
         reds = self._reds_under_bar()
-
         for arc in greens:
             self.arcs.remove(arc)
-
         # Any mis-strike costs a life: a red under the bar, or nothing under it at all.
         if reds or not greens:
             self.lives -= 1
-
-        if greens and not reds:
-            if self.speed_up:
-                self.bar_speed += 1 if self.bar_speed > 0 else -1
-            if self.reverse:
-                self.bar_speed = -self.bar_speed
 
     # -- engine entry point -------------------------------------------------
 
     def step(self) -> None:
         aid = self.action.id.value
 
-        if aid == 6:                                   # strike
+        if aid == 6:                                   # strike whatever the bar crosses
             self.budget_left -= STRIKE_COST
             self._strike()
             self._advance()
-        elif aid == 5:                                 # wait
-            self.budget_left -= WAIT_COST
+        elif aid == 3:                                 # turn the bar anticlockwise
+            self.budget_left -= TURN_COST
+            self.bar_angle = _norm(self.bar_angle - 1)
+            self._advance()
+        elif aid == 4:                                 # turn the bar clockwise
+            self.budget_left -= TURN_COST
+            self.bar_angle = _norm(self.bar_angle + 1)
             self._advance()
 
         if not self._greens():
