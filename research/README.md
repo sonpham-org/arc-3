@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-two production waves now contain four hundred twenty cross-mechanic prototypes in addition
+The first forty-three production waves now contain four hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch42-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch43-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -778,6 +778,19 @@ Batch 42:
 - `q433 Impeller Revision` — two costly samples recalibrate a worn law;
 - `q464 Tessera Lineage` — ancestry folds through a state-window macro;
 - `q496 Crossing Dependency` — alternating partial controllers build shared prerequisites.
+
+Batch 43:
+
+- `q217 Catalyst Veil` — attention freezing combines with stored-view execution;
+- `q248 Asterism Pact` — social evidence survives reset between test and commitment;
+- `q279 Reedbed Probe` — causal repairs rewire marsh connectivity;
+- `q310 Vault Ledger` — two quantities remain conserved in shared vessels;
+- `q341 Pollen Survey` — finite evidence crosses a visible complement change;
+- `q372 Semaphore Rig` — reusable parts require agreement from two test systems;
+- `q403 Impeller Delegation` — destructive relay penalizes redundant samples;
+- `q434 Tessera Revision` — wear recalibration precedes a macro interruption;
+- `q465 Vivarium Lineage` — ancestry carries partner favor through splits;
+- `q497 Spectrum Dependency` — one prerequisite graph transfers across frames.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
