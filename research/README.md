@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-five production waves now contain two hundred fifty cross-mechanic prototypes in addition
+The first twenty-six production waves now contain two hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch25-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch26-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -557,6 +557,19 @@ Batch 25:
 - `q718 Breakwater Gradient` — conserved routing with a dormant early intervention;
 - `q749 Strata Obligation` — identity-bound debt surviving physical causal undo;
 - `q780 Spore Rhythm` — dual-clock alignment through interruptible macro-time.
+
+Batch 26:
+
+- `q202 Tide Veil` — observation scheduling across coupled reversing currents;
+- `q233 Ember Pact` — resource-priced probing of a stable social convention;
+- `q264 Honeycomb Probe` — causal diagnosis across nested local and outer clocks;
+- `q295 Alloy Ledger` — conserved routing under rotating local controls;
+- `q326 Palimpsest Survey` — bounded set-cover observation of overwritten traces;
+- `q357 Canopy Rig` — capacity-bounded assembly of reusable multi-effect modules;
+- `q388 Breakwater Delegation` — complementary views integrated through persistent marks;
+- `q419 Strata Revision` — rule evidence that persists after physical probe undo;
+- `q450 Spore Lineage` — ancestry tracking through appearance exchange and unequal clocks;
+- `q482 Lockwater Dependency` — identity-conditioned prerequisites across adjacency rewrites.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
