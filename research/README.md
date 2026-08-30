@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirty-six production waves now contain three hundred sixty cross-mechanic prototypes in addition
+The first thirty-seven production waves now contain three hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch36-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch37-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -700,6 +700,19 @@ Batch 36:
 - `q427 Eclipse Law` — observing advances the rule boundary;
 - `q458 Caravan Seals` — ownership persists independently from seals;
 - `q490 Cavern Charter` — chamber dependencies require remapped keystones.
+
+Batch 37:
+
+- `q211 Periscope Current` — spatial controls rotate with the observer frame;
+- `q242 Choir Tokens` — each social reply rewrites a shared token;
+- `q273 Terrarium Levers` — interventions retain ecological carryover;
+- `q304 Glass Bead Exchange` — weighted bead mass survives fusion and splitting;
+- `q335 Beacon Triangulation` — rotating bearings constrain finite observations;
+- `q366 Marionette Forge` — installed joints rewrite phase and latch state;
+- `q397 Mountain Semaphore` — transmitted flags erase local memory;
+- `q428 Tundra Revision` — observation itself advances thaw;
+- `q459 Stamp Lineage` — authorship persists independently from postmarks;
+- `q492 Orchard Scaffold` — dependency terraces require remapped braces.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
