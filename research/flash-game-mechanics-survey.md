@@ -80,6 +80,62 @@ to inspect.
 The complete counts live in `flashpoint-genre-tags.tsv`. Counts should never be used as a
 quality score.
 
+## Long-tail retrieval and human review
+
+The aggregate counts are not enough to find unusual interaction rules. A second,
+deterministic pass now reads every one of the 129,019 Flash records, cleans description
+markup and update notices, retrieves mechanic-bearing phrases and curator tags, separates
+interactive games from cross-media artifacts, and applies caps by developer, source,
+mechanic signature, and rare core tag. It then interleaves candidates across interaction
+families so that the review queue is not simply hundreds of gravity games followed by
+hundreds of construction games.
+
+In the current snapshot the pass found 5,342 retrieval candidates and retained 1,281 for
+manual review: 1,238 gameplay records and 43 deliberately preserved cross-media records.
+The latter are kept because simulations and interactive demonstrations can contain useful
+causal ideas, but they are labelled so that calculators, galleries, and utilities do not
+swamp the game queue. The query and its exact database hash are recorded in
+`flash-long-tail-audit-v1.json`; the ordered records are in
+`flash-long-tail-queue-v1.tsv`.
+
+The first source-checked long-tail batch contains 49 lineage decisions in
+`flash-long-tail-reviewed-lineages-v1.tsv`: 34 promoted mechanic families, four families
+that require a modality or objective adaptation, seven adjacent cases that need a sharper
+novelty argument, and four covered cases retained as negative evidence. Promising
+additions include:
+
+- one command broadcast over all active branch tips (*Rings and Sticks*);
+- behavior selected by the color composition of a temporary worker group (*Tower of
+  Babblers*);
+- causal-DAG discovery through visible pairwise interventions (*NOBuzzle Tree*);
+- topology-controlled quarantine and mixing (*Liquid Colors*);
+- a persistent height field edited under an autonomously rolling payload (*Contour*);
+- typed particle laws that compose into new dynamics (*Agent Higgs*);
+- exact line coverage constrained by both local counts and mutual visibility (*Green
+  Leprechauns*);
+- ternary neighbor cycling where the target state is itself non-addressable (*Bomb
+  Disposal*);
+- irreversible bridges whose deployed length is stored in an upright object's visible
+  height (*TipOver*);
+- a reusable, morphing scaffold manipulated around an autonomous walker (*Enemy 585*);
+- an initial cell pattern used as a program for a multi-generation cellular automaton
+  (*The irRegularGame of Life*);
+- one controlled body serving as the other controlled body's moving floor (*Symbiosis
+  Snake*);
+- one input decoded into complementary actions by two simultaneous agents (*Poto &
+  Cabenga*);
+- hidden collision geometry exposed only in a spatially transformed companion view
+  (*noitcelfeR*);
+- movement that also broadcasts typed motion to responsive obstacles (*Nudge*);
+- globally exchanging the behavior of two object classes (*changeType()*);
+- causal effects that cross between spatially coexisting rule systems (*Mega Mash*);
+- explicit one-gate-per-tick signal propagation in an interactive circuit demonstration.
+
+This is still a review queue, not an automatic novelty oracle. Lexical distance from our
+463 concepts is useful for routing attention but cannot establish a structural difference.
+Every promoted row therefore names the nearest existing idea or lineage and states the
+specific difference that would have to survive implementation.
+
 ## The mechanic atoms worth carrying forward
 
 `flash-mechanic-lineages-v1.tsv` records 48 reviewed lineages. Each entry separates:
@@ -224,4 +280,12 @@ For `q002` and later games, mechanic selection should follow this sequence:
 - `flashpoint-genre-tags.tsv` — all 277 Flashpoint genre tags, including zero-use tags in
   this snapshot, sorted by Flash count;
 - `flash-mechanic-lineages-v1.tsv` — 48 manually reviewed mechanic lineages and guardrails;
+- `flash-long-tail-queue-v1.tsv` — 1,281 candidates retrieved from the complete Flash
+  metadata snapshot and interleaved for human review;
+- `flash-long-tail-audit-v1.json` — exact retrieval counts, caps, phrase families, corpus
+  hash, and interpretation boundary;
+- `flash-long-tail-reviewed-lineages-v1.tsv` — 49 source-checked long-tail decisions with
+  nearest-prior comparisons and ARC3 research questions;
 - `scripts/analyze_flashpoint_corpus.py` — deterministic regeneration command.
+- `scripts/mine_flashpoint_long_tail.py` — deterministic queue construction and nearest-
+  concept retrieval command.
