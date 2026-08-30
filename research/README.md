@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixteen production waves now contain one hundred sixty cross-mechanic prototypes in addition
+The first seventeen production waves now contain one hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch16-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch17-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -440,6 +440,19 @@ Batch 16:
 - `q176 Heat Diffusion` — local field prediction through material thresholds;
 - `q186 Deferred Mirror` — remote effects scheduled by a visible countdown;
 - `q196 Event Order` — causal event abstraction across changing animation durations.
+
+Batch 17:
+
+- `q108 Camera Relative` — camera-relative controls separated from world-relative drift;
+- `q117 Teach Back` — learned tutor policies demonstrated to a simpler student;
+- `q127 Policy Mirror` — adversaries that adopt the most recently successful strategy;
+- `q137 Shared Convention` — feedback-driven convergence on a common signal mapping;
+- `q147 Affordance Sketch` — structural fit previewed before irreversible construction;
+- `q157 Same Graph New Bodies` — exact causal topology transferred across embodiments;
+- `q167 Probe or Act` — safe uncertainty reduction before irreversible object use;
+- `q177 Pressure Web` — capacity-safe gradient control across connected chambers;
+- `q187 Echo Cost` — early repetition changing an action's later effect;
+- `q197 Phase Landmark` — long-cycle synchronization anchored by a distinctive phase.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
