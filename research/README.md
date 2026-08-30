@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-nine production waves now contain two hundred ninety cross-mechanic prototypes in addition
+The first thirty production waves now contain three hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch29-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch30-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -609,6 +609,19 @@ Batch 29:
 - `q421 Tapestry Revision` — wear-boundary recalibration after adjacency rewrite;
 - `q452 Lockwater Lineage` — barge ancestry through carrier exchange;
 - `q484 Moraine Dependency` — order-sensitive nested glacier prerequisites.
+
+Batch 30:
+
+- `q505 Alloy Frame` — billet motion composed with translating, rotating force lanes;
+- `q536 Palimpsest Lesson` — conditional learning separated from a visible failed twin;
+- `q567 Canopy Counter` — capacity-chunked opponent shaping;
+- `q598 Breakwater Grammar` — grouped relay language with a dormant first command;
+- `q629 Strata Sandbox` — reversible miniature tests with persistent evidence;
+- `q660 Spore Analogy` — relational transfer across unequal colony clocks;
+- `q691 Tapestry Evidence` — weighted stopping after evidence rewires adjacency;
+- `q722 Lockwater Gradient` — conserved barge flow with identity exchange;
+- `q753 Murmuration Obligation` — delayed identity debt guarded by parity;
+- `q784 Moraine Rhythm` — macro-time glacier alignment coupled to an outer token.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
