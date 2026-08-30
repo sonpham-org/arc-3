@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first thirty-four production waves now contain three hundred forty cross-mechanic prototypes in addition
+The first thirty-five production waves now contain three hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch34-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch35-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -674,6 +674,19 @@ Batch 34:
 - `q425 Ember Doctrine` — banked samples span a heat-triggered law change;
 - `q456 Fossil Carousel` — specimen identity survives pose reconstruction;
 - `q488 Temple Scaffold` — dependency nodes require remapped supports.
+
+Batch 35:
+
+- `q209 Tidal Mosaic` — physical tiles persist through a rotating tidal view;
+- `q240 Embassy Masks` — protocol and witness reliability are inferred jointly;
+- `q271 River Dam Trials` — reversible gates distinguish delayed flood models;
+- `q302 Seed Exchange` — crop units remain conserved across growth phases;
+- `q333 Archive Microscope` — finite lamps constrain remapped slide filters;
+- `q364 Balloon Atelier` — assembly couples pressure and valve state;
+- `q395 Firefly Relay` — private flashes become ordered lantern deposits;
+- `q426 Monsoon Edict` — banked samples span a rain-triggered revision;
+- `q457 Shell Provenance` — creature identity survives shell-pattern changes;
+- `q489 Skybridge Charter` — dependency spans require remapped permits.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
