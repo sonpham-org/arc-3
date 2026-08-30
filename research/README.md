@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty-six production waves now contain two hundred sixty cross-mechanic prototypes in addition
+The first twenty-seven production waves now contain two hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch26-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch27-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -570,6 +570,19 @@ Batch 26:
 - `q419 Strata Revision` — rule evidence that persists after physical probe undo;
 - `q450 Spore Lineage` — ancestry tracking through appearance exchange and unequal clocks;
 - `q482 Lockwater Dependency` — identity-conditioned prerequisites across adjacency rewrites.
+
+Batch 27:
+
+- `q203 Ember Veil` — attention-scheduled hidden heat updates under shared fuel;
+- `q234 Honeycomb Pact` — phase-sensitive convention inference across two clocks;
+- `q265 Alloy Probe` — causal-link diagnosis under a rotating measurement frame;
+- `q296 Palimpsest Ledger` — conserved routing constrained by a causal trace;
+- `q327 Canopy Survey` — scarce set-cover evidence buffered through a narrow store;
+- `q358 Breakwater Rig` — reusable tool assembly with a dormant first effect;
+- `q389 Strata Delegation` — reversible distributed probes with persistent marks;
+- `q420 Spore Revision` — wear-boundary recalibration at sparse shared events;
+- `q451 Tapestry Lineage` — ancestry tracking across a graph rewrite;
+- `q483 Murmuration Dependency` — reusable prerequisites with a mislead-correcting parity audit.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
