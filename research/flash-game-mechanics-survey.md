@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 39 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 40 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch39-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch40-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -468,6 +468,10 @@ Batch 39 adds automatic gravity drift to observer-relative navigation, then comb
 auctions, refractory causal memory, unequal-weight reactions, mobile phased surveys, self-modifying
 circuits, destructive ant relays, observation-driven tides, mask-independent identity, and
 dependency-constrained tower floors.
+Batch 40 compounds every axis with a secondary demand: opponent memory, thresholded offers,
+stored-orientation causality, experiment/reset separation, sample-rewired access, dual resource rings,
+change-point delegation, two-system recalibration, costly lineage sampling, and reciprocity-conditioned
+dependencies.
 
 For later games, mechanic selection follows this sequence:
 
