@@ -211,9 +211,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first five production waves now contain fifty cross-mechanic prototypes in addition
+The first six production waves now contain sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch05-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch06-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -280,6 +280,19 @@ Batch 05:
 - `q073 Phase Change` — threshold-triggered revision of the traversal law;
 - `q083 Unmarked Lineage` — persistent identity reconstructed from ancestry;
 - `q093 Milestone Garden` — hierarchical subgoals that unlock new operations.
+
+Batch 06:
+
+- `q103 Nested Compass` — composition of independently rotating control frames;
+- `q113 Alternating Teacher` — context-selected policy demonstrations;
+- `q123 Last-Move Guard` — predictable adaptation against repeated movement;
+- `q133 Spatial Grammar` — joint order-and-arrangement communication;
+- `q143 Costly Preview` — selective counterfactual information allocation;
+- `q153 Braids to Signals` — crossing permutations transferred to temporal channels;
+- `q163 Evidence Weight` — reliability-sensitive hypothesis assignment;
+- `q173 Density Drift` — conserved distribution shaping through gradients;
+- `q183 Delayed Escort` — early assistance with delayed policy effects;
+- `q193 Routine Builder` — action macros that preserve exceptional branches.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
