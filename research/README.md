@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ten production waves now contain one hundred cross-mechanic prototypes in addition
+The first eleven production waves now contain one hundred ten cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch10-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch11-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -362,6 +362,19 @@ Batch 10:
 - `q175 Pendulum Phase` — transfers timed by position and momentum;
 - `q185 Promise Tokens` — identity-bound delayed obligations;
 - `q195 Tempo Transfer` — rhythm scaling across mechanisms.
+
+Batch 11:
+
+- `q007 Still Guards` — observer-frozen patrols and visibility-costed gate decay;
+- `q016 Blind Guide` — route inference from a guide's demonstrated motion sequence;
+- `q026 Controlled Cascade` — joint seed-and-barrier selection for exact propagation;
+- `q036 Loop Current` — conserved redistribution across coupled storage loops;
+- `q046 One Question` — a single binary intervention before hypothesis commitment;
+- `q056 Magnet Chain` — polarity-constrained construction of alternating chains;
+- `q066 Beacon Relay` — locally encoded directions propagated through a relay chain;
+- `q076 Rule Thermostat` — active temperature control over a state-dependent rule regime;
+- `q086 Doppel Memory` — identity recovery through learned, persistent permissions;
+- `q096 Subgoal Cache` — reusable completion state across a repeated dependency.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
