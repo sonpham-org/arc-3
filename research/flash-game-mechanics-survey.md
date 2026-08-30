@@ -356,12 +356,12 @@ Flash is a source of design energy, not a content library for us to copy.
 `q001 Quiet Field` was completed first and deterministically qualified. The next production
 wave intentionally selected ten games across ten different capability families rather
 than building `q002` through `q010`, which would have produced an observer-dynamics-heavy
-batch. Batches 02 through 30 repeated that cross-family strategy across the second ten
+batch. Batches 02 through 31 repeated that cross-family strategy across the second ten
 axes and then further passes through both groups. Batch 05 adds observer-dependent transit,
 social signal grounding, intervention-led symmetry breaking, conservation exchanges,
 budgeted terrain sampling, bridge construction, remote-room state, phase transitions,
 lineage tracking, and milestone-gated growth. The immutable wave inventories and hashes
-live in `gpt-batch01-v1.json` through `gpt-batch30-v1.json`. Batch 11 begins the next
+live in `gpt-batch01-v1.json` through `gpt-batch31-v1.json`. Batch 11 begins the next
 cross-axis pass with observer-frozen patrols, sequence-guided navigation, controlled
 cascades, conserved loop currents, one-question diagnosis, magnetic construction,
 local relay codes, temperature-selected rules, identity memory, and reusable subgoals.
@@ -432,6 +432,10 @@ Batch 30 advances the second ten axes with moving foundry frames, failed-example
 lessons, buffered orchard counters, dormant harbor grammar, reversible quarry sandboxes,
 scheduled greenhouse analogy, rewiring-aware loom evidence, identity-swapped canal flow,
 parity-bound flock debt, and token-coupled glacier rhythms.
+Batch 31 returns to the first ten axes with framed foundry occlusion, failed-offer archive
+conventions, buffered orchard probes, dormant harbor conservation, reversible quarry
+surveys, clock-gated greenhouse tools, rewired loom delegation, identity-aware canal laws,
+parity-checked flock lineage, and counter-sensitive caravan dependencies.
 
 For later games, mechanic selection follows this sequence:
 
