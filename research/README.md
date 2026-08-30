@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fourteen production waves now contain one hundred forty cross-mechanic prototypes in addition
+The first fifteen production waves now contain one hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch14-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch15-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -414,6 +414,19 @@ Batch 14:
 - `q079 Exception Signal` — local marked exceptions without abandoning a general rule;
 - `q089 Persistent Passenger` — identity tracking across changing visible carriers;
 - `q099 Waypoint Memory` — reusable local waypoints assembled into a global route.
+
+Batch 15:
+
+- `q020 Crowd Current` — diagnosed alignment, avoidance, and attraction dynamics;
+- `q030 Antidote Network` — interventions with opposing neighbor and distance-two effects;
+- `q040 Mass Shadow` — invariant mass recovered across changing projections;
+- `q050 Compression Cabinet` — scarce reusable abstractions selected as a pattern basis;
+- `q060 Clockwork Tool` — physical cam-and-delay programs that execute autonomously;
+- `q070 Triangulation` — hidden-target localization from three relative-distance views;
+- `q080 Regime Cart` — a movable radius that transports and composes physical rules;
+- `q090 Lineage Garden` — pruning based on persistent inherited traits;
+- `q100 Recursive Gate` — nested self-similar dependencies controlled by inner parameters;
+- `q106 Local Gravity Wells` — movement across visibly different local gravity frames.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
