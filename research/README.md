@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifteen production waves now contain one hundred fifty cross-mechanic prototypes in addition
+The first sixteen production waves now contain one hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch15-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch16-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -427,6 +427,19 @@ Batch 15:
 - `q090 Lineage Garden` — pruning based on persistent inherited traits;
 - `q100 Recursive Gate` — nested self-similar dependencies controlled by inner parameters;
 - `q106 Local Gravity Wells` — movement across visibly different local gravity frames.
+
+Batch 16:
+
+- `q107 Folding Map` — hinge folds that rewrite global adjacency and orientation;
+- `q116 Counterexample Room` — policy learning driven by minority counterexamples;
+- `q126 Copycat Trap` — delayed imitation repurposed as a remote actuator;
+- `q136 Lossy Channel` — adaptive redundancy for a predictably dropped signal class;
+- `q146 Fork Seal` — downstream planning before irreversible sibling closure;
+- `q156 Bridge Logic` — transfer from embodied bridges to Boolean activation structure;
+- `q166 Checkpoint Choice` — confidence-sensitive placement of one preserved state;
+- `q176 Heat Diffusion` — local field prediction through material thresholds;
+- `q186 Deferred Mirror` — remote effects scheduled by a visible countdown;
+- `q196 Event Order` — causal event abstraction across changing animation durations.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
