@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first twenty production waves now contain two hundred cross-mechanic prototypes in addition
+The first twenty-one production waves now contain two hundred ten cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch20-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch21-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -492,6 +492,19 @@ Batch 20:
 - `q418 Breakwater Revision` — wear-triggered rule revision with a dormant side effect;
 - `q449 Strata Lineage` — persistent ancestry through reversible appearance changes;
 - `q480 Spore Dependency` — reusable prerequisites solved at sparse two-actor alignments.
+
+Batch 21:
+
+- `q511 Tapestry Frame` — moving local controls followed by a topology rewrite;
+- `q542 Lockwater Lesson` — conditional demonstrations with causally ineffective gestures;
+- `q573 Murmuration Counter` — deliberately shaping a recent-history opponent state;
+- `q604 Moraine Grammar` — grouped spatial commands transformed by local relays;
+- `q635 Waystation Sandbox` — persistent evidence from reset miniature interventions;
+- `q666 Backstage Analogy` — sightline structure transferred to quantity-bearing actors;
+- `q697 Catalyst Evidence` — reliability-weighted stopping with memory-bound execution;
+- `q728 Asterism Gradient` — conserved phased influence with evidence-preserving reset;
+- `q759 Reedbed Obligation` — identity-bound debt delayed through tool construction;
+- `q790 Vault Rhythm` — dual conservation and event-chunked interrupt timing.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
