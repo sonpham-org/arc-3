@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first nineteen production waves now contain one hundred ninety cross-mechanic prototypes in addition
+The first twenty production waves now contain two hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch19-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch20-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -479,6 +479,19 @@ Batch 19:
 - `q179 Field Alignment` — local vector alignment controlling integrated global drift;
 - `q189 Inheritance` — resources and structural damage passed to a successor;
 - `q199 Slow Consequence` — pending causes separated from later completed effects.
+
+Batch 20:
+
+- `q201 Aurora Veil` — attention-frozen regions with hysteretic hidden updates;
+- `q232 Tide Pact` — probing a hidden group convention before irreversible agreement;
+- `q263 Ember Probe` — budgeted causal diagnosis before a single repair;
+- `q294 Honeycomb Ledger` — conserved transfers coordinated across nested clocks;
+- `q325 Alloy Survey` — budgeted set coverage under a rotating measurement frame;
+- `q356 Palimpsest Rig` — one constructed geometry passing two rotated functional tests;
+- `q387 Canopy Delegation` — complementary observers communicating through a bounded store;
+- `q418 Breakwater Revision` — wear-triggered rule revision with a dormant side effect;
+- `q449 Strata Lineage` — persistent ancestry through reversible appearance changes;
+- `q480 Spore Dependency` — reusable prerequisites solved at sparse two-actor alignments.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
