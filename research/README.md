@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-five production waves now contain four hundred fifty cross-mechanic prototypes in addition
+The first forty-six production waves now contain four hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch45-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch46-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -817,6 +817,19 @@ Batch 45:
 - `q436 Crossing Revision` — disjoint controllers recalibrate a visibly worn ferry law;
 - `q467 Spectrum Lineage` — ancestry persists through splits, merges, and appearance swaps;
 - `q499 Monsoon Dependency` — shared weather prerequisites unlock at unequal-cycle phase pairs.
+
+Batch 46:
+
+- `q220 Vault Veil` — one observed chamber freezes while two conserved resources circulate;
+- `q251 Pollen Pact` — a social response convention complements after visible wear;
+- `q282 Semaphore Probe` — causal identification joins two miniature relay systems;
+- `q313 Impeller Ledger` — rotor stock stays conserved while duplicate samples cost extra;
+- `q344 Tessera Survey` — seam evidence gates an interruptible topology macro;
+- `q375 Vivarium Rig` — dual-effect habitat tools interact with partner reciprocity;
+- `q406 Crossing Delegation` — disjoint passenger and dock projections meet through marks;
+- `q437 Spectrum Revision` — a worn relational rule transfers across visual domains;
+- `q468 Escapement Lineage` — ancestry tracking composes with fault-discriminating probes;
+- `q500 Workbench Dependency` — shared fixtures create helper-identity obligations that must be repaid.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

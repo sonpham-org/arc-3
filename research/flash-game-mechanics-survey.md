@@ -491,6 +491,10 @@ social convention to dual conservation, causal evidence to complemented wear, co
 policy tests, evidence value to redundancy cost, construction to interruptible macros, delegation to
 reciprocity, revision to controller-specific marks, identity to appearance exchange, and hierarchy to
 unequal-cycle phase pairs.
+Batch 46 advances those pairings with dual-conserved hidden circulation, wear-revised social responses,
+two-system causal probes, redundancy-priced conserved transfers, evidence-gated seam macros,
+reciprocity-bound habitat tools, disjoint ferry projections, cross-domain relational revision,
+fault-intervened ancestry, and helper-identity debt over shared prerequisite graphs.
 
 For later games, mechanic selection follows this sequence:
 
