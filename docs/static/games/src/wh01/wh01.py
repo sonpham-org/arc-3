@@ -45,7 +45,18 @@ C_MAGENTA, C_LMAGENTA, C_RED, C_BLUE, C_LBLUE = 6, 7, 8, 9, 10
 C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 
 GREEN, RED = "green", "red"
-ARC_COLOR = {GREEN: C_GREEN, RED: C_RED}
+# The two arc kinds are drawn green and ORANGE, not green and red. Two reasons: the field is
+# maroon (see C_FIELD) and red-on-maroon is the one pairing that loses contrast, and ARC
+# forbids leaning on cultural convention, so "red means bad" was never carrying meaning
+# anyway -- the player learns which kind hurts by striking one.
+ARC_COLOR = {GREEN: C_GREEN, RED: C_ORANGE}
+
+# Palette choice: measured across all 773 catalogued games, greyscale is 60.3% of every
+# pixel and this game was 84% pure black. Maroon and purple are the only genuinely dark
+# entries in the ARC-3 palette, and maroon is 0.0% of official pixels -- so a maroon field
+# with purple guide rings is both legible and unlike anything in the corpus.
+C_FIELD = C_MAROON
+C_RING = C_PURPLE
 
 HUD_BAR_Y, HUD_BAR_X0, HUD_BAR_X1 = 0, 1, 63
 LIFE_Y, LIFE_X = 3, 2
@@ -154,7 +165,7 @@ class Wh01Display(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
-        frame[:, :] = C_BLACK
+        frame[:, :] = C_FIELD
 
         # Sampling has to scale with radius or the curve comes out dotted: an outer ring is
         # ~132 px around, so a fixed sample count leaves visible gaps. Two samples per
@@ -167,7 +178,7 @@ class Wh01Display(RenderableUserDisplay):
             n = samples_for(r, STEPS)
             for s in range(n):
                 x, y = self._polar(r, STEPS * s / n)
-                self._plot(frame, x, y, C_VDGRAY)
+                self._plot(frame, x, y, C_RING)
 
         # Arcs, three pixels thick so a thin ring still reads as a solid object.
         for arc in g.arcs:
@@ -243,7 +254,7 @@ class Wh01(ARCBaseGame):
         super().__init__(
             "wh",
             levels,
-            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
+            Camera(0, 0, 64, 64, C_FIELD, C_FIELD, [self.display]),
             False,
             len(levels),
             [3, 4, 6],           # 3/4 = turn the bar, 6 = strike (click anywhere)

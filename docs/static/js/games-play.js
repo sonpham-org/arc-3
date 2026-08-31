@@ -6,7 +6,7 @@
 // The ?v= is load-bearing: index.html serves this module uncached-busted otherwise, and
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
-import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-ai-generated";
+import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -72,7 +72,11 @@ const canvas = () => $("gameCanvas");
 async function init() {
   onEngineProgress(({ stage, percent }) => updateLoadingUI(stage, percent));
   try {
-    games = await fetch("./static/games/manifest.json?v=20260830-ai-generated").then((r) => r.json());
+    // no-store, NOT a ?v= literal: the catalog changes every time a game is added, while a
+    // hard-coded version string only changes when someone remembers to edit it. A stale
+    // manifest silently hides new games from anyone with a warm cache -- which looked
+    // exactly like "the game wasn't published", because the game itself fetches fine.
+    games = await fetch("./static/games/manifest.json", { cache: "no-store" }).then((r) => r.json());
   } catch (e) {
     $("browseOfficial").textContent = "Failed to load game catalog.";
     return;
@@ -219,7 +223,10 @@ async function selectGame(id) {
   if (!engineWasReady) $("engineLoading").hidden = false;
   try {
     await ensureGameEngine();
-    const source = await fetch(`./static/games/src/${entry.id}/${entry.src_file}`).then((r) => r.text());
+    // Same reasoning as the manifest: a game's source is rewritten whenever we fix or
+    // rebalance it, so it must never be served from a stale cache.
+    const source = await fetch(`./static/games/src/${entry.id}/${entry.src_file}`,
+                               { cache: "no-store" }).then((r) => r.text());
     currentSource = source;
     state = await gameLoad(source, entry.class_name);
   } catch (err) {
