@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-nine production waves now contain eight hundred eighty-nine cross-mechanic prototypes in addition
+The first ninety production waves now contain eight hundred ninety-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch89-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch90-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1505,6 +1505,23 @@ Batch 89:
 Batch 89 treats physical history as part of the puzzle state. Structural boards expose force routes,
 moment arms, redundancy, buckling, settlement, and intermediate support; the final two games extend
 that path dependence to retained strain and compression-specific contact geometry.
+
+Batch 90:
+
+- `a091 Pinched Tube` — fluid pressure deforms the same tube geometry that controls flow;
+- `a092 Crease Memory` — repeated folds create permanent hinges for later autonomous motion;
+- `a093 Viscous Block` — impulses and sustained pressure produce different material responses;
+- `a094 Elastic Net` — local node motion redistributes tension throughout the mesh;
+- `a095 Plastic Trail` — light loads recover while heavy rollers exceed a yield threshold;
+- `a096 Shape Recovery` — ordered pin releases turn stored strain into constrained actuation;
+- `a097 Standing Room` — wall spacing places nodes and antinodes at protected sites;
+- `a098 Boundary Echo` — returned phase reveals hidden reflection material;
+- `a099 Phase Cancel` — source timing cancels at a bridge and reinforces at a gate;
+- `a100 Waveguide Switch` — rotated guide sections convert modes across selective junctions.
+
+Batch 90 completes the first hundred Anthropic-queue concepts with distributed-state physics. Its
+material laboratory emphasizes feedback, rate, memory, tension, yield, and stored energy; its wave
+chambers require boundary-condition, phase, superposition, and mode reasoning rather than path tracing.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
