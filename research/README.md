@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-five production waves now contain five hundred fifty cross-mechanic prototypes in addition
+The first fifty-six production waves now contain five hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch55-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch56-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -947,6 +947,19 @@ Batch 55:
 - `q440 Workbench Revision` — wear-driven recalibration preserves the helper attached to each favor;
 - `q448 Breakwater Lineage` — a first intervention remains dormant across two solved subgoals;
 - `q512 Lockwater Frame` — barge identity survives exchanged appearance, position, and local frames.
+
+Batch 56:
+
+- `q120 Hidden Policy Handoff` — control transfers mid-demonstration without resetting latent state;
+- `q130 Rhythm Rival` — an adaptive opponent opens only under deliberate irregular cadence;
+- `q140 Grounded Labels` — player-created class markers become reusable worker commands;
+- `q150 Minimum Regret` — route selection minimizes worst-case loss and preserves recovery;
+- `q160 Tool Metamorphosis` — a mechanical relation transfers into autonomous coordination;
+- `q170 Commit Threshold` — decision-specific evidence requirements must be calibrated from feedback;
+- `q180 Gradient Climb` — only local field changes guide ascent through deceptive plateaus;
+- `q190 Lasting Shortcut` — one route intervention permanently changes every later level;
+- `q200 Clock of Clocks` — completed local periods trigger a higher-level temporal machine;
+- `q471 Aurora Dependency` — shared prerequisites are reused through a visible hysteresis loop.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

@@ -540,6 +540,11 @@ cooperation, diagnosis, stock, sensing, assembly, handoff, and recalibration mus
 that supplied the benefit even after focus or ownership moves. A harbor lineage task preserves the first
 intervention invisibly across two subgoals, while a stepped-canal task exchanges appearance and position
 but keeps assignment tied to causal identity and its local-to-global trail.
+Batch 56 starts a balanced expansion of the ten underrepresented axes. It adds latent-state policy
+handoff, cadence-adaptive opposition, player-grounded reusable labels, minimax route recovery,
+tool-to-agent relational transfer, decision-specific confidence thresholds, local-gradient search,
+cross-level shortcut credit, nested temporal abstraction, and dependency reuse through hysteresis. These
+games use unrelated visual and state grammars rather than one shared secondary-mechanic template.
 
 For later games, mechanic selection follows this sequence:
 
