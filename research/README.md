@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-nine production waves now contain six hundred ninety cross-mechanic prototypes in addition
+The first seventy production waves now contain seven hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch69-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch70-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1147,6 +1147,25 @@ policies and require the solver to predict when repetition changes motion, instr
 syntax, analogy, evidence, flow, debt, or timing. A bright folding-mosaic sandbox contributes a
 different geometry for reset-persistent counterfactual evidence. Its thumbnails are checked against
 all earlier generated thumbnails, preventing a visually identical cross-batch starting state.
+
+Batch 70:
+
+- `q523 Impeller Frame` — local blade motion composes with counter-rotating wake frames and sample cost;
+- `q553 Impeller Lesson` — wake-conditioned demonstrations separate empty gestures from costly oversampling;
+- `q562 Tide Counter` — recent shell treatments shape a rival before an irreversible sluice opens;
+- `q613 Impeller Grammar` — paired blade glyphs compose through sampled counter-rotating relays;
+- `q643 Impeller Sandbox` — turbine evidence persists across resets and grows costlier after discrimination;
+- `q673 Impeller Analogy` — direction and blade gap transfer from wake diagrams to unlike riders;
+- `q703 Impeller Evidence` — stopping must occur at first certainty before another wake probe adds excess cost;
+- `q733 Impeller Gradient` — conserved blade mass circulates through four capacity-limited wake reservoirs;
+- `q763 Impeller Obligation` — torque debt stays attached to three rider identities across ring rotation;
+- `q793 Impeller Rhythm` — counter-rotating macros are interrupted at a sampled state-defined window.
+
+Batch 70 treats information acquisition as an action with consequences. Nine industrial turbine
+tasks combine counter-rotating wakes with local frames, instruction, syntax, simulation, analogy,
+confidence, conserved flow, causal debt, and macro-time. Repeated sampling after discrimination
+raises an explicit cost and can invalidate commitment. The tidal counter adds a separate irreversible
+sluice that cannot safely open until the visible rival evidence supports one branch.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
