@@ -352,19 +352,26 @@ class Kr01Display(RenderableUserDisplay):
         # Rule between field and tray.
         self._rect(frame, 0, SEP_Y, 64, 1, C_VDGRAY)
 
-        # Budget bar -- a bar, never a number. Recoloured by how much is left.
-        span = 61
+        # Budget as DISCRETE TOKENS, not a continuous bar: a wrapped block of 2x2 counters
+        # that vanish one per action. Countable rather than estimated, which suits a game
+        # whose whole tension is "can I afford one more wrong insert" -- and deliberately
+        # unlike the other games in this set. Feedback from the ARC-3 team was that all our
+        # games wore the same top bar, so six games were testing one presentation six times.
         left = max(0, g.budget_left)
-        filled = 0 if g.budget_max <= 0 else int(round(span * left / g.budget_max))
-        self._rect(frame, 1, HUD_Y0, span, HUD_Y1, C_DGRAY)
-        if filled > 0:
-            if left * 2 > g.budget_max:
-                bar = C_GREEN
-            elif left * 4 > g.budget_max:
-                bar = C_ORANGE
-            else:
-                bar = C_RED
-            self._rect(frame, 1, HUD_Y0, filled, HUD_Y1, bar)
+        if left * 2 > g.budget_max:
+            tok = C_GREEN
+        elif left * 4 > g.budget_max:
+            tok = C_ORANGE
+        else:
+            tok = C_RED
+        # Two rows of 30 at a 2px pitch, so the whole block stays inside rows 0..3 and never
+        # reaches the bench platform that starts at row 4.
+        per_row = 30
+        for i in range(min(g.budget_max, per_row * 2)):
+            tx = 1 + (i % per_row) * 2
+            ty = HUD_Y0 + (i // per_row) * 2
+            if tx < 63 and ty + 1 < HUD_Y1 + 1:
+                self._rect(frame, tx, ty, 1, 2, tok if i < left else C_VDGRAY)
 
         # A click that changed nothing still has to be legible, or the agent cannot tell a
         # miss from a no-op. Only misses are marked; every other click visibly alters the

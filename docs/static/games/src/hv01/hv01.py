@@ -34,7 +34,12 @@ GRID_H = 13
 OX = 2                       # playfield origin x
 OY = 10                      # playfield origin y (HUD occupies rows 0..9)
 
-BAR_Y, BAR_X0, BAR_X1 = 0, 1, 63          # action-budget bar
+# Budget is a VERTICAL column down the left edge, draining upward -- not the horizontal top
+# bar every other game of ours used. Feedback from the ARC-3 team: our games had converged on
+# one house style, and shared furniture makes a set of games test one presentation repeatedly.
+# The official 25 vary this deliberately (R11L/LP85/AR25 run vertical, M0R0 mirrors top and
+# bottom, G50T/TN36 have no HUD at all), so each of ours now uses a different idiom.
+BAR_X, BAR_Y0, BAR_Y1 = 0, 2, 62          # action-budget column, left edge
 SWATCH_Y, SWATCH_SIZE = 3, 5              # node palette
 SWATCH_X = (2, 9, 16)
 PIP_Y = 8                                 # remaining-stock pips
@@ -265,11 +270,13 @@ class Hv01Display(RenderableUserDisplay):
                 frame[py + 2, px + 2] = (C_LMAGENTA if org["kind"] == O_NORMAL else C_MAGENTA)
 
         # ---- HUD ----------------------------------------------------------
-        span = BAR_X1 - BAR_X0
+        # Drains upward from the bottom of the column, so "running out" reads as a falling
+        # level rather than a shortening line.
+        span = BAR_Y1 - BAR_Y0
         filled = 0 if g.budget_max <= 0 else int(span * g.budget_left / g.budget_max)
-        frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X1] = C_DGRAY
+        frame[BAR_Y0:BAR_Y1, BAR_X:BAR_X + 2] = C_DGRAY
         if filled > 0:
-            frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X0 + filled] = (
+            frame[BAR_Y1 - filled:BAR_Y1, BAR_X:BAR_X + 2] = (
                 C_GREEN if g.budget_left * 4 > g.budget_max else C_ORANGE)
 
         for i, kind in enumerate(g.palette):
@@ -287,7 +294,7 @@ class Hv01Display(RenderableUserDisplay):
 
         for i in range(g.required):
             hx = BANK_X + i * 3
-            if hx + 2 > BAR_X1:
+            if hx + 2 > 62:
                 break
             frame[BANK_Y:BANK_Y + 3, hx:hx + 2] = (
                 C_GREEN if i < g.banked_total else C_DGRAY)
