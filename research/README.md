@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-seven production waves now contain six hundred seventy cross-mechanic prototypes in addition
+The first sixty-eight production waves now contain six hundred eighty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch67-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch68-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1109,6 +1109,25 @@ accumulate signed stage pressure through frame rotations, context switches, riva
 grouped relays, reset simulations, unequal evidence, conserved flow, identity debt, and
 macro-time. A prism-gallery analogy transfers an affine pair—magnitude and direction—from
 geometry to agents despite unrelated surface features.
+
+Batch 68:
+
+- `q518 Asterism Frame` — local orbit actions compose with a precessing chart while observations survive reset;
+- `q548 Asterism Lesson` — conditional star policies must be separated from empty gestures;
+- `q578 Asterism Counter` — recent treatments and chart precession jointly shape a three-tactic rival;
+- `q608 Asterism Grammar` — grouped glyphs are reversed, recolored, and rotated by precessing relays;
+- `q638 Asterism Sandbox` — twin star systems reset physically while their evidence persists;
+- `q668 Asterism Analogy` — cyclic gaps and precession transfer from geometry to an unlike surface;
+- `q698 Asterism Evidence` — unequal samples stop only when no unseen star can reverse the margin;
+- `q737 Spectrum Gradient` — conserved spectral mass crosses capacity-limited phase-rotated channels;
+- `q758 Asterism Obligation` — light debts remain attached to identities through swaps and resets;
+- `q788 Asterism Rhythm` — changing-period macro-orbits must be interrupted at a state-defined window.
+
+Batch 68 moves from theatrical pressure to orbital relation reasoning. Nine bright observatory
+tasks compose local actions with precessing charts across demonstrations, adversaries, language,
+simulation, analogy, evidence, identity, and macro-time. A spectrum laboratory adds conserved
+flow through rotating, capacity-limited channels. Dominant fields vary across blue, orange, pink,
+charcoal, silver, white, and black rather than sharing one dark or red canvas.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
