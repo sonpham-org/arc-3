@@ -509,6 +509,11 @@ interrupting an autonomous macro at a state-defined seam window. Tidal intervent
 sampling, construction, delegation, revision, and identity tasks delay an irreversible repair,
 seal, route, launch, handoff, or gate until enough evidence is available. A sliding archive then
 uses the causal difference between a near-miss failure and success to recover a moving frame.
+Batch 50 couples three vivarium tasks to short-term reciprocity: observation, offer inference, and
+causal repair all alter or depend on remembered partner treatment. Six kiln tasks then charge
+transformation, sampling, construction, communication, recalibration, and ancestry against the same
+finite fuel used for terminal progress. The closing orchard frame adds an independent bottleneck:
+globally valid exchanges can still deadlock when a narrow intermediate store is filled out of order.
 
 For later games, mechanic selection follows this sequence:
 

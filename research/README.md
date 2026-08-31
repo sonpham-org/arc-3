@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-nine production waves now contain four hundred ninety cross-mechanic prototypes in addition
+The first fifty production waves now contain five hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch49-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch50-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -869,6 +869,19 @@ Batch 49:
 - `q412 Tide Revision` — a worn current law is recalibrated before delayed effects are committed;
 - `q442 Tide Lineage` — split, merge, and appearance histories identify an ancestor at a one-way gate;
 - `q506 Palimpsest Frame` — near-miss failed examples reveal composition in a moving archive frame.
+
+Batch 50:
+
+- `q225 Vivarium Veil` — attention-dependent fauna updates are conditioned by remembered partner favor;
+- `q255 Vivarium Pact` — colony responses combine a hidden offer convention with reciprocity;
+- `q285 Vivarium Probe` — causal diagnosis and irreversible repair must preserve a fair partner state;
+- `q293 Ember Ledger` — conserved vessel transfers, heat movement, and repairs share one fuel reserve;
+- `q323 Ember Survey` — evidence collection, heat movement, and route commitment consume the same fuel;
+- `q353 Ember Rig` — component collection, dual-effect assembly, and activation compete for fuel;
+- `q383 Ember Delegation` — partial views, marks, controller handoffs, and integration all consume fuel;
+- `q413 Ember Revision` — sparse recalibration of a worn heat law is priced against repair fuel;
+- `q443 Ember Lineage` — split, merge, appearance, and ancestry operations deplete one reserve;
+- `q507 Canopy Frame` — moving orchard frames compose through a capacity-limited intermediate store.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
