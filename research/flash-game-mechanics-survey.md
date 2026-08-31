@@ -524,6 +524,12 @@ agents despite unrelated surface appearance. Four magnetic-foundry tasks then ex
 delegation, revised rules, and ancestry in a local frame that translates and rotates between decisions.
 The quarry finale separates reversible physical state from irreversible information: undoing a probe
 restores the crawlers and fault frame but does not erase the observation already acquired.
+Batch 53 turns fault intervention and visible failure into explicit evidence. Six clock-tower tasks use
+one active intervention to separate otherwise compatible accounts of attention, convention, causality,
+conservation, sampling, and tool behavior. Three sliding-archive tasks require partial controllers,
+revision, and ancestry to be inferred from a visible near miss rather than only successful examples.
+The greenhouse finale coordinates two autonomous periods whose valid joint contacts become increasingly
+sparse, reaching a twenty-step alignment cycle without adding hidden exceptions.
 
 For later games, mechanic selection follows this sequence:
 

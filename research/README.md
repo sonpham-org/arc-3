@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-two production waves now contain five hundred twenty cross-mechanic prototypes in addition
+The first fifty-three production waves now contain five hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch52-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch53-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -908,6 +908,19 @@ Batch 52:
 - `q415 Alloy Revision` — a worn billet law is recalibrated in local rather than screen coordinates;
 - `q445 Alloy Lineage` — billet ancestry survives splits, merges, appearance swaps, and frame motion;
 - `q509 Strata Frame` — physical probe state can be undone while acquired knowledge persists.
+
+Batch 53:
+
+- `q228 Escapement Veil` — scheduled attention is coupled to one fault-separating clock intervention;
+- `q258 Escapement Pact` — a stable offer convention is inferred despite a shared mechanical fault;
+- `q288 Escapement Probe` — bounded model evidence precedes an irreversible fault repair;
+- `q318 Escapement Ledger` — conserved weight stock moves through a diagnosed clockwork phase;
+- `q348 Escapement Survey` — evidence budget and redundancy constrain fault-specific sampling;
+- `q378 Escapement Rig` — collected parts become an instrument that reveals the active fault;
+- `q386 Palimpsest Delegation` — two readers integrate partial marks by comparing a visible near miss;
+- `q416 Palimpsest Revision` — explicit failed examples recalibrate a drifting archive rule;
+- `q446 Palimpsest Lineage` — failed exemplars disambiguate ancestry across split, merge, and appearance;
+- `q510 Spore Frame` — two greenhouse schedules meet at progressively sparser frame-aligned contacts.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
