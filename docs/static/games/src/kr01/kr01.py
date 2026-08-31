@@ -294,19 +294,26 @@ class Kr01Display(RenderableUserDisplay):
         # Bench platform (level 1 only): a raised band that visually separates the free
         # apparatus from the sockets that actually count.
         if g.bench:
-            self._rect(frame, 0, BENCH_Y0, 64, BENCH_Y1 - BENCH_Y0 + 1,
-                       C_VDGRAY if g.bench_uses < BENCH_FREE else C_BLACK)
-            self._frame_box(frame, 0, BENCH_Y0, 64, BENCH_Y1 - BENCH_Y0 + 1, C_DGRAY)
+            # The bench must not be mistakable for the sockets: playtesting showed two rows
+            # of same-grey shapes read as one thing. So the bench is a lit SURFACE carrying
+            # solid light shapes, while sockets below are dark holes cut into plates --
+            # different objects, not different shades of the same object.
+            band_h = BENCH_Y1 - BENCH_Y0 + 1
+            live = g.bench_uses < BENCH_FREE
+            self._rect(frame, 0, BENCH_Y0, 64, band_h, C_DGRAY if live else C_BLACK)
+            # bright rails top and bottom mark it as apparatus, and only the bench has them
+            rail = C_LBLUE if live else C_VDGRAY
+            self._rect(frame, 0, BENCH_Y0, 64, 1, rail)
+            self._rect(frame, 0, BENCH_Y1, 64, 1, rail)
             for i, pad in enumerate(g.bench):
                 x, y = pad["x"], pad["y"]
-                self._rect(frame, x, y, CELL, CELL, C_BLACK)
+                self._rect(frame, x, y, CELL, CELL, C_DGRAY)
                 if pad["found"] is not None:
                     self._blit(frame, x, y, shape_mask(pad["shape"], CELL), pad["found"])
                     self._frame_box(frame, x - 1, y - 1, CELL + 2, CELL + 2, C_WHITE)
                 else:
-                    ink = C_MAROON if g.bench_flash == i else C_GRAY
+                    ink = C_MAROON if g.bench_flash == i else C_LGRAY
                     self._blit(frame, x, y, shape_mask(pad["shape"], CELL), ink)
-                    self._frame_box(frame, x - 1, y - 1, CELL + 2, CELL + 2, C_LGRAY)
 
         # Sockets.
         for s in g.sockets:
