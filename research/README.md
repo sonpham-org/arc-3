@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-three production waves now contain five hundred thirty cross-mechanic prototypes in addition
+The first fifty-four production waves now contain five hundred forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch53-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch54-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -921,6 +921,19 @@ Batch 53:
 - `q416 Palimpsest Revision` — explicit failed examples recalibrate a drifting archive rule;
 - `q446 Palimpsest Lineage` — failed exemplars disambiguate ancestry across split, merge, and appearance;
 - `q510 Spore Frame` — two greenhouse schedules meet at progressively sparser frame-aligned contacts.
+
+Batch 54:
+
+- `q229 Monsoon Veil` — attention releases hidden rain updates while two weather cycles advance;
+- `q259 Monsoon Pact` — a hidden convention must be committed at a shared storm phase;
+- `q289 Monsoon Probe` — weather causes are diagnosed before a phase-aligned irreversible repair;
+- `q319 Monsoon Ledger` — conserved rain stock moves globally under unequal reservoir cycles;
+- `q349 Monsoon Survey` — bounded samples must cover the evidence needed at a sparse policy window;
+- `q379 Monsoon Rig` — a reusable rain instrument is assembled and activated at joint phase;
+- `q409 Monsoon Delegation` — two forecast readers integrate persistent marks across unequal cycles;
+- `q417 Canopy Revision` — a worn orchard law is recalibrated through a capacity-limited store;
+- `q447 Canopy Lineage` — seed ancestry survives transformations and constrained store ordering;
+- `q529 Monsoon Frame` — local rain controls compose with moving global weather coordinates.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

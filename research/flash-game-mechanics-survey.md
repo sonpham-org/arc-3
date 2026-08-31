@@ -530,6 +530,11 @@ conservation, sampling, and tool behavior. Three sliding-archive tasks require p
 revision, and ancestry to be inferred from a visible near miss rather than only successful examples.
 The greenhouse finale coordinates two autonomous periods whose valid joint contacts become increasingly
 sparse, reaching a twenty-step alignment cycle without adding hidden exceptions.
+Batch 54 applies unequal-cycle scheduling across seven weather-garden state machines: attention,
+convention, causal diagnosis, conservation, evidence allocation, tool assembly, and delegated views all
+retain their own primary mechanics while sharing increasingly sparse joint phases. Two orchard tasks add
+a different bottleneck, showing how rule repair and persistent ancestry can fail through bad ordering in
+a narrow store. The closing weather-frame task composes local motion, global rotation, and dual periods.
 
 For later games, mechanic selection follows this sequence:
 
