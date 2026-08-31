@@ -34,7 +34,7 @@ C_WHITE, C_LGRAY, C_GRAY, C_DGRAY, C_VDGRAY, C_BLACK = 0, 1, 2, 3, 4, 5
 C_MAGENTA, C_LMAGENTA, C_RED, C_BLUE, C_LBLUE = 6, 7, 8, 9, 10
 C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 
-C_FLOOR = C_VDGRAY        # a tile you can stand on
+C_FLOOR = C_MAROON        # a tile you can stand on (maroon: 0.0% of official pixels)
 C_WALL = C_GRAY           # never passable, never changes
 C_VOID = C_BLACK          # fell away this run -- comes back on a rewind
 C_SCAR = C_MAROON         # fell away for good -- does not come back
@@ -310,7 +310,10 @@ class Rw01Display(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
-        frame[:, :] = C_BLACK
+        # Palette: the corpus is 60.3% greyscale. Purple void, maroon floor -- both are
+        # near-absent from the catalogue. The void must stay clearly "not floor", since a
+        # fallen tile becoming void is the core feedback of this game.
+        frame[:, :] = C_PURPLE
 
         # Meter. Every action spends from it, including a rewind, so it is the one thing
         # that always visibly moves.
@@ -390,7 +393,7 @@ class Rw01(ARCBaseGame):
         super().__init__(
             "rw",
             levels,
-            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
+            Camera(0, 0, 64, 64, C_PURPLE, C_PURPLE, [self.display]),
             False,
             len(levels),
             [0, 1, 2, 3, 4, 6],      # 0 = rewind, 1-4 = step, 6 = click an adjacent tile

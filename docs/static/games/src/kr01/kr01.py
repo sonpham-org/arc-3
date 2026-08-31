@@ -288,8 +288,12 @@ class Kr01Display(RenderableUserDisplay):
     # -- whole frame --------------------------------------------------------
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
+        # Palette: the corpus is 60.3% greyscale and this game was 64% pure black. A maroon
+        # ground is near-absent from the catalogue (0.0% of official pixels) and leaves the
+        # five core colours -- magenta, blue, yellow, green, purple -- fully distinguishable,
+        # which matters here because the whole game is a colour/shape mapping.
         g = self.game
-        frame[:, :] = C_BLACK
+        frame[:, :] = C_MAROON
 
         # Bench platform (level 1 only): a raised band that visually separates the free
         # apparatus from the sockets that actually count.
@@ -398,7 +402,7 @@ class Kr01(ARCBaseGame):
         super().__init__(
             "kr",
             levels,
-            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
+            Camera(0, 0, 64, 64, C_MAROON, C_MAROON, [self.display]),
             False,
             len(levels),
             [6],                                          # click only
