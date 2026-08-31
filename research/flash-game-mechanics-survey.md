@@ -499,6 +499,11 @@ Batch 47 adds wear-complemented attention, two-court conventions, redundancy-pri
 conserved macro stock, reciprocity-conditioned evidence, controller-marked construction,
 cross-domain delegation, intervention-guided revision, phase-gated ancestry, and moving local frames
 whose irreversible exchange is delayed until visible evidence is sufficient.
+Batch 48 turns hysteresis into a controlled cross-axis study: focus-dependent rotor attention,
+offer conventions, causal rays, conserved crystal stock, bounded evidence, constructed tools,
+distributed marks, wear-revised rules, and ancestry all share direction-reversing control while
+retaining different state machines and visual grammars. A finite-fuel kiln closes the wave by
+charging local motion, reference-frame transforms, and observation against one resource.
 
 For later games, mechanic selection follows this sequence:
 
