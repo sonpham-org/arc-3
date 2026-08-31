@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-seven production waves now contain seven hundred seventy cross-mechanic prototypes in addition
+The first seventy-eight production waves now contain seven hundred eighty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch77-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch78-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1296,6 +1296,24 @@ Batch 77 spans eight object families and emphasizes causal state that survives v
 The tasks distinguish local frames from debt, demonstrations from parity-valid policy, physical resets
 from knowledge, appearance from identity, and local timing from enclosing timing. These mechanisms
 are introduced separately before being composed in each sixth level.
+
+Batch 78:
+
+- `q557 Spectrum Lesson` — contextual demonstrations transfer across prism surfaces;
+- `q559 Monsoon Lesson` — weather policy depends on unequal phase pairs;
+- `q571 Tapestry Counter` — rival adaptation composes with loom graph rewiring;
+- `q592 Tide Grammar` — grouped shell messages precede irreversible tidal commitment;
+- `q650 Workbench Sandbox` — fixture resets preserve tool-debt evidence;
+- `q672 Semaphore Analogy` — relay relations transfer after miniature policy tests;
+- `q693 Murmuration Evidence` — wind evidence requires a parity-consistent margin;
+- `q734 Tessera Gradient` — conserved tile flow interacts with a macro window;
+- `q751 Tapestry Obligation` — thread debt follows identity through graph rewiring;
+- `q792 Semaphore Rhythm` — two tests ground a dual-clock signal interruption.
+
+Batch 78 consumes ten of the final twenty-nine GPT-ledger concepts. Its visual systems range from
+prism galleries and storm gardens to looms, tidal basins, workshops, aviaries, mosaics, and signal
+yards. The batch preserves the distinction between these GPT-authored games and the separate
+`a001`–`a200` Anthropic implementation queue.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
