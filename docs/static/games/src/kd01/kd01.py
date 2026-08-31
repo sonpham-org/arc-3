@@ -225,7 +225,10 @@ class Kd01Display(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
-        frame[:, :] = C_BLACK
+        # Palette: the corpus is 60.3% greyscale and this game was 78% pure black. Purple is
+        # 0.5% of official pixels, so a purple ground is both legible and unlike anything in
+        # the catalogue. The hub's colour states carry the HUD, so they stay untouched.
+        frame[:, :] = C_PURPLE
 
         # Budget bar. Neutral colour: the hub carries the affordance, not the bar.
         span = BAR_X1 - BAR_X0
@@ -322,7 +325,7 @@ class Kd01(ARCBaseGame):
         super().__init__(
             "kd",
             levels,
-            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
+            Camera(0, 0, 64, 64, C_PURPLE, C_PURPLE, [self.display]),
             False,
             len(levels),
             [5, 6],              # 6 = strike what you clicked, 5 = release the mechanism

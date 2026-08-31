@@ -185,12 +185,16 @@ class Hv01Display(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
-        frame[:, :] = C_BLACK
+        # Palette: the corpus is 60.3% greyscale and this game was 95% grey -- worse than
+        # the average it exists to differ from. Purple surround, maroon floor, orange
+        # stipple: all three are near-absent from the catalogue (maroon is 0.0% of official
+        # pixels), and the swarm/nodes keep their own hues so nothing loses meaning.
+        frame[:, :] = C_PURPLE
 
         # Floor: a dark field stippled at every cell corner, so the grid the swarm moves
         # on is legible without drawing lines that would read as objects.
-        frame[OY:OY + GRID_H * CELL, OX:OX + GRID_W * CELL] = C_VDGRAY
-        frame[OY:OY + GRID_H * CELL:CELL, OX:OX + GRID_W * CELL:CELL] = C_DGRAY
+        frame[OY:OY + GRID_H * CELL, OX:OX + GRID_W * CELL] = C_MAROON
+        frame[OY:OY + GRID_H * CELL:CELL, OX:OX + GRID_W * CELL:CELL] = C_ORANGE
 
         # Walls: brick, lit from the top-left so they read as solid mass.
         for (gx, gy) in g.walls:
@@ -202,14 +206,16 @@ class Hv01Display(RenderableUserDisplay):
             frame[py + CELL - 1, px:px + CELL] = C_DGRAY      # bottom shadow
             frame[py:py + CELL, px + CELL - 1] = C_DGRAY      # right shadow
 
+        # Hazards move maroon -> red with yellow flecks: maroon is now the floor, and a
+        # hazard drawn in the floor's own colour is invisible.
         for (gx, gy) in g.hazards:
             px, py = self._cell_px(gx, gy)
             if 0 <= px and 0 <= py and px + CELL <= 64 and py + CELL <= 64:
-                frame[py:py + CELL, px:px + CELL] = C_MAROON
-                frame[py, px + 1] = C_ORANGE
-                frame[py + 1, px + 3] = C_ORANGE
-                frame[py + 2, px] = C_ORANGE
-                frame[py + 3, px + 2] = C_ORANGE
+                frame[py:py + CELL, px:px + CELL] = C_RED
+                frame[py, px + 1] = C_YELLOW
+                frame[py + 1, px + 3] = C_YELLOW
+                frame[py + 2, px] = C_YELLOW
+                frame[py + 3, px + 2] = C_YELLOW
 
         # Source: a vent as tall as the swarm that leaves it, so the opening matches what
         # actually comes out instead of three organisms overlapping a one-cell hole.
@@ -324,7 +330,7 @@ class Hv01(ARCBaseGame):
         super().__init__(
             "hv",
             levels,
-            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
+            Camera(0, 0, 64, 64, C_PURPLE, C_PURPLE, [self.display]),
             False,
             len(levels),
             [5, 6],              # 5 = release the swarm, 6 = click to place/remove/select
