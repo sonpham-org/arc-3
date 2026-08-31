@@ -107,10 +107,16 @@ LEVELS = [
         # Two lives, not three: by this level the rule is known and aiming is deliberate,
         # so a human rarely mis-strikes, while blind striking dies twice as fast. Greens
         # are also narrowed and red coverage widened.
+        # A fourth green and a fourth red. Measured at ~1/250 with three greens and two
+        # lives: the aligned pair is one wide target, so a single lucky strike still bought
+        # two thirds of the level. Needing three separate hits, against more red coverage,
+        # is what closes it -- more required hits beats a tighter budget every time here.
         "name": "Double Tap",
-        "lives": 2, "budget": 64,
-        "arcs": [(0, 20, 5, -1, GREEN), (2, 20, 5, -1, GREEN), (1, 33, 4, 2, GREEN),
-                 (1, 40, 10, 0, RED), (1, 6, 10, 0, RED), (0, 44, 8, 0, RED)],
+        "lives": 2, "budget": 72,
+        "arcs": [(0, 20, 4, -1, GREEN), (2, 20, 4, -1, GREEN), (1, 33, 3, 2, GREEN),
+                 (0, 47, 3, -2, GREEN),
+                 (1, 40, 11, 0, RED), (1, 6, 11, 0, RED), (0, 44, 9, 0, RED),
+                 (2, 38, 10, 1, RED), (2, 4, 8, -1, RED)],
     },
     {
         # Third red added: with two, blind striking survived long enough to win ~1 in 181.
@@ -128,11 +134,16 @@ LEVELS = [
                  (0, 15, 8, 1, RED), (1, 31, 8, -1, RED), (2, 47, 8, 1, RED)],
     },
     {
-        "name": "Gauntlet",                     # five greens, three reds, all three rings
-        "lives": 3, "budget": 140,
+        # Two lives, not three, and a fourth red. This level had never actually been
+        # measured -- the broken detector reported it 0/2000 while detecting nothing,
+        # because the last level calls win() instead of advancing level_index. Its first
+        # real measurement was ~1/500.
+        "name": "Gauntlet",                     # five greens, four reds, all three rings
+        "lives": 2, "budget": 140,
         "arcs": [(0, 3, 5, 2, GREEN), (0, 30, 5, 2, GREEN), (1, 17, 5, -1, GREEN),
                  (2, 33, 5, 3, GREEN), (2, 50, 5, 3, GREEN),
-                 (1, 40, 7, 1, RED), (2, 10, 7, -2, RED), (0, 45, 6, -3, RED)],
+                 (1, 40, 7, 1, RED), (2, 10, 7, -2, RED), (0, 45, 6, -3, RED),
+                 (1, 5, 8, 2, RED)],
     },
 ]
 
