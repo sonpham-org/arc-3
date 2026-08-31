@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-two production waves now contain nine hundred nineteen cross-mechanic prototypes in addition
+The first ninety-three production waves now contain nine hundred twenty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch92-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch93-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1558,6 +1558,24 @@ Batch 92 shifts packing from occupied cells to visibility and future accessibili
 assignment arcade around genuinely global criteria. Its matching boards expose blocking pairs,
 composition quotas, phase changes, complementarities, envy, minimax cost, interval conflicts, and
 exchange cycles—failure modes that cannot be repaired by greedily choosing the nearest pair.
+
+Batch 93:
+
+- `a121 All But One` — acceptance depends on exactly one relational exception;
+- `a122 Between Lines` — a body must satisfy several ternary betweenness constraints at once;
+- `a123 Same Row Different Role` — team and behavioral-role equivalence live on orthogonal axes;
+- `a124 Exists Exactly One` — every green needs one red neighbor while a blue witness has none;
+- `a125 Nested Neighborhood` — room validity quantifies over marked neighbors of neighbors;
+- `a126 Relation Closure` — path reachability, rather than direct adjacency, determines shortcuts;
+- `a127 Triad Ban` — overlapping three-cell hyperedges forbid monochromatic triples;
+- `a128 Majority Relation` — moving a divider changes each simultaneous majority population;
+- `a129 Canonical Room` — an external anchor chooses one dihedral normal form;
+- `a130 Leader Tile` — an off-ring landmark permits a unique local-signal leader.
+
+Batch 93 turns the board into a logic diagram. Exact quantifiers, ternary relations, role binding,
+nested neighborhoods, closure, hyperedges, and simultaneous aggregation all require reasoning over
+sets of relations rather than objects in isolation. The final gallery and ring then make symmetry
+breaking explicit: equivalence alone is insufficient when the task demands a reproducible answer.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
