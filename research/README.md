@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-eight production waves now contain six hundred eighty cross-mechanic prototypes in addition
+The first sixty-nine production waves now contain six hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch68-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch69-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1128,6 +1128,25 @@ tasks compose local actions with precessing charts across demonstrations, advers
 simulation, analogy, evidence, identity, and macro-time. A spectrum laboratory adds conserved
 flow through rotating, capacity-limited channels. Dominant fields vary across blue, orange, pink,
 charcoal, silver, white, and black rather than sharing one dark or red canvas.
+
+Batch 69:
+
+- `q515 Waystation Frame` — local caravan motion composes with shifting dune frames and repetition counters;
+- `q545 Waystation Lesson` — conditional policy is separated from context switches and empty guide gestures;
+- `q575 Waystation Counter` — the last two treatments and corridor shifts shape a three-tactic rival;
+- `q605 Waystation Grammar` — paired glyphs compose through relays affected by recent group outputs;
+- `q644 Tessera Sandbox` — folded mosaic copies reset physically while their intervention evidence persists;
+- `q665 Waystation Analogy` — repetition-sensitive route transforms transfer from dunes to walkers;
+- `q695 Waystation Evidence` — threefold sampling repetition can invert evidence before safe stopping;
+- `q725 Waystation Gradient` — repeated routes shrink transfers through capacity-limited conserved bins;
+- `q755 Waystation Obligation` — repeated borrowing adds tolls to identity-bound delayed cargo debt;
+- `q785 Waystation Rhythm` — repeated macros alter the rival counter before a state-defined interruption.
+
+Batch 69 makes short behavioral history causal. Nine warm caravan tasks expose the previous two
+policies and require the solver to predict when repetition changes motion, instruction, opposition,
+syntax, analogy, evidence, flow, debt, or timing. A bright folding-mosaic sandbox contributes a
+different geometry for reset-persistent counterfactual evidence. Its thumbnails are checked against
+all earlier generated thumbnails, preventing a visually identical cross-batch starting state.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
