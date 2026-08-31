@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-three production waves now contain nine hundred twenty-nine cross-mechanic prototypes in addition
+The first ninety-four production waves now contain nine hundred thirty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch93-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch94-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1576,6 +1576,24 @@ Batch 93 turns the board into a logic diagram. Exact quantifiers, ternary relati
 nested neighborhoods, closure, hyperedges, and simultaneous aggregation all require reasoning over
 sets of relations rather than objects in isolation. The final gallery and ring then make symmetry
 breaking explicit: equivalence alone is insufficient when the task demands a reproducible answer.
+
+Batch 94:
+
+- `a131 Symmetry Breaker` — one marker changes a symmetric scanner into a complete traversal;
+- `a132 Orbit Representative` — generated transformation orbits require exactly one selection each;
+- `a133 Anonymous Robots` — environmental landmarks must create distinct local views before roles;
+- `a134 Tie Break` — a geometric cue gives identical agents the same canonical route;
+- `a135 Asymmetric Seed` — one seed class selects traveling growth over repeated collisions;
+- `a136 Normal Form` — oriented reversible rewrites must terminate at one representative;
+- `a137 Undo Group` — inferred inverse operations must be composed in reverse order;
+- `a138 Commutator Lock` — noncommutativity moves one hidden marker while preserving the rest;
+- `a139 Inverse Pair` — machine inverses are discovered by composition rather than appearance;
+- `a140 Conjugate Corridor` — entry and exit transforms transport a local move globally.
+
+Batch 94 makes asymmetry operational. Markers and landmarks are valuable only when they change
+traversal, orbit coverage, identity, consensus, or growth. The machine half then turns reversible
+transformations into an algebra: order, commutators, inverse identity, and change of basis are all
+observable constraints rather than labels on controls.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
