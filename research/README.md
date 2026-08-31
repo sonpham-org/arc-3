@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-two production waves now contain six hundred twenty cross-mechanic prototypes in addition
+The first sixty-three production waves now contain six hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch62-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch63-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1038,6 +1038,19 @@ Batch 62:
 - `q750 Spore Obligation` — identity debt is repaid only when clocks align;
 - `q779 Strata Rhythm` — timing knowledge persists after a physical probe is undone;
 - `q474 Honeycomb Dependency` — shared nectar prerequisites assemble at local-cycle boundaries.
+
+Batch 63:
+
+- `q551 Pollen Lesson` — a conditional policy is transferred across a visible wear-triggered complement;
+- `q581 Pollen Counter` — opponent shaping crosses a wear boundary that complements its update law;
+- `q611 Pollen Grammar` — grouped messages compose through a wear-complemented relay;
+- `q641 Pollen Sandbox` — simulation evidence persists while reset state crosses a rule change;
+- `q671 Pollen Analogy` — relational structure transfers after its mapping becomes the complement;
+- `q701 Pollen Evidence` — unequal samples support safe stopping across an evidence inversion;
+- `q731 Pollen Gradient` — conserved bloom mass moves through channels reversed by wear;
+- `q761 Pollen Obligation` — identity debt survives a wear-triggered exchange of visible positions;
+- `q791 Pollen Rhythm` — an autonomous period changes before a state-defined interruption window;
+- `q513 Murmuration Frame` — local flight composes with a rotating wake and a three-view parity audit.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

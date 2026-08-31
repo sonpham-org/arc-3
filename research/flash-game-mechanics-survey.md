@@ -580,6 +580,11 @@ policies, rival shaping, messages, conserved quantities, and identity-bound obli
 independently visible schedules. Honeycomb tasks separate local cycles from outer-clock state for
 simulation commitment, analogy transfer, confidence stopping, and dependency assembly. The quarry
 rhythm task adds reversible physical timing probes whose knowledge persists after restoration.
+Batch 63 makes a visible change point alter semantics instead of merely raising difficulty. Nine bright
+alpine-meadow tasks complement a policy, opponent law, relay, simulation interpretation, relation,
+evidence sign, flow direction, identity placement, or autonomous period after a wear boundary. The open
+aviary task composes local movement with a rotating frame and requires a three-view majority audit to
+reject one misleading parity observation before commitment.
 
 For later games, mechanic selection follows this sequence:
 
