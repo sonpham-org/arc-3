@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-six production waves now contain nine hundred fifty-nine cross-mechanic prototypes in addition
+The first ninety-seven production waves now contain nine hundred sixty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch96-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch97-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1630,6 +1630,24 @@ Batch 96 completes agency attribution with temporal credit and embodiment, then 
 boundaries deliberately nontrivial. Prototype overlap, oblique geometry, specificity, online drift,
 disjunction, context, structured absence, and modality transfer each invalidate a different familiar
 shortcut while remaining visibly grounded and intervention-testable.
+
+Batch 97:
+
+- `a161 Frontier Marks` — scarce markers preserve unresolved branches as explored passages fade;
+- `a162 Survey Ribbon` — complete island-boundary coverage penalizes repeated scanning;
+- `a163 Branch and Bound` — visible lower bounds justify abandoning dominated constructions;
+- `a164 Bidirectional Hunt` — reversible frontiers grow from start and target until they meet;
+- `a165 Landmark Search` — relational distance bands guide search through a repetitive map;
+- `a166 Iterative Deepening` — complete depth pulses trade discovery against exponential cost;
+- `a167 Symmetry Pruning` — one branch per rotational class replaces duplicate exploration;
+- `a168 Dynamic Frontier` — every inspection changes topology and reachable unknowns;
+- `a169 Same Future` — action-response equivalence merges appearance-different states;
+- `a170 Quotient Rooms` — repeated room transitions collapse into a smaller planning graph.
+
+Batch 97 treats search state as part of the puzzle rather than an invisible agent implementation
+detail. Frontiers, retrace cost, lower bounds, two-sided reachability, heuristic coordinates, depth,
+symmetry classes, and topology updates are all explicit. The closing pair then shows why abstraction
+must be behavioral: visual similarity is neither necessary nor sufficient for state equivalence.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
