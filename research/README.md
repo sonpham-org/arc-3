@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-one production waves now contain five hundred ten cross-mechanic prototypes in addition
+The first fifty-two production waves now contain five hundred twenty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch51-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch52-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -895,6 +895,19 @@ Batch 51:
 - `q414 Honeycomb Revision` — a worn scent law is recalibrated while two clocks advance;
 - `q444 Honeycomb Lineage` — courier ancestry survives transformations across nested cycles;
 - `q508 Breakwater Frame` — an early harbor intervention remains dormant through two solved subgoals.
+
+Batch 52:
+
+- `q227 Spectrum Veil` — attention-dependent packet updates preserve one relation across domains;
+- `q257 Spectrum Pact` — a hidden convention transfers from geometric panes to unrelated agents;
+- `q287 Spectrum Probe` — causal evidence shares an algebra across domains before irreversible repair;
+- `q317 Spectrum Ledger` — conserved packet stock survives a change of relational representation;
+- `q347 Spectrum Survey` — bounded evidence must cover relations rather than repeated surface samples;
+- `q355 Alloy Rig` — dual-effect foundry assembly is expressed in a translating, rotating frame;
+- `q385 Alloy Delegation` — controller marks are integrated after the local frame moves;
+- `q415 Alloy Revision` — a worn billet law is recalibrated in local rather than screen coordinates;
+- `q445 Alloy Lineage` — billet ancestry survives splits, merges, appearance swaps, and frame motion;
+- `q509 Strata Frame` — physical probe state can be undone while acquired knowledge persists.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

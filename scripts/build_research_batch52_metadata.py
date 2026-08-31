@@ -1,0 +1,30 @@
+"""Generate metadata, thumbnails, and the contact sheet for research Batch 52."""
+import hashlib,importlib.util,json
+from PIL import Image,ImageDraw
+from arcengine import ActionInput,GameAction
+from build_research_batch06_metadata import ROOT,SESSION,PAL
+CFG={
+"q227":("Spectrum Veil","observer-dependent-dynamics","attention-scheduled-packet-updates-with-cross-domain-relational-transfer","A black prism gallery uses three tall panes, moving packets, and relation anchors."),
+"q257":("Spectrum Pact","social-inference","hidden-offer-convention-transferred-between-geometry-and-agent-domains","A blue-violet prism court stacks three panes above offer, response, and domain rails."),
+"q287":("Spectrum Probe","causal-intervention","budgeted-causal-algebra-transfer-before-irreversible-prism-repair","A dark-blue prism diagnostic places three packet panes above evidence and repair bands."),
+"q317":("Spectrum Ledger","conservation-law-induction","conserved-packet-stock-through-cross-domain-relational-representation","A green prism ledger exposes three packet vaults, stock, domain, and relation bars."),
+"q347":("Spectrum Survey","epistemic-resource-allocation","bounded-relational-evidence-transferred-across-unrelated-domains","A red prism survey arranges three lens panes above evidence and policy rails."),
+"q355":("Alloy Rig","tool-construction","dual-effect-foundry-assembly-in-a-translating-rotating-local-frame","A gray magnetic workshop grows component towers beneath alternating force lanes."),
+"q385":("Alloy Delegation","distributed-partial-observability","controller-marks-integrated-across-moving-foundry-frames","A violet foundry splits two billet consoles beneath shared force lanes."),
+"q415":("Alloy Revision","nonstationary-rule-revision","wear-revised-billet-law-recalibrated-in-a-moving-frame","A pink foundry diagnostic couples three billet columns to wear and frame rails."),
+"q445":("Alloy Lineage","persistent-identity","split-merge-appearance-ancestry-through-moving-force-frames","An orange foundry field traces billet masks above selection and frame bars."),
+"q509":("Strata Frame","multi-scale-reference-frames","reversible-physical-probe-with-irreversible-persistent-knowledge","A rust-red quarry composes three crawler faults with knowledge and undo indicators.")}
+def load(c):
+ p=ROOT/"docs"/"static"/"games"/"src"/f"{c}-v1"/f"{c}.py";s=importlib.util.spec_from_file_location(c,p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return p,m
+def main():
+ games=[];out=ROOT/"research"/"games";out.mkdir(parents=True,exist_ok=True)
+ for c,(title,axis,primary,silhouette) in CFG.items():
+  p,m=load(c);h=hashlib.sha256(p.read_bytes()).hexdigest();rel=p.relative_to(ROOT).as_posix();names=[x["name"] for x in m.LEVELS];g=getattr(m,c.upper())();frame=g.perform_action(ActionInput(id=GameAction.RESET),raw=True).frame[-1];palette=sorted({int(v) for row in frame for v in row})
+  meta={"schema_version":1,"game_id":c,"version":"v1","internal_title":title,"public_title":None,"author_partition":"gpt","authorship":{"model_family":"OpenAI GPT-5","model_snapshot":"current Codex task model; exact deployment id not exposed to task","session_id":SESSION,"created_at":"2026-08-30T00:00:00Z","source_lineage":[f"research/gpt-ideas-v2.tsv:{c}"],"source_commit":None},"mechanics":{"primary":primary,"secondary":[axis,"cross-domain-frame-and-persistent-knowledge-composition"],"novelty_claim":names[-1],"closest_prior_art":["research/coverage-gap-study-v1.md","research/flash-game-mechanics-survey.md"]},"failure_modes":["copies surface features instead of transferring the shared relation","uses screen coordinates after the foundry frame moves","treats an undone physical probe as erasing the knowledge it produced"],"interface":{"actions":[1,2,3,4,5,6],"observation":"64x64x16","deterministic":True,"seeded_stochasticity":False},"progression":[{"level":i+1,"role":["orient","discriminate","plan","compose","inhibit","synthesize"][i],"new_demand":n,"composes":list(range(1,i+1))} for i,n in enumerate(names)],"visual_identity":{"dominant_palette":palette,"silhouette_grammar":silhouette,"spatial_grammar":silhouette,"motion_grammar":primary.replace("-"," "),"hud_grammar":"Colored domain, relation, evidence, rotation, translation, knowledge, probe, and undo rails expose state without text.","nearest_visual_games":[]},"evaluation":{"allowed_development_models":["deterministic-solvers","random-fuzzer","Qwen3.8 diagnostic only"],"held_out_evaluator":"anthropic","human_baseline_status":"not_started","held_out_status":"sealed"},"artifacts":{"source":rel,"metadata":f"research/games/{c}-v1.json","win_recording":f"research/recordings/{c}-v1-win.json","loss_recording":f"research/recordings/{c}-v1-loss.json","thumbnail":f"docs/static/img/games/{c}-v1.png","source_sha256":h},"status":"prototype"}
+  (out/f"{c}-v1.json").write_text(json.dumps(meta,indent=2)+"\n");im=Image.new("RGB",(64,64));im.putdata([PAL[int(v)] for row in frame for v in row]);im.save(ROOT/"docs"/"static"/"img"/"games"/f"{c}-v1.png",optimize=True);games.append({"game_id":c,"title":title,"axis":axis,"levels":6,"source_sha256":h})
+ path=ROOT/"research"/"gpt-batch52-v1.json";path.write_text(json.dumps({"schema_version":1,"batch_id":"gpt-batch52-v1","created_at":"2026-08-30T00:00:00Z","design":"Ten games coupling cross-domain relational transfer, moving local frames, and persistent knowledge to attention, convention, intervention, conservation, evidence, construction, delegation, revision, identity, and reference-frame reasoning.","games":games},indent=2)+"\n")
+ sheet=Image.new("RGB",(800,352),(242,242,246));d=ImageDraw.Draw(sheet)
+ for i,c in enumerate(CFG):
+  im=Image.open(ROOT/"docs"/"static"/"img"/"games"/f"{c}-v1.png").resize((128,128),Image.Resampling.NEAREST);x,y=(i%5)*160+16,(i//5)*176+12;sheet.paste(im,(x,y));d.text((x,y+136),c,fill=(28,28,36))
+ (ROOT/".cache").mkdir(exist_ok=True);sheet.save(ROOT/".cache"/"batch52-contact.png",optimize=True);print("10 metadata records",path)
+if __name__=="__main__":main()

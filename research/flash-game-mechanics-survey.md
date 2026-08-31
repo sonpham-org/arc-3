@@ -519,6 +519,11 @@ controllers with disjoint state and persistent marks. Five apiary tasks require 
 of a local action clock and an enclosing hive clock for sampling, construction, delegation, revision,
 and ancestry. The final modular-harbor frame retains an early intervention invisibly across two later
 subgoals before applying its delayed effect, testing causal memory rather than recency.
+Batch 52 makes relational transfer explicit in five prism tasks: the same algebra governs geometry and
+agents despite unrelated surface appearance. Four magnetic-foundry tasks then express assembly,
+delegation, revised rules, and ancestry in a local frame that translates and rotates between decisions.
+The quarry finale separates reversible physical state from irreversible information: undoing a probe
+restores the crawlers and fault frame but does not erase the observation already acquired.
 
 For later games, mechanic selection follows this sequence:
 
