@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-eight production waves now contain seven hundred eighty cross-mechanic prototypes in addition
+The first seventy-nine production waves now contain seven hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch78-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch79-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1314,6 +1314,25 @@ Batch 78 consumes ten of the final twenty-nine GPT-ledger concepts. Its visual s
 prism galleries and storm gardens to looms, tidal basins, workshops, aviaries, mosaics, and signal
 yards. The batch preserves the distinction between these GPT-authored games and the separate
 `a001`–`a200` Anthropic implementation queue.
+
+Batch 79:
+
+- `q560 Workbench Lesson` — contextual tool demonstrations separate null gestures from identity debt;
+- `q585 Vivarium Counter` — keeper adaptation depends on recent treatment and reciprocal fairness;
+- `q588 Escapement Counter` — diagnostic interventions distinguish clock faults before exploitation;
+- `q602 Lockwater Grammar` — grouped barge messages compose while causal identities cross;
+- `q615 Vivarium Grammar` — thermal syntax is interpreted through remembered reciprocity;
+- `q631 Tapestry Sandbox` — miniature loom resets preserve evidence before graph commitment;
+- `q642 Semaphore Sandbox` — two signal copies support one irreversible policy commit;
+- `q661 Tapestry Analogy` — crossing-thread relations transfer after adjacency rewires;
+- `q679 Monsoon Analogy` — storm relations transfer only at unequal phase pairs;
+- `q702 Semaphore Evidence` — reliability-weighted samples determine calibrated stopping.
+
+Batch 79 consumes ten more of the final GPT-ledger concepts, leaving nine for the eightieth wave.
+Its pale workshops, stacked terrariums, cobalt clocks, lilac canals, paired miniature systems,
+cream looms, peach weather panels, and gold signal towers use ten different canvas backgrounds.
+The sixth levels compose retained identity, adaptive state, persistent evidence, graph change,
+unequal timing, and stopping criteria rather than merely lengthening earlier action sequences.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
