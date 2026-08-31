@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-two production waves now contain eight hundred nineteen cross-mechanic prototypes in addition
+The first eighty-three production waves now contain eight hundred twenty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch82-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch83-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1386,6 +1386,23 @@ Batch 82 moves from fault localization into maintenance under continuity constra
 sensorimotor calibration. Its sixth levels jointly require action memory, deadline state, safe repair
 order, compatible substitution, geometric access, and learned control mappings rather than adding
 cosmetic obstacles to otherwise unchanged rules.
+
+Batch 83:
+
+- `a021 Delayed Rudder` — queued steering must anticipate a moving channel;
+- `a022 Gain Garden` — direction stays fixed while soil zones change push magnitude;
+- `a023 Dead Zone` — invisible subthreshold force accumulates before slider motion;
+- `a024 Crosswind Calibration` — sheltered trials separate commands from additive drift;
+- `a025 Which Hand` — neutral probes distinguish controlled and autonomous cursors;
+- `a026 Coupled Buttons` — floor buttons respond only to discoverable input chords;
+- `a027 Echo Effector` — delayed physical effects must be separated from decoy flashes;
+- `a028 Shared Pedal` — one pedal dynamically targets the lowest-pressure machine;
+- `a029 Latent Cursor` — selection remains bound after highlights vanish and objects cross;
+- `a030 Ownership Flash` — control rotation is inferred between sparse ownership markers.
+
+Batch 83 focuses on causal control binding. Progressive levels move from direct calibration to
+queued effects, hidden actuator state, dynamically reassigned recipients, and agency that must be
+maintained between observations. Ten background and spatial grammars keep those distinctions visual.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
