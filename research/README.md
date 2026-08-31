@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-one production waves now contain seven hundred ten cross-mechanic prototypes in addition
+The first seventy-two production waves now contain seven hundred twenty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch71-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch72-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1185,6 +1185,25 @@ completion update a visible outer dependency board, so solving the right subprob
 order can produce the wrong terminal state. Two saturated weather gardens test a different temporal
 abstraction: the useful event is identified by a pair of unequal clock phases, not by a fixed action
 count. Initial thumbnails remain globally collision-checked against earlier generated games.
+
+Batch 72:
+
+- `q526 Crossing Frame` — ferry motion crosses local dock frames through mandatory marked handoffs;
+- `q555 Vivarium Lesson` — fair and unfair demonstrations reveal a reciprocal partner policy;
+- `q586 Crossing Counter` — controller-specific treatments jointly shape a three-tactic ferry rival;
+- `q616 Crossing Grammar` — disjoint glyph buffers compose through persistent nonverbal marks;
+- `q646 Crossing Sandbox` — ferry copies reset while cross-controller simulation evidence persists;
+- `q675 Vivarium Analogy` — temperature relations transfer through a fairness-dependent partner policy;
+- `q706 Crossing Evidence` — safe stopping combines unequal samples from two controller projections;
+- `q736 Crossing Gradient` — conserved passenger flow crosses controller-specific capacity edges;
+- `q766 Crossing Obligation` — identity-bound fare debt is repaid using marked disjoint views;
+- `q796 Crossing Rhythm` — two clock projections must be shared before a ferry macro is interrupted.
+
+Batch 72 makes partial observability social rather than merely hidden. Eight vivid ferry tasks split
+the relevant state between alternating controllers; switching without first leaving a persistent mark
+is illegal, and later solutions must integrate several marks under capacity, evidence, identity, or
+timing constraints. Two stacked terrariums test reciprocity and relational transfer under a partner
+policy that changes with remembered fairness. Global thumbnail-collision checks remain mandatory.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
