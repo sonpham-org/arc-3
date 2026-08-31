@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-nine production waves now contain nine hundred eighty-nine cross-mechanic prototypes in addition
+The first one hundred production waves now contain nine hundred ninety-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch99-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch100-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1684,6 +1684,24 @@ Batch 99 completes the proof-artifact family with path certificates, minimal obs
 universal tests, and local constructive checks. It then makes communication failure observable:
 erasure, path loss, burst corruption, frame drift, lost acknowledgements, and simultaneous sensor
 faults each require a different recovery invariant rather than blind repetition.
+
+Batch 100:
+
+- `a191 Interleaved Message` — pilot phase separates two alternating senders on one lane;
+- `a192 Self-Clocking Path` — transition-dense encoding recovers timing without a shared clock;
+- `a193 Hot Swap` — a synchronized bypass replaces a module without stopping live flow;
+- `a194 Bus Backplane` — explicit slots arbitrate several modules on one shared interface;
+- `a195 Interface Adapter` — a minimal converter chain reconciles shape, direction, and pulse;
+- `a196 Module Polarity` — orientation changes both function and neighboring compatibility;
+- `a197 Reconfigurable Cell` — one programmed substrate processes several sequential inputs;
+- `a198 Shared Resource` — layout and schedule jointly move one unique toolhead among modules;
+- `a199 Capability Graph` — demonstrated effects compose into a minimal dependency network;
+- `a200 Fault-Tolerant Assembly` — every possible single post-construction failure is tested.
+
+Batch 100 closes the 1,000-game production target. Its communication pair completes ownership and
+clock recovery; its modular systems make reconfiguration a live constraint rather than a static
+assembly exercise. The final universal failure test prevents decorative redundancy and requires
+the machine to retain function no matter which individual component is disabled.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
