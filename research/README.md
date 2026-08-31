@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-seven production waves now contain nine hundred sixty-nine cross-mechanic prototypes in addition
+The first ninety-eight production waves now contain nine hundred seventy-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch97-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch98-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1648,6 +1648,24 @@ Batch 97 treats search state as part of the puzzle rather than an invisible agen
 detail. Frontiers, retrace cost, lower bounds, two-sided reachability, heuristic coordinates, depth,
 symmetry classes, and topology updates are all explicit. The closing pair then shows why abstraction
 must be behavioral: visual similarity is neither necessary nor sufficient for state equivalence.
+
+Batch 98:
+
+- `a171 Irrelevant Paint` — scarce memory must reject fast-changing decorative nuisance state;
+- `a172 Minimal Memory` — one sufficient statistic replaces replay of the whole event stream;
+- `a173 Predictive Partition` — bins are judged by future consistency under every action;
+- `a174 Bisimulation Bridge` — paired cross-world states must match transitions reciprocally;
+- `a175 Macro State` — fast particle cycles share a slower controllable machine mode;
+- `a176 Alias Breaker` — one added feature splits only the invalid history alias;
+- `a177 Constructive Gate` — success requires synthesizing a fresh relational witness;
+- `a178 Counterexample Garden` — a minimal plant edit falsifies a universal growth claim;
+- `a179 Invariant Witness` — a compact parity or connectivity certificate proves impossibility;
+- `a180 Unsat Core` — the smallest contradictory constraint subset explains failure.
+
+Batch 98 finishes the abstraction queue by emphasizing predictive sufficiency and minimal refinement.
+It then changes the output contract from classification to evidence: a player must build a witness,
+construct a falsifier, exhibit an invariant, or isolate a minimal conflict. Correct recognition without
+a visible certificate is intentionally insufficient.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
