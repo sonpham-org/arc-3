@@ -434,12 +434,20 @@ class Gn01Display(RenderableUserDisplay):
         frame[:, :] = C_FIELD
 
         # -- budget bar: length is the signal, colour is the second, redundant one -------
-        span = BAR_X1 - BAR_X0
-        frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X1] = C_VDGRAY
-        if g.budget_max > 0 and g.budget_left > 0:
-            filled = max(1, int(span * g.budget_left / g.budget_max))
+        # No budget BAR. The remaining budget is the border frame around the whole board,
+        # which erodes clockwise from the top-left as it is spent -- a world object that
+        # recedes, the way G50T and TN36 handle their timers, rather than a strip of
+        # furniture. The ARC-3 team's note was that our games all shared the same top bar,
+        # so a set of six was really testing one presentation six times.
+        perim = [(0, x) for x in range(GRID)] \
+            + [(y, GRID - 1) for y in range(1, GRID)] \
+            + [(GRID - 1, x) for x in range(GRID - 2, -1, -1)] \
+            + [(y, 0) for y in range(GRID - 2, 0, -1)]
+        if g.budget_max > 0:
+            keep = max(0, min(len(perim), int(len(perim) * g.budget_left / g.budget_max)))
             colour = C_BAR_OK if g.budget_left * 3 > g.budget_max else C_BAR_LOW
-            frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X0 + filled] = colour
+            for i, (py, px) in enumerate(perim):
+                frame[py, px] = colour if i < keep else C_VDGRAY
 
         # -- life pips ------------------------------------------------------------------
         for i in range(g.lives_max):

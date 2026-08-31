@@ -234,10 +234,25 @@ class Kd01Display(RenderableUserDisplay):
 
         # Budget bar. Neutral colour: the hub carries the affordance, not the bar.
         span = BAR_X1 - BAR_X0
+        # Budget is shown as MULTI-LAP COLOUR TIERS, not a draining line: a short track that
+        # refills and changes colour each lap, so a handful of pixels encodes a long budget.
+        # Borrowed from how AR25/BP35/LF52 pack 640 actions into 64 pixels. Deliberately
+        # unlike the other games in this set -- the ARC-3 team's note was that shared
+        # furniture makes a whole set test one presentation over and over.
+        TIERS = (C_GREEN, C_YELLOW, C_ORANGE, C_RED)
+        LAP = 8                                    # actions represented per lap
         frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X1] = C_DGRAY
         if g.budget_max > 0 and g.budget_left > 0:
-            filled = max(1, int(span * g.budget_left / g.budget_max))
-            frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X0 + filled] = C_LGRAY
+            laps_left = (g.budget_left - 1) // LAP           # 0 = final lap
+            within = g.budget_left - laps_left * LAP         # 1..LAP
+            tier = TIERS[min(laps_left, len(TIERS) - 1)]
+            seg = max(1, int((BAR_X1 - BAR_X0) * within / LAP))
+            frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X0 + seg] = tier
+            # a tick per remaining lap, so the tier is countable and not just a hue
+            for i in range(min(laps_left, 7)):
+                tx = BAR_X0 + i * 3
+                if tx < BAR_X1:
+                    frame[BAR_Y + 2, tx] = tier
 
         # Strip rows. Dark while the mechanism is armed on levels that hide it: you cannot
         # look the answer up again without first breaking your run.
