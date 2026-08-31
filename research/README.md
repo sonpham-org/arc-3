@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-one production waves now contain eight hundred nine cross-mechanic prototypes in addition
+The first eighty-two production waves now contain eight hundred nineteen cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch81-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch82-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1368,6 +1368,24 @@ Batch 81:
 Batch 81 begins the `a` queue while preserving two separate provenance facts: every concept keeps
 its `gpt-seeded-anthropic-build` source lineage, and these concrete implementations are recorded as
 GPT-authored rather than falsely attributed to Anthropic. Their held-out evaluator remains Anthropic.
+
+Batch 82:
+
+- `a011 Fuse Surgeon` — containment cuts and one bridge preserve a powered district;
+- `a012 Maintenance Window` — preventive service competes across phase-limited openings;
+- `a013 Cannibal Workshop` — a donor device supplies compatible modules to a required subset;
+- `a014 Sealant Trail` — wet repairs change future drone access while pressure reactivates;
+- `a015 Calibration Crew` — two machines cross-measure under temporary tolerance limits;
+- `a016 Graceful Degradation` — optional functions are dropped to preserve steering and braking;
+- `a017 Bent Compass` — observed displacements reveal a reflected and rotated control map;
+- `a018 Reversed Joint` — separate joint mappings compose into an end-effector model;
+- `a019 Sticky Controls` — persistent commands require anticipatory opposite-input braking;
+- `a020 Mixed Axes` — horizontal and vertical remappings factor across floor regions.
+
+Batch 82 moves from fault localization into maintenance under continuity constraints and then into
+sensorimotor calibration. Its sixth levels jointly require action memory, deadline state, safe repair
+order, compatible substitution, geometric access, and learned control mappings rather than adding
+cosmetic obstacles to otherwise unchanged rules.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
