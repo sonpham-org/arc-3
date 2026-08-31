@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-nine production waves now contain seven hundred ninety cross-mechanic prototypes in addition
+The first eighty production waves now contain seven hundred ninety-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch79-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch80-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1333,6 +1333,23 @@ Its pale workshops, stacked terrariums, cobalt clocks, lilac canals, paired mini
 cream looms, peach weather panels, and gold signal towers use ten different canvas backgrounds.
 The sixth levels compose retained identity, adaptive state, persistent evidence, graph change,
 unequal timing, and stopping criteria rather than merely lengthening earlier action sequences.
+
+Batch 80:
+
+- `q704 Tessera Evidence` — weighted seam evidence composes with a fold-macro interruption;
+- `q708 Escapement Evidence` — exclusive interventions localize a fault across nested phases;
+- `q709 Monsoon Evidence` — sample reliability depends on unequal weather-clock pairs;
+- `q732 Semaphore Gradient` — conserved signal mass crosses capacity-limited relays;
+- `q735 Vivarium Gradient` — conserved fauna flow depends on thermal capacity and trust;
+- `q764 Tessera Obligation` — mosaic debt follows identity through seams and macro timing;
+- `q765 Vivarium Obligation` — fauna debt survives strata swaps and reciprocal updates;
+- `q770 Workbench Obligation` — tool debt follows helper identity through reconfiguration;
+- `q797 Spectrum Rhythm` — a prism macro is interrupted at a relational phase event.
+
+Batch 80 is intentionally a nine-game ledger boundary rather than mixing authorship lineages.
+Together with `q001 Quiet Field`, it completes all 800 implemented q-ledger concepts. The next
+200 implementation slots correspond to `a001`–`a200`, whose `gpt-seeded-anthropic-build`
+concept lineage must remain explicit even if implementation and evaluation provenance differ.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
