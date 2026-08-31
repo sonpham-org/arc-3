@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-two production waves now contain seven hundred twenty cross-mechanic prototypes in addition
+The first seventy-three production waves now contain seven hundred thirty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch72-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch73-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1204,6 +1204,25 @@ the relevant state between alternating controllers; switching without first leav
 is illegal, and later solutions must integrate several marks under capacity, evidence, identity, or
 timing constraints. Two stacked terrariums test reciprocity and relational transfer under a partner
 policy that changes with remembered fairness. Global thumbnail-collision checks remain mandatory.
+
+Batch 73:
+
+- `q527 Spectrum Frame` — packets compose motion through rotating and translating prism frames;
+- `q558 Escapement Lesson` — contextual demonstrations separate diagnostic probes from a null gesture;
+- `q590 Workbench Counter` — the last two tool treatments shape a visible three-tactic rival;
+- `q617 Spectrum Grammar` — grouped color packets compose through meaning-changing prism relays;
+- `q648 Escapement Sandbox` — physical clock trials reset while diagnostic evidence persists;
+- `q678 Escapement Analogy` — gear-gap relations transfer to weights across fault rotations;
+- `q710 Workbench Evidence` — unequal tool tests update a bounded margin and sampling cost;
+- `q740 Workbench Gradient` — conserved tool mass flows through phase-dependent fixture capacities;
+- `q767 Spectrum Obligation` — photon debt follows causal identity through packet exchanges;
+- `q798 Escapement Rhythm` — nested gear cycles require a state-defined interruption phase pair.
+
+Batch 73 changes the material vocabulary again: high-contrast prism galleries, nested clock towers,
+and warm mobile workshops replace ferries and terrariums. The ten tasks distinguish screen position
+from moving frames, surface imitation from conditional policy, physical resets from persistent
+knowledge, and visible objects from causal identities. Their six-level curricula add relays, rival
+memory, experiment histories, conservation, obligation, and nested time progressively.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
