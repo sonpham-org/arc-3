@@ -514,6 +514,11 @@ causal repair all alter or depend on remembered partner treatment. Six kiln task
 transformation, sampling, construction, communication, recalibration, and ancestry against the same
 finite fuel used for terminal progress. The closing orchard frame adds an independent bottleneck:
 globally valid exchanges can still deadlock when a narrow intermediate store is filled out of order.
+Batch 51 distributes ferry attention, conventions, causal evidence, and conserved stock across
+controllers with disjoint state and persistent marks. Five apiary tasks require simultaneous tracking
+of a local action clock and an enclosing hive clock for sampling, construction, delegation, revision,
+and ancestry. The final modular-harbor frame retains an early intervention invisibly across two later
+subgoals before applying its delayed effect, testing causal memory rather than recency.
 
 For later games, mechanic selection follows this sequence:
 

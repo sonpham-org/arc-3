@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty production waves now contain five hundred cross-mechanic prototypes in addition
+The first fifty-one production waves now contain five hundred ten cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch50-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch51-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -882,6 +882,19 @@ Batch 50:
 - `q413 Ember Revision` — sparse recalibration of a worn heat law is priced against repair fuel;
 - `q443 Ember Lineage` — split, merge, appearance, and ancestry operations deplete one reserve;
 - `q507 Canopy Frame` — moving orchard frames compose through a capacity-limited intermediate store.
+
+Batch 51:
+
+- `q226 Crossing Veil` — attention scheduling across capped docks is split between marked controllers;
+- `q256 Crossing Pact` — a hidden offer convention is inferred from two controller projections;
+- `q286 Crossing Probe` — controller-specific causal evidence precedes one irreversible ferry repair;
+- `q316 Crossing Ledger` — conserved passenger stock moves through capped, partially observed docks;
+- `q324 Honeycomb Survey` — bounded scent evidence must be interpreted across local and hive clocks;
+- `q354 Honeycomb Rig` — assembly effects depend on both the current action cycle and enclosing cycle;
+- `q384 Honeycomb Delegation` — alternating controller marks are integrated under nested clocks;
+- `q414 Honeycomb Revision` — a worn scent law is recalibrated while two clocks advance;
+- `q444 Honeycomb Lineage` — courier ancestry survives transformations across nested cycles;
+- `q508 Breakwater Frame` — an early harbor intervention remains dormant through two solved subgoals.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
