@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-one production waves now contain nine hundred nine cross-mechanic prototypes in addition
+The first ninety-two production waves now contain nine hundred nineteen cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch91-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch92-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1540,6 +1540,24 @@ Batch 91 closes the remaining wave-boundary queue with aperture, transmission, r
 dispersion systems, then opens a packing sequence whose constraints live across projections,
 hierarchies, cut trees, configuration-space paths, and time. The two visual families deliberately
 use separate laboratory and studio grammars while retaining distinct background palettes per game.
+
+Batch 92:
+
+- `a111 Occlusion Cover` — screens must hide fragile cells without blocking every solar phase;
+- `a112 Layered Bin` — dense depth packing must preserve a specified retrieval order;
+- `a113 Stable Pairing` — a matching fails whenever an unmatched pair would mutually defect;
+- `a114 Capacity Match` — many-to-one assignments combine capacity with mixed-skill quotas;
+- `a115 Rotating Assignment` — compatibility changes between phases under a recourse budget;
+- `a116 Complement Market` — joint bundle value makes independent item routing misleading;
+- `a117 Fair Split` — inferred valuations determine envy, not equal object counts;
+- `a118 Bottleneck Match` — the worst carrier time matters more than total travel;
+- `a119 Temporal Booking` — room equipment and interval overlap constrain the same assignment;
+- `a120 Chain Exchange` — simultaneous cycles clear desires that bilateral swaps cannot.
+
+Batch 92 shifts packing from occupied cells to visibility and future accessibility, then builds an
+assignment arcade around genuinely global criteria. Its matching boards expose blocking pairs,
+composition quotas, phase changes, complementarities, envy, minimax cost, interval conflicts, and
+exchange cycles—failure modes that cannot be repaired by greedily choosing the nearest pair.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
