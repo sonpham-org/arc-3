@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-four production waves now contain seven hundred forty cross-mechanic prototypes in addition
+The first seventy-five production waves now contain seven hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch74-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch75-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1242,6 +1242,24 @@ canals, open aviaries, a reset laboratory, a tidal basin, and a terraced orchard
 silhouettes and palettes. Across the curricula, topology changes, opponent memory, parity, persistent
 knowledge, irreversible commitment, conservation, identity debt, and nested clocks become jointly
 necessary rather than decorative state variables.
+
+Batch 75:
+
+- `q522 Semaphore Frame` — flag motion composes across moving relay frames and miniature tests;
+- `q534 Honeycomb Lesson` — contextual courier demonstrations reveal a two-clock policy;
+- `q582 Semaphore Counter` — recent treatments shape a rival across two visible testbeds;
+- `q612 Semaphore Grammar` — grouped flag messages compose before tested policy commitment;
+- `q622 Tide Sandbox` — shell state resets while observed current evidence persists;
+- `q663 Murmuration Analogy` — geometric relations transfer to flocks under parity constraints;
+- `q682 Tide Evidence` — unequal current samples update a costed stopping margin;
+- `q714 Honeycomb Gradient` — conserved nectar crosses capacity edges under two clocks;
+- `q762 Semaphore Obligation` — signal debt follows flag identity through relay tests;
+- `q772 Tide Rhythm` — a reversing-current macro waits for a safe interruption window.
+
+Batch 75 foregrounds visible information systems. Cliff semaphores expose relay frames and miniature
+policy tests, apiaries separate courier time from colony time, tidal basins distinguish reversible
+physical trials from persistent evidence, and a flock analogy adds a redundant parity constraint.
+The final levels require combining these state channels rather than solving independent subpuzzles.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
