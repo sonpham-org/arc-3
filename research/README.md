@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-three production waves now contain eight hundred twenty-nine cross-mechanic prototypes in addition
+The first eighty-four production waves now contain eight hundred thirty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch83-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch84-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1403,6 +1403,23 @@ Batch 83:
 Batch 83 focuses on causal control binding. Progressive levels move from direct calibration to
 queued effects, hidden actuator state, dynamically reassigned recipients, and agency that must be
 maintained between observations. Ten background and spatial grammars keep those distinctions visual.
+
+Batch 84:
+
+- `a031 Branching Actuator` — hidden lever mode is entangled with changing branch geometry;
+- `a032 Command Arbitration` — a stable priority rule resolves three simultaneous controllers;
+- `a033 Twin Stacks` — two top-only wells provide LIFO routing and temporary storage;
+- `a034 Queue Garden` — FIFO seed order composes with channel-specific latency;
+- `a035 Ring Buffer` — bounded writes overwrite the oldest tile at a rotating head;
+- `a036 Stable Sorter` — equal-size crates must preserve their arrival order;
+- `a037 Heap Orchard` — local swaps restore a max-heap after repeated harvests;
+- `a038 Deque Ferry` — cargo is served through controllable ends and a locked interior;
+- `a039 Register Swap` — one short permutation program generalizes across inputs;
+- `a040 Tape Head` — a finite-state transition table separates control from tape state.
+
+Batch 84 introduces explicit algorithmic memory. Its visual legends expose top access, FIFO order,
+eviction, stable ties, structural invariants, restricted ends, reusable programs, and finite-state
+transitions from the initial frame so the difficulty comes from state reasoning rather than ambiguity.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
