@@ -90,16 +90,23 @@ LEVELS = [
     {
         # NEW: two greens hold the same angle on different rings, so one strike takes both
         # -- and the budget only closes if it does.
+        # A third green off the shared angle: with only the aligned pair, one lucky strike
+        # cleared the whole level and random play won ~1 in 36. Needing a second, separate
+        # hit takes it to zero.
+        # Two lives, not three: by this level the rule is known and aiming is deliberate,
+        # so a human rarely mis-strikes, while blind striking dies twice as fast. Greens
+        # are also narrowed and red coverage widened.
         "name": "Double Tap",
-        "lives": 3, "budget": 56,
-        "arcs": [(0, 20, 7, -1, GREEN), (2, 20, 7, -1, GREEN),
-                 (1, 40, 6, 0, RED), (1, 8, 6, 0, RED)],
+        "lives": 2, "budget": 64,
+        "arcs": [(0, 20, 5, -1, GREEN), (2, 20, 5, -1, GREEN), (1, 33, 4, 2, GREEN),
+                 (1, 40, 10, 0, RED), (1, 6, 10, 0, RED), (0, 44, 8, 0, RED)],
     },
     {
+        # Third red added: with two, blind striking survived long enough to win ~1 in 181.
         "name": "Three Rings",                  # NEW: the third radius joins in
-        "lives": 3, "budget": 96,
-        "arcs": [(0, 4, 6, 2, GREEN), (1, 20, 6, -1, GREEN), (2, 36, 6, 1, GREEN),
-                 (0, 28, 6, -2, RED), (2, 52, 6, -1, RED)],
+        "lives": 2, "budget": 96,
+        "arcs": [(0, 4, 5, 2, GREEN), (1, 20, 5, -1, GREEN), (2, 36, 5, 1, GREEN),
+                 (0, 28, 8, -2, RED), (2, 52, 8, -1, RED), (1, 44, 8, 1, RED)],
     },
     {
         # NEW: reds sit immediately beside greens, so the bar must land in a narrow window
