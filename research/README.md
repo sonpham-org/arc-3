@@ -228,10 +228,11 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty production waves now contain seven hundred ninety-nine cross-mechanic prototypes in addition
+The first eighty-one production waves now contain eight hundred nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch80-v1.json` are the content-hashed batch manifests. Each wave samples
-ten capability families instead of filling one adjacent family at a time.
+`research/gpt-batch81-v1.json` are the content-hashed batch manifests. Each full wave samples
+ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
+nine-game boundary that closes the q-ledger exactly.
 
 Batch 01:
 
@@ -1350,6 +1351,23 @@ Batch 80 is intentionally a nine-game ledger boundary rather than mixing authors
 Together with `q001 Quiet Field`, it completes all 800 implemented q-ledger concepts. The next
 200 implementation slots correspond to `a001`–`a200`, whose `gpt-seeded-anthropic-build`
 concept lineage must remain explicit even if implementation and evaluation provenance differ.
+
+Batch 81:
+
+- `a001 Dead Bulb Atlas` — discriminating junction pulses localize a branching-circuit fault;
+- `a002 Crosstalk Cart` — simultaneous motion reveals an interaction-only shared control line;
+- `a003 False Floor Clinic` — deformation fields identify a support rather than the largest sag;
+- `a004 Stuck Gear Census` — multi-input tests separate a jammed axle from backlash;
+- `a005 Leaking Loop` — movable gauges triangulate a leak from conservation residuals;
+- `a006 One-Sided Hinge` — opposed marble launches reveal a directional mechanical fault;
+- `a007 Phantom Load` — controlled weights expose a hidden beam attachment through coupling;
+- `a008 Cascade Autopsy` — freeze-per-replay evidence separates deviation from downstream alarms;
+- `a009 Patch Cable` — a temporary bypass preserves service during live edge replacement;
+- `a010 Spare Path` — one reusable track tile supports preventive maintenance scheduling.
+
+Batch 81 begins the `a` queue while preserving two separate provenance facts: every concept keeps
+its `gpt-seeded-anthropic-build` source lineage, and these concrete implementations are recorded as
+GPT-authored rather than falsely attributed to Anthropic. Their held-out evaluator remains Anthropic.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

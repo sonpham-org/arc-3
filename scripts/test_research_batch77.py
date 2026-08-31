@@ -38,10 +38,10 @@ def test_batch77_visuals():
  hashes=[];backgrounds=[]
  for c in CODES:
   m=load(c);g=getattr(m,c.upper())();r=g.perform_action(ActionInput(id=GameAction.RESET),raw=True);a=np.asarray(r.frame[-1]);hashes.append(dig(r));backgrounds.append(int(a[0,0]));assert len(np.unique(a))>=5
- assert len(set(hashes))==10 and len(set(backgrounds))==10
- prior={hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/"docs"/"static"/"img"/"games").glob("q*-v1.png") if p.stem.split("-",1)[0] not in CODES}
+ assert len(set(hashes))==len(CODES) and len(set(backgrounds))==len(CODES)
+ prior={hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/"docs"/"static"/"img"/"games").glob("*-v1.png") if p.stem.split("-",1)[0] not in CODES}
  current=[hashlib.sha256((ROOT/"docs"/"static"/"img"/"games"/f"{c}-v1.png").read_bytes()).hexdigest() for c in CODES]
- assert len(set(current))==10 and not prior.intersection(current)
+ assert len(set(current))==len(CODES) and not prior.intersection(current)
 def test_batch77_artifacts():
  b=json.loads((ROOT/"research"/"gpt-batch77-v1.json").read_text());assert[x["game_id"] for x in b["games"]]==CODES
  for x in b["games"]:

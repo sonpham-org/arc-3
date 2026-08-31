@@ -3,14 +3,22 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = 1000
 
 
+def game_order(path: Path):
+    match = re.fullmatch(r"([qa])(\d+)-v\d+\.json", path.name)
+    if not match:
+        return (2, 10**9, path.name)
+    return (0 if match.group(1) == "q" else 1, int(match.group(2)), path.name)
+
+
 def main():
     records = []
-    for path in sorted((ROOT / "research" / "games").glob("q*-v1.json")):
+    for path in sorted((ROOT / "research" / "games").glob("*-v1.json"), key=game_order):
         metadata = json.loads(path.read_text(encoding="utf-8"))
         if metadata.get("artifacts", {}).get("source") and (ROOT / metadata["artifacts"]["source"]).exists():
             records.append(metadata)
