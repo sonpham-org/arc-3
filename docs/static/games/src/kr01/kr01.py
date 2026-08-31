@@ -276,13 +276,13 @@ class Kr01Display(RenderableUserDisplay):
             return
         jammed = state == "jam"
         if style == STYLE_SOLID:
-            self._blit(frame, x, y, shape_mask(shape, size), C_MAROON if jammed else C_GRAY)
+            self._blit(frame, x, y, shape_mask(shape, size), C_RED if jammed else C_GRAY)
         elif style == STYLE_OUTLINE:
             self._frame_box(frame, x, y, size, size, C_VDGRAY)
             self._blit(frame, x, y, shape_outline(shape, size),
-                       C_MAROON if jammed else C_LGRAY)
+                       C_RED if jammed else C_LGRAY)
         else:                                            # STYLE_INVERT
-            self._rect(frame, x, y, size, size, C_MAROON if jammed else C_DGRAY)
+            self._rect(frame, x, y, size, size, C_RED if jammed else C_DGRAY)
             self._blit(frame, x, y, shape_mask(shape, size), C_BLACK)
 
     # -- whole frame --------------------------------------------------------
@@ -316,7 +316,9 @@ class Kr01Display(RenderableUserDisplay):
                     self._blit(frame, x, y, shape_mask(pad["shape"], CELL), pad["found"])
                     self._frame_box(frame, x - 1, y - 1, CELL + 2, CELL + 2, C_WHITE)
                 else:
-                    ink = C_MAROON if g.bench_flash == i else C_LGRAY
+                    # red, not maroon: maroon is now the ground, so a maroon reject flash
+                    # would be invisible -- and this flash is the bench's only feedback
+                    ink = C_RED if g.bench_flash == i else C_LGRAY
                     self._blit(frame, x, y, shape_mask(pad["shape"], CELL), ink)
 
         # Sockets.
