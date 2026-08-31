@@ -575,6 +575,11 @@ terminal policy, counter, analogy, confidence decision, obligation, rhythm windo
 A quarry grammar preserves composed meaning after restoration; a greenhouse sandbox admits commitment
 only when unequal autonomous clocks share a sparse event; and an orchard gradient couples conserved
 quantity control to capacity-sensitive seasonal ordering.
+Batch 62 makes sparse shared events the common coordination bottleneck. Glass-greenhouse tasks couple
+policies, rival shaping, messages, conserved quantities, and identity-bound obligations to two
+independently visible schedules. Honeycomb tasks separate local cycles from outer-clock state for
+simulation commitment, analogy transfer, confidence stopping, and dependency assembly. The quarry
+rhythm task adds reversible physical timing probes whose knowledge persists after restoration.
 
 For later games, mechanic selection follows this sequence:
 

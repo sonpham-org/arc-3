@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-one production waves now contain six hundred ten cross-mechanic prototypes in addition
+The first sixty-two production waves now contain six hundred twenty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch61-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch62-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1025,6 +1025,19 @@ Batch 61:
 - `q748 Breakwater Obligation` — the first creditor wakes after two tasks and constrains repayment by identity;
 - `q778 Breakwater Rhythm` — a timing offset activates only after two completed routines;
 - `q478 Breakwater Dependency` — one delayed key governs every later terminal assembly.
+
+Batch 62:
+
+- `q540 Spore Lesson` — conditional policy transfer is coordinated at sparse unequal-clock events;
+- `q570 Spore Counter` — repeated shaping rounds align autonomous treatment clocks;
+- `q600 Spore Grammar` — grouped messages are relayed only at shared schedule events;
+- `q624 Honeycomb Sandbox` — simulation evidence survives resets until nested-clock commitment;
+- `q654 Honeycomb Analogy` — relation transfer occurs only at local and outer-clock boundaries;
+- `q684 Honeycomb Evidence` — safe stopping is constrained to nested-clock boundaries;
+- `q720 Spore Gradient` — conserved distribution reaches a phase threshold at unequal-clock alignment;
+- `q750 Spore Obligation` — identity debt is repaid only when clocks align;
+- `q779 Strata Rhythm` — timing knowledge persists after a physical probe is undone;
+- `q474 Honeycomb Dependency` — shared nectar prerequisites assemble at local-cycle boundaries.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
