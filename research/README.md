@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-three production waves now contain seven hundred thirty cross-mechanic prototypes in addition
+The first seventy-four production waves now contain seven hundred forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch73-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch74-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1223,6 +1223,25 @@ and warm mobile workshops replace ferries and terrariums. The ten tasks distingu
 from moving frames, surface imitation from conditional policy, physical resets from persistent
 knowledge, and visible objects from causal identities. Their six-level curricula add relays, rival
 memory, experiment histories, conservation, obligation, and nested time progressively.
+
+Batch 74:
+
+- `q524 Tessera Frame` — tessera motion composes across rotating and topology-changing seams;
+- `q541 Tapestry Lesson` — contextual demonstrations reveal a policy that rewires the loom;
+- `q572 Lockwater Counter` — a rival adapts while barges swap appearance but retain identity;
+- `q603 Murmuration Grammar` — grouped flock messages use parity to expose a decoy symbol;
+- `q632 Lockwater Sandbox` — canal state resets while identity-indexed wake evidence persists;
+- `q652 Tide Analogy` — reversing-current relations transfer before an irreversible gate;
+- `q692 Lockwater Evidence` — unequal gauge samples follow causal barge identities through swaps;
+- `q723 Murmuration Gradient` — conserved flock mass crosses capacity-limited parity-tracked wakes;
+- `q747 Canopy Obligation` — seed debt survives seasonal motion through a capacity-one store;
+- `q781 Tapestry Rhythm` — a loom macro is interrupted after pattern completion rewires adjacency.
+
+Batch 74 broadens both material appearance and causal structure. Folding mosaics, pale looms, blue
+canals, open aviaries, a reset laboratory, a tidal basin, and a terraced orchard all use different
+silhouettes and palettes. Across the curricula, topology changes, opponent memory, parity, persistent
+knowledge, irreversible commitment, conservation, identity debt, and nested clocks become jointly
+necessary rather than decorative state variables.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
