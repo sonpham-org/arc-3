@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-eight production waves now contain nine hundred seventy-nine cross-mechanic prototypes in addition
+The first ninety-nine production waves now contain nine hundred eighty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch98-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch99-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1666,6 +1666,24 @@ Batch 98 finishes the abstraction queue by emphasizing predictive sufficiency an
 It then changes the output contract from classification to evidence: a player must build a witness,
 construct a falsifier, exhibit an invariant, or isolate a minimal conflict. Correct recognition without
 a visible certificate is intentionally insufficient.
+
+Batch 99:
+
+- `a181 Certificate Path` — sparse checkpoints independently certify a one-way route;
+- `a182 Minimal Obstruction` — deletion leaves an irreducible forbidden core;
+- `a183 Universal Tester` — a tiny probe suite distinguishes every candidate pair;
+- `a184 Proof by Tiling` — verified local seams certify a constructive decomposition;
+- `a185 Missing Packet` — shifted redundancy reconstructs known erasures across cycles;
+- `a186 Redundant Relay` — transformed copies recover a message after one path fails;
+- `a187 Burst Error` — interleaving disperses contiguous corruption into sparse damage;
+- `a188 Synchronization Word` — a self-unique cyclic delimiter recovers frame alignment;
+- `a189 Noisy Handshake` — acknowledgements and retries complete once without duplication;
+- `a190 Majority Decode` — five voters preserve truth under any two sensor faults.
+
+Batch 99 completes the proof-artifact family with path certificates, minimal obstructions,
+universal tests, and local constructive checks. It then makes communication failure observable:
+erasure, path loss, burst corruption, frame drift, lost acknowledgements, and simultaneous sensor
+faults each require a different recovery invariant rather than blind repetition.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
