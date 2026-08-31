@@ -1,0 +1,54 @@
+"""q688 Breakwater Evidence -- a first sample remains dormant across two subgoals."""
+from copy import deepcopy
+from arcengine import ARCBaseGame,Camera,Level,RenderableUserDisplay
+BG,HARBOR,CHANNEL,EVIDENCE,SAMPLE,PENDING,SUBGOAL,STOP,BAD=13,8,11,6,2,9,4,12,15
+LEVELS=[
+ {"name":"Dormant First","weights":(5,1,1),"plan":(1,4,4,5)},{"name":"Dormant Second","weights":(1,5,1),"plan":(2,4,4,5)},
+ {"name":"All Samples","weights":(5,4,3),"plan":(1,2,3,4,4,5)},{"name":"Interleaved Evidence","weights":(6,1,1),"plan":(1,4,2,4,5)},
+ {"name":"Close Harbor","weights":(4,3,1),"plan":(1,2,3,4,4,5)},{"name":"Breakwater Evidence","weights":(5,4,6),"plan":(3,1,2,4,4,5)}]
+def advance(s,a,x):
+ scores,sampled,pending,subgoals,stopped=s;scores=list(scores);sampled=list(sampled)
+ if a in (1,2,3):
+  i=a-1
+  if i in sampled:return None
+  sampled.append(i)
+  if pending is None and subgoals<2:pending=(i,x["weights"][i])
+  else:scores[i]+=x["weights"][i]
+ elif a==4:
+  subgoals+=1
+  if subgoals==2 and pending is not None:scores[pending[0]]+=pending[1]
+ elif a==5:
+  if subgoals<2:return None
+  order=sorted(scores,reverse=True);margin=order[0]-order[1];remaining=sum(x["weights"][i] for i in range(3) if i not in sampled)
+  if margin<=remaining:return None
+  stopped=(scores.index(max(scores)),tuple(scores),tuple(sampled),pending,subgoals,remaining)
+ return tuple(scores),tuple(sampled),pending,subgoals,stopped
+def target(x):
+ s=((0,0,0),(),None,0,None)
+ for a in x["plan"]:s=advance(s,a,x);assert s is not None
+ return s
+class D(RenderableUserDisplay):
+ def __init__(self,g):self.g=g
+ def render_interface(self,f):
+  g=self.g;f[:,:]=BG;f[4:60,4:60]=HARBOR
+  for i,v in enumerate(g.scores):x=8+i*17;f[8:35,x:x+13]=CHANNEL+i%2;f[31-v*3:33,x+2:x+11]=EVIDENCE-i
+  f[41:45,8:8+len(g.sampled)*14]=SAMPLE;f[48:51,8:8+g.subgoals*9]=SUBGOAL
+  if g.pending:f[53:56,8+g.pending[0]*17:21+g.pending[0]*17]=PENDING
+  if g.stopped:f[38:58,56:59]=STOP
+  if g.bad:f[0:3,18:46]=BAD
+  return f
+class Q688(ARCBaseGame):
+ def __init__(self):self.display=D(self);self.bad=False;self.cfg=LEVELS[0];self._reset();self.target=target(self.cfg);ls=[Level(sprites=[],grid_size=(64,64),data=deepcopy(x),name=x["name"]) for x in LEVELS];super().__init__("q688",ls,Camera(0,0,64,64,BG,BG,[self.display]),False,6,[1,2,3,4,5,6])
+ def _reset(self):self.scores=(0,0,0);self.sampled=();self.pending=None;self.subgoals=0;self.stopped=None
+ def on_set_level(self,l):self.cfg=LEVELS[self.level_index];self._reset();self.bad=False;self.target=target(self.cfg)
+ def step(self):
+  a=self.action.id.value
+  if a==0:self.complete_action();return
+  if a in (1,2,3,4,5):
+   s=advance((self.scores,self.sampled,self.pending,self.subgoals,self.stopped),a,self.cfg)
+   if s is None:self.bad=True;self.lose()
+   else:self.scores,self.sampled,self.pending,self.subgoals,self.stopped=s
+  elif a==6:
+   if (self.scores,self.sampled,self.pending,self.subgoals,self.stopped)==self.target:self.next_level()
+   else:self.bad=True;self.lose()
+  self.complete_action()

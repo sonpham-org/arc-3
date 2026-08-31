@@ -569,6 +569,12 @@ while retaining the causal evidence needed for communication, planning, calibrat
 delayed repayment, timing, and dependency repair. Two quarry tasks make the split literal: a probe can be
 physically undone while its observation continues to shape policy or adversary state. A capacity-limited
 orchard analogy tests whether the inferred relation survives ordering constraints during transfer.
+Batch 61 stretches causal credit across solved intermediate tasks. Seven modular-harbor games keep the
+first intervention visually dormant through at least two completed subgoals, then use it to determine a
+terminal policy, counter, analogy, confidence decision, obligation, rhythm window, or assembly affordance.
+A quarry grammar preserves composed meaning after restoration; a greenhouse sandbox admits commitment
+only when unequal autonomous clocks share a sparse event; and an orchard gradient couples conserved
+quantity control to capacity-sensitive seasonal ordering.
 
 For later games, mechanic selection follows this sequence:
 

@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty production waves now contain six hundred cross-mechanic prototypes in addition
+The first sixty-one production waves now contain six hundred ten cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch60-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch61-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1012,6 +1012,19 @@ Batch 60:
 - `q746 Palimpsest Obligation` — failed repayment reveals the identity retaining delayed debt;
 - `q776 Palimpsest Rhythm` — a failed interruption persists as evidence for a later macro window;
 - `q476 Palimpsest Dependency` — one missing-prerequisite trace repairs increasingly many branches.
+
+Batch 61:
+
+- `q538 Breakwater Lesson` — the first harbor intervention wakes only after two solved subgoals;
+- `q568 Breakwater Counter` — rival shaping precedes activation of a delayed terminal counter;
+- `q599 Strata Grammar` — a composed message survives physical restoration as persistent knowledge;
+- `q630 Spore Sandbox` — simulation evidence can be committed only at sparse unequal-clock alignments;
+- `q658 Breakwater Analogy` — a latent transform activates after two branches before relational transfer;
+- `q688 Breakwater Evidence` — the first unequal sample remains dormant until two subgoals are solved;
+- `q717 Canopy Gradient` — conserved seed influence is routed through a capacity-limited seasonal store;
+- `q748 Breakwater Obligation` — the first creditor wakes after two tasks and constrains repayment by identity;
+- `q778 Breakwater Rhythm` — a timing offset activates only after two completed routines;
+- `q478 Breakwater Dependency` — one delayed key governs every later terminal assembly.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
