@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-six production waves now contain six hundred sixty cross-mechanic prototypes in addition
+The first sixty-seven production waves now contain six hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch66-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch67-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1090,6 +1090,25 @@ Batch 66:
 - `q730 Vault Gradient` — two quantities share capacity-limited chambers under phase rotation;
 - `q760 Vault Obligation` — two-quantity debts remain attached to identities after swaps;
 - `q777 Canopy Rhythm` — a capacity-limited seed store persists through macro timing.
+
+Batch 67:
+
+- `q516 Backstage Frame` — signed pressure accumulates through rotating local sightline frames;
+- `q546 Backstage Lesson` — policy transfer depends on threshold distance and signed direction;
+- `q576 Backstage Counter` — rival shaping depends on signed pressure and direction;
+- `q606 Backstage Grammar` — grouped glyphs compose signed pressure through a direction-changing relay;
+- `q636 Backstage Sandbox` — signed evidence persists when physical stage values reset;
+- `q696 Backstage Evidence` — safe stopping crosses a visible direction turn;
+- `q726 Backstage Gradient` — conserved stage mass crosses direction-reversing controls;
+- `q756 Backstage Obligation` — signed pressure debt stays attached to mask identity;
+- `q786 Backstage Rhythm` — macro-routines flip direction before an exact interruption window;
+- `q677 Spectrum Analogy` — affine magnitude and direction transfer across unlike surfaces.
+
+Batch 67 makes direction as important as distance to threshold. Nine rotating-theater tasks
+accumulate signed stage pressure through frame rotations, context switches, rival shaping,
+grouped relays, reset simulations, unequal evidence, conserved flow, identity debt, and
+macro-time. A prism-gallery analogy transfers an affine pair—magnitude and direction—from
+geometry to agents despite unrelated surface features.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
