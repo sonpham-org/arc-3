@@ -545,6 +545,12 @@ handoff, cadence-adaptive opposition, player-grounded reusable labels, minimax r
 tool-to-agent relational transfer, decision-specific confidence thresholds, local-gradient search,
 cross-level shortcut credit, nested temporal abstraction, and dependency reuse through hysteresis. These
 games use unrelated visual and state grammars rather than one shared secondary-mechanic template.
+Batch 57 revisits those axes through two new environmental families rather than reskins of the preceding
+machines. Aurora observatories combine ineffective demonstrations, opponent shaping, grouped relay
+grammar, separate simulated and committed copies, relational transfer, unequal evidence, identity-bound
+obligations, and state-defined rhythm windows. Tidal laboratories add conserved continuous influence and
+reversing shared prerequisites before irreversible commitments. Every level adds a compositional demand,
+and every mechanic is expressed in visible palette state rather than labels or privileged instructions.
 
 For later games, mechanic selection follows this sequence:
 

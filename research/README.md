@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-six production waves now contain five hundred sixty cross-mechanic prototypes in addition
+The first fifty-seven production waves now contain five hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch56-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch57-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -960,6 +960,19 @@ Batch 56:
 - `q190 Lasting Shortcut` — one route intervention permanently changes every later level;
 - `q200 Clock of Clocks` — completed local periods trigger a higher-level temporal machine;
 - `q471 Aurora Dependency` — shared prerequisites are reused through a visible hysteresis loop.
+
+Batch 57:
+
+- `q531 Aurora Lesson` — conditional demonstrations transfer through ineffective gestures and context hysteresis;
+- `q561 Aurora Counter` — a legible opponent is shaped through hysteretic counterplay;
+- `q591 Aurora Grammar` — grouped relay symbols compose under changing channel state;
+- `q621 Aurora Sandbox` — simulated and committed copies share persistent evidence but not progress;
+- `q651 Aurora Analogy` — a curtain relation transfers into an independent mote system;
+- `q681 Aurora Evidence` — unequal evidence reliability determines when stopping is safe;
+- `q712 Tide Gradient` — conserved influence, capacity, and phase constrain an irreversible threshold;
+- `q741 Aurora Obligation` — delayed obligations remain attached to identity despite immediate rewards;
+- `q771 Aurora Rhythm` — chunked rhythms and scaled intervals define interruption windows;
+- `q472 Tide Dependency` — shared prerequisites must survive reversing current before irreversible commitment.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
