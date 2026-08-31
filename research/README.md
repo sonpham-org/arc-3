@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-four production waves now contain eight hundred thirty-nine cross-mechanic prototypes in addition
+The first eighty-five production waves now contain eight hundred forty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch84-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch85-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1420,6 +1420,23 @@ Batch 84:
 Batch 84 introduces explicit algorithmic memory. Its visual legends expose top access, FIFO order,
 eviction, stable ties, structural invariants, restricted ends, reusable programs, and finite-state
 transitions from the initial frame so the difficulty comes from state reasoning rather than ambiguity.
+
+Batch 85:
+
+- `a041 Race Gate` — two autonomous carriers must be interleaved around shared switches;
+- `a042 Semaphore Garden` — movable permits protect a one-cell tunnel under either arrival order;
+- `a043 Atomic Crossing` — coupled lock updates must be staged and committed indivisibly;
+- `a044 Deadlock Dock` — releases and grants must avoid circular resource ownership;
+- `a045 Barrier Beat` — whole waiting cohorts synchronize agents on unequal loops;
+- `a046 Interrupt Loom` — safe preemption preserves two automata's resumable local state;
+- `a047 Two-Phase Move` — reservations precede conflict-free simultaneous movement;
+- `a048 Livelock Lights` — one asymmetric policy edit turns safe activity into progress;
+- `a049 Bottleneck Bins` — finite downstream capacity propagates pressure to the source;
+- `a050 Spillback City` — signal choices preserve escape cells and prevent network gridlock.
+
+Batch 85 makes concurrency observable without reducing it to decorative timers. Tracks, ownership
+marks, waiting cohorts, staged reservations, rule panels, queue occupancy, and downstream vacancies
+separate local activity from globally safe progress across ten colorful systems dioramas.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
