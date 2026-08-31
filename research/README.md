@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety production waves now contain eight hundred ninety-nine cross-mechanic prototypes in addition
+The first ninety-one production waves now contain nine hundred nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch90-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch91-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1522,6 +1522,24 @@ Batch 90:
 Batch 90 completes the first hundred Anthropic-queue concepts with distributed-state physics. Its
 material laboratory emphasizes feedback, rate, memory, tension, yield, and stored energy; its wave
 chambers require boundary-condition, phase, superposition, and mode reasoning rather than path tracing.
+
+Batch 91:
+
+- `a101 Diffraction Gate` — aperture width reshapes a wave field before it reaches the receiver;
+- `a102 Impedance Steps` — graded layers trade reflection loss against transmitted amplitude;
+- `a103 Resonant Cavity` — wall geometry and pulse rhythm select the accumulating mode;
+- `a104 Pulse Packet` — input components must precompensate for unequal propagation delays;
+- `a105 Exact Cover Mosaic` — rotated anchored patches must cover every target exactly once;
+- `a106 Shadow Packing` — one solid arrangement must satisfy front and side silhouettes together;
+- `a107 Nesting Cargo` — containment changes effective item count, footprint, and balance;
+- `a108 Guillotine Floor` — only recursive full cuts can reach the required rectangle multiset;
+- `a109 Hinged Packing` — a connected object must follow a collision-free fold path into its bin;
+- `a110 Mobile Cover` — phased patrol footprints must cover targets without entering forbidden cells.
+
+Batch 91 closes the remaining wave-boundary queue with aperture, transmission, resonance, and
+dispersion systems, then opens a packing sequence whose constraints live across projections,
+hierarchies, cut trees, configuration-space paths, and time. The two visual families deliberately
+use separate laboratory and studio grammars while retaining distinct background palettes per game.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
