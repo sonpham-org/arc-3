@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-four production waves now contain six hundred forty cross-mechanic prototypes in addition
+The first sixty-five production waves now contain six hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch64-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch65-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1064,6 +1064,19 @@ Batch 64:
 - `q729 Reedbed Gradient` — conserved mass crosses links that change channel capacity;
 - `q789 Reedbed Rhythm` — a constructed link changes period before a state-defined interruption;
 - `q477 Canopy Dependency` — one shared glider serves nested branches through a capacity-limited store.
+
+Batch 65:
+
+- `q517 Catalyst Frame` — stored orientation executes after pipe-frame motion changes its global meaning;
+- `q547 Catalyst Lesson` — a conditional demonstration is stored before context changes and execution;
+- `q577 Catalyst Counter` — rival state is shaped, observed, and later executed from memory;
+- `q607 Catalyst Grammar` — a composed relay code survives subsequent pipe transforms;
+- `q637 Catalyst Sandbox` — observed orientations persist when physical simulation copies reset;
+- `q667 Catalyst Analogy` — a source relation is stored before surface transforms and target transfer;
+- `q727 Catalyst Gradient` — observed pipe directions later execute hidden conserved transfers;
+- `q757 Catalyst Obligation` — stored helper identity survives hidden borrowing and appearance swaps;
+- `q787 Catalyst Rhythm` — an interruption phase survives intervening macro-routines;
+- `q479 Strata Dependency` — restored probes leave knowledge that unlocks one reusable support.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

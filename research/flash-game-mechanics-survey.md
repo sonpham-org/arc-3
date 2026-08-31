@@ -590,6 +590,11 @@ component, treatment, glyph, bridge, sensor, or interrupter to change both its i
 route edge, capacity, or period. Local success can therefore obstruct the global plan. A terraced-orchard
 dependency task adds one reusable prerequisite whose branch order must respect a hard intermediate-store
 capacity and alternating seasonal condition.
+Batch 65 separates observation-time memory writes from later hidden execution. Nine chemical-refinery
+tasks store an orientation, policy result, rival state, composed code, simulation result, relation, flow
+direction, helper identity, or interruption phase before intervening frame changes, transforms, resets,
+swaps, or macro-routines. A quarry dependency task makes the same distinction through physical probes
+that can be restored while their knowledge persists to unlock one reusable support.
 
 For later games, mechanic selection follows this sequence:
 
