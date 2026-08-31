@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy production waves now contain seven hundred cross-mechanic prototypes in addition
+The first seventy-one production waves now contain seven hundred ten cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch70-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch71-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1166,6 +1166,25 @@ tasks combine counter-rotating wakes with local frames, instruction, syntax, sim
 confidence, conserved flow, causal debt, and macro-time. Repeated sampling after discrimination
 raises an explicit cost and can invalidate commitment. The tidal counter adds a separate irreversible
 sluice that cannot safely open until the visible rival evidence supports one branch.
+
+Batch 71:
+
+- `q514 Moraine Frame` — local raft motion writes order-sensitive tokens into an outer dependency board;
+- `q544 Moraine Lesson` — contextual raft policy separates empty gestures before updating an outer token;
+- `q574 Moraine Counter` — a shaped rival state solves the selected outer glacier enclosure;
+- `q619 Monsoon Grammar` — rain glyphs relay only at a phase pair of two unequal clocks;
+- `q634 Moraine Sandbox` — persistent simulation evidence writes one outer token after physical reset;
+- `q664 Moraine Analogy` — a transformed crevasse relation transfers into a selected dependency slot;
+- `q694 Moraine Evidence` — decisive local evidence must become an outer token before stopping;
+- `q724 Moraine Gradient` — conserved flow writes phase-indexed tokens into the outer board;
+- `q754 Moraine Obligation` — identity-bound debt repayment writes values in completion order;
+- `q799 Monsoon Rhythm` — rain macros are interrupted at a state-defined unequal-clock phase pair.
+
+Batch 71 connects local success to a larger problem. Eight icy glacier tasks make every local
+completion update a visible outer dependency board, so solving the right subproblem in the wrong
+order can produce the wrong terminal state. Two saturated weather gardens test a different temporal
+abstraction: the useful event is identified by a pair of unequal clock phases, not by a fixed action
+count. Initial thumbnails remain globally collision-checked against earlier generated games.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
