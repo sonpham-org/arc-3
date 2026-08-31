@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-eight production waves now contain five hundred eighty cross-mechanic prototypes in addition
+The first fifty-nine production waves now contain five hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch58-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch59-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -986,6 +986,19 @@ Batch 58:
 - `q743 Ember Obligation` — debt remains attached to causal identity after vessel swaps and distracting rewards;
 - `q774 Honeycomb Rhythm` — local routine chunks compose into outer-clock interruption windows;
 - `q473 Ember Dependency` — stored heat is reused across increasingly nested vessel and tempering prerequisites.
+
+Batch 59:
+
+- `q537 Canopy Lesson` — conditional policy transfer must respect capacity-sensitive seed ordering;
+- `q565 Alloy Counter` — local tactics shape a rival through a translating and rotating frame;
+- `q595 Alloy Grammar` — grouped relational symbols are decoded only after frame transformation;
+- `q627 Canopy Sandbox` — branch evidence survives resets of a hard-capacity simulation store;
+- `q655 Alloy Analogy` — a relation transfers exactly despite translation and rotation;
+- `q685 Alloy Evidence` — unequal causal evidence must be recovered from rotating visible slots;
+- `q715 Alloy Gradient` — conserved billet influence is measured in a phase-sensitive moving frame;
+- `q745 Alloy Obligation` — causal debt survives object swaps and reference-frame rotation;
+- `q775 Alloy Rhythm` — routine chunks reach interruption windows expressed in moving coordinates;
+- `q475 Alloy Dependency` — a single frame-relative catalyst is reused across nested assemblies.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

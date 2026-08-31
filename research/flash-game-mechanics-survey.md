@@ -557,6 +557,12 @@ otherwise-correct local operations into planning failures when performed gratuit
 tasks replace that budget with nested clocks, requiring opponent shaping and rhythm control to preserve
 local event order while reasoning over slower enclosing cycles. The resulting mechanics distinguish
 causal identity and persistent evidence from screen position, immediate reward, and disposable progress.
+Batch 59 makes reference-frame reasoning the shared stressor rather than a decorative camera effect.
+Eight magnetic-foundry tasks translate and rotate the mapping between visible lanes and causal entities,
+so demonstrations, opponent tactics, messages, analogies, samples, quantities, debts, routines, and
+prerequisites cannot be solved in fixed screen coordinates. Two terraced-orchard tasks introduce a
+different challenge: a hard-capacity intermediate store makes locally valid seed transfers or simulated
+branches deadlock unless evidence collection and clearing operations are globally ordered.
 
 For later games, mechanic selection follows this sequence:
 
