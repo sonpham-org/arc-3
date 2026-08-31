@@ -225,10 +225,12 @@ class Kd01Display(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
-        # Palette: the corpus is 60.3% greyscale and this game was 78% pure black. Purple is
-        # 0.5% of official pixels, so a purple ground is both legible and unlike anything in
-        # the catalogue. The hub's colour states carry the HUD, so they stay untouched.
-        frame[:, :] = C_PURPLE
+        # Palette note: this game keeps a black ground on purpose, and it is the one
+        # exception to the project's move away from black-and-grey. kd01 uses all sixteen
+        # palette entries -- six for the stones the player must name, plus five hub states --
+        # so EVERY vivid background collides with something the player has to identify. A
+        # purple ground was tried and made the purple stone invisible. Correctness wins.
+        frame[:, :] = C_BLACK
 
         # Budget bar. Neutral colour: the hub carries the affordance, not the bar.
         span = BAR_X1 - BAR_X0
@@ -325,7 +327,7 @@ class Kd01(ARCBaseGame):
         super().__init__(
             "kd",
             levels,
-            Camera(0, 0, 64, 64, C_PURPLE, C_PURPLE, [self.display]),
+            Camera(0, 0, 64, 64, C_BLACK, C_BLACK, [self.display]),
             False,
             len(levels),
             [5, 6],              # 6 = strike what you clicked, 5 = release the mechanism

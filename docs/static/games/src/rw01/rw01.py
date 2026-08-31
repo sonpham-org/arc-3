@@ -37,13 +37,15 @@ C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 C_FLOOR = C_MAROON        # a tile you can stand on (maroon: 0.0% of official pixels)
 C_WALL = C_GRAY           # never passable, never changes
 C_VOID = C_BLACK          # fell away this run -- comes back on a rewind
-C_SCAR = C_MAROON         # fell away for good -- does not come back
+C_SCAR = C_DGRAY          # fell away for good -- ashen, and NOT the floor's colour
 C_BRITTLE = C_ORANGE      # a tile that will scar instead of falling
 C_PAD = C_LBLUE           # where a rewind puts the walker
 C_GOAL = C_GREEN
 
 # Four keyed colours. A beacon lights its colour; a door of that colour opens.
-KEY_COLORS = (C_PURPLE, C_YELLOW, C_MAGENTA, C_RED)
+# Blue, not purple: purple is now the void behind the board, and a key drawn in the
+# background's colour is invisible.
+KEY_COLORS = (C_BLUE, C_YELLOW, C_MAGENTA, C_RED)
 
 # ---------------------------------------------------------------------------
 # Board geometry -- 9x8 tiles of 7px fills 63x56 of the 64x64 frame under a 8px HUD
