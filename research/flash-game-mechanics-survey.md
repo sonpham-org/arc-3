@@ -595,6 +595,11 @@ tasks store an orientation, policy result, rival state, composed code, simulatio
 direction, helper identity, or interruption phase before intervening frame changes, transforms, resets,
 swaps, or macro-routines. A quarry dependency task makes the same distinction through physical probes
 that can be restored while their knowledge persists to unlock one reusable support.
+Batch 66 requires simultaneous bookkeeping rather than one scalar total. Nine branching-vault tasks
+place two independently conserved echo types in shared containers, so a transfer can preserve combined
+occupancy while violating one ledger or destination capacity. The same dual constraint appears in moving
+frames, learned policies, rival shaping, messages, simulation evidence, analogy, stopping, gradients, and
+identity debt. A terraced-orchard rhythm task carries a hard-capacity store through macro-time.
 
 For later games, mechanic selection follows this sequence:
 

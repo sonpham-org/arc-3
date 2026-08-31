@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-five production waves now contain six hundred fifty cross-mechanic prototypes in addition
+The first sixty-six production waves now contain six hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch65-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch66-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1077,6 +1077,19 @@ Batch 65:
 - `q757 Catalyst Obligation` — stored helper identity survives hidden borrowing and appearance swaps;
 - `q787 Catalyst Rhythm` — an interruption phase survives intervening macro-routines;
 - `q479 Strata Dependency` — restored probes leave knowledge that unlocks one reusable support.
+
+Batch 66:
+
+- `q520 Vault Frame` — two conserved echo types route through containers in a moving local frame;
+- `q550 Vault Lesson` — conditional policy transfer maintains two independent shared-container ledgers;
+- `q580 Vault Counter` — opponent shaping depends on both conserved echo distributions;
+- `q610 Vault Grammar` — grouped operations redistribute two ledgers before decoding;
+- `q640 Vault Sandbox` — dual-ledger evidence persists when miniature vaults reset;
+- `q670 Vault Analogy` — relational transfer preserves separate source and target ledgers;
+- `q700 Vault Evidence` — unequal samples move two conserved types until stopping is safe;
+- `q730 Vault Gradient` — two quantities share capacity-limited chambers under phase rotation;
+- `q760 Vault Obligation` — two-quantity debts remain attached to identities after swaps;
+- `q777 Canopy Rhythm` — a capacity-limited seed store persists through macro timing.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
