@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-nine production waves now contain five hundred ninety cross-mechanic prototypes in addition
+The first sixty production waves now contain six hundred cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch59-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch60-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -999,6 +999,19 @@ Batch 59:
 - `q745 Alloy Obligation` — causal debt survives object swaps and reference-frame rotation;
 - `q775 Alloy Rhythm` — routine chunks reach interruption windows expressed in moving coordinates;
 - `q475 Alloy Dependency` — a single frame-relative catalyst is reused across nested assemblies.
+
+Batch 60:
+
+- `q539 Strata Lesson` — a physical probe is undone while its observation remains available to the policy;
+- `q569 Strata Counter` — reversible probes shape a rival through knowledge that survives restoration;
+- `q596 Palimpsest Grammar` — one causal relation is isolated from an overwritten near-miss message;
+- `q626 Palimpsest Sandbox` — failed-branch evidence survives disposable simulation resets;
+- `q657 Canopy Analogy` — seasonal relations transfer through a hard-capacity seed store;
+- `q686 Palimpsest Evidence` — unequal evidence remains usable after its visible trace is erased;
+- `q716 Palimpsest Gradient` — a visible near miss identifies how to cross a conserved threshold;
+- `q746 Palimpsest Obligation` — failed repayment reveals the identity retaining delayed debt;
+- `q776 Palimpsest Rhythm` — a failed interruption persists as evidence for a later macro window;
+- `q476 Palimpsest Dependency` — one missing-prerequisite trace repairs increasingly many branches.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

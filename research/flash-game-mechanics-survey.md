@@ -563,6 +563,12 @@ so demonstrations, opponent tactics, messages, analogies, samples, quantities, d
 prerequisites cannot be solved in fixed screen coordinates. Two terraced-orchard tasks introduce a
 different challenge: a hard-capacity intermediate store makes locally valid seed transfers or simulated
 branches deadlock unless evidence collection and clearing operations are globally ordered.
+Batch 60 distinguishes persistent knowledge from temporary world state. Sliding-archive tasks present
+near-miss traces that share most of a successful sequence, then overwrite or reset the visible process
+while retaining the causal evidence needed for communication, planning, calibration, quantity control,
+delayed repayment, timing, and dependency repair. Two quarry tasks make the split literal: a probe can be
+physically undone while its observation continues to shape policy or adversary state. A capacity-limited
+orchard analogy tests whether the inferred relation survives ordering constraints during transfer.
 
 For later games, mechanic selection follows this sequence:
 
