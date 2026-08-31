@@ -1,0 +1,47 @@
+"""q674 Tessera Analogy -- transfer seam relations across surfaces and a macro window."""
+from copy import deepcopy
+from arcengine import ARCBaseGame,Camera,Level,RenderableUserDisplay
+BG,MOSAIC,SOURCE,TARGET,TILE,SEAM,WINDOW,GOAL,BAD=5,10,6,12,14,9,11,13,15
+LEVELS=[
+ {"name":"Relation Map","seq":(4,)},{"name":"Rotated Surface","seq":(1,4)},
+ {"name":"Seam Gap","seq":(2,1,4)},{"name":"Macro Window","seq":(3,1,2,4)},
+ {"name":"Folded Transfer","seq":(1,3,2,1,4)},
+ {"name":"Tessera Analogy","seq":(2,1,3,2,1,3,4)}]
+def advance(s,a):
+ source,target,surface,window,mapped,locked=s;x,y=source;u,v=target
+ if a==1:x=(x+1+surface)%5;u=(u+2)%5
+ elif a==2:y=(y+2+window)%6;v=(v+1+surface)%6;surface=(surface+1)%3
+ elif a==3:window=(window+1+x+u)%4
+ elif a==4:mapped=((y-x)%6,(v-u)%6,surface,window)
+ elif a==5:locked=(mapped,source,target,surface,window)
+ return (x,y),(u,v),surface,window,mapped,locked
+for x in LEVELS:
+ s=((0,2),(1,3),0,0,None,None)
+ for a in x["seq"]:s=advance(s,a)
+ x["plan"]=x["seq"]+(5,);x["target"]=advance(s,5)
+class D(RenderableUserDisplay):
+ def __init__(self,g):self.g=g
+ def render_interface(self,f):
+  g=self.g;f[:,:]=BG;f[4:60,4:60]=MOSAIC;f[8:33,7:29]=SOURCE;f[8:33,35:57]=TARGET
+  for side,pair in enumerate((g.source,g.target)):
+   ox=10+side*28
+   for i,v in enumerate(pair):f[13+i*11:20+i*11,ox:ox+15]=SEAM if side==0 else TILE;f[15+i*11:18+i*11,ox+2:ox+4+v*2]=TILE
+  f[39:44,8:8+g.surface*15+10]=SEAM;f[47:51,8:8+g.window*11+7]=WINDOW
+  if g.mapped:f[54:58,8:45]=TARGET
+  if g.locked:f[52:58,49:57]=GOAL
+  if g.bad:f[0:3,18:46]=BAD
+  return f
+class Q674(ARCBaseGame):
+ def __init__(self):
+  self.display=D(self);self.bad=False;self._reset();self.cfg=LEVELS[0];self.target_state=self.cfg["target"]
+  ls=[Level(sprites=[],grid_size=(64,64),data=deepcopy(x),name=x["name"]) for x in LEVELS];super().__init__("q674",ls,Camera(0,0,64,64,BG,BG,[self.display]),False,6,[1,2,3,4,5,6])
+ def _reset(self):self.source=(0,2);self.target=(1,3);self.surface=self.window=0;self.mapped=self.locked=None
+ def on_set_level(self,l):self.cfg=LEVELS[self.level_index];self._reset();self.bad=False;self.target_state=self.cfg["target"]
+ def step(self):
+  a=self.action.id.value
+  if a==0:self.complete_action();return
+  if a in (1,2,3,4,5):self.source,self.target,self.surface,self.window,self.mapped,self.locked=advance((self.source,self.target,self.surface,self.window,self.mapped,self.locked),a)
+  elif a==6:
+   if (self.source,self.target,self.surface,self.window,self.mapped,self.locked)==self.target_state:self.next_level()
+   else:self.bad=True;self.lose()
+  self.complete_action()

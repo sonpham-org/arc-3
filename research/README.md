@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-five production waves now contain seven hundred fifty cross-mechanic prototypes in addition
+The first seventy-six production waves now contain seven hundred sixty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch75-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch76-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1260,6 +1260,24 @@ Batch 75 foregrounds visible information systems. Cliff semaphores expose relay 
 policy tests, apiaries separate courier time from colony time, tidal basins distinguish reversible
 physical trials from persistent evidence, and a flock analogy adds a redundant parity constraint.
 The final levels require combining these state channels rather than solving independent subpuzzles.
+
+Batch 76:
+
+- `q528 Escapement Frame` — gear-frame motion combines with exclusive diagnostic interventions;
+- `q554 Tessera Lesson` — demonstrations reveal a contextual mosaic macro interruption;
+- `q589 Monsoon Counter` — a weather rival adapts at unequal clock phase pairs;
+- `q620 Workbench Grammar` — grouped tool messages write identity-bound relay debt;
+- `q647 Spectrum Sandbox` — prism state resets while wavelength evidence persists;
+- `q674 Tessera Analogy` — seam relations transfer across surfaces and macro windows;
+- `q689 Strata Evidence` — reversible quarry probes accumulate persistent stopping evidence;
+- `q739 Monsoon Gradient` — conserved rain mass crosses cells at useful phase pairs;
+- `q768 Escapement Obligation` — weight debt survives diagnostic gear interventions;
+- `q795 Vivarium Rhythm` — reciprocal fairness determines a two-clock interruption window.
+
+Batch 76 combines seven visual grammars with stronger causal demands. The clock tasks require active
+diagnosis and identity tracking; mosaic tasks distinguish demonstration from relation transfer;
+weather tasks bind conserved quantities to unequal time; and the prism, quarry, workshop, and
+terrarium tasks make persistent knowledge, symbolic debt, and reciprocal policy operational.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
