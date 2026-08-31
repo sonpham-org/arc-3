@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-five production waves now contain eight hundred forty-nine cross-mechanic prototypes in addition
+The first eighty-six production waves now contain eight hundred fifty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch85-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch86-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1437,6 +1437,23 @@ Batch 85:
 Batch 85 makes concurrency observable without reducing it to decorative timers. Tracks, ownership
 marks, waiting cohorts, staged reservations, rule panels, queue occupancy, and downstream vacancies
 separate local activity from globally safe progress across ten colorful systems dioramas.
+
+Batch 86:
+
+- `a051 Priority Chute` — deadlines compete with starvation at a shared server;
+- `a052 Batch Furnace` — compatible arrivals must be grouped before cooling windows close;
+- `a053 Service Rhythm` — persistent queues must anticipate alternating service rates;
+- `a054 Merge Meter` — throughput and bounded lane fairness constrain one merge buffer;
+- `a055 Perishable Queue` — item order and visible age require selective siding use;
+- `a056 Pull System` — downstream requests govern production and circulating inventory;
+- `a057 Thermostat Tiles` — delayed neighboring heat must remain inside a band over time;
+- `a058 Reservoir Governor` — valves distribute intermittent inflow across coupled levels;
+- `a059 Cruise Beetle` — throttle and brake regulate velocity against changing slope;
+- `a060 Balance Pole` — one countersteering channel must stabilize and advance a cart.
+
+Batch 86 transitions from queueing decisions into closed-loop regulation. Its industrial belts and
+buffers make retained work visible, while its climate room, reservoirs, hillside, and balance arena
+require anticipation of lag, coupled disturbances, velocity, and unstable state—not static matching.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
