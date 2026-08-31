@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first seventy-six production waves now contain seven hundred sixty cross-mechanic prototypes in addition
+The first seventy-seven production waves now contain seven hundred seventy cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch76-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch77-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1278,6 +1278,24 @@ Batch 76 combines seven visual grammars with stronger causal demands. The clock 
 diagnosis and identity tracking; mosaic tasks distinguish demonstration from relation transfer;
 weather tasks bind conserved quantities to unequal time; and the prism, quarry, workshop, and
 terrarium tasks make persistent knowledge, symbolic debt, and reciprocal policy operational.
+
+Batch 77:
+
+- `q530 Workbench Frame` — tool motion composes across fixtures that write visible debt;
+- `q543 Murmuration Lesson` — parity identifies a decoy in contextual flock demonstrations;
+- `q584 Tessera Counter` — a mosaic rival adapts before a fold macro is interrupted;
+- `q601 Tapestry Grammar` — completed patterns rewire the graph for later messages;
+- `q633 Murmuration Sandbox` — flock state resets while parity evidence persists;
+- `q662 Lockwater Analogy` — water relations transfer while barge identity changes surface cues;
+- `q705 Vivarium Evidence` — partner fairness changes the policy behind sampled evidence;
+- `q719 Strata Gradient` — conserved ore flow composes with persistent probe knowledge;
+- `q744 Honeycomb Obligation` — courier debt survives local and colony clock updates;
+- `q782 Lockwater Rhythm` — coupled water clocks interact with identity-preserving barge swaps.
+
+Batch 77 spans eight object families and emphasizes causal state that survives visible rearrangement.
+The tasks distinguish local frames from debt, demonstrations from parity-valid policy, physical resets
+from knowledge, appearance from identity, and local timing from enclosing timing. These mechanisms
+are introduced separately before being composed in each sixth level.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
