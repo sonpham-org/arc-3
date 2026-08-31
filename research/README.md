@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-seven production waves now contain five hundred seventy cross-mechanic prototypes in addition
+The first fifty-eight production waves now contain five hundred eighty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch57-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch58-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -973,6 +973,19 @@ Batch 57:
 - `q741 Aurora Obligation` — delayed obligations remain attached to identity despite immediate rewards;
 - `q771 Aurora Rhythm` — chunked rhythms and scaled intervals define interruption windows;
 - `q472 Tide Dependency` — shared prerequisites must survive reversing current before irreversible commitment.
+
+Batch 58:
+
+- `q533 Ember Lesson` — a conditional kiln policy must be transferred without copying an effort-wasting gesture;
+- `q564 Honeycomb Counter` — a legible rival is shaped while local treatments advance an outer apiary clock;
+- `q593 Ember Grammar` — grouping and spatial relay operations compose under one finite effort budget;
+- `q623 Ember Sandbox` — evidence persists when disposable simulations reset before one commitment;
+- `q653 Ember Analogy` — a heat-band relation transfers to clay vessels despite surface transformation;
+- `q683 Ember Evidence` — limited effort calibrates only the unequal observations needed for safe stopping;
+- `q713 Ember Gradient` — conserved mass, heat, and phase jointly determine an observed commit threshold;
+- `q743 Ember Obligation` — debt remains attached to causal identity after vessel swaps and distracting rewards;
+- `q774 Honeycomb Rhythm` — local routine chunks compose into outer-clock interruption windows;
+- `q473 Ember Dependency` — stored heat is reused across increasingly nested vessel and tempering prerequisites.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

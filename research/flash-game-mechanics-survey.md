@@ -551,6 +551,12 @@ grammar, separate simulated and committed copies, relational transfer, unequal e
 obligations, and state-defined rhythm windows. Tidal laboratories add conserved continuous influence and
 reversing shared prerequisites before irreversible commitments. Every level adds a compositional demand,
 and every mechanic is expressed in visible palette state rather than labels or privileged instructions.
+Batch 58 changes both palette and constraint regime. Eight warm ceramic-kiln tasks make observation,
+movement, repair, experimentation, and commitment draw from the same visible effort supply; this turns
+otherwise-correct local operations into planning failures when performed gratuitously. Two honeycomb
+tasks replace that budget with nested clocks, requiring opponent shaping and rhythm control to preserve
+local event order while reasoning over slower enclosing cycles. The resulting mechanics distinguish
+causal identity and persistent evidence from screen position, immediate reward, and disposable progress.
 
 For later games, mechanic selection follows this sequence:
 
