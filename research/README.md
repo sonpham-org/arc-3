@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first fifty-four production waves now contain five hundred forty cross-mechanic prototypes in addition
+The first fifty-five production waves now contain five hundred fifty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch54-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch55-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -934,6 +934,19 @@ Batch 54:
 - `q417 Canopy Revision` — a worn orchard law is recalibrated through a capacity-limited store;
 - `q447 Canopy Lineage` — seed ancestry survives transformations and constrained store ordering;
 - `q529 Monsoon Frame` — local rain controls compose with moving global weather coordinates.
+
+Batch 55:
+
+- `q230 Workbench Veil` — attention-dependent tools borrow help that remains bound to the helper;
+- `q260 Workbench Pact` — convention evidence and delayed reciprocity refer to persistent agents;
+- `q290 Workbench Probe` — a fixture repair waits until every diagnostic helper is repaid;
+- `q320 Workbench Ledger` — temporary loans preserve global stock and helper-specific debt;
+- `q350 Workbench Survey` — bounded evidence must account for identity-bound sensor favors;
+- `q380 Workbench Rig` — reusable tool assembly creates obligations to the supplying helpers;
+- `q410 Workbench Delegation` — controller marks and handoff debts are integrated by identity;
+- `q440 Workbench Revision` — wear-driven recalibration preserves the helper attached to each favor;
+- `q448 Breakwater Lineage` — a first intervention remains dormant across two solved subgoals;
+- `q512 Lockwater Frame` — barge identity survives exchanged appearance, position, and local frames.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

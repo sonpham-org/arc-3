@@ -535,6 +535,11 @@ convention, causal diagnosis, conservation, evidence allocation, tool assembly, 
 retain their own primary mechanics while sharing increasingly sparse joint phases. Two orchard tasks add
 a different bottleneck, showing how rule repair and persistent ancestry can fail through bad ordering in
 a narrow store. The closing weather-frame task composes local motion, global rotation, and dual periods.
+Batch 55 makes delayed obligation identity-bound across eight workshop tasks. Borrowed perception,
+cooperation, diagnosis, stock, sensing, assembly, handoff, and recalibration must be repaid to the helper
+that supplied the benefit even after focus or ownership moves. A harbor lineage task preserves the first
+intervention invisibly across two subgoals, while a stepped-canal task exchanges appearance and position
+but keeps assignment tied to causal identity and its local-to-global trail.
 
 For later games, mechanic selection follows this sequence:
 
