@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first eighty-six production waves now contain eight hundred fifty-nine cross-mechanic prototypes in addition
+The first eighty-seven production waves now contain eight hundred sixty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch86-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch87-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1454,6 +1454,23 @@ Batch 86:
 Batch 86 transitions from queueing decisions into closed-loop regulation. Its industrial belts and
 buffers make retained work visible, while its climate room, reservoirs, hillside, and balance arena
 require anticipation of lag, coupled disturbances, velocity, and unstable state—not static matching.
+
+Batch 87:
+
+- `a061 Predator Valve` — migration regulates coupled prey and predator oscillations;
+- `a062 Hysteresis House` — door state remembers which temperature threshold was crossed;
+- `a063 Delayed Feedback` — irrigation acts now while the display reports older moisture;
+- `a064 Coupled Controllers` — two locally sensible gain choices interact through one platform;
+- `a065 Wagon Wheel` — strobe interval separates true rotation from aliased direction;
+- `a066 Strobe Swarm` — four chosen flashes reveal insects moving at different periods;
+- `a067 Nyquist Bridge` — a faster probe rate resolves a structural load cycle;
+- `a068 Beat Detector` — sparse coincidences reveal the difference between nearby frequencies;
+- `a069 Sparse Tracker` — four sightings support extrapolation through boundary bounces;
+- `a070 Exposure Window` — exposure duration trades position detail for speed-class smear.
+
+Batch 87 makes the observation process itself controllable. Habitat and controller boards retain
+hidden dynamical history; the optics laboratory then asks when to sample, how frequently to probe,
+and how long to integrate evidence before committing to a phase, intercept, transfer, or gate.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
