@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-four production waves now contain nine hundred thirty-nine cross-mechanic prototypes in addition
+The first ninety-five production waves now contain nine hundred forty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch94-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch95-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1594,6 +1594,24 @@ Batch 94 makes asymmetry operational. Markers and landmarks are valuable only wh
 traversal, orbit coverage, identity, consensus, or growth. The machine half then turns reversible
 transformations into an algebra: order, commutators, inverse identity, and change of basis are all
 observable constraints rather than labels on controls.
+
+Batch 95:
+
+- `a141 Reversible Scrambler` — every gate must preserve enough information for universal reversal;
+- `a142 Cycle Basis` — a compact generator set realizes requested permutations efficiently;
+- `a143 Return Parity` — reversible moves still partition arrangements into unreachable classes;
+- `a144 Group Walk` — pose follows a reducible word of abstract transformations;
+- `a145 Self or Wind` — null and reversed commands separate agency from periodic disturbance;
+- `a146 Hidden Puppeteer` — selective blocking reveals a common-controller subset;
+- `a147 Common Cause` — an upstream intervention breaks a misleading lamp correlation;
+- `a148 Reactive Floor` — counterfactual starts expose a stateless response field;
+- `a149 Controllable Object` — orthogonal probes identify the only weakly steerable piece;
+- `a150 Intent Trace` — obstacle-induced replanning distinguishes a goal from route replay.
+
+Batch 95 closes reversible transformation algebra by testing losslessness, generator structure,
+reachability invariants, and word reduction. Its causal half insists on counterfactual evidence:
+motion, correlation, responsiveness, and repeated trajectories are not credited as agency or intent
+until interventions isolate command, controller, cause, controllability, or replanning.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
