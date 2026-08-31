@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first ninety-five production waves now contain nine hundred forty-nine cross-mechanic prototypes in addition
+The first ninety-six production waves now contain nine hundred fifty-nine cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch95-v1.json` are the content-hashed batch manifests. Each full wave samples
+`research/gpt-batch96-v1.json` are the content-hashed batch manifests. Each full wave samples
 ten capability families instead of filling one adjacent family at a time; Batch 80 is the documented
 nine-game boundary that closes the q-ledger exactly.
 
@@ -1612,6 +1612,24 @@ Batch 95 closes reversible transformation algebra by testing losslessness, gener
 reachability invariants, and word reduction. Its causal half insists on counterfactual evidence:
 motion, correlation, responsiveness, and repeated trajectories are not credited as agency or intent
 until interventions isolate command, controller, cause, controllability, or replanning.
+
+Batch 96:
+
+- `a151 Delayed Agency` — colored tags identify commands despite heterogeneous execution delays;
+- `a152 Body Boundary` — probed co-motion separates limbs from tools, passengers, and followers;
+- `a153 Family Resemblance` — overlapping prototype features replace one defining conjunction;
+- `a154 Rule Boundary` — informative queries recover an oblique two-feature separator;
+- `a155 Exception Ladder` — the most specific nested category rule controls classification;
+- `a156 Prototype Drift` — recent accepted examples move the active concept beyond stale history;
+- `a157 Disjunctive Class` — two distant relational clusters defeat a single similarity centroid;
+- `a158 Relational Category` — moving groups changes smallest-member status without changing objects;
+- `a159 Negative Space Class` — equivalent enclosed holes pair dissimilar foreground shapes;
+- `a160 Cross-Modal Category` — relation structure transfers from motion to static geometry.
+
+Batch 96 completes agency attribution with temporal credit and embodiment, then makes category
+boundaries deliberately nontrivial. Prototype overlap, oblique geometry, specificity, online drift,
+disjunction, context, structured absence, and modality transfer each invalidate a different familiar
+shortcut while remaining visibly grounded and intervention-testable.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified
