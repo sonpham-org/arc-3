@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first forty-eight production waves now contain four hundred eighty cross-mechanic prototypes in addition
+The first forty-nine production waves now contain four hundred ninety cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch48-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch49-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -856,6 +856,19 @@ Batch 48:
 - `q411 Aurora Revision` — wear changes the crystal law while delayed effects require recalibration;
 - `q441 Aurora Lineage` — ancestry persists through split, merge, appearance rotation, and reversal;
 - `q503 Ember Frame` — movement, frame transforms, and observation consume one shared fuel reserve.
+
+Batch 49:
+
+- `q224 Tessera Veil` — an occlusion macro must be interrupted at a seam-defined phase;
+- `q254 Tessera Pact` — offer-convention inference is coupled to timed topology interruptions;
+- `q262 Tide Probe` — bounded causal probes precede one irreversible repair;
+- `q292 Tide Ledger` — conserved shell stock moves through reversing currents before sealing;
+- `q322 Tide Survey` — distinct current samples must justify an irreversible route commitment;
+- `q352 Tide Rig` — dual-effect components are assembled before a one-way launch;
+- `q382 Tide Delegation` — disjoint controller marks are integrated before irreversible handoff;
+- `q412 Tide Revision` — a worn current law is recalibrated before delayed effects are committed;
+- `q442 Tide Lineage` — split, merge, and appearance histories identify an ancestor at a one-way gate;
+- `q506 Palimpsest Frame` — near-miss failed examples reveal composition in a moving archive frame.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

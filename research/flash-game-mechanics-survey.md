@@ -504,6 +504,11 @@ offer conventions, causal rays, conserved crystal stock, bounded evidence, const
 distributed marks, wear-revised rules, and ancestry all share direction-reversing control while
 retaining different state machines and visual grammars. A finite-fuel kiln closes the wave by
 charging local motion, reference-frame transforms, and observation against one resource.
+Batch 49 contrasts two kinds of commitment. Folding-mosaic attention and convention tasks require
+interrupting an autonomous macro at a state-defined seam window. Tidal intervention, conservation,
+sampling, construction, delegation, revision, and identity tasks delay an irreversible repair,
+seal, route, launch, handoff, or gate until enough evidence is available. A sliding archive then
+uses the causal difference between a near-miss failure and success to recover a moving frame.
 
 For later games, mechanic selection follows this sequence:
 
