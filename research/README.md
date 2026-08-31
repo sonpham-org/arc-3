@@ -228,9 +228,9 @@ Anthropic side.
 
 ## GPT implementation status
 
-The first sixty-three production waves now contain six hundred thirty cross-mechanic prototypes in addition
+The first sixty-four production waves now contain six hundred forty cross-mechanic prototypes in addition
 to `q001 Quiet Field`. `research/gpt-batch01-v1.json` through
-`research/gpt-batch63-v1.json` are the content-hashed batch manifests. Each wave samples
+`research/gpt-batch64-v1.json` are the content-hashed batch manifests. Each wave samples
 ten capability families instead of filling one adjacent family at a time.
 
 Batch 01:
@@ -1051,6 +1051,19 @@ Batch 63:
 - `q761 Pollen Obligation` — identity debt survives a wear-triggered exchange of visible positions;
 - `q791 Pollen Rhythm` — an autonomous period changes before a state-defined interruption window;
 - `q513 Murmuration Frame` — local flight composes with a rotating wake and a three-view parity audit.
+
+Batch 64:
+
+- `q519 Reedbed Frame` — rotating local controls interact with links that change route and function;
+- `q549 Reedbed Lesson` — conditional policy applications also rewire the route they must use;
+- `q579 Reedbed Counter` — opponent-shaping treatments jointly alter rival state and connectivity;
+- `q609 Reedbed Grammar` — grouped relay glyphs compose meaning while changing the relay graph;
+- `q639 Reedbed Sandbox` — evidence persists while temporary simulated functions and links reset;
+- `q669 Reedbed Analogy` — relational structure transfers through function-changing bridges;
+- `q699 Reedbed Evidence` — unequal sensor components grow a network until stopping is safe;
+- `q729 Reedbed Gradient` — conserved mass crosses links that change channel capacity;
+- `q789 Reedbed Rhythm` — a constructed link changes period before a state-defined interruption;
+- `q477 Canopy Dependency` — one shared glider serves nested branches through a capacity-limited store.
 
 Each implemented game has six levels, a distinct visual grammar, a known-win recording, a known-loss
 recording, source-hash metadata, and seeded action fuzz coverage. These are qualified

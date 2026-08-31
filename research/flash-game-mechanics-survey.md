@@ -585,6 +585,11 @@ alpine-meadow tasks complement a policy, opponent law, relay, simulation interpr
 evidence sign, flow direction, identity placement, or autonomous period after a wear boundary. The open
 aviary task composes local movement with a rotating frame and requires a three-view majority audit to
 reject one misleading parity observation before commitment.
+Batch 64 makes construction inseparable from topology. Nine flooded-marsh tasks require each installed
+component, treatment, glyph, bridge, sensor, or interrupter to change both its immediate function and a
+route edge, capacity, or period. Local success can therefore obstruct the global plan. A terraced-orchard
+dependency task adds one reusable prerequisite whose branch order must respect a hard intermediate-store
+capacity and alternating seasonal condition.
 
 For later games, mechanic selection follows this sequence:
 
