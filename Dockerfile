@@ -23,7 +23,9 @@ COPY railway/entrypoint.sh /entrypoint.sh
 COPY railway/catalog_server.py /catalog_server.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/publication_store.py /publication_store.py
+COPY railway/model_backfill.py /model_backfill.py
 COPY scripts/run_catalog.py /run_catalog.py
+COPY scripts/model_metadata.py /model_metadata.py
 COPY templates/ /etc/oauth2-proxy/templates/
 COPY docs/*.html /srv/
 COPY docs/static/ /srv/static/

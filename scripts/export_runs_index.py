@@ -1,9 +1,10 @@
 """Generate docs/data/runs-index.json: per-run stats, per-game scores, harness facts.
 
-Stats come from each run's benchmark.json. The harness block is curated here --
-server/weights/env facts live outside the run artifacts (they belong to the VM
-that ran it), and this table is their single source of truth. The `baseline`
-entry names the run every other run's knobs are diffed against on the site.
+Stats come from each run's benchmark.json. Exact model identity comes from the
+immutable LAUNCH_STATE.json/model-info.json captured with the run; explicit
+exports fail if those records are missing. The harness block remains curated
+for explanatory serving and agent details. The `baseline` entry names the run
+every other run's knobs are diffed against on the site.
 """
 
 import glob
@@ -11,6 +12,9 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+from model_metadata import ModelMetadataError, extract_model_metadata
 
 
 def extract_prompts(run_dir: str) -> dict:
@@ -1436,6 +1440,7 @@ HARNESS = {
 }
 
 runs = []
+explicit_run_names = {Path(value).resolve().name for value in sys.argv[1:]}
 # A GCS sync may contain both a lightweight root benchmark and the complete
 # benchmark under ``runs/``.  Index each run once and prefer the complete tree.
 benchmark_by_run = {}
@@ -1463,9 +1468,11 @@ for bench_path in benchmark_paths:
     if os.path.basename(benchmark_dir) == "runs":
         run = os.path.basename(os.path.dirname(benchmark_dir))
         artifact_dir = benchmark_dir
+        run_dir = os.path.dirname(benchmark_dir)
     else:
         run = os.path.basename(benchmark_dir)
         artifact_dir = benchmark_dir
+        run_dir = benchmark_dir
     try:
         bench = json.load(open(bench_path))
     except Exception:
@@ -1486,7 +1493,13 @@ for bench_path in benchmark_paths:
         }
         for g in games
     ]
-    runs.append({
+    try:
+        model = extract_model_metadata(Path(run_dir), require_revision=True)
+    except ModelMetadataError as exc:
+        if run in explicit_run_names:
+            raise SystemExit(str(exc)) from exc
+        model = None
+    entry = {
         "run": run,
         "games": len(games),
         "avg_score": round(sum(g["score"] for g in per_game) / n, 3),
@@ -1504,7 +1517,10 @@ for bench_path in benchmark_paths:
         # scoreboard shows a "usage" link to the visualizer.
         "has_usage": os.path.exists(os.path.join("docs", "data", run, "usage.json")),
         "has_execution_trace": os.path.exists(os.path.join("docs", "data", run, "run-timeline.json")),
-    })
+    }
+    if model:
+        entry["model"] = model
+    runs.append(entry)
 
 index_path = "docs/data/runs-index.json"
 # Sparse publication checkouts may intentionally materialize only the run being

@@ -27,6 +27,7 @@ from publication_store import (
     validate_run_id,
     validate_sha256,
 )
+from model_backfill import backfill_catalog_models
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -239,7 +240,14 @@ def migrate_and_bootstrap(schema_path: Path, data_root: Path) -> int:
                 (Json(legacy_index.get("baseline") or {}), Json(legacy_index.get("biases") or {})),
             )
             inserted = bootstrap_legacy_catalog(cursor, data_root, legacy_index)
+            backfilled, unresolved = backfill_catalog_models(cursor, Json)
             cursor.execute("SELECT arc3_refresh_catalog_snapshot()")
+            print(
+                f"catalog model backfill updated={backfilled} unresolved={len(unresolved)}",
+                flush=True,
+            )
+            if unresolved:
+                print(f"catalog model backfill unresolved runs: {','.join(unresolved)}", flush=True)
     return inserted
 
 

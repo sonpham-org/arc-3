@@ -25,6 +25,10 @@ class PublicationStoreTests(unittest.TestCase):
             "levels": 1,
             "actions": 3,
             "tokens": 40,
+            "model": {
+                "id": "RadixArk/Qwen3.8-Flash-Next-NVFP4",
+                "revision": "7b719225242aacd3dbd3f9407468c2ee9a9d2594",
+            },
             "per_game": [
                 {
                     "id": "game-a",

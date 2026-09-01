@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    from .model_metadata import ModelMetadataError, validate_model_metadata
+except ImportError:  # Docker copies both modules beside each other.
+    from model_metadata import ModelMetadataError, validate_model_metadata
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -74,6 +79,15 @@ def validate_catalog_consistency(
         raise ValueError("per-game score rows contain duplicate game ids")
 
 
+def require_catalog_model(entry: dict[str, Any]) -> dict[str, Any]:
+    """Require an exact, pinned model identity on every new publication."""
+
+    try:
+        return validate_model_metadata(entry.get("model"), require_revision=True)
+    except ModelMetadataError as exc:
+        raise ValueError(f"invalid model metadata: {exc}") from exc
+
+
 def prepare_run_submission(
     run_dir: Path,
     index_path: Path,
@@ -86,6 +100,7 @@ def prepare_run_submission(
         raise ValueError("run-overview.json and run-timeline.json are both required")
     index = json.loads(index_path.read_text(encoding="utf-8"))
     entry = find_catalog_entry(index, run_name)
+    entry["model"] = require_catalog_model(entry)
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
     validate_catalog_consistency(run_name, entry, timeline)
 

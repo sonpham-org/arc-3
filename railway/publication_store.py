@@ -15,9 +15,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable
 
 try:
-    from scripts.run_catalog import artifact_kind, validate_catalog_consistency
+    from scripts.run_catalog import (
+        artifact_kind,
+        require_catalog_model,
+        validate_catalog_consistency,
+    )
 except ImportError:  # Docker copies run_catalog.py beside this module.
-    from run_catalog import artifact_kind, validate_catalog_consistency
+    from run_catalog import artifact_kind, require_catalog_model, validate_catalog_consistency
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -209,6 +213,10 @@ def _validate_submission(run_dir: Path, run_id: str) -> dict[str, Any]:
         raise PublicationProblem(400, "invalid_submission", "submission artifacts or source is invalid")
     if entry.get("run") != run_id or not entry.get("has_execution_trace"):
         raise PublicationProblem(400, "invalid_submission", "catalog entry is not a complete trace")
+    try:
+        entry["model"] = require_catalog_model(entry)
+    except ValueError as exc:
+        raise PublicationProblem(400, "invalid_model_metadata", str(exc)) from exc
     if timeline_on_disk.get("run") != run_id or timeline_on_disk.get("scoreCurve") != curve:
         raise PublicationProblem(400, "timeline_mismatch", "timeline differs from submitted score curve")
     try:

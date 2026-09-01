@@ -152,6 +152,9 @@ execution trace, validates the final score against the timestamped score curve, 
 hash-verified archive to the versioned Railway publication API. The API installs the run files
 and commits the run, per-game scores, score events, artifact hashes, and publication receipt to
 Railway Postgres in one transaction with filesystem rollback.
+Every publication must include `LAUNCH_STATE.json` or `model-info.json` with the exact model
+repository and full 40-character revision. The exporter cross-checks both files when both exist,
+stores their SHA-256 evidence in the catalog, and refuses an unlabelled or unpinned upload.
 The scoreboard and both score-over-time pages read that database-backed catalog, so there is
 no separate index upload to remember. Publishing data never changes Git and never triggers a
 Railway deployment. The publisher reads `ARC3_PUBLISH_TOKEN` from the environment or, when run
