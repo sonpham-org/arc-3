@@ -2,9 +2,10 @@
 
 Two things live in this repo, and they share one site (**https://arc3.sonpham.net**):
 
-1. **Games** — a browsable, playable catalog of ~300 ARC-AGI-3 games: the 25 official
-   ARC Prize Foundation games, our in-house custom games, and the Red Blue Pill community
-   catalog. Public, no login, runs entirely in the browser.
+1. **Games** — a browsable, playable catalog of 927 ARC-AGI-3 games: the 25 official
+   ARC Prize Foundation games, our in-house custom games, the reviewed `arena` set, our
+   generator's output, and the Red Blue Pill community catalog. Public, no login, runs
+   entirely in the browser.
 2. **Internal runs** — the evaluation side: every benchmark run we've done of the
    ARC-AGI-3 duck harness, with a scoreboard, a per-turn run inspector, resource usage,
    and score-distribution ("signal") runs. Behind sign-in.
@@ -18,15 +19,21 @@ the harness variants, the GCP launch kit, and the raw run logs.
 
 `docs/index.html` — the public half of the site.
 
-**294 games in the catalog**, from three sources that all share the same
+**927 games in the catalog**, from five sources that all share the same
 `environment_files/<code>/<version>/` layout and the same `ARCBaseGame` / `arcengine`
 model:
 
 | Source | Count | Origin |
 |---|---:|---|
-| `official` | 25 | the public ARC-AGI-3 games (`environment_files/` in this repo) |
-| `custom` | 17 | built in-house (sibling repo `arc-agi-3`) |
+| `ai-generated` | 571 | straight off our generator, unreviewed |
 | `redbluepill` | 252 | [theredbluepill/arc-interactive](https://github.com/theredbluepill/arc-interactive) |
+| `arena` | 50 | generated, then played and revised until they hold up — the reviewed set. Also served from local disk by [arc-explainer](https://github.com/82deutschmark/arc-explainer), which is the copy that wins there; see its `Arc3MirrorCatalog.ts`. |
+| `custom` | 29 | built in-house |
+| `official` | 25 | the public ARC-AGI-3 games (`environment_files/` in this repo) |
+
+The `arena` rows carry no `description` or `tags`, and their `title` is just the id. That
+is deliberate: arc-explainer uses them to collect a blind human baseline, where a player
+infers the rules from the frame, so a name spends the data point before the first move.
 
 Game *codes* collide across sources (`cr01`, `ft09`, `ls20`, `pt01`, `vc33` exist in more
 than one catalog as entirely different games), so everything keys on the full `game_id`
@@ -77,9 +84,11 @@ their source and thumbnails stay on disk; delete the entry to bring one back.
 |---|---|
 | `internal.html` | **Scoreboard**: one row per run, one column per game, cell = that run's score |
 | `viewer.html` | **Run inspector**: scrub every board state of a game and read the agent's full decision trace per turn |
-| `harness.html` | Per-run harness facts (server, weights, env knobs) + real in-code tool-call counts |
+| `trace.html` | Execution trace for a single run |
 | `signals.html` | **Signal runs**: one game played N times, as a box/whisker score distribution |
 | `usage.html` | Per-run CPU / GPU / RAM / storage over the life of the run |
+| `score-time.html`, `score-over-time.html` | Score over time |
+| `research.html` | "Beyond the Public 25" — results off the official set |
 
 Static data from finished runs only — no live streaming. 37 runs are published today.
 
