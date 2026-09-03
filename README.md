@@ -51,6 +51,11 @@ The 16-colour board palette is deliberately duplicated between the thumbnail gen
 (`scripts/build_games_manifest.py`) and the play page (`docs/static/js/games-play.js`), so
 in-browser play renders pixel-identical to the static thumbnails and to recorded runs.
 
+Those same thumbnails are the site's favicon: `docs/static/js/favicon.js` points each page's
+`<link rel="icon">` at one of the 25 `official` games at random per load, and the icon in the
+page's head is the static fallback for when JavaScript is off. If the official set changes,
+regenerate the id list at the top of `favicon.js` with the one-liner in its comment.
+
 ### Rebuilding the catalog
 
 ```bash
