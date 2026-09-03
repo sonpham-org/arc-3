@@ -29,7 +29,9 @@ from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
 # ---------------------------------------------------------------------------
 
 STEPS = 60                   # angular resolution of the whole wheel (6 degrees per step)
-CX, CY = 32, 38              # wheel centre (pushed down; HUD occupies the top rows)
+# Wheel centre. Display-only: the strike test is angular (bar_angle against arc coverage)
+# and never reads CX/CY, so the wheel sits dead centre now that no HUD rows exist.
+CX, CY = 32, 32
 RINGS = (11, 16, 21)         # radii the arcs may occupy
 BAR_INNER, BAR_OUTER = 3, 24 # the sweeping bar spans these radii
 
@@ -58,8 +60,14 @@ ARC_COLOR = {GREEN: C_GREEN, RED: C_ORANGE}
 C_FIELD = C_MAROON
 C_RING = C_PURPLE
 
-HUD_BAR_Y, HUD_BAR_X0, HUD_BAR_X1 = 0, 1, 63
-LIFE_Y, LIFE_X = 3, 2
+# No HUD. Every game in the set must show its state differently, so Wheel carries budget
+# and lives on the wheel itself (see Wh01Display) and never draws a bar, a pip or a count:
+#   budget  -> the hub disc, whose radius shrinks concentrically as budget is spent;
+#   lives   -> the bar, drawn as one strand per remaining life, so it frays as lives go;
+#   greens  -> the green arcs still on the ring ARE the count.
+C_HUB = C_LMAGENTA           # neutral hub colour; light magenta is unused elsewhere here
+HUB_RADIUS = 6.0             # hub disc radius at full budget; one pixel at zero budget
+STRAND_GAP = 2               # perpendicular pixels between bar strands
 
 # ---------------------------------------------------------------------------
 # Levels. Each arc is (ring_index, start_step, length_steps, speed, kind).
@@ -166,9 +174,12 @@ class Wh01Display(RenderableUserDisplay):
         self.game = game
 
     @staticmethod
-    def _polar(radius, step):
+    def _polar(radius, step, offset=0.0):
+        """Pixel at (radius, step), shifted `offset` px perpendicular to the radial line."""
         theta = 2.0 * math.pi * step / STEPS
-        return int(round(CX + radius * math.cos(theta))), int(round(CY + radius * math.sin(theta)))
+        c, s = math.cos(theta), math.sin(theta)
+        return (int(round(CX + radius * c - offset * s)),
+                int(round(CY + radius * s + offset * c)))
 
     def _plot(self, frame, x, y, color):
         if 0 <= x < 64 and 0 <= y < 64:
@@ -191,7 +202,8 @@ class Wh01Display(RenderableUserDisplay):
                 x, y = self._polar(r, STEPS * s / n)
                 self._plot(frame, x, y, C_RING)
 
-        # Arcs, three pixels thick so a thin ring still reads as a solid object.
+        # Arcs, three pixels thick so a thin ring still reads as a solid object. The greens
+        # still on the ring are the only "remaining" display there is -- no pips.
         for arc in g.arcs:
             color = ARC_COLOR[arc["kind"]]
             radius = RINGS[arc["ring"]]
@@ -202,43 +214,49 @@ class Wh01Display(RenderableUserDisplay):
                     x, y = self._polar(radius + dr, step)
                     self._plot(frame, x, y, color)
 
-        # The bar the player turns.
+        # The bar the player turns, drawn as one white strand per remaining life, laid side
+        # by side STRAND_GAP px apart and centred on the true angle. Losing a life strips a
+        # strand and the bar re-centres thinner; on the last life it is a single-pixel line.
+        # Rendering only: the strike test is the centre angle alone, whatever the width.
+        lives = max(0, g.lives)
+        offsets = [STRAND_GAP * (k - (lives - 1) / 2.0) for k in range(lives)]
         n = (BAR_OUTER - BAR_INNER) * 3
         for i in range(n + 1):
             radius = BAR_INNER + (BAR_OUTER - BAR_INNER) * i / n
-            x, y = self._polar(radius, g.bar_angle)
-            self._plot(frame, x, y, C_WHITE)
-            # widen the tip so the aiming end is unmistakable
-            if radius > BAR_OUTER - 4:
-                self._plot(frame, x + 1, y, C_WHITE)
-                self._plot(frame, x, y + 1, C_WHITE)
-        # Hub: recoloured by what the bar is currently over -- colour as affordance, and
-        # the one cue that makes "strike now" learnable without being told.
-        hub = C_LGRAY
+            for off in offsets:
+                x, y = self._polar(radius, g.bar_angle, off)
+                self._plot(frame, x, y, C_WHITE)
+        # Tip cap: a short perpendicular stroke joining the strands at the outer end, so
+        # the aiming end is unmistakable however many strands remain (never narrower than
+        # three pixels, so a lone strand still has a visible head).
+        half = max(1.0, STRAND_GAP * (lives - 1) / 2.0)
+        m = int(4 * half) + 1
+        for radius in (BAR_OUTER - 1, BAR_OUTER - 0.5, BAR_OUTER):
+            for j in range(m + 1):
+                off = -half + 2.0 * half * j / m
+                x, y = self._polar(radius, g.bar_angle, off)
+                self._plot(frame, x, y, C_WHITE)
+
+        # Hub: the budget gauge. A solid disc whose radius shrinks concentrically as budget
+        # is spent -- a full disc at full budget, a single centre pixel at zero -- recomputed
+        # every frame from budget_left / budget_max. Its AREA tracks the budget (radius goes
+        # as the square root): with radius linear the disc was already one pixel at a sixth
+        # of the budget and two thirds of its size steps fell above half, whereas area-linear
+        # spreads the steps evenly and only collapses to a pixel in the last few percent.
+        # Its colour stays the affordance cue that makes "strike now" learnable without
+        # being told: it takes the colour of the arc kind under the bar (reds win), else
+        # the neutral hub colour.
+        hub = C_HUB
         if g._reds_under_bar():
-            hub = C_RED
+            hub = ARC_COLOR[RED]
         elif g._greens_under_bar():
-            hub = C_GREEN
-        frame[CY - 1:CY + 2, CX - 1:CX + 2] = hub
-
-        # HUD: budget bar.
-        span = HUD_BAR_X1 - HUD_BAR_X0
-        filled = 0 if g.budget_max <= 0 else int(span * g.budget_left / g.budget_max)
-        frame[HUD_BAR_Y:HUD_BAR_Y + 2, HUD_BAR_X0:HUD_BAR_X1] = C_DGRAY
-        if filled > 0:
-            frame[HUD_BAR_Y:HUD_BAR_Y + 2, HUD_BAR_X0:HUD_BAR_X0 + filled] = (
-                C_GREEN if g.budget_left * 4 > g.budget_max else C_ORANGE)
-
-        # HUD: lives as pips, and remaining greens as pips on the right.
-        for i in range(g.lives_max):
-            x = LIFE_X + i * 4
-            if x + 2 < 64:
-                frame[LIFE_Y:LIFE_Y + 3, x:x + 3] = C_RED if i < g.lives else C_VDGRAY
-        remaining = len(g._greens())
-        for i in range(g.greens_at_start):
-            x = 63 - (i + 1) * 4
-            if x >= 0:
-                frame[LIFE_Y:LIFE_Y + 3, x:x + 3] = C_VDGRAY if i < remaining else C_GREEN
+            hub = ARC_COLOR[GREEN]
+        frac = 0.0 if g.budget_max <= 0 else min(1.0, max(0.0, g.budget_left / g.budget_max))
+        r = HUB_RADIUS * math.sqrt(frac)
+        R = int(HUB_RADIUS)
+        yy, xx = np.ogrid[-R:R + 1, -R:R + 1]
+        disc = (xx * xx + yy * yy) <= r * r          # r == 0 leaves exactly the centre pixel
+        frame[CY - R:CY + R + 1, CX - R:CX + R + 1][disc] = hub
         return frame
 
 
