@@ -27,6 +27,7 @@ const CATEGORIES = [
   { key: "custom", label: "Custom", grid: "browseCustom", pager: "pagerCustom", count: "countCustom" },
   { key: "ai-generated", label: "AI-Generated games", grid: "browseAiGenerated", pager: "pagerAiGenerated", count: "countAiGenerated" },
   { key: "redbluepill", label: "Red Blue Pill", grid: "browseRedblue", pager: "pagerRedblue", count: "countRedblue" },
+  { key: "arena", label: "Arena", grid: "browseArena", pager: "pagerArena", count: "countArena" },
 ];
 
 let games = [];
