@@ -9,7 +9,7 @@
 #   rewind, spend it later. Every level past the tutorial is unreachable in a single run --
 #   proved exhaustively over self-avoiding walks in smoke_test.py.
 #   Core-knowledge priors only: objectness, topology, agentness. No text, no glyphs, no
-#   numbers -- counts are pips and affordances are colours.
+#   numbers, no bars, no pips -- affordances are colours and the meter is the walker's body.
 # SRP/DRY check: Pass -- self-contained environment. Nothing in the ~300-game catalogue
 #   carries state across a RESET, so there is no prior art to reuse.
 """Rewind -- the floor falls behind you; rewinding is how you get back.
@@ -48,12 +48,34 @@ C_GOAL = C_GREEN
 KEY_COLORS = (C_BLUE, C_YELLOW, C_MAGENTA, C_RED)
 
 # ---------------------------------------------------------------------------
-# Board geometry -- 9x8 tiles of 7px fills 63x56 of the 64x64 frame under a 8px HUD
+# Board geometry -- 9x8 tiles of 7px fills 63x56 of the 64x64 frame. Rows 0-7 are an inert
+# band of field colour (the HUD that used to live there is gone). The origin stays at OY = 8
+# because step() hit-tests clicks with the same OX/OY/CELL, and the game logic is frozen.
 # ---------------------------------------------------------------------------
 
 GRID_W, GRID_H = 9, 8
 CELL = 7
 OX, OY = 0, 8
+
+# The walker IS the meter. It is a 5x5 figure with the corners knocked off -- 21 pixels
+# inside the tile body -- and it fades as the meter drains: ceil(21 * left / max) of these
+# pixels are lit, taken from the front of this tuple. The order walks a 2x2 Bayer tiling
+# class by class, so holes open evenly across the figure instead of eating it from one
+# side. The centre never drops, and the inner diagonals outlive the edge-mids so the last
+# survivors form an X on the tile's body rather than lying along a lit beacon's white
+# cross. Offsets are (dx, dy) inside the 5x5 body.
+WALKER_PIXELS = (
+    (2, 2),                                                  # the core: never drops
+    (1, 1), (3, 3), (3, 1), (1, 3),                          # bayer 1: inner diagonals
+    (0, 2), (4, 2), (2, 0), (2, 4),                          # bayer 0: edge-mids
+    (1, 2), (3, 2), (1, 0), (3, 4), (3, 0), (1, 4),          # bayer 2
+    (2, 1), (2, 3), (0, 1), (4, 3), (4, 1), (0, 3),          # bayer 3
+)
+C_WALKER = C_WHITE
+# The final quarter of the meter: the thinning figure turns light magenta. Unused anywhere
+# else on the board, and it still reads on the pad, the floor and a lit lamp's white cross,
+# where a grey or white scatter of five pixels would not.
+C_WALKER_LOW = C_LMAGENTA
 
 DIRS = ((0, -1), (0, 1), (-1, 0), (1, 0))          # ACTION1..4 = up/down/left/right
 DIR_OF_ACTION = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}
@@ -205,6 +227,9 @@ class Rw01Display(RenderableUserDisplay):
     The whole vocabulary is solid-versus-hollow: a solid tile can be stood on, a hollow or
     empty one cannot. A door is a solid slab while shut and a pair of jambs once open. A
     beacon is an empty socket until it is lit, then a filled lamp with a white cross.
+
+    There is no HUD. The meter is the walker itself: solid at full, dithered away pixel by
+    pixel as it drains, a scatter of dots near the end. Nothing else counts anything.
     """
 
     def __init__(self, game):
@@ -308,54 +333,45 @@ class Rw01Display(RenderableUserDisplay):
             return
         self._tile(frame, px, py, C_FLOOR)
 
+    # -- the walker ---------------------------------------------------------
+
+    def _draw_walker(self, frame, g):
+        """The walker is the meter, drawn over whatever it stands on.
+
+        ceil(21 * left / max) of WALKER_PIXELS are lit, in order, so the figure is solid at
+        full meter and thins evenly as the meter drains; the centre never drops, so the
+        walker can still be found at one unit left. In the final quarter it turns pink.
+        A stuck walker (every neighbour wall, void or a shut door) keeps its hollow centre
+        -- at which point the pad turns white as well -- unless the centre is all it has.
+        """
+        wx, wy = OX + g.pos[0] * CELL, OY + g.pos[1] * CELL
+        total = len(WALKER_PIXELS)
+        lit = 1
+        if g.budget_max > 0 and g.budget_left > 0:
+            lit = min(total, max(1, -(-(total * g.budget_left) // g.budget_max)))
+        colour = C_WALKER if g.budget_left * 4 > g.budget_max else C_WALKER_LOW
+        for dx, dy in WALKER_PIXELS[:lit]:
+            frame[wy + 1 + dy, wx + 1 + dx] = colour
+        if g.stuck and lit > 1:
+            frame[wy + 3, wx + 3] = C_BLACK
+
     # -- frame --------------------------------------------------------------
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
         # Palette: the corpus is 60.3% greyscale. Purple void, maroon floor -- both are
         # near-absent from the catalogue. The void must stay clearly "not floor", since a
-        # fallen tile becoming void is the core feedback of this game.
+        # fallen tile becoming void is the core feedback of this game. Rows 0-7 stay field
+        # colour: no bar, no pips. The meter is the walker, and the board already shows
+        # every lit colour (beacon filled, its doors open), every sealed door (walled up,
+        # ringed in its colour) and every scar (hollow ring) where it happened.
         frame[:, :] = C_PURPLE
-
-        # Meter. Every action spends from it, including a rewind, so it is the one thing
-        # that always visibly moves.
-        frame[1:3, 1:63] = C_DGRAY
-        if g.budget_max > 0 and g.budget_left > 0:
-            filled = max(1, int(62 * g.budget_left / g.budget_max))
-            frame[1:3, 1:1 + filled] = (C_GREEN if g.budget_left * 4 > g.budget_max
-                                        else C_ORANGE)
-
-        # Left pips: one per keyed colour this level uses -- lit, dark, or walled up.
-        for i, k in enumerate(g.keys_used):
-            x = 2 + i * 5
-            if k in g.sealed:
-                frame[4:7, x:x + 3] = KEY_COLORS[k]
-                frame[5, x + 1] = C_SCAR               # lit once, dead now
-            else:
-                frame[4:7, x:x + 3] = KEY_COLORS[k] if k in g.armed else C_DGRAY
-
-        # Right pips: one per brittle tile -- solid while intact, hollow once scarred.
-        for i, cell in enumerate(g.brittle_cells):
-            x = 61 - i * 4
-            if x < 2:
-                break
-            if cell in g.scars:
-                frame[4:7, x:x + 3] = C_SCAR
-                frame[5, x + 1] = C_BLACK
-            else:
-                frame[4:7, x:x + 3] = C_BRITTLE
 
         for r in range(GRID_H):
             for c in range(GRID_W):
                 self._draw_cell(frame, g, c, r)
 
-        # The walker, drawn over whatever it stands on. A solid block while it has
-        # somewhere to go, a hollow one when every neighbour is wall, void or a shut door
-        # -- at which point the pad turns white as well.
-        wx, wy = OX + g.pos[0] * CELL, OY + g.pos[1] * CELL
-        frame[wy + 2:wy + 5, wx + 2:wx + 5] = C_WHITE
-        if g.stuck:
-            frame[wy + 3, wx + 3] = C_BLACK
+        self._draw_walker(frame, g)
         return frame
 
 
