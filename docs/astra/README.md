@@ -4,17 +4,20 @@ Source: <https://arcprize.org/results/openai-gpt-6-astra>. The page is JS-only; 
 numbers below were pulled from the JSON API behind it, not scraped from the HTML.
 Raw extract: `astra_v3_gaps.json` (25 games x 12 configurations).
 
-## Read this first: the chain-of-thought is not published
+## Read this first: the raw chain-of-thought is not published, only summaries
 
-Every action in every replay carries `reasoning: null` alongside a non-zero
-`reasoning_tokens` count (e.g. 1256). The model's actual thinking is **sealed** and is
-not in the replay dump. What you can read is the terse `output` line per action — the
-same ~40 tokens the site's Reasoning Log panel shows.
+This is a property of OpenAI's Responses API, not of the ARC Prize dump. The API
+**encrypts the reasoning** and returns only a summary of it. So the replays carry summary
+text where the provider produced one, and `reasoning: null` on the actions where it did
+not — alongside a non-zero `reasoning_tokens` count either way (e.g. 1256). Do not read
+`reasoning: null` as "the reasoning field is always empty"; read it as "the raw trace is
+never available, and even the summary is intermittent."
 
-So the question "is the reasoning performative / nonsensical" is answerable only against
-that summary line, plus the ratio of hidden reasoning tokens to output tokens. Anyone who
-finds this directory expecting auditable reasoning traces will not find them. Do not plan
-an analysis that needs them.
+What you can audit, therefore: the compact summary where present, the terse `output` line
+per action, and the ratio of hidden reasoning tokens to visible output tokens. What you
+cannot audit: the actual thinking. Anyone who finds this directory planning to grade the
+model's reasoning line by line should know that up front — the object of that grading is
+a provider-written summary, not the model's own trace.
 
 ## The gap, per game
 
