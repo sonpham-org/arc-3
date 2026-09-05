@@ -1,0 +1,15 @@
+# Optional CPU toolkit
+
+This candidate extends the segmentation-cache parent with fourteen optional `vision` methods: crop, mask, topology, relations, path, reachable, groups, background, hud, lattice, cells, symmetry, track and find. They are available in fresh Python snippets and saved helpers. Existing segmentation, object summaries and settled deltas remain available.
+
+The static Python guidance adds 813 characters relative to the parent. `vision.help()` returns a short method index; `vision.help('method')` returns one compact signature/field/caveat string. Topic text is capped at 400 characters and the serialized index at 1,400. These are character limits, not measured Qwen tokenizer counts. Full implementation/evaluation documentation belongs in release artifacts, not the model prompt.
+
+Methods compute only when called. Results stay inside Python unless explicitly printed or returned. The existing per-game 128-entry/4 MiB encoded-result LRU also caches these results and reusable component membership. Cache keys include frame content, dimensions, options and connectivity; temporal features additionally include observation/boundary/action identities. Cached geometry receives the requesting observation's current frame ID. New game-state paths reset the cache. Encoded bytes exclude Python bookkeeping, keys and transient decoded copies.
+
+All new algorithms use CPU/standard-library operations over at most 64x64 pixels. Pattern search stops at 250,000 cell checks; tracking stops at 100,000 candidate comparisons. Partial results disclose work/output limits. Component grouping and spatial relation outputs are bounded. Legacy segmentation cache misses still compute inside the existing timed guest process; its original algorithm is byte-identical.
+
+Object IDs match `vision.objects` at the chosen connectivity. Exact masks preserve holes. Topology uses complementary digital connectivity. Grid paths use explicit passable colors, unit pixel moves and no diagonal corner cutting; they never execute actions or infer movement rules. Groupings, background/HUD ranks, lattice proposals and correspondence matches are evidence. Duplicate tracking candidates remain ambiguous; reset/level/nonconsecutive boundaries do not produce matches. A single transition cannot establish persistent timer behavior.
+
+`cells` maps an explicitly chosen origin/spacing to exact cell bounds/color counts, with mixed colors and edge clipping reported. Symmetry compares exact color grids or a component mask. Template search accepts exact ARC characters or numeric values with None wildcards and optional D4 variants. None of these algorithms infer objectives or hidden game state.
+
+The solver, GPU/model serving, runtime limits, curator configuration, persistent-helper rules and legacy segmentation algorithm are unchanged. No GPU run or deployment is performed by this release. Windows tests use the existing test-only sandbox launcher adapter; Linux production launch and gameplay/token benefit remain unmeasured. This toolkit does not combine the separate preserved-rules arm.

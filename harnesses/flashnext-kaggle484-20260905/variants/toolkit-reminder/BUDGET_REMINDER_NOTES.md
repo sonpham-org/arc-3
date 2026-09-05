@@ -1,0 +1,3 @@
+# Compact runtime budget reminder
+
+Enable ARC3_BUDGET_REMINDER_ENABLED=1. Before each completion request, the current user input shows fresh minimum(game remaining, suite remaining) and reported generated tokens against a 108,000-token per-game soft target. There is no new token cutoff or scheduling policy. Existing system prompts, tools, deadlines, action limits, token accounting and sampling are unchanged. The reminder is replaced per request and removed from persisted conversation history. Metadata is saved to per-game *_budget_metrics.json; raw request/transcript logs include the reminder.
