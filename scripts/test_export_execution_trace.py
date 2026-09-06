@@ -1,10 +1,11 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts.export_execution_trace import (
+    action_pace_points,
     assign_gameplay_slots,
     call_phase_summary,
     gameplay_concurrency,
@@ -14,6 +15,22 @@ from scripts.export_execution_trace import (
 
 
 class ExecutionTraceTopologyTests(unittest.TestCase):
+    def test_action_pace_samples_cumulative_and_trailing_rate(self):
+        started = datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc)
+        ended = started + timedelta(minutes=20)
+        timed_actions = [
+            *[started + timedelta(seconds=30 * index + 1) for index in range(20)],
+            *[started + timedelta(minutes=10, seconds=150 * index + 1) for index in range(4)],
+        ]
+
+        points = action_pace_points(timed_actions, started, ended, total_actions=24)
+
+        self.assertEqual(0, points[0]["cumulativeActions"])
+        self.assertEqual(20, points[10]["cumulativeActions"])
+        self.assertEqual(2.0, points[10]["actionsPerMinute"])
+        self.assertEqual(24, points[-1]["cumulativeActions"])
+        self.assertEqual(0.4, points[-1]["actionsPerMinute"])
+
     def test_phase_summary_preserves_semantic_order(self):
         step = {
             "context": {"sections": [{"source": "request", "content": "system + user"}]},

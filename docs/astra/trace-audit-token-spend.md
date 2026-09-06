@@ -43,8 +43,9 @@ feature. Do not quote them as a controlled ablation.
   our budget — the ceiling is not what blocks us, the spend pattern is.
 - A median of 482.5 generated tokens per action means we are re-reasoning the mechanic every
   step. The adapter path produces the same actions at 32.
-- Worth implementing. It may also let us retreat on model size, since the win comes from
-  where the tokens go rather than from raw capability.
+- Worth implementing as a cost measure. **Do not yet read it as the cause of the score
+  gap** — see the regime caveat below. In particular, "this lets us retreat on model size"
+  does not follow from these numbers.
 
 ## Open questions
 
@@ -54,3 +55,61 @@ feature. Do not quote them as a controlled ablation.
   mechanic shifts mid-game?
 - Does cheap rollout survive a level-3+ mechanic change, or does it need an explicit
   re-entry into the expensive phase?
+
+## Regime caveat: the token result and the score gap are not the same phenomenon
+
+Added 2026-09-05 after re-reading `astra_v3_gaps.json` alongside the numbers above.
+
+Split the 25 games by how much the six default-harness configurations disagree with each
+other, and the default harness has three regimes, not one:
+
+| Regime | Games | Default spread across 6 configs | Gap to PA |
+|---|---|---|---|
+| Deterministic floor | BP35, G50T, TU93, LF52 | 0.018 – 0.087, at scores under 0.11 | 0.89 – 0.98 |
+| Chaos band | 17 games | median 0.373, up to CD82 1.000 and SB26 0.972 | 0.00 – 0.79 |
+| Deterministic ceiling | S5I5, LP85, FT09, AR25 | 0.000, flat at 1.000 | 0.000 |
+
+This refines the README's "reasoning effort is noise" claim. It is noise **in the middle
+band only**. At the floor it is not noise at all — four games fail reproducibly at every
+reasoning level, within 0.09 of each other. That reproducibility is what makes them the
+debuggable ones.
+
+**The caveat that matters for the token numbers above.** S5I5 — the game the 82.6% figure
+comes from — is a deterministic-ceiling game: default spread 0.000, gap to PA 0.000. Both
+harnesses win every configuration. So the cheap-rollout evidence was measured on a game
+where the harness makes no difference to the score whatsoever. WA30 is no better as a
+tiebreaker: its default spread is 0.373, so a single standard-vs-adapter pair there sits
+comfortably inside the default harness's own noise.
+
+Conclusion: front-load-then-commit is **demonstrated as a cost win and unproven as the
+mechanism of the score gap**. Nobody has yet shown that this is what turns BP35 from 0.02
+into 1.000.
+
+## Hypothesis worth testing: the floor games die, they do not run out of budget
+
+The README's TU93 worked case is the only action-level evidence in this directory: the best
+default configuration spent 232 actions and **38 resets** to reach 2 of 9 levels and a
+GAME_OVER; Provider Adapter took 218 actions and **2 resets** to 9 of 9 and a WIN. Similar
+action budget, opposite outcome, twenty times the deaths.
+
+If that generalizes, then front-loading buys score by **not taking fatal actions**, and the
+token saving is a second consequence of the same behavior rather than its cause. One
+behavior, two effects — not one effect causing the other.
+
+**The check that discriminates.** Pull one BP35 default replay and one BP35 PA replay and
+count two things: total resets, and the action index of first death. If the default run
+dies early and repeatedly on a game it scores 0.022 on, the mechanism is confirmed and the
+fix is a commit-gate on irreversible actions, not a token budget.
+
+Note on getting that data: the replay pages under `three.arcprize.org` render the log
+client-side — the served HTML contains only an empty `reasoning-log-empty` shell behind a
+suspense boundary. Static `curl` will not get it. Needs a headless browser or the streamed
+RSC chunk.
+
+## Correction to the README
+
+`README.md` in this directory calls five games "pure scaffolding failures" and includes
+SK48. SK48 does not belong in that group: it is the one game where Provider Adapter also
+fails to saturate (worst PA level 0.278), with TN36 at 0.888 the only other non-saturating
+case. There are **four** pure scaffolding failures — BP35, G50T, TU93, LF52 — and SK48 is
+a separate, more interesting case where neither harness closes it out.
