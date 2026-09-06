@@ -2,7 +2,7 @@ import { fetchRunsIndex, fetchRunScoreCurve } from "./api.js?v=postgres-catalog-
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COLORS = ["#3b82f6", "#f59e0b", "#22c55e", "#a78bfa", "#ef4444", "#06b6d4", "#ec4899", "#eab308"];
-const state = { rows: [], selected: new Set(), traces: new Map(), colors: new Map(), axis: "time", lockedRun: null };
+const state = { rows: [], selected: new Set(), traces: new Map(), colors: new Map(), axis: "time", paceMetric: "rate", lockedRun: null };
 const el = {
   runList: document.querySelector("#run-list"),
   selectAll: document.querySelector("#select-all"),
@@ -12,6 +12,11 @@ const el = {
   axisButtons: [...document.querySelectorAll("[data-axis]")],
   chart: document.querySelector("#compare-chart"),
   tooltip: document.querySelector("#compare-tooltip"),
+  paceChart: document.querySelector("#pace-chart"),
+  paceTooltip: document.querySelector("#pace-tooltip"),
+  paceDescription: document.querySelector("#pace-description"),
+  paceNote: document.querySelector("#pace-note"),
+  paceButtons: [...document.querySelectorAll("[data-pace-metric]")],
   summary: document.querySelector("#summary-body"),
   summaryFirstLabel: document.querySelector("#summary-first-label"),
 };
@@ -60,12 +65,50 @@ function requestedAxis() {
   return ["time", "actions", "tokens"].includes(axis) ? axis : "time";
 }
 
+function requestedPaceMetric() {
+  return hashParams().get("pace") === "cumulative" ? "cumulative" : "rate";
+}
+
 function updateHash() {
   const runs = state.rows.filter((row) => state.selected.has(row.run)).map((row) => encodeURIComponent(row.run));
   const params = new URLSearchParams();
   params.set("axis", state.axis);
+  params.set("pace", state.paceMetric);
   if (runs.length) params.set("runs", runs.join(","));
   history.replaceState(null, "", `#${params.toString().replaceAll("%2C", ",")}`);
+}
+
+function actionPointsFor(curve) {
+  if (curve?.actionPoints?.length > 1) {
+    return curve.actionPoints.map((point) => ({
+      ...point,
+      elapsedSeconds: Number(point.elapsedSeconds || 0),
+      cumulativeActions: Number(point.cumulativeActions || 0),
+      actionsPerMinute: Number(point.actionsPerMinute || 0),
+      exact: true,
+    }));
+  }
+  const points = (curve?.points || []).map((point) => ({
+    elapsedSeconds: Number(point.elapsedSeconds || 0),
+    cumulativeActions: Number(point.cumulativeActions || 0),
+  })).sort((a, b) => a.elapsedSeconds - b.elapsedSeconds);
+  return points.map((point, index) => {
+    const prior = points[Math.max(0, index - 1)];
+    const elapsedMinutes = (point.elapsedSeconds - prior.elapsedSeconds) / 60;
+    return {
+      ...point,
+      actionsPerMinute: elapsedMinutes > 0 ? (point.cumulativeActions - prior.cumulativeActions) / elapsedMinutes : 0,
+      exact: false,
+    };
+  });
+}
+
+function actionPaceSummary(curve) {
+  if (!curve?.actionPoints?.length) return null;
+  const points = actionPointsFor(curve);
+  const first = points.find((point) => point.elapsedSeconds >= 600) || points.at(-1);
+  const last = points.at(-1);
+  return {first:Number(first.actionsPerMinute || 0), last:Number(last.actionsPerMinute || 0)};
 }
 
 function renderControls() {
@@ -155,16 +198,100 @@ function renderSummary(rows) {
     const trace = state.traces.get(row.run);
     const curve = trace.scoreCurve;
     const first = firstScore(curve);
+    const pace = actionPaceSummary(curve);
     return `<tr>
       <td><a class="summary-run" style="--series-color:${state.colors.get(row.run)}" href="./score-time.html#run=${encodeURIComponent(row.run)}"><i></i><span>${esc(row.run)}</span></a></td>
       <td>${esc(fmtScore(curve.finalMeanScore))}</td>
       <td>${esc(fmtDuration(trace.durationSeconds))}</td>
       <td>${Number(curve.finalActions ?? row.actions ?? 0).toLocaleString()}</td>
+      <td>${pace ? `${pace.first.toFixed(1)} → ${pace.last.toFixed(1)}/min` : "—"}</td>
       <td>${Number(curve.finalGeneratedTokens ?? row.tokens ?? 0).toLocaleString()}</td>
       <td>${first ? esc(spec.hover(Number(first[spec.key] || 0))) : "—"}</td>
       <td>${Number(curve.completionEvents || 0).toLocaleString()}</td>
     </tr>`;
   }).join("");
+}
+
+function renderPaceChart(rows) {
+  el.paceChart.innerHTML = "";
+  el.paceTooltip.hidden = true;
+  const metric = state.paceMetric === "cumulative" ? "cumulativeActions" : "actionsPerMinute";
+  const series = rows.map((row) => ({
+    ...row,
+    color: state.colors.get(row.run),
+    points: actionPointsFor(curveFor(row.run)),
+  })).filter((item) => item.points.length > 1);
+  if (!series.length) {
+    el.paceChart.innerHTML = '<div class="compare-empty">No timestamped action data is available for the selected runs.</div>';
+    return;
+  }
+
+  const width = Math.max(340, el.paceChart.clientWidth || 1100);
+  const height = width < 620 ? 300 : 350;
+  const margin = {top:22, right:width < 620 ? 24 : 92, bottom:50, left:64};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  const xMax = Math.max(1, ...series.flatMap((item) => item.points.map((point) => point.elapsedSeconds)));
+  const rawYMax = Math.max(1, ...series.flatMap((item) => item.points.map((point) => Number(point[metric] || 0))));
+  const yMax = state.paceMetric === "cumulative" ? Math.ceil(rawYMax / 250) * 250 : Math.ceil(rawYMax * 1.12 / 5) * 5;
+  const x = (value) => margin.left + Number(value) / xMax * innerW;
+  const y = (value) => margin.top + innerH - Number(value) / yMax * innerH;
+  const svg = svgNode("svg", {viewBox:`0 0 ${width} ${height}`, role:"img", "aria-label":state.paceMetric === "cumulative" ? "Cumulative gameplay actions over elapsed runtime" : "Trailing ten-minute gameplay actions per minute over elapsed runtime"});
+  svg.append(svgNode("title", {}, state.paceMetric === "cumulative" ? "Cumulative actions over time" : "Action throughput over time"));
+  svg.append(svgNode("rect", {class:"chart-frame", x:margin.left, y:margin.top, width:innerW, height:innerH, fill:"none"}));
+
+  for (let i = 0; i <= 5; i += 1) {
+    const value = yMax * i / 5;
+    const yy = y(value);
+    svg.append(svgNode("line", {class:"chart-grid", x1:margin.left, x2:margin.left+innerW, y1:yy, y2:yy}));
+    const label = state.paceMetric === "cumulative" ? Math.round(value).toLocaleString() : value.toFixed(1);
+    svg.append(svgNode("text", {class:"chart-axis-text", x:margin.left-9, y:yy+3, "text-anchor":"end"}, label));
+  }
+  const xTicks = width < 620 ? 4 : 7;
+  for (let i = 0; i <= xTicks; i += 1) {
+    const value = xMax * i / xTicks;
+    const xx = x(value);
+    svg.append(svgNode("line", {class:"chart-grid", x1:xx, x2:xx, y1:margin.top, y2:margin.top+innerH}));
+    svg.append(svgNode("text", {class:"chart-axis-text", x:xx, y:margin.top+innerH+18, "text-anchor":i===0?"start":i===xTicks?"end":"middle"}, (value / 60).toFixed(0)));
+  }
+  svg.append(svgNode("text", {class:"chart-axis-title", x:margin.left+innerW/2, y:height-11, "text-anchor":"middle"}, "Elapsed runtime (minutes)"));
+  svg.append(svgNode("text", {class:"chart-axis-title", transform:`translate(16 ${margin.top+innerH/2}) rotate(-90)`, "text-anchor":"middle"}, state.paceMetric === "cumulative" ? "Cumulative actions" : "Actions per minute"));
+
+  for (const item of series) {
+    const path = item.points.map((point, index) => `${index ? "L" : "M"} ${x(point.elapsedSeconds).toFixed(1)} ${y(point[metric]).toFixed(1)}`).join(" ");
+    svg.append(svgNode("path", {class:"compare-line", d:path, stroke:item.color}));
+    const final = item.points.at(-1);
+    svg.append(svgNode("circle", {class:"compare-endpoint", cx:x(final.elapsedSeconds), cy:y(final[metric]), r:4, fill:item.color}));
+    if (width >= 620) {
+      const label = state.paceMetric === "cumulative" ? Math.round(final[metric]).toLocaleString() : `${Number(final[metric]).toFixed(1)}/m`;
+      svg.append(svgNode("text", {class:"compare-end-label", x:x(final.elapsedSeconds)+8, y:y(final[metric])+3, fill:item.color}, label));
+    }
+  }
+
+  const guide = svgNode("line", {class:"cursor-guide", x1:0, x2:0, y1:margin.top, y2:margin.top+innerH, visibility:"hidden"});
+  svg.append(guide);
+  const overlay = svgNode("rect", {class:"chart-overlay", x:margin.left, y:margin.top, width:innerW, height:innerH, fill:"transparent", tabindex:0, role:"application", "aria-label":"Interactive action pace chart"});
+  const inspect = (event) => {
+    const bounds = svg.getBoundingClientRect();
+    const px = (event.clientX - bounds.left) * width / bounds.width;
+    const seconds = Math.max(0, Math.min(xMax, (px - margin.left) / innerW * xMax));
+    const xx = x(seconds);
+    guide.setAttribute("x1", xx); guide.setAttribute("x2", xx); guide.setAttribute("visibility", "visible");
+    const values = series.map((item) => {
+      const point = item.points.reduce((best, candidate) => Math.abs(candidate.elapsedSeconds - seconds) < Math.abs(best.elapsedSeconds - seconds) ? candidate : best, item.points[0]);
+      return {item, point, value:Number(point[metric] || 0)};
+    });
+    el.paceTooltip.innerHTML = `<span class="tooltip-time"><span>${fmtDuration(seconds)} elapsed</span><em>one-minute samples</em></span>${values.map(({item, value}) => `<div class="tooltip-row" style="--series-color:${item.color}"><i></i><span>${esc(shortRun(item.run))}</span><b>${state.paceMetric === "cumulative" ? Math.round(value).toLocaleString() : `${value.toFixed(1)}/min`}</b></div>`).join("")}`;
+    el.paceTooltip.hidden = false;
+    const displayX = xx / width * el.paceChart.clientWidth;
+    const tooltipWidth = Math.min(330, el.paceChart.clientWidth - 24);
+    el.paceTooltip.style.left = `${Math.max(10, displayX + 14 + tooltipWidth <= el.paceChart.clientWidth - 10 ? displayX + 14 : displayX - tooltipWidth - 14)}px`;
+    el.paceTooltip.style.top = "58px";
+  };
+  overlay.addEventListener("pointermove", inspect);
+  overlay.addEventListener("pointerleave", () => { guide.setAttribute("visibility", "hidden"); el.paceTooltip.hidden = true; });
+  svg.append(overlay);
+  el.paceChart.append(svg);
 }
 
 function renderChart(rows) {
@@ -349,6 +476,11 @@ function render() {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  el.paceButtons.forEach((button) => {
+    const active = button.dataset.paceMetric === state.paceMetric;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
   el.axisDescription.textContent = state.axis === "actions" ? "Cumulative environment actions" : state.axis === "tokens" ? "Cumulative generated tokens" : "Elapsed runtime · minutes";
   el.summaryFirstLabel.textContent = state.axis === "actions" ? "First score at action" : state.axis === "tokens" ? "First score at token" : "First score at time";
   if (state.axis === "actions") {
@@ -362,7 +494,13 @@ function render() {
     const notes = new Set(rows.map((row) => curveFor(row.run)?.timestampNote).filter(Boolean));
     el.curveNote.textContent = notes.size === 1 ? [...notes][0] : "Shared runtime axis; reconstructed and exact timestamps may coexist.";
   }
+  const exactPaceCurves = rows.filter((row) => curveFor(row.run)?.actionPoints?.length > 1).length;
+  el.paceDescription.textContent = state.paceMetric === "cumulative" ? "Cumulative environment actions" : "Trailing 10-minute actions per minute";
+  el.paceNote.textContent = rows.length && exactPaceCurves === rows.length
+    ? "One-minute samples from every timestamped environment action."
+    : `${exactPaceCurves} of ${rows.length} selected runs have minute-level action samples; older curves use sparse reconstruction.`;
   renderChart(rows);
+  renderPaceChart(rows);
   renderSummary(rows);
   renderControls();
 }
@@ -396,10 +534,16 @@ el.axisButtons.forEach((button) => button.addEventListener("click", () => {
   updateHash();
   render();
 }));
-addEventListener("resize", () => renderChart(selectedRows()));
+el.paceButtons.forEach((button) => button.addEventListener("click", () => {
+  state.paceMetric = button.dataset.paceMetric === "cumulative" ? "cumulative" : "rate";
+  updateHash();
+  render();
+}));
+addEventListener("resize", () => { renderChart(selectedRows()); renderPaceChart(selectedRows()); });
 
 async function init() {
   state.axis = requestedAxis();
+  state.paceMetric = requestedPaceMetric();
   const index = await fetchRunsIndex();
   state.rows = (index?.runs || []).filter((row) => row.has_execution_trace).sort((a, b) => b.run.localeCompare(a.run));
   state.rows.forEach((row, indexValue) => state.colors.set(row.run, COLORS[indexValue % COLORS.length]));

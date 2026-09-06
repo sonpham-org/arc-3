@@ -280,6 +280,43 @@ def live_game_score(run: dict, actions_per_level: list[int], levels_completed: i
     return min(total_score / total_weights, max_weights / total_weights * 100.0)
 
 
+def action_pace_points(
+    timed_actions: list[datetime],
+    started: datetime,
+    ended: datetime,
+    total_actions: int,
+    sample_seconds: int = 60,
+    window_seconds: int = 600,
+) -> list[dict]:
+    """Sample cumulative actions and a trailing action rate on the run clock."""
+    duration = max(0.0, (ended - started).total_seconds())
+    bounded = sorted(at for at in timed_actions if started <= at <= ended)
+    offsets = [float(value) for value in range(0, int(duration), sample_seconds)]
+    if not offsets or offsets[-1] != duration:
+        offsets.append(duration)
+
+    points: list[dict] = []
+    for elapsed in offsets:
+        at = started + timedelta(seconds=elapsed)
+        cumulative = bisect_right(bounded, at)
+        window_start = max(started, at - timedelta(seconds=window_seconds))
+        window_minutes = (at - window_start).total_seconds() / 60.0
+        in_window = cumulative - bisect_right(bounded, window_start)
+        rate = in_window / window_minutes if window_minutes > 0 else 0.0
+        if elapsed == duration:
+            cumulative = total_actions
+        points.append(
+            {
+                "at": iso(at),
+                "elapsedSeconds": round(elapsed, 3),
+                "cumulativeActions": cumulative,
+                "actionsPerMinute": round(rate, 6),
+                "kind": "start" if elapsed == 0 else "end" if elapsed == duration else "sample",
+            }
+        )
+    return points
+
+
 def score_curve(
     benchmark: dict,
     artifact_root: Path,
@@ -481,9 +518,12 @@ def score_curve(
             "kind": "end",
         }
     )
+    pace_points = action_pace_points(timed_actions, started, ended, total_actions)
     return {
         "points": points,
         "tokenPoints": token_points,
+        "actionPoints": pace_points,
+        "actionRateWindowSeconds": 600,
         "completionEvents": len(completions),
         "untimedCompletions": untimed,
         "finalMeanScore": round(final_mean, 9),
