@@ -10,12 +10,13 @@ class SiteUiContractTests(unittest.TestCase):
         schema = (ROOT / "railway" / "catalog_schema.sql").read_text(encoding="utf-8")
         self.assertIn("jsonb_build_object('duration_seconds', r.duration_seconds)", schema)
 
-    def test_scoreboard_has_runtime_column_and_min_max_filter(self) -> None:
+    def test_scoreboard_has_runtime_column_and_bucket_filter(self) -> None:
         page = (ROOT / "docs" / "internal.html").read_text(encoding="utf-8")
         self.assertIn('title="Total wall-clock runtime">Total runtime</th>', page)
-        self.assertIn('id="runtime-min"', page)
-        self.assertIn('id="runtime-max"', page)
-        self.assertIn("matchesRuntime(entry, bounds)", page)
+        for bucket in (108, 132, 264):
+            self.assertIn(f'data-runtime="{bucket}"', page)
+        self.assertIn("RUNTIME_TOLERANCE_MINUTES = 2", page)
+        self.assertIn("runtimeBucket(seconds)", page)
 
     def test_event_log_merges_and_selects_turn_rows(self) -> None:
         script = (ROOT / "docs" / "static" / "js" / "log.js").read_text(encoding="utf-8")
