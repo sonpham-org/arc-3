@@ -9,7 +9,7 @@ fetchRunsIndex().then((payload) => {
 import { initBoard, setPalette, showBoard, setClicks, clearPins, colorAt, redraw, view, setDiff, clearDiff } from "./board.js?v=20260815-frames";
 import { initCoordRefs, showTooltip } from "./coords.js";
 import { renderDecision } from "./decision.js?v=20260817-literal";
-import { EventLog } from "./log.js";
+import { EventLog } from "./log.js?v=20260907-turn-groups";
 import { renderOverview } from "./overview.js";
 import { Scrubber } from "./scrubber.js";
 

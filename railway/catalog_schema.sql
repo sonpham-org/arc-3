@@ -101,7 +101,13 @@ AS $$
             'biases', biases,
             'runs', COALESCE(
                 (
-                    SELECT jsonb_agg(r.catalog_entry ORDER BY r.avg_score DESC, r.run_id DESC)
+                    SELECT jsonb_agg(
+                        r.catalog_entry
+                        || jsonb_strip_nulls(
+                            jsonb_build_object('duration_seconds', r.duration_seconds)
+                        )
+                        ORDER BY r.avg_score DESC, r.run_id DESC
+                    )
                     FROM arc3_runs AS r
                     WHERE r.status = 'published'
                 ),

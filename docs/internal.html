@@ -113,6 +113,19 @@
   .gamesel .quickfilters { display: inline-flex; gap: 5px; }
   .gamesel .quickfilters button.active { border-color: var(--accent, #1E93FF);
                                           background: var(--accent-wash, rgba(59,130,246,.12)); }
+  .runfilters { max-width: 1240px; margin: 0 auto 10px; display: flex; align-items: center;
+                gap: 8px; flex-wrap: wrap; color: var(--text-dim, inherit); font-size: 12.5px; }
+  .runfilters > span:first-child { color: var(--text, inherit); font-weight: 600; }
+  .runfilters label { display: inline-flex; align-items: center; gap: 5px; }
+  .runfilters input { width: 76px; box-sizing: border-box; padding: 4px 7px; font: inherit;
+                      color: inherit; background: var(--wash, transparent);
+                      border: 1px solid var(--wash-line, rgba(128,128,128,.3)); border-radius: 5px; }
+  .runfilters input:focus { outline: 2px solid #1E93FF; outline-offset: 1px; }
+  .runfilters input[aria-invalid="true"] { border-color: var(--err, #ef4444); }
+  .runfilters button { padding: 3px 9px; font: inherit; }
+  .runfilters button:disabled { opacity: .45; cursor: default; }
+  .runfilters .hint { opacity: .6; }
+  .runfilters .status { min-width: 12em; }
 </style>
 </head>
 <body>
@@ -130,6 +143,16 @@
   Each game cell is the run or replica-group mean (shading scales with the score). Tufa's public
   reference average: 1.6002. All games are selected on every page load; use the quick filters or
   click a category or game header to narrow the comparison.</p>
+</div>
+<div class="runfilters" aria-label="Runtime filter">
+  <span>Total runtime</span>
+  <label>Min <input id="runtime-min" type="number" min="0" step="1" inputmode="decimal" placeholder="132" aria-label="Minimum total runtime in minutes"></label>
+  <span aria-hidden="true">–</span>
+  <label>Max <input id="runtime-max" type="number" min="0" step="1" inputmode="decimal" placeholder="264" aria-label="Maximum total runtime in minutes"></label>
+  <span>minutes</span>
+  <button id="runtime-clear" type="button" disabled>Clear</button>
+  <span class="status" id="runtime-filter-status" aria-live="polite"></span>
+  <span class="hint">Most full runs land between 132 and 264 minutes.</span>
 </div>
 <div class="gamesel" id="gamesel-status"></div>
 <div class="tablewrap"><table id="t"><thead></thead><tbody></tbody></table></div>
@@ -256,6 +279,13 @@ Promise.all([
   const mean = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   const entryAvg = entry => mean(entry.members.map(activeAvg).filter(value => value != null));
   const entryMetric = (entry, key) => mean(entry.members.map(row => Number(row[key])).filter(Number.isFinite));
+  const runRuntimeSeconds = row => {
+    const raw = row.duration_seconds ?? row.durationSeconds;
+    if (raw == null || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  const entryRuntimeSeconds = entry => mean(entry.members.map(runRuntimeSeconds).filter(value => value != null));
   const entryGame = (entry, id) => {
     const games = entry.members
       .map(row => (row.per_game || []).find(game => game.id === id))
@@ -273,11 +303,15 @@ Promise.all([
   const thead = document.querySelector("#t thead");
   const tbody = document.querySelector("#t tbody");
   const status = document.querySelector("#gamesel-status");
+  const runtimeMin = document.querySelector("#runtime-min");
+  const runtimeMax = document.querySelector("#runtime-max");
+  const runtimeClear = document.querySelector("#runtime-clear");
+  const runtimeStatus = document.querySelector("#runtime-filter-status");
 
   // Header is built once; toggling only flips classes, so the thumbnails never reload.
   thead.innerHTML = `<tr class="game-groups">
     <th class="run" rowspan="2">Run</th><th class="date" rowspan="2">Date</th><th class="model" rowspan="2">Model</th>
-    <th rowspan="2">Levels</th><th rowspan="2">Actions</th><th rowspan="2">Tokens</th><th rowspan="2">Avg</th>${
+    <th rowspan="2" title="Total wall-clock runtime">Total runtime</th><th rowspan="2">Levels</th><th rowspan="2">Actions</th><th rowspan="2">Tokens</th><th rowspan="2">Avg</th>${
       groups.map(group => `
     <th class="game-group" data-group="${group.key}" colspan="${group.ids.length}" role="button" tabindex="0">
       <span class="group-label">${group.label}</span><span class="group-state"></span>
@@ -401,6 +435,30 @@ Promise.all([
       : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
   }
 
+  function formatRuntime(seconds) {
+    if (seconds == null) return "—";
+    const minutes = seconds / 60;
+    return `${minutes.toLocaleString(undefined, { maximumFractionDigits: 1 })} min`;
+  }
+
+  function runtimeBounds() {
+    const min = runtimeMin.value === "" ? null : Number(runtimeMin.value);
+    const max = runtimeMax.value === "" ? null : Number(runtimeMax.value);
+    return {
+      min: Number.isFinite(min) && min >= 0 ? min : null,
+      max: Number.isFinite(max) && max >= 0 ? max : null,
+    };
+  }
+
+  function matchesRuntime(entry, bounds) {
+    if (bounds.min == null && bounds.max == null) return true;
+    const seconds = entryRuntimeSeconds(entry);
+    if (seconds == null) return false;
+    const minutes = seconds / 60;
+    return (bounds.min == null || minutes >= bounds.min)
+      && (bounds.max == null || minutes <= bounds.max);
+  }
+
   function runRow(r, avg, className = "", replicaTag = "") {
     const byId = new Map((r.per_game || []).map(g => [g.id, g]));
     const cells = order.map(id => cell(r.run, id, byId.get(id))).join("");
@@ -409,6 +467,7 @@ Promise.all([
       <td class="run">${replicaTag ? `<span class="replica-tag">${replicaTag}</span>` : ""}<a href="./viewer.html#run=${encodeURIComponent(r.run)}">${r.run}</a>${r.has_execution_trace ? `<a class="trace" href="./trace.html#run=${encodeURIComponent(r.run)}" title="Timestamped model, sidecar, CPU, and context trace">trace</a><a class="trace" href="./score-time.html#run=${encodeURIComponent(r.run)}" title="Mean ARC3 score over timestamped runtime">score over time</a>` : ""}${r.has_usage ? `<a class="usage" href="./usage.html#run=${encodeURIComponent(r.run)}" title="CPU / GPU / RAM / storage over this run">usage</a>` : ""}</td>
       <td class="date" title="${d.full}">${dateCell(d)}</td>
       <td class="model" title="${modelTitle(r)}">${modelLabel(r)}</td>
+      <td title="Total wall-clock runtime">${formatRuntime(runRuntimeSeconds(r))}</td>
       <td>${r.levels}</td><td>${r.actions.toLocaleString()}</td><td>${r.tokens.toLocaleString()}</td>
       <td class="avg">${avg == null ? "—" : avg.toFixed(3)}</td>${cells}
     </tr>`;
@@ -420,6 +479,7 @@ Promise.all([
     const levels = entryMetric(entry, "levels");
     const actions = entryMetric(entry, "actions");
     const tokens = entryMetric(entry, "tokens");
+    const runtime = entryRuntimeSeconds(entry);
     const cells = order.map(id => groupCell(entry, id, entryGame(entry, id))).join("");
     const weights = [...new Set(entry.members.map(modelTitle))].join("; ");
     return `<tr class="run-group${isBest ? " best" : ""}">
@@ -428,6 +488,7 @@ Promise.all([
       </button></td>
       <td class="date" title="${d.full}">${dateCell(d)}</td>
       <td class="model" title="${weights}">${entryModel(entry)}</td>
+      <td title="Mean total runtime per replica">${formatRuntime(runtime)}<span class="mean-mark">Ø</span></td>
       <td title="Mean levels per replica">${formatMean(levels)}<span class="mean-mark">Ø</span></td>
       <td title="Mean actions per replica">${formatMean(actions)}<span class="mean-mark">Ø</span></td>
       <td title="Mean generated tokens per replica">${formatMean(tokens)}<span class="mean-mark">Ø</span></td>
@@ -437,7 +498,10 @@ Promise.all([
 
   function render() {
     // Recompute each run/group average over the active games, then rank collapsed entries.
-    const ranked = entries.map(entry => ({ entry, avg: entryAvg(entry) }))
+    const bounds = runtimeBounds();
+    const invalidBounds = bounds.min != null && bounds.max != null && bounds.min > bounds.max;
+    const ranked = entries.filter(entry => !invalidBounds && matchesRuntime(entry, bounds))
+      .map(entry => ({ entry, avg: entryAvg(entry) }))
       .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
     const best = Math.max(...ranked.map(x => x.avg ?? -Infinity));
 
@@ -476,6 +540,16 @@ Promise.all([
       button.addEventListener("click", () => toggleReplicaGroup(button.dataset.toggleGroup));
     });
 
+    runtimeMin.setAttribute("aria-invalid", String(invalidBounds));
+    runtimeMax.setAttribute("aria-invalid", String(invalidBounds));
+    runtimeClear.disabled = bounds.min == null && bounds.max == null;
+    if (invalidBounds) runtimeStatus.textContent = "Min must be no greater than max.";
+    else if (bounds.min != null || bounds.max != null) {
+      const range = bounds.min != null && bounds.max != null ? `${bounds.min}–${bounds.max}`
+        : bounds.min != null ? `${bounds.min}+` : `up to ${bounds.max}`;
+      runtimeStatus.textContent = `${ranked.length} of ${entries.length} run entries · ${range} min`;
+    } else runtimeStatus.textContent = `${entries.length} run entries`;
+
     const n = active.size, total = order.length;
     const replicaGroups = entries.filter(entry => entry.isGroup).length;
     const groupSummary = groups.map(group =>
@@ -496,6 +570,15 @@ Promise.all([
     document.getElementById("games-all").addEventListener("click", () => selectGames(order));
     document.getElementById("games-panel").addEventListener("click", () => selectGames(panel));
   }
+
+  runtimeMin.addEventListener("input", render);
+  runtimeMax.addEventListener("input", render);
+  runtimeClear.addEventListener("click", () => {
+    runtimeMin.value = "";
+    runtimeMax.value = "";
+    render();
+    runtimeMin.focus();
+  });
 
   render();
 });
