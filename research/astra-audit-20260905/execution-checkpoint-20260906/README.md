@@ -1,6 +1,6 @@
 # ARC-3 execution checkpoint — 6 September 2026
 
-This checkpoint preserves the final context-budget matrix, the CPU KV resume investigation, and the accounting needed to interpret earlier reference runs. Raw trajectories, service logs, cloud identities, and deployment state remain outside the public repository. Their immutable hashes are recorded under `provenance/`.
+This checkpoint preserves the final context-budget matrix, the CPU KV resume investigation, and the accounting needed to interpret earlier reference runs. Derived interactive traces for the ten matrix arms and two historical references are published on the ARC3 site and recorded under `website-publication/`. Raw source trajectories, service logs, cloud identities, and deployment state remain outside the public repository. Their immutable hashes are recorded under `provenance/`.
 
 ## Main result
 
@@ -29,6 +29,7 @@ The ordering control passed serial text CPU-resume parity at all three boundarie
 - [`context-matrix/`](context-matrix/README.md): design, exact minute-132 values, final scores, and the 22-lane validity warning.
 - [`cache-resume/`](cache-resume/README.md): frozen transfer instrumentation, probes, trace tooling, candidates, and sanitized findings.
 - [`comparisons/`](comparisons/README.md): reference-run resource accounting and full-context cache interpretation.
+- [`website-publication/`](website-publication/README.md): production trace URLs, scores, policies, and immutable publication hashes.
 - [`provenance/`](provenance/): raw-artifact index and a manifest of every file in this checkpoint.
 
 Scores use the 25-game denominator and are already on the 0–100 ARC scale. Final scores are equal-time suite outcomes, not token-matched comparisons. Action-attached token totals can omit successful responses that did not produce a later action.
