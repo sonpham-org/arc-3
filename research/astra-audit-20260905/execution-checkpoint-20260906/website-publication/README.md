@@ -7,6 +7,11 @@ its local publication receipt or identical local export manifest. There were no
 missing or mismatched runs. Publication changed the site data catalog atomically;
 it did not require a Git change or Railway deployment.
 
+The agreed 12-run scope is the ten selected context-matrix attempts plus the two
+historical configurations that replaced overlapping paid matrix runs. The
+separate 131,072-context, seven-lane historical run is outside both requested
+aggregate-envelope grids and is therefore an optional 13th publication.
+
 “Aggregate envelope” is configured context per lane multiplied by lanes. It is
 not a universal physical KV-cache size. Scores use the fixed 25-game denominator.
 
