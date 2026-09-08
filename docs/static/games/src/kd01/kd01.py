@@ -1,15 +1,18 @@
 # Author: Claude Opus 5
-# Date: 2026-08-27 09:20
+# Date: 2026-08-27 09:20 (board reshaped from a ring to a staff, and the budget bar and
+#   progress pips replaced by state carried on the stones themselves, 2026-09-02; the
+#   mechanics are untouched)
 # PURPOSE: kd01 "Cadence" -- an ARC-AGI-3 environment built to MEASURE one specific
 #   behaviour: committing to a whole plan instead of improvising one action at a time.
-#   A ring of stones surrounds a lock. A strip above the ring names the stones that must be
-#   struck, in order. The lock only opens for the exact, UNINTERRUPTED run: any wrong strike,
-#   any strike on empty ground, and any release (ACTION5) drops the mechanism back to zero.
-#   Single-stepping "try one, look, try another" therefore can never solve it -- the whole
-#   sequence has to be worked out from the board first and then delivered in one unbroken
-#   run, which is exactly what batching several actions into one harness call produces.
-#   Core-knowledge priors only: objectness, geometry, counting-as-pips, agentness.
-#   No text, no glyphs, no digits, no cultural colour conventions.
+#   A vertical STAFF of stones runs down the middle of the board with a lock at its foot. A
+#   strip beside the staff names the stones that must be struck, in order. The lock only
+#   opens for the exact, UNINTERRUPTED run: any wrong strike, any strike on empty ground,
+#   and any release (ACTION5) drops the mechanism back to zero. Single-stepping "try one,
+#   look, try another" therefore can never solve it -- the whole sequence has to be worked
+#   out from the board first and then delivered in one unbroken run, which is exactly what
+#   batching several actions into one harness call produces.
+#   Core-knowledge priors only: objectness, geometry, agentness.
+#   No text, no glyphs, no digits, no bars, no pips, no cultural colour conventions.
 # SRP/DRY check: Pass -- self-contained environment. Nothing in the catalogue enforces an
 #   uninterrupted action sequence as its win condition, so there is nothing to reuse.
 """Cadence -- read the strip, then deliver the whole run without a single wrong move.
@@ -18,13 +21,13 @@ Click a stone to strike it. ACTION5 releases the mechanism (progress back to zer
 Striking the wrong stone, a dead stone, or bare ground STALLS the mechanism: progress resets
 AND the stall costs several units of the action budget, so blind retrying runs you dry.
 
-The lock's pips show how far into the run you are. Once the mechanism is armed the strip
-goes dark (level 3 onwards) -- you cannot re-read it mid-run without breaking the run.
+A struck stone's seat peg lights up while the run is alive; the plinth under the lock shows
+the mechanism's state. Every live stone wears a halo whose colour is the budget tier. The
+strip is on screen, fully readable, at all times: nothing in this game asks you to hold a
+sequence in your head -- it asks you to work one out from what is drawn.
 
 7 levels. No RNG. Lose by running the budget out.
 """
-
-import math
 
 import numpy as np
 from arcengine import ARCBaseGame, Camera, Level, RenderableUserDisplay
@@ -38,33 +41,63 @@ C_MAGENTA, C_LMAGENTA, C_RED, C_BLUE, C_LBLUE = 6, 7, 8, 9, 10
 C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 
 # Reserved, never used as a stone colour, so each has exactly one meaning in this world:
-#   C_YELLOW  -- "the lock wants striking" (hub) and the strip marker that says so
-#   C_LBLUE   -- "the mechanism is armed"
+#   C_YELLOW  -- "the lock wants striking" (plinth) and the strip marker that says so
+#   C_LBLUE   -- "the mechanism is armed": the plinth, and the peg of every stone struck
 #   C_WHITE   -- "the lock is opening", and the size-blob inside a size marker
-#   C_MAROON  -- "the mechanism just stalled"
+#   C_BLACK   -- "the mechanism just stalled" (maroon is the field now)
+#   C_LGRAY   -- the lock block itself (a fixed colour: the PLINTH under it carries state)
 STONE_COLORS = (C_RED, C_BLUE, C_GREEN, C_MAGENTA, C_ORANGE, C_PURPLE)
 
 # ---------------------------------------------------------------------------
-# Geometry
+# Geometry -- a vertical staff, read top to bottom. No bar, no pips: every piece of
+# state lives on a world object (a stone's halo, a stone's peg, the plinth).
+#
+#   x:  6..10  strip column 1 (decoy, levels 6-7 only)
+#      13..17  strip column 0
+#      22..58  the staff: a 1-px rail at x=40 with a seat every 8 rows, stones hanging
+#              alternately left (even slots) and right (odd slots) of the rail so six
+#              stones and their halos fit in 64 rows and every stone keeps its own row band
+#      36..44  the lock block (rows 55-59) standing on a 21-px plinth (rows 60-63)
 # ---------------------------------------------------------------------------
 
-CX, CY = 32, 38                  # centre of the lock, and of the stone ring
-SLOT_R = 20                      # radius the stones sit on
-SLOT_POS = ((52, 38), (42, 55), (22, 55), (12, 38), (22, 21), (42, 21))
+RAIL_X = 40                      # the staff's rail; also the lock's centre line
+STAFF_Y0 = 0                     # the rail runs from the top edge down into the lock
+SLOT_DX = 14                     # stones hang this far left/right of the rail. Widened
+                                 # from 10: at 10 the six seats read as one wobbly column,
+                                 # which made the staff look like a signal head. At 14 the
+                                 # zigzag is unmistakable and a radius-6 halo still fits
+                                 # (40 +/- 14, +/- 6 -> 20..60 inside the 64px frame).
+SLOT_Y0, SLOT_PITCH = 8, 8       # slot 0 is at the top; one seat every 8 rows
+SLOT_POS = tuple((RAIL_X - SLOT_DX if i % 2 == 0 else RAIL_X + SLOT_DX,
+                  SLOT_Y0 + i * SLOT_PITCH) for i in range(6))
+# = ((30, 8), (50, 16), (30, 24), (50, 32), (30, 40), (50, 48))
+# Same-side seats are 16 rows apart, so the halos of a radius-6 and a radius-5 stone
+# (8 + 7 = 15) never touch. Slot 5 sits 7 rows above the lock block: it holds a ruin or
+# a size <= 4 stone in every level, and a size-5 stone there would cross into the lock.
+HALO_GAP = 1                     # black rows between a stone's edge and its halo ring
 
-HUB_R = 5                        # drawn radius of the lock hub
-HUB_CLICK_R = 13                 # the whole lock assembly is one clickable object
-PIP_R = (8, 12)                  # radii of the run-1 and run-2 pip rings
+LOCK_X = RAIL_X                  # the lock block sits at the foot of the rail
+LOCK_Y0, LOCK_Y1 = 55, 59        # rows of the lock block
+LOCK_HALF = 4                    # block half-width: 9 px wide
+LOCK_Y = (LOCK_Y0 + LOCK_Y1) // 2   # 55 -- the point the tests strike
+PLINTH_Y0 = 60                   # the plinth: rows 60..63 ...
+PLINTH_HALF = 10                 # ... and 21 px wide. Its colour is the mechanism's state.
 DEAD_R = 5                       # dead stones always draw at this radius (no size to read)
 
-BAR_Y, BAR_X0, BAR_X1 = 0, 1, 63          # budget bar
-STRIP_Y = (3, 9)                          # top-left y of strip row 0 / row 1
-CELL_W, CELL_H, CELL_PITCH = 5, 5, 6      # strip marker cells
+STRIP_X = (13, 6)                # left x of strip column 0 / column 1
+STRIP_Y0 = 2                     # first marker's top row
+CELL_W, CELL_H, CELL_PITCH = 5, 5, 6      # strip marker cells, stacked downwards
 
 STEP_COST = 1                    # a strike the mechanism accepted
 RELEASE_COST = 1                 # ACTION5, a deliberate abort
 STALL_FRAMES = 3                 # animation length of a stall
 OPEN_FRAMES = 4                  # animation length of the lock opening
+
+# Budget tiers: the budget is read in LAPS of eight actions, and the tier colour of the
+# current lap is worn by every live stone as a halo. Borrowed from how AR25/BP35/LF52
+# pack a long budget into a few pixels; here it is on the objects, not on a HUD.
+TIERS = (C_LMAGENTA, C_GRAY, C_DGRAY, C_VDGRAY)  # final lap first: the halo fades
+LAP = 8
 
 # ---------------------------------------------------------------------------
 # Levels
@@ -72,25 +105,33 @@ OPEN_FRAMES = 4                  # animation length of the lock opening
 # nodes: (slot, colour, size, alive). size 1..5 -> drawn radius 2..6; a dead stone has
 #        size 0 and draws at DEAD_R, so it can never be named by a size marker.
 # runs:  one list of node indices per run. Between two runs the mechanism latches and the
-#        LOCK ITSELF must be struck (the hub) before the next run may start.
+#        LOCK ITSELF must be struck before the next run may start.
 # keys:  per marker, how the strip names that stone -- "c" by colour, "s" by size.
-# decoy: an extra strip row that is deliberately unsatisfiable: it names a stone that is
-#        not on the ring. Exactly one of the two rows can actually be performed.
+# decoy: an extra strip column that is deliberately unsatisfiable: it names a stone that is
+#        not on the staff. Exactly one of the two columns can actually be performed.
 #
 # ESCALATION -- one new rule per level, every earlier rule still in force:
 #   1 strike the stones the strip names, in order      (2 long, forgiving budget)
-#   2 + a wrong strike STALLS: it costs 3, not 1       (brute force now runs you dry)
-#   3 + the strip goes dark while the mechanism is armed, and a stone may repeat
-#   4 + the strip names stones by SIZE, not by colour  (derive, do not read)
-#   5 + two runs in a fixed order, latched by striking the lock; mixed colour/size naming
-#   6 + a decoy strip row that names a stone that is not there
+#   2 + a wrong strike STALLS: it costs 3, not 1, and a stone may repeat
+#       (7 strikes over 6 stones: the exact-DP blind clear rate is 1/376,000 at budget 21;
+#        6 strikes was 1/44,000, and cutting the budget instead of the run only reaches
+#        1/100,000 at budget 11, which leaves a human one early mistake)
+#   3 + the strip names stones by SIZE, not by colour  (colourless stones; derive, do not read)
+#   4 + colour markers and size markers mixed in one strip (two naming keys at once)
+#   5 + two runs in a fixed order, latched by striking the lock
+#   6 + a decoy strip column that names a stone that is not there
 #   7 everything at once
+#
+# There is deliberately no rule that depends on history. An earlier build darkened the strip
+# while the mechanism was armed, which asked the player to hold seven to ten items in mind;
+# that is the one mechanic the ARC-3 team flagged as too hard for humans, and it was removed
+# (2026-09-02). The strip is readable at every moment of every level.
 # ---------------------------------------------------------------------------
 
 LEVELS = [
     {
         "name": "First Pair",
-        "budget": 24, "stall": 1, "hide": False,
+        "budget": 24, "stall": 1,
         "nodes": [(0, C_RED, 3, True), (2, C_BLUE, 3, True), (4, C_GREEN, 3, True)],
         "runs": [[1, 0]],
         "keys": [["c", "c"]],
@@ -98,36 +139,43 @@ LEVELS = [
     },
     {
         "name": "Stall",
-        "budget": 21, "stall": 3, "hide": False,
+        "budget": 21, "stall": 3,
         "nodes": [(0, C_RED, 3, True), (1, C_BLUE, 3, True), (2, C_GREEN, 3, True),
                   (3, C_MAGENTA, 3, True), (4, C_ORANGE, 3, True), (5, C_PURPLE, 3, True)],
-        "runs": [[2, 5, 0, 3, 1, 4]],
-        "keys": [["c"] * 6],
-        "decoy": None, "decoy_first": False,
-    },
-    {
-        "name": "Dark Run",
-        "budget": 21, "stall": 3, "hide": True,
-        "nodes": [(0, C_PURPLE, 3, True), (1, C_GREEN, 3, True), (2, C_RED, 3, True),
-                  (3, C_ORANGE, 3, True), (4, C_MAGENTA, 3, True), (5, C_BLUE, 3, True)],
-        "runs": [[3, 0, 0, 4, 2, 5]],
-        "keys": [["c"] * 6],
+        # every stone once, then back to the first: the one repeat a 7-run over 6 stones
+        # must contain is the easiest kind to hold in mind, and the strip stays lit here
+        "runs": [[2, 5, 0, 3, 1, 4, 2]],
+        "keys": [["c"] * 7],
         "decoy": None, "decoy_first": False,
     },
     {
         "name": "Weights",
-        "budget": 22, "stall": 3, "hide": True,
-        # colourless stones: at this level the strip names them by size alone, and white
-        # stones read as the same object as the white size-blob inside a strip marker
+        "budget": 21, "stall": 3,
+        # colourless stones: the strip names them by size alone, and white stones read as
+        # the same object as the white size-blob inside a strip marker. Five sizes, five
+        # stones -- and a ruin in the sixth seat (dead, unnameable, a stall to strike) so the
+        # seat count, and with it the blind clear rate (1/376,000), match level 2.
         "nodes": [(0, C_WHITE, 1, True), (1, C_WHITE, 4, True), (2, C_WHITE, 2, True),
-                  (3, C_WHITE, 5, True), (4, C_WHITE, 3, True)],
-        "runs": [[3, 0, 4, 1, 2, 0, 3]],
+                  (3, C_WHITE, 5, True), (4, C_WHITE, 3, True), (5, C_VDGRAY, 0, False)],
+        "runs": [[3, 0, 4, 1, 2, 0, 3]],          # sizes 5 1 3 4 2 1 5
         "keys": [["s"] * 7],
         "decoy": None, "decoy_first": False,
     },
     {
+        "name": "Mixed",
+        "budget": 22, "stall": 3,
+        # colour markers and size markers in ONE strip. Two stones share size 3, so no size
+        # marker could name either of them; the strip names those two by colour. Both keys
+        # have to be handled at once, on stones that carry both a colour and a size.
+        "nodes": [(0, C_RED, 2, True), (1, C_BLUE, 5, True), (2, C_GREEN, 1, True),
+                  (3, C_MAGENTA, 4, True), (4, C_PURPLE, 3, True), (5, C_ORANGE, 3, True)],
+        "runs": [[1, 4, 0, 3, 5, 2, 1]],          # size5 purple size2 magenta orange size1 blue
+        "keys": [["s", "c", "s", "c", "c", "s", "c"]],
+        "decoy": None, "decoy_first": False,
+    },
+    {
         "name": "Two Runs",
-        "budget": 24, "stall": 3, "hide": True,
+        "budget": 24, "stall": 3,
         "nodes": [(0, C_RED, 2, True), (1, C_BLUE, 5, True), (2, C_GREEN, 1, True),
                   (3, C_MAGENTA, 4, True), (4, C_PURPLE, 3, True)],
         "runs": [[4, 1, 0, 3], [2, 0, 4, 1]],
@@ -136,19 +184,19 @@ LEVELS = [
     },
     {
         "name": "Ghost Line",
-        "budget": 22, "stall": 3, "hide": True,
+        "budget": 22, "stall": 3,
         "nodes": [(0, C_GREEN, 3, True), (1, C_MAGENTA, 1, True), (2, C_BLUE, 4, True),
                   (3, C_PURPLE, 2, True), (4, C_RED, 5, True), (5, C_VDGRAY, 0, False)],
         "runs": [[2, 4, 0, 3, 1, 4, 2]],
         "keys": [["c", "s", "c", "s", "c", "c", "s"]],
-        # names an orange stone; there is no orange stone on the ring.
+        # names an orange stone; there is no orange stone on the staff.
         "decoy": [("c", C_GREEN), ("s", 5), ("c", C_BLUE), ("c", C_ORANGE),
                   ("s", 2), ("c", C_MAGENTA), ("s", 4)],
         "decoy_first": True,
     },
     {
         "name": "Full Cadence",
-        "budget": 25, "stall": 3, "hide": True,
+        "budget": 25, "stall": 3,
         "nodes": [(0, C_BLUE, 5, True), (1, C_PURPLE, 2, True), (2, C_RED, 4, True),
                   (3, C_GREEN, 1, True), (4, C_MAGENTA, 3, True), (5, C_VDGRAY, 0, False)],
         "runs": [[1, 3, 4, 0], [2, 4, 1, 0, 3]],
@@ -162,7 +210,7 @@ LEVELS = [
 
 def node_radius(node):
     """Drawn radius of a stone. Dead stones have no size, so none can be named by size.
-    The +1 keeps the largest stone clear of the outer pip ring at PIP_R[1]."""
+    The +1 spreads the five sizes over radii 2..6 so neighbouring sizes stay tellable."""
     return DEAD_R if not node["alive"] else node["size"] + 1
 
 
@@ -185,21 +233,19 @@ class Kd01Display(RenderableUserDisplay):
                 if dx * dx + dy * dy <= r * r:
                     self._plot(frame, cx + dx, cy + dy, color)
 
-    def _ring(self, frame, cx, cy, r, color):
-        """Circle outline sampled by PIXEL DISTANCE -- a fixed sample count leaves a big
-        radius dotted, which is the rendering gap that bit the earlier games."""
-        n = max(8, int(4 * math.pi * r) + 1)
-        for i in range(n):
-            th = 2.0 * math.pi * i / n
-            self._plot(frame, int(round(cx + r * math.cos(th))),
-                       int(round(cy + r * math.sin(th))), color)
+    def _halo(self, frame, cx, cy, r, color):
+        """A 1-px ring at radius r, built from pixel distance -- (r-1)^2 < d^2 <= r^2 --
+        so it is closed at every radius; a sampled circle goes dotted as r grows."""
+        lo, hi = (r - 1) * (r - 1), r * r
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                d = dx * dx + dy * dy
+                if lo < d <= hi:
+                    self._plot(frame, cx + dx, cy + dy, color)
 
     # -- strip ------------------------------------------------------------
 
-    def _marker(self, frame, x0, y0, spec, hidden):
-        if hidden:
-            frame[y0:y0 + CELL_H, x0:x0 + CELL_W] = C_VDGRAY
-            return
+    def _marker(self, frame, x0, y0, spec):
         kind, val = spec
         if kind == "c":
             frame[y0:y0 + CELL_H, x0:x0 + CELL_W] = val
@@ -210,16 +256,19 @@ class Kd01Display(RenderableUserDisplay):
             ox = x0 + (CELL_W - k) // 2
             oy = y0 + (CELL_H - k) // 2
             frame[oy:oy + k, ox:ox + k] = C_WHITE
-        else:                                   # "sep" -- strike the lock itself
-            frame[y0:y0 + CELL_H, x0:x0 + CELL_W] = C_YELLOW
-            frame[y0 + 1:y0 + CELL_H - 1, x0 + 1:x0 + CELL_W - 1] = C_BLACK
+        else:
+            # "sep" -- strike the lock itself. Drawn as the lock in miniature: a block
+            # standing on a plinth, in the yellow the real plinth turns when it wants
+            # striking, so the marker and the object it names share both shape and hue.
+            frame[y0 + 3:y0 + CELL_H, x0:x0 + CELL_W] = C_YELLOW
+            frame[y0:y0 + 3, x0 + 1:x0 + CELL_W - 1] = C_LGRAY
 
-    def _row(self, frame, y0, specs, hidden):
-        span = len(specs) * CELL_PITCH - (CELL_PITCH - CELL_W)
-        x = max(0, (64 - span) // 2)
+    def _column(self, frame, x0, specs):
+        """One strip column, first marker at the top -- read it downwards."""
+        y = STRIP_Y0
         for spec in specs:
-            self._marker(frame, x, y0, spec, hidden)
-            x += CELL_PITCH
+            self._marker(frame, x0, y, spec)
+            y += CELL_PITCH
 
     # -- main -------------------------------------------------------------
 
@@ -227,46 +276,50 @@ class Kd01Display(RenderableUserDisplay):
         g = self.game
         # Palette note: this game keeps a black ground on purpose, and it is the one
         # exception to the project's move away from black-and-grey. kd01 uses all sixteen
-        # palette entries -- six for the stones the player must name, plus five hub states --
-        # so EVERY vivid background collides with something the player has to identify. A
-        # purple ground was tried and made the purple stone invisible. Correctness wins.
-        frame[:, :] = C_BLACK
+        # palette entries -- six for the stones the player must name, four budget tiers,
+        # five plinth states -- so EVERY vivid background collides with something the
+        # player has to identify. A purple ground was tried and made the purple stone
+        # invisible. Correctness wins.
+        frame[:, :] = C_MAROON
 
-        # Budget bar. Neutral colour: the hub carries the affordance, not the bar.
-        span = BAR_X1 - BAR_X0
-        # Budget is shown as MULTI-LAP COLOUR TIERS, not a draining line: a short track that
-        # refills and changes colour each lap, so a handful of pixels encodes a long budget.
-        # Borrowed from how AR25/BP35/LF52 pack 640 actions into 64 pixels. Deliberately
-        # unlike the other games in this set -- the ARC-3 team's note was that shared
-        # furniture makes a whole set test one presentation over and over.
-        TIERS = (C_GREEN, C_YELLOW, C_ORANGE, C_RED)
-        LAP = 8                                    # actions represented per lap
-        frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X1] = C_DGRAY
+        # Strip columns, beside the staff -- readable at every moment of every level.
+        for idx, specs in enumerate(g.strip_rows):
+            self._column(frame, STRIP_X[idx], specs)
+
+        # The staff: a rail from the top edge down into the lock.
+        frame[STAFF_Y0:LOCK_Y0, RAIL_X] = C_VDGRAY
+
+        # Budget tier, recomputed every step and worn by every live stone as a halo.
+        tier = None
         if g.budget_max > 0 and g.budget_left > 0:
             laps_left = (g.budget_left - 1) // LAP           # 0 = final lap
-            within = g.budget_left - laps_left * LAP         # 1..LAP
             tier = TIERS[min(laps_left, len(TIERS) - 1)]
-            seg = max(1, int((BAR_X1 - BAR_X0) * within / LAP))
-            frame[BAR_Y:BAR_Y + 2, BAR_X0:BAR_X0 + seg] = tier
-            # a tick per remaining lap, so the tier is countable and not just a hue
-            for i in range(min(laps_left, 7)):
-                tx = BAR_X0 + i * 3
-                if tx < BAR_X1:
-                    frame[BAR_Y + 2, tx] = tier
 
-        # Strip rows. Dark while the mechanism is armed on levels that hide it: you cannot
-        # look the answer up again without first breaking your run.
-        hidden = g.hide_when_armed and g.armed()
-        for idx, specs in enumerate(g.strip_rows):
-            self._row(frame, STRIP_Y[idx], specs, hidden)
+        struck = {ni for run in g.filled for ni in run}      # this attempt, all runs
+        occupied = {node["slot"] for node in g.nodes}
 
-        # The track the stones sit on, so the ring reads as one object even where empty.
-        self._ring(frame, CX, CY, SLOT_R, C_VDGRAY)
+        # Seats: every slot has a peg from the rail, visible when the seat is empty
+        # (levels 1, 4, 5) so the staff reads as one object with six seats.
+        for slot, (sx, sy) in enumerate(SLOT_POS):
+            if slot not in occupied:
+                x0, x1 = sorted((RAIL_X, sx))
+                frame[sy, x0:x1 + 1] = C_VDGRAY
 
-        # Stones.
-        for node in g.nodes:
+        # Stones, drawn halo -> peg -> disc so the peg reads as passing through the halo
+        # and ending under the stone.
+        for ni, node in enumerate(g.nodes):
             sx, sy = SLOT_POS[node["slot"]]
             r = node_radius(node)
+            if node["alive"] and tier is not None:
+                self._halo(frame, sx, sy, r + HALO_GAP + 1, tier)
+            x0, x1 = sorted((RAIL_X, sx))
+            if ni in struck:
+                # PROGRESS: a struck stone's peg goes thick and light blue -- the armed
+                # hue -- and stays so until the run breaks or the lock opens. Colour is
+                # paired with shape (thickness) so the state survives a colour-blind read.
+                frame[sy - 1:sy + 2, x0:x1 + 1] = C_LBLUE
+            else:
+                frame[sy, x0:x1 + 1] = C_VDGRAY
             if node["alive"]:
                 # no outline: at radius 2 an outline eats the whole stone, and the
                 # background is black already, so nothing needs separating
@@ -275,39 +328,21 @@ class Kd01Display(RenderableUserDisplay):
                 self._disc(frame, sx, sy, r, C_DGRAY)
                 self._disc(frame, sx, sy, r - 2, C_BLACK)
 
-        # The lock: one pip ring per run, one pip per required strike, filled with the
-        # colour of the stone that filled it. This is the progress display -- without it
-        # the rule would be undiscoverable.
-        for r_i, run in enumerate(g.runs):
-            radius = PIP_R[min(r_i, len(PIP_R) - 1)]
-            self._ring(frame, CX, CY, radius, C_VDGRAY)
-            k = len(run)
-            done = g.filled[r_i]
-            for i in range(k):
-                # the outer ring is offset half a pip so the two rings never stack into
-                # one radial bar and become unreadable
-                th = -0.5 * math.pi + 2.0 * math.pi * (i + 0.5 * r_i) / k
-                px = int(round(CX + radius * math.cos(th)))
-                py = int(round(CY + radius * math.sin(th)))
-                col = C_DGRAY
-                if i < len(done):
-                    col = g.nodes[done[i]]["color"]
-                    if col == C_VDGRAY:
-                        col = C_WHITE
-                frame[py - 1:py + 2, px - 1:px + 2] = col
+        # The lock: a fixed-colour block at the foot of the rail ...
+        frame[LOCK_Y0:LOCK_Y1 + 1, LOCK_X - LOCK_HALF:LOCK_X + LOCK_HALF + 1] = C_LGRAY
 
-        # Hub -- colour as affordance, recomputed every step.
+        # ... standing on the plinth -- colour as affordance, recomputed every step.
         if g.anim_kind == "stall":
-            hub = C_MAROON
+            plinth = C_BLACK
         elif g.anim_kind == "open":
-            hub = C_WHITE
+            plinth = C_WHITE
         elif g.latched:
-            hub = C_YELLOW                       # same hue as the strip's separator marker
+            plinth = C_YELLOW                    # same hue as the strip's lock marker
         elif g.armed():
-            hub = C_LBLUE
+            plinth = C_LBLUE
         else:
-            hub = C_GRAY
-        self._disc(frame, CX, CY, HUB_R, hub)
+            plinth = C_GRAY
+        frame[PLINTH_Y0:64, LOCK_X - PLINTH_HALF:LOCK_X + PLINTH_HALF + 1] = plinth
         return frame
 
 
@@ -325,7 +360,6 @@ class Kd01(ARCBaseGame):
         self.keys = []
         self.strip_rows = []
         self.real_row = 0
-        self.hide_when_armed = False
         self.stall_cost = 1
         self.budget_max = 0
         self.budget_left = 0
@@ -356,7 +390,6 @@ class Kd01(ARCBaseGame):
                       for (s, c, z, a) in ldef["nodes"]]
         self.runs = [list(r) for r in ldef["runs"]]
         self.keys = [list(k) for k in ldef["keys"]]
-        self.hide_when_armed = ldef["hide"]
         self.stall_cost = ldef["stall"]
         self.budget_max = self.budget_left = ldef["budget"]
 
@@ -403,7 +436,7 @@ class Kd01(ARCBaseGame):
         return self.latched or self.progress > 0 or self.run_idx > 0
 
     def total_steps(self):
-        """Actions a flawless run costs: every strike, plus one hub latch between runs."""
+        """Actions a flawless run costs: every strike, plus one lock strike between runs."""
         return sum(len(r) for r in self.runs) + len(self.runs) - 1
 
     def node_at(self, x, y):
@@ -414,13 +447,16 @@ class Kd01(ARCBaseGame):
                 return i
         return None
 
-    def on_hub(self, x, y):
-        return (x - CX) ** 2 + (y - CY) ** 2 <= HUB_CLICK_R ** 2
+    def on_lock(self, x, y):
+        """The lock block (with a 1-px margin) and the plinth are one clickable object."""
+        in_block = abs(x - LOCK_X) <= LOCK_HALF + 1 and LOCK_Y0 - 1 <= y <= 63
+        in_plinth = abs(x - LOCK_X) <= PLINTH_HALF and y >= PLINTH_Y0
+        return in_block or in_plinth
 
     def expected(self):
-        """What the mechanism wants next: ('hub', None) or ('node', index)."""
+        """What the mechanism wants next: ('lock', None) or ('node', index)."""
         if self.latched:
-            return ("hub", None)
+            return ("lock", None)
         return ("node", self.runs[self.run_idx][self.progress])
 
     # -- simulation ---------------------------------------------------------
@@ -459,7 +495,7 @@ class Kd01(ARCBaseGame):
                 return
             self._stall()
             return
-        if ni is None and self.on_hub(x, y):
+        if ni is None and self.on_lock(x, y):
             if self.latched:
                 self.budget_left -= STEP_COST
                 self.latched = False
@@ -478,7 +514,7 @@ class Kd01(ARCBaseGame):
             return
         # A stall's colour is deliberately NOT cleared here. Agents read frame[-1], so
         # feedback that lives only in the intermediate animation frames is feedback nobody
-        # sees; the hub stays maroon until the next action clears it.
+        # sees; the plinth stays maroon until the next action clears it.
         if self.budget_left <= 0:
             self.budget_left = 0
             self.lose()
