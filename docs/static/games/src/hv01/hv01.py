@@ -1,24 +1,34 @@
-# Author: Claude Opus 5
-# Date: 2026-08-26 23:10
+# Author: Claude Fable 5.1 (spill chamber, object dock, conjunctive levels; original game
+#   by Claude Opus 5)
+# Date: 2026-09-02 21:30
 # PURPOSE: hv01 "Hive" -- an ARC-AGI-3 environment. A swarm streams rightward from a
 #   source; the player places influence nodes (attract / repel / teleport) that bend its
-#   path, then presses RUN to play a deterministic simulation and herd the swarm into a
+#   path, then releases the swarm to play a deterministic simulation and herd it into a
 #   sink. Levels add exactly one new rule each. Core-knowledge priors only (objectness,
-#   geometry, agentness): no text, digits or glyphs anywhere in the raster. Implements the
-#   arcengine ARCBaseGame contract (step / on_set_level / complete_action); consumed by the
-#   Pyodide browser player, the CLI agent, and the duck-harness bundle.
+#   geometry, agentness): no text, digits, glyphs, bars or pips anywhere in the raster.
+#   Everything around the field is an object -- nodes in hand sit on a shelf as themselves,
+#   banked organisms are carried into a bank pocket, lost organisms fall into a spill
+#   pocket -- and the level is lost only when the spill pocket is full. Implements the
+#   arcengine ARCBaseGame contract (step / on_set_level / complete_action); consumed by
+#   the Pyodide browser player, the CLI agent, and the duck-harness bundle.
 # SRP/DRY check: Pass -- self-contained environment module; no existing utility covers
 #   swarm-field simulation. Rendering follows the RenderableUserDisplay house pattern used
 #   by cr01/px02. No shared font/sprite module exists to reuse.
 """Hive -- steer a drifting swarm into the sink by placing influence nodes.
 
-Everything is done by clicking: pick a node type from the palette, click the board to
-place or remove one, then click RUN to play the simulation out. Adjust and run again.
+Everything is done by clicking: pick a node from the shelf along the top edge, click the
+board to place it or to take one back, then release the swarm to play the simulation out.
+Adjust and release again.
 
 Organisms always advance one cell to the right each tick; nodes decide whether they also
 step up or down. That guarantees every run terminates and nothing can stall in place.
 
-8 levels. Fully deterministic -- no RNG anywhere. Loss condition is the action budget.
+Nothing costs an action and nothing is counted for you. The nodes still in hand sit on
+the shelf as themselves; organisms that reach a sink are carried into the bank pocket at
+the top-right; every organism that falls off the board, hits a wall or a hazard lands in
+the spill pocket along the bottom edge. When the spill pocket is full the level is lost.
+
+8 levels. Fully deterministic -- no RNG anywhere.
 """
 
 import numpy as np
@@ -32,19 +42,29 @@ CELL = 4
 GRID_W = 15
 GRID_H = 13
 OX = 2                       # playfield origin x
-OY = 10                      # playfield origin y (HUD occupies rows 0..9)
+OY = 6                       # playfield origin y: six rows of shelf above, six of pocket below
 
-# Budget is a VERTICAL column down the left edge, draining upward -- not the horizontal top
-# bar every other game of ours used. Feedback from the ARC-3 team: our games had converged on
-# one house style, and shared furniture makes a set of games test one presentation repeatedly.
-# The official 25 vary this deliberately (R11L/LP85/AR25 run vertical, M0R0 mirrors top and
-# bottom, G50T/TN36 have no HUD at all), so each of ours now uses a different idiom.
-BAR_X, BAR_Y0, BAR_Y1 = 0, 2, 62          # action-budget column, left edge
-SWATCH_Y, SWATCH_SIZE = 3, 5              # node palette
-SWATCH_X = (2, 9, 16)
-PIP_Y = 8                                 # remaining-stock pips
-BANK_X, BANK_Y = 26, 3                    # banked-organism pips
-VENT_HALF = 1                             # source vent extends this far above/below
+# There is no HUD: no bars, no pips, no counters. Everything around the field is a world
+# object drawn at full size. Feedback from the ARC-3 team: all eight of our games lost by
+# a budget counter and showed stock and progress as pip rows, so a set of eight tested
+# one presentation eight times. Hive's pressure is a pile the player watches grow.
+#  - DOCK: a shelf along the top edge holding one full-size node sprite per node still in
+#    stock. A sprite leaves the shelf when its node is placed and comes back when the node
+#    is taken back. Click a sprite to pick that kind; the picked kind is framed.
+#  - BANK: a walled pocket at the top-right, exactly as many slots as the level's quota.
+#    Every organism that reaches its sink is carried into it during the run.
+#  - SPILL: a walled pocket along the bottom edge, exactly as many slots as the level's
+#    capacity. Every organism that fails lands in it, in its own colour, and stays there
+#    for the rest of the level. When it is full the level is lost.
+# Both pockets are sized to what they hold, so "full" is visibly full and the remaining
+# room is visibly remaining room. Walls are the board's brick greys (greys for structure).
+DOCK_X0, DOCK_Y = 2, 1                    # first shelf slot's top-left; slots are CELL x CELL
+DOCK_PITCH = CELL + 2                     # two clear pixels between shelf slots
+BODY = 3                                  # body size in px: the sprite of a live organism
+BODY_PITCH = BODY + 1                     # one-pixel gap between bodies in a pocket
+POCKET_X1 = OX + GRID_W * CELL - 1        # both pockets are flush with the field's right edge
+BANK_Y0 = 1                               # bank pocket top wall; its floor is the field's top rim
+SPILL_Y0 = OY + GRID_H * CELL             # spill pocket top wall rests on the field's bottom rim
 
 # ---------------------------------------------------------------------------
 # Colours (ARC-3 palette indices -- 12 is Orange, 8 is Red, 5 is Black)
@@ -67,12 +87,6 @@ SINK_COLOR = {O_NORMAL: C_LBLUE, O_INVERT: C_LMAGENTA}
 
 NODE_K = 10.0                # node field strength (gives a useful reach of ~5 cells)
 TURN_THRESHOLD = 0.30        # vertical force needed to bend the swarm one cell
-
-# Placing a node is cheap; releasing the swarm to see what happens is expensive. Thinking
-# about where the nodes go should be free, running the experiment should not be. Without
-# this a blind policy simply releases every other action and brute-forces placements --
-# measured at 1 in 12 on level 2 when a release cost the same as a click.
-RELEASE_COST = 3
 
 # ---------------------------------------------------------------------------
 # Levels -- each introduces exactly one new rule and keeps every earlier one.
@@ -160,13 +174,15 @@ LEVELS = [
     },
 ]
 
-# Action budgets, deliberately tight. A solver clears each level in 3-6 clicks, so these
-# leave a human several full attempts while starving brute-force search: this is a
-# place-and-test game, so a loose budget lets a random policy simply try placements until
-# one sticks. The tutorial is generous because the mechanic is still unknown.
-BUDGETS = (36, 20, 26, 26, 26, 34, 26, 32)
-for _ldef, _budget in zip(LEVELS, BUDGETS):
-    _ldef["budget"] = _budget
+# Spill-pocket capacities: how many lost organisms a level tolerates before it fails.
+# Every level's solution banks the whole swarm, so a clean run adds nothing to the pile and
+# a fully failed release adds the whole swarm (3 or 4 bodies). Capacities are set so two
+# total failures still leave a third attempt, while a blind policy that releases without
+# thinking fills the pocket in three releases. The tutorial is generous because the
+# mechanic is still unknown.
+CAPACITIES = (12, 8, 8, 8, 8, 8, 10, 10)
+for _ldef, _capacity in zip(LEVELS, CAPACITIES):
+    _ldef["capacity"] = _capacity
 
 PALETTE_ORDER = (N_ATTRACT, N_REPEL, N_TELEPORT)
 MAX_TICKS = GRID_W + 3       # every organism advances one column per tick, so this bounds a run
@@ -187,6 +203,30 @@ class Hv01Display(RenderableUserDisplay):
         px, py = self._cell_px(gx, gy)
         if 0 <= px and 0 <= py and px + CELL <= 64 and py + CELL <= 64:
             frame[py:py + CELL, px:px + CELL] = color
+
+    def _node_sprite(self, frame, px, py, kind):
+        """A node: hollow ring with a bright core, so it never reads as an organism. The
+        same sprite on the shelf and on the board -- the shelf holds the objects themselves."""
+        frame[py:py + CELL, px:px + CELL] = NODE_COLOR[kind]
+        frame[py + 1:py + 3, px + 1:px + 3] = C_BLACK
+        frame[py + 1, px + 1] = C_WHITE if kind == N_ATTRACT else C_YELLOW
+
+    def _pocket(self, frame, y0, slots, bodies):
+        """A walled pocket flush with the field's right edge: light-grey top, grey left,
+        dark-grey right and floor (lit from the top-left like the bricks), a black cavity
+        exactly `slots` bodies wide, and one body per entry of `bodies` packed in from the
+        left. A body is the exact sprite of a live organism in that organism's own colour."""
+        x0 = POCKET_X1 - slots * BODY_PITCH
+        y1 = y0 + BODY_PITCH
+        frame[y0:y1 + 1, x0:POCKET_X1 + 1] = C_BLACK
+        frame[y0, x0:POCKET_X1 + 1] = C_LGRAY
+        frame[y0:y1 + 1, x0] = C_GRAY
+        frame[y0:y1 + 1, POCKET_X1] = C_DGRAY
+        frame[y1, x0:POCKET_X1 + 1] = C_DGRAY
+        for i, kind in enumerate(bodies[:slots]):
+            bx, by = x0 + 1 + i * BODY_PITCH, y0 + 1
+            frame[by:by + BODY, bx:bx + BODY] = ORG_COLOR[kind]
+            frame[by + 1, bx + 1] = C_LMAGENTA if kind == O_NORMAL else C_MAGENTA
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         g = self.game
@@ -240,14 +280,12 @@ class Hv01Display(RenderableUserDisplay):
                 done = g.banked_by_kind.get(kind, 0) >= g.need_by_kind.get(kind, 1)
                 frame[py + 1:py + 3, px + 1:px + 3] = C_GREEN if done else C_WHITE
 
-        # Nodes: hollow rings with a bright core, so they never read as an organism.
+        # Nodes on the board.
         for (gx, gy), kind in g.nodes.items():
             px, py = self._cell_px(gx, gy)
             if px < 0 or py < 0 or px + CELL > 64 or py + CELL > 64:
                 continue
-            frame[py:py + CELL, px:px + CELL] = NODE_COLOR[kind]
-            frame[py + 1:py + 3, px + 1:px + 3] = C_BLACK
-            frame[py + 1, px + 1] = C_WHITE if kind == N_ATTRACT else C_YELLOW
+            self._node_sprite(frame, px, py, kind)
 
         # Teleport partners joined by a dotted line so the pairing is visible.
         tp = sorted(p for p, k in g.nodes.items() if k == N_TELEPORT)
@@ -269,35 +307,19 @@ class Hv01Display(RenderableUserDisplay):
                 frame[py + 1:py + 4, px + 1:px + 4] = ORG_COLOR[org["kind"]]
                 frame[py + 2, px + 2] = (C_LMAGENTA if org["kind"] == O_NORMAL else C_MAGENTA)
 
-        # ---- HUD ----------------------------------------------------------
-        # Drains upward from the bottom of the column, so "running out" reads as a falling
-        # level rather than a shortening line.
-        span = BAR_Y1 - BAR_Y0
-        filled = 0 if g.budget_max <= 0 else int(span * g.budget_left / g.budget_max)
-        frame[BAR_Y0:BAR_Y1, BAR_X:BAR_X + 2] = C_DGRAY
-        if filled > 0:
-            frame[BAR_Y1 - filled:BAR_Y1, BAR_X:BAR_X + 2] = (
-                C_GREEN if g.budget_left * 4 > g.budget_max else C_ORANGE)
-
-        for i, kind in enumerate(g.palette):
-            x = SWATCH_X[i]
-            frame[SWATCH_Y:SWATCH_Y + SWATCH_SIZE, x:x + SWATCH_SIZE] = NODE_COLOR[kind]
-            frame[SWATCH_Y + 1:SWATCH_Y + 4, x + 1:x + 4] = C_BLACK
+        # ---- the objects around the field ------------------------------------
+        # Shelf: the nodes still in hand, as themselves. The picked kind is framed.
+        for x, y, kind in g.dock_slots():
+            self._node_sprite(frame, x, y, kind)
             if kind == g.selected:
-                frame[SWATCH_Y - 1, x - 1:x + SWATCH_SIZE + 1] = C_WHITE
-                frame[SWATCH_Y + SWATCH_SIZE, x - 1:x + SWATCH_SIZE + 1] = C_WHITE
-                frame[SWATCH_Y - 1:SWATCH_Y + SWATCH_SIZE + 1, x - 1] = C_WHITE
-                frame[SWATCH_Y - 1:SWATCH_Y + SWATCH_SIZE + 1, x + SWATCH_SIZE] = C_WHITE
-            for p in range(g.stock_left.get(kind, 0)):
-                if x + p * 2 < 64:
-                    frame[PIP_Y, x + p * 2] = NODE_COLOR[kind]
+                frame[y - 1, x - 1:x + CELL + 1] = C_WHITE
+                frame[y + CELL, x - 1:x + CELL + 1] = C_WHITE
+                frame[y - 1:y + CELL + 1, x - 1] = C_WHITE
+                frame[y - 1:y + CELL + 1, x + CELL] = C_WHITE
 
-        for i in range(g.required):
-            hx = BANK_X + i * 3
-            if hx + 2 > 62:
-                break
-            frame[BANK_Y:BANK_Y + 3, hx:hx + 2] = (
-                C_GREEN if i < g.banked_total else C_DGRAY)
+        # Bank pocket (top-right, the quota) and spill pocket (bottom edge, the capacity).
+        self._pocket(frame, BANK_Y0, g.required, g.bank)
+        self._pocket(frame, SPILL_Y0, g.capacity, g.spill)
 
         return frame
 
@@ -319,6 +341,7 @@ class Hv01(ARCBaseGame):
         self.hazards = set()
         self.stock_left = {}
         self.palette = []
+        self.dock_layout = []
         self.selected = None
         self.nodes = {}
         self.organisms = []
@@ -326,8 +349,9 @@ class Hv01(ARCBaseGame):
         self.banked_by_kind = {}
         self.need_by_kind = {}
         self.banked_total = 0
-        self.budget_max = 0
-        self.budget_left = 0
+        self.bank = []
+        self.capacity = 1
+        self.spill = []
         self._running = False
         self._tick = 0
 
@@ -357,7 +381,16 @@ class Hv01(ARCBaseGame):
         self.stock_left = dict(ldef["stock"])
         self.selected = self.palette[0] if self.palette else None
         self.nodes = {}
-        self.budget_max = self.budget_left = ldef["budget"]
+        self.capacity = ldef["capacity"]
+        self.spill = []                    # kinds of every organism lost on this level
+
+        # One fixed shelf slot per node in the level's stock, grouped by kind in palette
+        # order. A slot empties when its node is placed and refills when it is taken back.
+        self.dock_layout = []
+        for kind in self.palette:
+            for _ in range(ldef["stock"][kind]):
+                self.dock_layout.append(
+                    (DOCK_X0 + len(self.dock_layout) * DOCK_PITCH, DOCK_Y, kind))
 
         self.need_by_kind = {}
         for kind, count in self.spawn_plan:
@@ -385,12 +418,23 @@ class Hv01(ARCBaseGame):
     def _vent_cells(self):
         return {cell for cell, _kind in self._spawns}
 
+    def dock_slots(self):
+        """(x, y, kind) of every node sprite on the shelf right now: the first
+        `stock_left[kind]` slots of each kind, so the rightmost of a kind leaves first."""
+        shown, seen = [], {}
+        for x, y, kind in self.dock_layout:
+            seen[kind] = seen.get(kind, 0) + 1
+            if seen[kind] <= self.stock_left.get(kind, 0):
+                shown.append((x, y, kind))
+        return shown
+
     def _reset_run(self):
-        """Rewind the swarm to the source. Placed nodes are deliberately kept."""
+        """Rewind the swarm to the source. Placed nodes and the spill pile are kept."""
         self.organisms = [{"pos": cell, "kind": kind, "alive": True}
                           for cell, kind in self._spawns]
         self.banked_by_kind = {k: 0 for k in self.sinks}
         self.banked_total = 0
+        self.bank = []
         self._running = False
         self._tick = 0
 
@@ -423,6 +467,12 @@ class Hv01(ARCBaseGame):
             return None
         return tp[1] if tp[0] == cell else tp[0]
 
+    def _spill(self, org):
+        """An organism that can never reach a sink dies, and its body joins the pile in
+        the pocket on the same frame -- the player sees the cause and the cost together."""
+        org["alive"] = False
+        self.spill.append(org["kind"])
+
     def _sim_tick(self):
         """One tick: every organism advances exactly one column, bending up or down."""
         self._tick += 1
@@ -437,10 +487,10 @@ class Hv01(ARCBaseGame):
             if self._blocked(nx, ny):
                 nx, ny = gx + 1, gy                      # try straight ahead instead
                 if self._blocked(nx, ny):
-                    org["alive"] = False                 # ran into a wall
+                    self._spill(org)                     # ran into a wall
                     continue
             if nx >= GRID_W:
-                org["alive"] = False                     # left the board
+                self._spill(org)                         # left the board
                 continue
 
             partner = self._teleport_partner((nx, ny))
@@ -449,13 +499,14 @@ class Hv01(ARCBaseGame):
 
             org["pos"] = (nx, ny)
             if (nx, ny) in self.hazards:
-                org["alive"] = False
+                self._spill(org)                         # scalded
                 continue
             for kind, spos in self.sinks.items():
                 if (nx, ny) == spos and org["kind"] == kind:
                     org["alive"] = False
                     self.banked_by_kind[kind] = self.banked_by_kind.get(kind, 0) + 1
                     self.banked_total += 1
+                    self.bank.append(kind)               # carried into the bank pocket
                     break
 
     def _run_over(self):
@@ -468,20 +519,18 @@ class Hv01(ARCBaseGame):
         if self.banked_total >= self.required:
             self.next_level()
             return
-        tally = self.banked_total          # keep the tally readable on the failed frame
+        tally, bank = self.banked_total, self.bank   # keep the bank readable on the failed frame
         self._reset_run()
-        self.banked_total = tally
-        if self.budget_left <= 0:
-            self.budget_left = 0
-            self.lose()
+        self.banked_total, self.bank = tally, bank
+        if len(self.spill) >= self.capacity:
+            self.lose()                    # a full spill pocket is the only way to lose
 
     # -- input --------------------------------------------------------------
 
-    def _palette_hit(self, x, y):
-        if not (SWATCH_Y <= y < SWATCH_Y + SWATCH_SIZE):
-            return None
-        for i, kind in enumerate(self.palette):
-            if SWATCH_X[i] <= x < SWATCH_X[i] + SWATCH_SIZE:
+    def _dock_hit(self, x, y):
+        """The kind of the shelf sprite under a click (one pixel of slack around it)."""
+        for sx, sy, kind in self.dock_slots():
+            if sx - 1 <= x <= sx + CELL and sy - 1 <= y <= sy + CELL:
                 return kind
         return None
 
@@ -491,10 +540,10 @@ class Hv01(ARCBaseGame):
         return (x - OX) // CELL, (y - OY) // CELL
 
     def _handle_click(self, x, y):
-        kind = self._palette_hit(x, y)
+        kind = self._dock_hit(x, y)
         if kind is not None:
             self.selected = kind
-            return False
+            return
 
         cell = self._board_cell(x, y)
         if cell is None:
@@ -524,12 +573,12 @@ class Hv01(ARCBaseGame):
 
         aid = self.action.id.value
 
+        # Nothing costs an action: picking, placing and taking back nodes are free, and so
+        # is releasing the swarm. A bad release is paid for in bodies, not in clicks.
         if aid == 6:
-            self.budget_left -= 1
             self._handle_click(int(self.action.data.get("x", 0)),
                                int(self.action.data.get("y", 0)))
         elif aid == 5:                                 # release the swarm
-            self.budget_left -= RELEASE_COST
             self._reset_run()
             self._running = True
             self._sim_tick()
@@ -537,9 +586,5 @@ class Hv01(ARCBaseGame):
                 self._finish_run()
             else:
                 return                                 # animate: withhold completion
-
-        if self.budget_left <= 0 and not self._running:
-            self.budget_left = 0
-            self.lose()
 
         self.complete_action()
