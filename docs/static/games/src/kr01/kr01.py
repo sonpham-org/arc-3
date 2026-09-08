@@ -1,14 +1,23 @@
 # Author: Claude Opus 5
-# Date: 2026-08-27 09:20
+# Date: 2026-08-27 09:20 (loss condition reworked 2026-09-02)
 # PURPOSE: kr01 "Carry" -- an ARC-AGI-3 environment built to measure ONE thing: whether an
 #   agent carries a hidden mapping across a level boundary. Level 1 hands the player a free
-#   test bench that reveals which coloured core belongs in which shaped socket at zero
-#   budget cost. From level 2 the bench is gone, the mapping is unchanged, and a wrong
-#   insertion costs a large slice of budget and jams the socket. Remembering wins in a
-#   handful of clicks; re-deriving the mapping costs more budget than the level grants.
+#   test bench that reveals which coloured core belongs in which shaped socket. From level 2
+#   the bench is gone, the mapping is unchanged, and a wrong insertion jams the socket.
+#   There is NO budget and nothing counts down: the level is lost only by BOARD STATE. Every
+#   wrong insert jams its socket for a few actions AND trips one of three latches on the
+#   tray rail; a latch releases on its own after a longer timeout, draining visibly as it
+#   goes. When the third latch trips, the tray seizes: a bar slams across the cores and the
+#   level fails. A mistake is therefore a cost (a locked socket, a lit bay that drains) and
+#   only a third mistake made while two latches are still live is an ending. Remembering
+#   the mapping never trips anything; re-deriving it by guessing jams three of every four
+#   inserts and seizes the tray in a handful of clicks.
 #   Later levels EXTEND the mapping (a fifth pair, forced by elimination), RE-SKIN the
 #   sockets (outline, then figure/ground inversion) without re-teaching, and COMPOSE it
 #   (compound sockets consume two cores in a geometrically ordered sequence).
+#   The tray REMEMBERS for the player: every pairing seen to fit is drawn permanently on its
+#   core (the shape, filled with the colour) and carried across levels, so the puzzle is
+#   "learn once, apply later" without anything living in the player's head.
 #   Core-knowledge priors only: objectness, geometry/topology, agentness. No text, no
 #   glyphs, no digits, no cultural conventions. Click is the only verb.
 # SRP/DRY check: Pass -- self-contained environment. No catalogued game tests cross-level
@@ -17,11 +26,13 @@
 """Carry -- learn the colour/shape mapping on the bench, then keep it.
 
 Click a core in the tray to select it. Click a socket to push the selected core in. A core
-only fits the shape it belongs to. Level 1 has a free bench: testing a core against a bench
-pad costs nothing and the pad keeps the colour that fits it. After level 1 the bench is
-gone but the mapping is the same.
+only fits the shape it belongs to; a core that does not fit jams the socket for a while and
+trips a latch on the tray rail, which drains away over a longer while. Three live latches
+seize the tray: a bar slams across the cores and the level is lost. Level 1 has a free
+bench: testing a core against a bench pad never jams anything and the pad keeps the colour
+that fits it. After level 1 the bench is gone but the mapping is the same.
 
-7 levels. No RNG. Lose by running the budget to zero.
+7 levels. No RNG. No budget. Lose only by tripping three latches at the same time.
 """
 
 import numpy as np
@@ -38,7 +49,7 @@ C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 # ---------------------------------------------------------------------------
 # The hidden mapping. Five colours, five shapes, one bijection, constant for the whole
 # game. This is the ONLY thing the player has to carry from level 1 to level 7; nothing on
-# screen after level 1 discloses it, and every wrong guess is paid for in budget.
+# screen after level 1 discloses it, and every wrong guess jams a socket and trips a latch.
 # ---------------------------------------------------------------------------
 
 SQ, TR, DI, CR, RI = 0, 1, 2, 3, 4          # square, triangle, diamond, cross, ring
@@ -69,33 +80,58 @@ TRAY_Y = 53
 TRAY_X = (2, 15, 28, 41, 54)
 CORE = 9
 
-HUD_Y0, HUD_Y1 = 0, 3        # budget bar occupies rows 0..2
-SEP_Y = 51                   # thin rule between field and tray
-
 BENCH_Y0, BENCH_Y1 = 4, 31   # bench platform band (inclusive rows)
 BENCH_PAD_Y = 11
-BENCH_FREE = 60              # free bench tests; afterwards a test costs one budget unit
 
-SELECT_COST = 1
-INSERT_COST = 1
-MISS_COST = 1
+# ---------------------------------------------------------------------------
+# The loss condition, as board state and nothing else. A wrong insert does two things to
+# the socket it landed on: the socket JAMS (its shape turns red and refuses cores for a few
+# actions) and it trips a LATCH (an orange frame closes around the whole socket and stays
+# for longer, after the shape has gone grey and accepts cores again). A second wrong insert
+# on the same socket while its first latch is live adds a second frame just inside the
+# first. When the third latch is live anywhere on the board the tray seizes: a bar slams
+# across the cores over a few frames and the level is lost. There is no bar, no pip row and
+# no counter: the only pressure display is the sockets themselves glowing, and the seizure.
+#
+# Why latches are counted per JAM and not per jammed SOCKET: with only sockets counted, a
+# board with two open sockets can never seize, so any blind policy that survives the opening
+# finishes for free by retrying the same two sockets; measured, that leak alone put a random
+# clicker above 1/1000 on every level at any socket-jam length under 20. A latch per jam
+# closes it: the third wrong guess is fatal wherever it lands, including twice on one socket.
+# ---------------------------------------------------------------------------
+
+SEIZE_JAMS = 3                               # live latches that seize the tray
+LATCH_INK = C_ORANGE                         # latch frame; not a core colour, not the jam red
+SEP_Y = 51                                   # thin rule between field and tray
+BAR_H = 3                                    # lock bar thickness
+SLAM_PATH = (51, 53, 55, 56)                 # lock bar top row on each frame of the slam
 
 # ---------------------------------------------------------------------------
 # Levels. Each escalation ADDS a rule and keeps every earlier one:
-#   1 Bench    free discovery apparatus; four pairs
-#   2 Recall   bench gone; a wrong insert costs ~10 budget and jams the socket for 5 turns
-#
-# Budget tuning rule, measured not guessed: what defeats a memoryless re-deriving agent is
-# TOLERANCE -- how many wrong inserts fit in the spare budget -- and spare budget also pays
-# for its extra selection churn. Every level therefore keeps
-#     carrying-policy cost + 1.0..1.3 x wrong_cost  <=  budget  <  cost + 2 x wrong_cost
-# which leaves an agent that remembers ~6-8 free misclicks but lets one wrong insert stand,
-# never two. Raising the spare to 1.7x wrong_cost triples the re-deriving agent's win rate.
+#   1 Bench    free discovery apparatus; four pairs. A wrong insert jams for 2 actions and
+#              trips a 2-action latch, so both glows are SEEN here -- but at most `latch`
+#              latches can ever be live at once (one reject per action), so latch=2 cannot
+#              seize: the tutorial is impossible to fail.
+#   2 Recall   bench gone; a wrong insert jams the socket for `jam` actions and trips a
+#              latch for `latch` actions; three live latches seize the tray
 #   3 Extend   a fifth colour and a fifth shape; the new pair is forced by elimination
 #   4 Reskin   sockets are drawn as outlines instead of filled bodies
 #   5 Invert   sockets are drawn as figure/ground inversions (the shape is a hole)
 #   6 Compose  compound sockets take two cores, head shape first then tail shape
 #   7 Gauntlet compound sockets in all three presentations at once
+#
+# Tuning rule, measured not guessed (numbers in the plan doc): a latch tripped at action t
+# is still live at action T iff T - t <= latch - 1, so the tray seizes exactly when three
+# rejects fall inside a (latch - 1)-action span. A carrying player never rejects and is
+# untouched by either timeout. A blind clicker fits a socket 1 time in 4 (5 colours: 1 in
+# 5) and so can only clear a 10-stage level by luck -- ten fits inside its first dozen-odd
+# socket hits -- and the latch length decides how many SPACED rejects that streak may
+# contain: about 2 + (level length / latch). At latch 30, twice a carrying player's level,
+# that is three, and the luck floor is ~1e-4 on the 4-colour level and ~2e-5 on the
+# 5-colour ones. Longer latches buy little more and turn "wait one out" into a fiction;
+# the socket jam stays at the original 5-6 so that one mistake locks one socket only
+# briefly. `latch` is the same on every non-tutorial level: the pressure is a rule the
+# player learns once, not a dial that is turned up.
 #
 # socket spec: (col, row, shape, style)                  -> simple, one stage
 #              (col, row, head_shape, style, tail_shape) -> compound, two stages
@@ -109,7 +145,7 @@ LEVELS = [
         "cores": (C_MAGENTA, C_BLUE, C_YELLOW, C_GREEN),
         "bench": (SQ, TR, CR, RI),
         "sockets": ((0, 2, RI, _S), (1, 2, CR, _S), (2, 2, SQ, _S), (3, 2, TR, _S)),
-        "wrong": 2, "jam": 0, "budget": 44,
+        "jam": 2, "latch": 2,
     },
     {
         "name": "Recall",
@@ -118,7 +154,7 @@ LEVELS = [
         "sockets": ((0, 0, RI, _S), (1, 0, CR, _S), (2, 0, SQ, _S), (3, 0, TR, _S),
                     (0, 1, CR, _S), (1, 1, RI, _S), (2, 1, TR, _S), (3, 1, SQ, _S),
                     (1, 2, RI, _S), (2, 2, CR, _S)),
-        "wrong": 10, "jam": 5, "budget": 26,
+        "jam": 5, "latch": 30,
     },
     {
         "name": "Extend",
@@ -127,7 +163,7 @@ LEVELS = [
         "sockets": ((0, 0, DI, _S), (1, 0, TR, _S), (2, 0, RI, _S), (3, 0, CR, _S),
                     (0, 1, SQ, _S), (1, 1, DI, _S), (2, 1, CR, _S), (3, 1, RI, _S),
                     (1, 2, SQ, _S), (2, 2, TR, _S)),
-        "wrong": 11, "jam": 5, "budget": 26,
+        "jam": 5, "latch": 30,
     },
     {
         "name": "Reskin",
@@ -136,7 +172,7 @@ LEVELS = [
         "sockets": ((0, 0, CR, _O), (1, 0, SQ, _O), (2, 0, DI, _O), (3, 0, TR, _O),
                     (0, 1, RI, _O), (1, 1, TR, _O), (2, 1, SQ, _O), (3, 1, DI, _O),
                     (0, 2, RI, _O), (3, 2, CR, _O)),
-        "wrong": 11, "jam": 5, "budget": 26,
+        "jam": 5, "latch": 30,
     },
     {
         "name": "Invert",
@@ -145,7 +181,7 @@ LEVELS = [
         "sockets": ((0, 0, TR, _I), (1, 0, RI, _I), (2, 0, CR, _I), (3, 0, DI, _I),
                     (0, 1, SQ, _I), (1, 1, CR, _I), (2, 1, DI, _I), (3, 1, TR, _I),
                     (0, 2, RI, _I), (2, 2, SQ, _I)),
-        "wrong": 11, "jam": 5, "budget": 26,
+        "jam": 5, "latch": 30,
     },
     {
         "name": "Compose",
@@ -154,7 +190,7 @@ LEVELS = [
         "sockets": ((0, 0, CR, _S, SQ), (2, 0, RI, _S, DI),
                     (0, 1, TR, _S, CR), (2, 1, DI, _S), (3, 1, TR, _S),
                     (1, 2, SQ, _S), (2, 2, RI, _S)),
-        "wrong": 12, "jam": 5, "budget": 27,
+        "jam": 5, "latch": 30,
     },
     {
         "name": "Gauntlet",
@@ -163,7 +199,7 @@ LEVELS = [
         "sockets": ((0, 0, SQ, _S, RI), (2, 0, DI, _O, CR),
                     (0, 1, RI, _I, TR), (2, 1, CR, _S, DI),
                     (1, 2, TR, _O), (2, 2, SQ, _I)),
-        "wrong": 13, "jam": 6, "budget": 28,
+        "jam": 6, "latch": 30,
     },
 ]
 
@@ -303,12 +339,10 @@ class Kr01Display(RenderableUserDisplay):
             # solid light shapes, while sockets below are dark holes cut into plates --
             # different objects, not different shades of the same object.
             band_h = BENCH_Y1 - BENCH_Y0 + 1
-            live = g.bench_uses < BENCH_FREE
-            self._rect(frame, 0, BENCH_Y0, 64, band_h, C_DGRAY if live else C_BLACK)
+            self._rect(frame, 0, BENCH_Y0, 64, band_h, C_DGRAY)
             # bright rails top and bottom mark it as apparatus, and only the bench has them
-            rail = C_LBLUE if live else C_VDGRAY
-            self._rect(frame, 0, BENCH_Y0, 64, 1, rail)
-            self._rect(frame, 0, BENCH_Y1, 64, 1, rail)
+            self._rect(frame, 0, BENCH_Y0, 64, 1, C_LBLUE)
+            self._rect(frame, 0, BENCH_Y1, 64, 1, C_LBLUE)
             for i, pad in enumerate(g.bench):
                 x, y = pad["x"], pad["y"]
                 self._rect(frame, x, y, CELL, CELL, C_DGRAY)
@@ -336,42 +370,54 @@ class Kr01Display(RenderableUserDisplay):
                 else:
                     state, color = "ghost", 0
                 self._draw_stage(frame, cx, cy, cs, s["shapes"][i], s["style"], state, color)
+            # Latch glow: one orange frame around the whole socket per live latch, the
+            # second one just inside the first. Every 13px and 9px cell keeps its outermost
+            # pixel ring free of shape, so the inner frame never touches the shape. The
+            # frames outlive the red jam and survive the socket being filled, because the
+            # latch is the tray's consequence, not the socket's.
+            n = len(s["latch"])
+            if n >= 1:
+                self._frame_box(frame, s["x"] - 1, s["y"] - 1,
+                                s["hit_w"] + 2, s["hit_h"] + 2, LATCH_INK)
+            if n >= 2:
+                self._frame_box(frame, s["x"], s["y"], s["hit_w"], s["hit_h"], LATCH_INK)
 
-        # Tray. A core whose every remaining target is already filled turns hollow: colour
-        # recomputed from what the object currently affords, not from level data.
+        # Tray. The tray remembers for the player: a core whose pairing has been DISCOVERED
+        # (a fit anywhere, or a bench hit) is drawn as its shape filled with its colour on a
+        # dark plate, with the same 9px rasteriser the socket tails use, and stays that way
+        # across levels; an undiscovered core is a plain block. Nothing is ever shown that
+        # the player has not seen happen, so the legend cannot be read by a blind policy.
+        # A core whose every remaining target is already filled turns hollow (outline only):
+        # colour recomputed from what the object currently affords, not from level data.
         need = g.colors_still_needed()
         for i, core in enumerate(g.cores):
-            x, y = core["x"], core["y"]
-            if core["color"] in need:
-                self._rect(frame, x + 1, y + 1, CORE - 2, CORE - 2, core["color"])
+            x, y, col = core["x"], core["y"], core["color"]
+            live = col in need
+            shape = g.known.get(col)
+            if shape is None:
+                if live:
+                    self._rect(frame, x + 1, y + 1, CORE - 2, CORE - 2, col)
+                else:
+                    self._frame_box(frame, x + 1, y + 1, CORE - 2, CORE - 2, col)
             else:
-                self._frame_box(frame, x + 1, y + 1, CORE - 2, CORE - 2, core["color"])
-            if g.selected == i:
+                self._rect(frame, x, y, CORE, CORE, C_VDGRAY)
+                mask = shape_mask(shape, CORE) if live else shape_outline(shape, CORE)
+                self._blit(frame, x, y, mask, col)
+            if g.selected == i and not g.seized():
                 self._frame_box(frame, x - 1, y - 1, CORE + 2, CORE + 2, C_WHITE)
 
         # Rule between field and tray.
-        self._rect(frame, 0, SEP_Y, 64, 1, C_VDGRAY)
+        self._rect(frame, 0, SEP_Y, 64, 1, C_RED if g.seized() else C_VDGRAY)
 
-        # Budget as DISCRETE TOKENS, not a continuous bar: a wrapped block of 2x2 counters
-        # that vanish one per action. Countable rather than estimated, which suits a game
-        # whose whole tension is "can I afford one more wrong insert" -- and deliberately
-        # unlike the other games in this set. Feedback from the ARC-3 team was that all our
-        # games wore the same top bar, so six games were testing one presentation six times.
-        left = max(0, g.budget_left)
-        if left * 2 > g.budget_max:
-            tok = C_GREEN
-        elif left * 4 > g.budget_max:
-            tok = C_ORANGE
-        else:
-            tok = C_RED
-        # Two rows of 30 at a 2px pitch, so the whole block stays inside rows 0..3 and never
-        # reaches the bench platform that starts at row 4.
-        per_row = 30
-        for i in range(min(g.budget_max, per_row * 2)):
-            tx = 1 + (i % per_row) * 2
-            ty = HUD_Y0 + (i // per_row) * 2
-            if tx < 63 and ty + 1 < HUD_Y1 + 1:
-                self._rect(frame, tx, ty, 1, 2, tok if i < left else C_VDGRAY)
+        # Seizure: the lock bar leaves the rule and slams down across the cores, one step per
+        # frame, and stays there. Drawn last so it crosses everything in the tray. A second
+        # red line closes the bottom of the tray once the bar has landed, so the final frame
+        # reads as a caged tray even to a viewer who never saw the slam.
+        if g.seized():
+            top = SLAM_PATH[min(g.seize_frame, len(SLAM_PATH) - 1)]
+            self._rect(frame, 0, top, 64, BAR_H, C_RED)
+            if g.seize_frame >= len(SLAM_PATH) - 1:
+                self._rect(frame, 0, 63, 64, 1, C_RED)
 
         # A click that changed nothing still has to be legible, or the agent cannot tell a
         # miss from a no-op. Only misses are marked; every other click visibly alters the
@@ -395,15 +441,16 @@ class Kr01(ARCBaseGame):
         self.sockets: list = []
         self.cores: list = []
         self.bench: list = []
-        self.bench_uses = 0
         self.bench_flash = -1
         self.selected = None
-        self.wrong_cost = 0
         self.jam_turns = 0
-        self.budget_max = 0
-        self.budget_left = 0
+        self.latch_len = 1
+        self.seize_frame = None
         self.click_mark = None
         self.last_result = ""
+        # {colour: shape} the player has seen fit. Survives level changes and level resets;
+        # a full reset (a new game) empties it. This is the whole cross-level state.
+        self.known: dict = {}
 
         levels = [Level(sprites=[], grid_size=(64, 64), data=ldef, name=ldef["name"])
                   for ldef in LEVELS]
@@ -422,6 +469,11 @@ class Kr01(ARCBaseGame):
     def on_set_level(self, level: Level) -> None:
         ldef = LEVELS[self.level_index]
 
+        # The engine sets _full_reset only for a new game (RESET at action 0 or after WIN);
+        # a level reset and next_level() leave it False, and the tray keeps its memory.
+        if getattr(self, "_full_reset", True):
+            self.known = {}
+
         self.sockets = []
         for spec in ldef["sockets"]:
             col, row, shape, style = spec[0], spec[1], spec[2], spec[3]
@@ -436,7 +488,7 @@ class Kr01(ARCBaseGame):
             self.sockets.append({
                 "x": x, "y": y, "hit_w": hit_w, "hit_h": CELL,
                 "cells": cells, "shapes": shapes, "style": style,
-                "stage": 0, "fills": [], "jam": 0,
+                "stage": 0, "fills": [], "jam": 0, "latch": [],
             })
 
         self.cores = [{"x": TRAY_X[i], "y": TRAY_Y, "color": c}
@@ -444,14 +496,13 @@ class Kr01(ARCBaseGame):
 
         self.bench = [{"x": COLS[i], "y": BENCH_PAD_Y, "shape": sh, "found": None}
                       for i, sh in enumerate(ldef["bench"])]
-        self.bench_uses = 0
         self.bench_flash = -1
 
         # A core is pre-selected so the very first click on any socket does something.
         self.selected = 0 if self.cores else None
-        self.wrong_cost = ldef["wrong"]
         self.jam_turns = ldef["jam"]
-        self.budget_max = self.budget_left = ldef["budget"]
+        self.latch_len = ldef["latch"]
+        self.seize_frame = None
         self.click_mark = None
         self.last_result = ""
 
@@ -474,29 +525,35 @@ class Kr01(ARCBaseGame):
     def solved(self):
         return all(s["stage"] >= len(s["shapes"]) for s in self.sockets)
 
+    def jam_count(self):
+        """Sockets that refuse a core right now."""
+        return sum(1 for s in self.sockets if s["jam"] > 0)
+
+    def latch_count(self):
+        """Live latches on the board -- the whole loss condition, and what the frames show."""
+        return sum(len(s["latch"]) for s in self.sockets)
+
+    def seized(self):
+        return self.seize_frame is not None
+
     # -- click resolution ---------------------------------------------------
 
     def _click_core(self, index):
         if self.selected == index:
-            self.budget_left -= MISS_COST
             self.last_result = "miss"
             return
         self.selected = index
-        self.budget_left -= SELECT_COST
         self.last_result = "select"
 
     def _click_bench(self, index):
         pad = self.bench[index]
-        free = self.bench_uses < BENCH_FREE
-        self.bench_uses += 1
-        if not free:
-            self.budget_left -= MISS_COST
         if pad["found"] is not None or self.selected is None:
             self.last_result = "miss"
             return
         color = self.cores[self.selected]["color"]
         if MAP[color] == pad["shape"]:
             pad["found"] = color
+            self.known[color] = pad["shape"]
             self.last_result = "bench_hit"
         else:
             self.bench_flash = index
@@ -506,21 +563,21 @@ class Kr01(ARCBaseGame):
         s = self.sockets[index]
         want = self.stage_shape(s)
         if want is None or s["jam"] > 0 or self.selected is None:
-            self.budget_left -= MISS_COST
             self.last_result = "miss"
             return
         color = self.cores[self.selected]["color"]
         if MAP[color] == want:
             s["fills"].append(color)
             s["stage"] += 1
-            self.budget_left -= INSERT_COST
+            self.known[color] = want
             self.last_result = "fit"
         else:
-            # A rejected core tells you nothing except that this pairing is wrong, and it
-            # costs several turns of budget plus the socket for several turns. That is what
-            # makes re-deriving the mapping more expensive than remembering it.
-            self.budget_left -= self.wrong_cost
+            # A rejected core tells you nothing except that this pairing is wrong. It locks
+            # the socket for a few actions and trips a latch on the tray for longer. Three
+            # live latches seize the tray, which is what makes re-deriving the mapping by
+            # trial more dangerous than remembering it.
             s["jam"] = self.jam_turns
+            s["latch"].append(self.latch_len)
             self.last_result = "reject"
 
     def _handle_click(self, cx, cy):
@@ -537,12 +594,20 @@ class Kr01(ARCBaseGame):
             if _inside(cx, cy, s["x"], s["y"], s["hit_w"], s["hit_h"]):
                 self._click_socket(i)
                 return
-        self.budget_left -= MISS_COST
         self.last_result = "miss"
 
     # -- engine entry point -------------------------------------------------
 
     def step(self) -> None:
+        if self.seized():
+            # Mid-slam. The click that seized the tray has already been resolved; these
+            # extra frames only move the bar, so the action is not read again. Bounded by
+            # len(SLAM_PATH) frames.
+            self.seize_frame += 1
+            if self.seize_frame >= len(SLAM_PATH) - 1:
+                self.complete_action()
+            return
+
         aid = self.action.id.value
 
         if aid == 6:
@@ -550,13 +615,13 @@ class Kr01(ARCBaseGame):
             for s in self.sockets:
                 if s["jam"] > 0:
                     s["jam"] -= 1
+                s["latch"] = [t - 1 for t in s["latch"] if t - 1 > 0]
             data = self.action.data or {}
             cx = int(data.get("x", -1))
             cy = int(data.get("y", -1))
             if 0 <= cx < 64 and 0 <= cy < 64:
                 self._handle_click(cx, cy)
             else:
-                self.budget_left -= MISS_COST
                 self.click_mark = None
                 self.last_result = "miss"
 
@@ -565,8 +630,11 @@ class Kr01(ARCBaseGame):
             self.complete_action()
             return
 
-        if self.budget_left <= 0:
-            self.budget_left = max(0, self.budget_left)
+        if self.latch_count() >= SEIZE_JAMS:
+            # Third live latch: the tray seizes. lose() now, and withhold complete_action()
+            # so the engine calls step() again for the slam frames.
+            self.seize_frame = 0
             self.lose()
+            return
 
         self.complete_action()
