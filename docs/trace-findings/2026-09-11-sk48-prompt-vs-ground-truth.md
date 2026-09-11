@@ -32,6 +32,28 @@ a second skewer whose load you must reproduce in order.
 **Budget.** 196 moves per level, decremented only by the four direction actions;
 `lose()` at zero. **Click and undo are free.**
 
+**The HUD reports per-slot progress, live.** For every segment of every HUD skewer,
+`on_set_level()` places a small marker sprite (`kevthtkmzm`) and hides it. `gvtmoopqgy()`
+then runs after each action and sets marker `i` visible exactly when your rod's block at
+position `i` matches the HUD's block at position `i`:
+
+```python
+elif self.vjfbwggsd[head][i].pixels[1, 1] == self.vjfbwggsd[hud_twin][i].pixels[1, 1]:
+    marker.set_visible(True)
+else:
+    marker.set_visible(False)
+    solved = False
+```
+
+So the bottom strip lights a pip per correctly-placed block, in the frame, every turn. A
+state with two of three reds lit is one action from clearing the level and says so on
+screen. **This is a dense progress signal and no trace read so far uses it** — every run
+treats level completion as the only feedback, which is the sparsest possible reading of a
+game that is telling them their score slot by slot.
+
+It is also a third reason not to write the bottom strip off as a legend: it is the goal
+specification, a click target for switching skewers, *and* the progress meter.
+
 ## Level 6, as defined in source
 
 ```
