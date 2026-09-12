@@ -31,6 +31,9 @@ artifact; experiments copy from it and never edit it in place.**
 
 ## Contents
 - `baseline-v12/` — FROZEN reference. Validated ex-`ft09` ≈ **1.21** (2 runs: 1.224, 1.188).
+- `minimal-w7/` — FROZEN September 12 minimal-only Flash-Next snapshot: Loop A,
+  input access off, seven lanes, 103k context, and the larger optional scaffolds
+  disabled. Private Kaggle readiness passed; not a competition submission.
 - `frame-full/` — variant (env-toggle `ARC3_FRAME_MODE=full`). ex-`ft09` **1.44 (+19%)**.
 - `predict-check/` — variant of `frame-full` (env-toggle `ARC3_PREDICT_CHECK=1`): OPINE
   predict-then-check / counterexample signal grafted onto the graft loop. Score pending.
