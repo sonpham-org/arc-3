@@ -57,11 +57,11 @@ ARMS = {
     "job0-smoke": ("ARC3 job0 smoke", "arc3-job0-smoke", CONTROL_BUNDLE,
                    BOTTOM_SEVEN[:2], 1, 600, 5400, "A-control"),
     "job1-control": ("ARC3 job1 control", "arc3-job1-control", CONTROL_BUNDLE,
-                     BOTTOM_SEVEN, 4, 2061, 7920, "A-control"),
+                     BOTTOM_SEVEN, 4, 1980, 7920, "A-control"),
     "job2-sparse": ("ARC3 job2 sparse deletion", "arc3-job2-sparse", SPARSE_BUNDLE,
-                    BOTTOM_SEVEN, 4, 2061, 7920, "B-sparse-deletion"),
+                    BOTTOM_SEVEN, 4, 1980, 7920, "B-sparse-deletion"),
     "job3-null": ("ARC3 job3 null check", "arc3-job3-null", SPARSE_BUNDLE,
-                  NULL_CHECK, 4, 2061, 7920, "B-sparse-deletion"),
+                  NULL_CHECK, 4, 1980, 7920, "B-sparse-deletion"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
@@ -102,6 +102,7 @@ PROVENANCE_CELL = f'''# Arm provenance. The accelerator taught us that a request
 # assembled system prompt are all hashed into this log, and the arm asserts its own
 # prompt text before a single game is played.
 import hashlib
+import pathlib
 import subprocess
 
 import inference.agent.prompts as _prompts
