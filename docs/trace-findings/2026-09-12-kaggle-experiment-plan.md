@@ -95,3 +95,45 @@ notebook editor GUI.
    budget are compatible without touching Son's account. Confirm that reading is right
    before launching.
 2. Accelerator string, per above.
+
+---
+
+## Smoke-test result — 12-Sep-2026 16:04-16:20 ET: accelerator NOT selectable via API
+
+Three pushes of a one-minute `nvidia-smi` probe (`markbarney/arc3-accel-smoke`, private).
+Total quota spent: **12.996s of 108000s.**
+
+| v | metadata | result |
+|---|---|---|
+| 1 | `enable_gpu: true` + `--accelerator nvidiaRtxPro6000` | push accepted, ran on **Tesla P100** |
+| 2 | `enable_gpu: false` + `"machine_shape": "nvidiaRtxPro6000"` | ran on **CPU**, `nvidia-smi` not found |
+| 3 | `enable_gpu: true` + `--accelerator nvidiaRtxPro6000` + `competition_sources: ["arc-prize-2026-arc-agi-3"]` | push accepted, ran on **Tesla P100** |
+
+The correct camelCase string was confirmed from Kaggle's own bundle
+(`m.NVIDIA_RTX_PRO_6000 = "nvidiaRtxPro6000"`, enum value 17). The string is not the
+problem.
+
+**The push is accepted silently and the scheduler substitutes a P100.** No warning, no
+error, no field echoed back. Left undetected this would have produced 20 hours of
+P100 results labelled as RTX Pro 6000 — a result that looks clean and is wrong.
+This is why the smoke test ran before the budget.
+
+Version 2 establishes that `machine_shape` alone does not even request a GPU: only
+`enable_gpu` decides GPU-vs-CPU, and it defaults the model. So `machine_shape` appears to
+be dropped somewhere between the CLI and the scheduler on this path.
+
+Gating found in the web bundle: two separate feature flags,
+`AllowRtxPro6000Selection` (boolean) and `KernelsRtxPro6000Comps` (a competition
+allowlist). Version 3 tested the competition-allowlist hypothesis by attaching
+`arc-prize-2026-arc-agi-3` and it made no difference, so either the boolean flag is off
+for this account or API-path selection is not wired regardless of the flag. Neither flag
+is readable from outside the editor session; no feature-flag RPC responds.
+
+**Resolution: set the accelerator once in the notebook editor GUI.** Open the experiment
+notebook, Settings -> Accelerator -> "GPU RTX Pro 6000", save. Subsequent API pushes to
+that same kernel should inherit the saved setting — to be confirmed by re-running the
+`nvidia-smi` probe against the saved kernel before the real runs start.
+
+**Gate on the experiment: no arm launches until an `nvidia-smi` probe prints RTX Pro 6000.**
+Every run must carry the probe in its own log so the hardware is recorded per run and not
+assumed.
