@@ -137,3 +137,51 @@ that same kernel should inherit the saved setting — to be confirmed by re-runn
 **Gate on the experiment: no arm launches until an `nvidia-smi` probe prints RTX Pro 6000.**
 Every run must carry the probe in its own log so the hardware is recorded per run and not
 assumed.
+
+---
+
+## Correction — 12-Sep-2026 16:04 ET: the job budget was misunderstood
+
+**Son Pham, 12-Sep 16:04 ET:** a job's total run-time limit is **132 minutes** with a
+per-game limit of **34m21s**. That admits **7 lanes run 4 times** — seven games, each
+played four times, twenty-eight game-runs, **inside a single job**.
+
+Everything above that counts "4 duplicates per arm" as four separate Kaggle jobs is
+wrong. The duplication is *internal to one job*, not a repetition of jobs.
+
+- 4 x 34m21s = 137m, which is the 132m job cap with the per-game cap doing the slicing.
+- 7 lanes are the parallel axis; 4 passes are the sequential axis.
+- The framework's own vocabulary matches Son's exactly: a **lane** is one `(game, pass)`
+  pair, and "all lanes run in parallel at equal speed"
+  (`tufa-arc-agi-framework/src/taaf/diagnostics.py:756`). Passes are
+  `Benchmark.n_passes` (`benchmark.py:56`), laid out passes-major (`benchmark.py:43`).
+
+So the configuration is `n_games=7, n_passes=4` — not eight jobs.
+
+### What this buys, and it is the point Son was making
+
+The anti-fluke machinery is already built and I was about to pay for it twice. With
+`n_passes >= 2`, `_run_pass_stats` (`diagnostics.py:623-658`) reports per-game
+**mean, sigma, and SEM = sigma / sqrt(n_passes)** across passes; below 2 passes it returns
+`None` because sample stdev is undefined at one point. Four passes is the smallest setting
+that yields an error bar per game, and it is what makes a seven-game average robust
+against a single fluke run on a game like sk48 that scores zero in 84% of attempts.
+
+### Corrected cost
+
+| unit | old (wrong) | corrected |
+|---|---|---|
+| one arm | 4 jobs x 2h30m = 10h | **1 job x 132m = 2.2h** |
+| both arms | 20h | **4.4h** |
+
+That is 4.4h of the 30h quota, not 20h. Son's 20h envelope therefore buys roughly **nine
+jobs**, not two. Proposed use of the headroom — and this is a question for Son, not a
+decision I will make alone: run **4 jobs per arm** (8 jobs, ~17.6h), giving n = 16 passes
+per game per arm rather than 4. Between-job variance then gets measured too, instead of
+being assumed away by pooling passes from a single job.
+
+### Unchanged by this correction
+
+The arms, the deletion-only variant, the bottom-seven game set, and the pre-registered
+prediction all stand. The accelerator gate also stands: no arm launches until an
+`nvidia-smi` probe prints RTX Pro 6000.
