@@ -45,6 +45,26 @@ mitigation is possibility phrasing and a hard six-line cap.
 definition of what each arm changes to the control bundle. Previously the arm B upload
 was hand-patched with nothing in the repo recording the edit.
 
+### The defect the manifest diff caught
+
+The first arm C upload was wrong and the prompt-text check did not see it. `"puzzle"`
+appears in **two** files, not one: `prompts.py`, and the base system prompt line at
+`tool_agent.py:351` ("a coding agent solving a grid-based puzzle game"). The shipped arm
+B bundle deletes both; my builder deleted only the first. Arm C would have launched
+carrying `puzzle` in its assembled prompt, and the in-process probe would have raised
+after the ~9 minutes of vLLM boot — a failed 2.2h slot, or worse, a result compared
+against arm B as though the arms differed by six lines when they differed by seven edits.
+
+Caught by diffing the **full paginated file manifests** of the two Kaggle datasets
+(4,408 paths each) rather than the prompt text. Arm B's own `SOURCE_IDENTITY.json`
+records only the `prompts.py` change, so the bundle's own provenance was incomplete too;
+arm C's records both files. Standing rule from this: verify the artifact, not the edit.
+
+Final manifest state — 4,408 identical paths, and the only code difference between the
+arm B and arm C datasets is `prompts.py` (12,875 -> 13,964 bytes). `tool_agent.py`
+matches at 89,292 bytes in both. The two remaining deltas are `README.dataset.md` and
+`SOURCE_IDENTITY.json`, which are per-arm descriptive text that nothing in the run reads.
+
 Verified before upload:
 
 - the builder reproduces the **shipped arm B bundle byte-identically** from the control
@@ -65,6 +85,17 @@ The gain, if any, shows on the two moving-frame games (bp35, lf52) and the two
 carried/contested games (ls20, wa30) before it shows anywhere else. g50t is the sharpest
 single test: its mechanic is "your previous run replays against you," which is the
 carried-state bullet almost verbatim, and it scored 0.00 on all four control passes.
+
+## The branch, written before job 2's number is known
+
+Job 2 gates the reading of job 4, so the rule goes down now rather than after the number
+is visible. If arm B lands at or below the control's 0.864, the B-to-C delta is measured
+off a broken base and says nothing about C on its own. Job 4 launches either way — A to C
+is still an interpretable ladder — but the headline comparison is:
+
+- **B beats A:** headline is the B-to-C delta. C is judged against the deletion arm.
+- **B at or below A:** headline is the A-to-C delta, and the B-to-C number is reported as
+  uninterpretable rather than quietly promoted to the story.
 
 ## Known caveat carried forward from job 1
 

@@ -16,6 +16,15 @@ import shutil
 import sys
 
 PROMPTS = "src/ARC3-Inference/inference/agent/prompts.py"
+TOOL_AGENT = "src/ARC3-Inference/inference/agent/tool_agent.py"
+
+# Arm B: the word "puzzle" also appears in the base system prompt line in tool_agent.py,
+# so deleting it from prompts.py alone leaves the assembled prompt carrying it and the
+# in-process probe fails. Caught by a full-tree manifest diff against the shipped bundle.
+TOOL_AGENT_DELETIONS = [
+    ('prompt = "You are a coding agent solving a grid-based puzzle game."',
+     'prompt = "You are a coding agent solving a grid-based game."'),
+]
 
 # Arm B: four deletions, nothing added. Each is (old, new) applied to prompts.py.
 DELETIONS = [
@@ -65,6 +74,14 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(src, out)
+    ta_path = out / TOOL_AGENT
+    ta_text = ta_path.read_text()
+    for old, new in TOOL_AGENT_DELETIONS:
+        if old not in ta_text:
+            raise SystemExit(f"{arm}: tool_agent anchor missing: {old[:60]!r}")
+        ta_text = ta_text.replace(old, new, 1)
+    ta_path.write_text(ta_text)
+
     path = out / PROMPTS
     text = path.read_text()
 
@@ -84,7 +101,11 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
     probes = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
     still = [p for p in probes if p in text]
     if still:
-        raise SystemExit(f"{arm}: still carries {still}")
+        raise SystemExit(f"{arm}: prompts.py still carries {still}")
+    # tool_agent.py's module docstring says "ARC puzzle runs" and never reaches a prompt,
+    # so probe the prompt-bearing line specifically rather than the whole file.
+    if 'grid-based puzzle game' in ta_text:
+        raise SystemExit(f"{arm}: tool_agent base prompt still says puzzle")
     has_block = "window onto a larger world" in text
     if (arm == "C") != has_block:
         raise SystemExit(f"{arm}: mechanics block present={has_block}")
