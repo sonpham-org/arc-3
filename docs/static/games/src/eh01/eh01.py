@@ -1,20 +1,21 @@
 # Author: Claude Opus 5
-# Date: 2026-09-07 09:10
+# Date: 2026-09-12 09:40
 # PURPOSE: eh01 "Echo" -- an ARC-AGI-3 environment in which UNDO is the only sense organ.
-#   The corridor's shape is lit, but what lies IN each cell is dark. Walking into a cell tells
-#   you nothing; pressing UNDO (ACTION7) retreats one cell and permanently lights the cell you
-#   just left, so you learn a cell only by stepping onto it and backing out. The retreat lands
-#   on a cell that pays for it: every corridor cell can absorb two retreats, then it scars and
-#   is closed forever -- and a retreat off ground you have ALREADY lit showed you nothing, so
-#   it burns two marks instead of one. Looking is therefore rationed by geometry: a junction is
-#   the only vantage for its own arms, so a crossroads can be inspected exactly twice before it
-#   seals under you. Holes are only dangerous while unlit: walking on THROUGH an unlit hole
-#   drops you back to the entrance and turns that cell into rock; a lit hole is simply a wall
-#   you walk around. Keys are taken by lighting them; the ring out opens when the last key is
-#   in, and it too must be seen before it can be entered. There is no budget, no lives, no
-#   counter and no HUD: the afterimages and the scars are the entire display of state, and the
-#   loss is purely topological -- ground you can no longer reach caves back into the rock the
-#   moment the way is cut, and a wing you have finished caves in BEFORE you can step into it.
+#   The corridor's shape is lit, but what lies IN each cell is dark -- and a dark cell is DRAWN
+#   dark: a purple field under a grey stipple that reads as static, next to the flat pink of a
+#   cell you have lit. Walking into a cell tells you nothing; pressing UNDO (ACTION7) retreats
+#   one cell and permanently lights the cell you just left. The retreat lands on a cell that
+#   pays for it: every corridor cell can absorb two retreats, then it scars and is closed
+#   forever -- and a retreat off ground you have ALREADY lit showed you nothing, so it burns
+#   two marks instead of one. Looking is therefore rationed by geometry: a junction is the only
+#   vantage for its own arms, so a crossroads can be inspected exactly twice before it seals
+#   under you. Holes are only dangerous while unlit: walking on THROUGH an unlit hole drops you
+#   back to the entrance and turns that cell into rock; a lit hole is simply a wall you walk
+#   around. Keys are taken by lighting them; the ring out opens when the last key is in, and it
+#   too must be seen before it can be entered. There is no budget, no lives, no counter and no
+#   HUD: the afterimages and the scars are the entire display of state, and the loss is purely
+#   topological -- ground you can no longer reach caves back into the rock the moment the way is
+#   cut, and a wing you have finished caves in BEFORE you can step into it.
 #   Core-knowledge priors only: objectness, topology, agentness.
 # SRP/DRY check: Pass -- self-contained environment. Nothing in the catalogue spends a
 #   look-budget through an undo stack, so there is no prior art to reuse; the rule functions
@@ -28,6 +29,11 @@ and the look showed you nothing. At zero marks a cell scars: you may step off it
 onto it. Walking forward off an unlit cell resolves it the hard way, and an unlit hole drops
 you back to the entrance and becomes rock. Light every key, then walk into the opened ring.
 RESET retries the level.
+
+Every refusal answers: a walk into stone flashes the stone red, an UNDO with nothing behind
+you flashes a white halo on the walker, and an UNDO onto a scar flashes that scar white. The
+flash alternates between a full and an inset form, so pressing a refused key twice still moves
+pixels both times.
 
 7 levels. No RNG. No budget, no lives, no counters.
 """
@@ -47,7 +53,8 @@ C_YELLOW, C_ORANGE, C_MAROON, C_GREEN, C_PURPLE = 11, 12, 13, 14, 15
 
 C_ROCK = C_MAROON        # the stone the corridor is cut through (maroon: 0.0% of official px)
 C_DARK = C_PURPLE        # a corridor cell whose contents are still unknown
-C_LIT = C_LMAGENTA       # an afterimage: a cell you have lit, and can retreat onto
+C_NOISE = C_VDGRAY       # the stipple laid over it: the texture of having no information
+C_LIT = C_LMAGENTA       # an afterimage: flat, untextured -- a cell you have lit
 C_MARK = C_MAROON        # a remaining retreat, cut into the top of the afterimage as a notch
 C_SCAR = C_ORANGE        # a cell whose marks are spent: filled, crossed, never enterable
 C_CUT = C_VDGRAY         # corridor no longer connected to you: dead structure, not meaning
@@ -57,15 +64,20 @@ C_LOCK = C_MAGENTA       # the exit ring while it is closed
 C_OPEN = C_LBLUE         # the exit ring once every key is in
 C_PIT = C_BLACK          # the hole itself
 C_RIM = C_MAGENTA        # its rim
-C_YOU = C_WHITE
+C_YOU = C_BLUE           # the walker, and nothing else on the board is ever blue
 C_DEAD = C_GRAY
+C_NO = C_RED             # a walk refused by stone: the stone answers
+C_BACK = C_WHITE         # a retreat refused: nothing behind you, or a scar behind you
 
 # ---------------------------------------------------------------------------
-# Board geometry -- 8x8 cells of 8px fill the 64x64 frame exactly. No HUD band.
+# Board geometry -- 6x6 cells of 10px, centred in the 64x64 frame. No HUD band.
+# Small and dense on purpose: step-look-step costs three actions per cell of progress, so a
+# level that fits the harness's ~120-action game has to be short in CELLS, not in rules.
 # ---------------------------------------------------------------------------
 
-GRID = 8
-CELL = 8
+GRID = 6
+CELL = 10
+OFF = (64 - GRID * CELL) // 2
 LOOKS = 2                # retreats a corridor cell can absorb before it scars
 
 DIRS = {"U": (0, -1), "D": (0, 1), "L": (-1, 0), "R": (1, 0)}
@@ -81,9 +93,15 @@ def neighbours(cell):
     return [(cell[0] + dx, cell[1] + dy) for dx, dy in DIRS.values()]
 
 
+def origin(cell):
+    """Top-left pixel of a cell."""
+    return OFF + cell[0] * CELL, OFF + cell[1] * CELL
+
+
 # ---------------------------------------------------------------------------
 # Levels. Walls are visible from the first frame; contents are not. Escalation adds a rule
-# and never scales one up -- every earlier rule stays in force.
+# and never scales one up -- every earlier rule stays in force. The ladder is Echo, Key, Fork,
+# Order, Side, Weave, Echoes, exactly as before; only the corridors are shorter.
 #
 # The governing geometry: the ONLY vantage from which a cell can be lit is a neighbour you
 # can stand on, so a junction is the sole vantage for each of its own branches. Two marks per
@@ -95,106 +113,97 @@ LEVELS = [
     {
         # NEW: everything. A press moves you into the dark; UNDO steps back and lights what you
         # stood on; the cell you land on spends a mark; the exit ring has to be lit before it
-        # can be walked into. One corridor, one dead-end stub with a trap in it, and no
-        # junction whose branches you need both of -- nothing here can strand you.
+        # can be walked into. One corridor, one dead-end stub with a hole in it, and the ring
+        # at the far end -- a retreat can only ever cut off ground BEHIND you, so on a corridor
+        # whose ring is at the end there is nothing here that can strand you. No keys yet.
         "name": "Echo",
-        "map": ("###S####",
-                "###.####",
-                "###...T#",
-                "#####.##",
-                "##....##",
-                "##.#####",
-                "##E#####",
-                "########"),
+        "map": ("######",
+                "##ST##",
+                "##.###",
+                "##..##",
+                "###.##",
+                "###E##"),
     },
     {
         # NEW: keys, and a ring that stays shut without them. Lighting a key is what takes it,
-        # so a key has to be stepped on and retreated from. Both keys hang two cells down a
-        # visible dead-end pocket, and a pocket's mouth is the only vantage for the pocket AND
-        # for the road on: sweep the pocket first and you walk back out through a mouth that
-        # still has a mark, look down the road first and the mouth burns with the key behind it.
+        # so a key has to be stepped on and retreated from -- which is the look you were going
+        # to spend on that cell anyway. That is why almost every cell holds one: the key is
+        # what makes the look compulsory. The two-cell pocket above the entrance is the first
+        # thing you meet, and the entrance is the only vantage for both it and the road on:
+        # sweep the pocket and walk back out first, or the last mark buys the road and seals
+        # the keys in behind a scar.
         "name": "Key",
-        "map": ("##K#####",
-                "##.#K#K#",
-                "##.#.#.#",
-                "#S.....#",
-                "#T####.#",
-                "###....#",
-                "###.####",
-                "###E####"),
+        "map": ("#K####",
+                "#K####",
+                "#SK###",
+                "##KK##",
+                "#KK###",
+                "##KE##"),
     },
     {
         # NEW: a junction, and the scar. Its two arms can only be looked into from the junction
         # itself, so the second look burns it out under you -- you may step off a scar, never
         # back onto it. Both arms end in a ring here, so the commitment itself cannot cost you
-        # the level; only the pockets on the road in still have to be swept in order.
+        # the level; every key is on the stem in, and the stem has to be swept in order.
         "name": "Fork",
-        "map": ("###K####",
-                "#K#.#K##",
-                "#.#.#.##",
-                "#S....##",
-                "####.###",
-                "T......T",
-                "#.####.#",
-                "#E####E#"),
+        "map": ("#E#E##",
+                "#.K.##",
+                "##K###",
+                "#KK###",
+                "##KKK#",
+                "#KS###"),
     },
     {
-        # NEW: the arms are no longer equal. One is a two-cell pocket with the second key at
-        # the bottom; the other is the long road to the only ring. Sweep the pocket, walk back
-        # out, then spend the junction on the road. Spend it on the road first and the key is
-        # behind a scar; look into both before sweeping either and neither side is whole.
+        # NEW: the arms are no longer equal. One is a two-cell pocket with a key at the bottom;
+        # the other is the road to the only ring. Sweep the pocket, walk back out, then spend
+        # the junction on the road. Spend it on the road first and the key is behind a scar;
+        # look into both before sweeping either and neither side is whole.
         "name": "Order",
-        "map": ("##K#####",
-                "##.#K###",
-                "##.#.###",
-                "#S...###",
-                "####.###",
-                "#......K",
-                "#.######",
-                "#..E####"),
+        "map": ("##K###",
+                "##K###",
+                "#SKK##",
+                "###KK#",
+                "##KK##",
+                "###E##"),
     },
     {
-        # NEW: a hole in a doorway. The room with the second key has two mouths, both drawn in
-        # the walls, and a hole fills one of them: light it and that way in is rock for good.
-        # Nothing is lost -- the other mouth is right there on the map -- but it is the first
-        # cell on this board whose contents decide which SIDE of a room you may enter from.
+        # NEW: a hole in a doorway. The cell in front of the ring has two mouths, both drawn in
+        # the walls, and a hole fills the near one: light it and that way in is rock for good.
+        # Nothing is lost -- the long way round is right there on the map -- but it is the
+        # first cell on this board whose contents decide which SIDE you may enter from.
         "name": "Side",
-        "map": ("##K#####",
-                "##.#####",
-                "#S.##K##",
-                "##.##.##",
-                "##.....T",
-                "##T.##.#",
-                "##.K##.#",
-                "######E#"),
+        "map": ("#K####",
+                "#K####",
+                "#SK###",
+                "##KT##",
+                "#KKK##",
+                "###E##"),
     },
     {
         # NEW: a key lying in the open road rather than at the bottom of a pocket. Walking over
         # it in the dark lights it and leaves it lying there -- only a retreat picks it up -- so
         # it stays on the floor as a block until you come back and step off it the other way.
+        # The spine here is nothing but such keys, alternating with pockets left and right.
         "name": "Weave",
-        "map": ("##K###K#",
-                "##.###.#",
-                "##.###.#",
-                "#S.....#",
-                "#T####.#",
-                "###.K..#",
-                "#...#T##",
-                "#E######"),
+        "map": ("##S###",
+                "#KK###",
+                "##KKK#",
+                "#KK###",
+                "##KK##",
+                "##E###"),
     },
     {
         # Everything at once, and NEW: a crossroads. Three dark arms, two marks -- one arm can
         # never be looked into at all, and the one that is a single dead-end cell is the one to
-        # leave alone: on this board every key lies at the bottom of a pocket, never in a stub.
+        # leave alone: on this board every key lies on a road or at the bottom of a pocket,
+        # never in a stub.
         "name": "Echoes",
-        "map": ("###S####",
-                "#K..##K#",
-                "###.##.#",
-                "#......#",
-                "#K#T#.##",
-                "#####.##",
-                "#####E##",
-                "########"),
+        "map": ("######",
+                "##K###",
+                "##K###",
+                "#TKKKK",
+                "##K#K#",
+                "##S#E#"),
     },
 ]
 
@@ -243,16 +252,19 @@ def component(src, passable):
 class Eh01Display(RenderableUserDisplay):
     """Repainted from current state every frame.
 
-    rock          flat maroon, no marks
-    unlit cell    deep purple, no marks -- you have never seen inside it
-    afterimage    light magenta, with one block per retreat it can still absorb
+    rock          flat maroon, no texture
+    unlit cell    deep purple under a grey stipple -- static, the texture of no information
+    afterimage    FLAT light magenta, with one notch per retreat it can still absorb
     scar          filled orange with a maroon cross: spent, and closed for good
     cut off       the same cell in grey the instant it stops being connected to you
-    key           a yellow plus while it lies there, a small yellow dot once taken
+    key           a yellow block while it lies there, a small yellow socket once taken
     exit          a closed magenta ring; a light-blue ring with a gap once every key is in
-    trap          a black diamond with a hot rim on rock -- it is a wall now
-    you           a white border round your cell: solid when you know what you stand on,
-                  four corner ticks when you do not
+    hole          a black diamond with a hot rim on rock -- it is a wall now
+    you           a solid blue diamond in a blue frame, and nothing else on the board is blue:
+                  solid when you know what you stand on, and punched through with a window of
+                  the stipple itself when you do not
+    refusals      stone you walked into flashes red; an UNDO with nothing behind you flashes a
+                  white halo on the walker; an UNDO onto a scar flashes that scar white
     """
 
     def __init__(self, game):
@@ -275,31 +287,61 @@ class Eh01Display(RenderableUserDisplay):
         frame[py + r0:py + r1 + 1, px + c0] = color
         frame[py + r0:py + r1 + 1, px + c1] = color
 
+    @classmethod
+    def _band(cls, frame, px, py, inset, thick, color):
+        """A square band `thick` pixels wide, `inset` pixels in from the cell edge."""
+        for i in range(thick):
+            cls._ring(frame, px, py, inset + i, CELL - 1 - inset - i,
+                      inset + i, CELL - 1 - inset - i, color)
+
     @staticmethod
-    def _diamond(frame, px, py, reach, color):
+    def _diamond(frame, px, py, reach, color, hole=0):
+        mid = (CELL - 1) / 2.0
         for r in range(CELL):
             for c in range(CELL):
-                if abs(r - 3.5) + abs(c - 3.5) <= reach:
+                d = abs(r - mid) + abs(c - mid)
+                if d <= reach and not (hole and abs(r - mid) < hole and abs(c - mid) < hole):
                     frame[py + r, px + c] = color
+
+    @staticmethod
+    def _stipple(frame, px, py, color):
+        """The texture of an unlit cell: a sparse regular dither, unmistakably not flat."""
+        for r in range(1, CELL - 1):
+            for c in range(1, CELL - 1):
+                if r % 3 in (1, 2) and c % 3 in (1, 2):
+                    frame[py + r, px + c] = color
+
+    @classmethod
+    def _edge_bar(cls, frame, px, py, d, thick, color):
+        """A bar along one side of a cell -- which side you were refused on."""
+        if d == "U":
+            frame[py:py + thick, px:px + CELL] = color
+        elif d == "D":
+            frame[py + CELL - thick:py + CELL, px:px + CELL] = color
+        elif d == "L":
+            frame[py:py + CELL, px:px + thick] = color
+        elif d == "R":
+            frame[py:py + CELL, px + CELL - thick:px + CELL] = color
 
     # -- one cell -----------------------------------------------------------
 
     def _draw_cell(self, frame, g, cell, reach):
-        px, py = cell[0] * CELL, cell[1] * CELL
+        px, py = origin(cell)
         lit = cell in g.revealed
         what = g.content[cell]
 
-        if lit and what == TRAP:                       # a lit trap is rock with a hole in it
+        if lit and what == TRAP:                       # a lit hole is rock with a pit in it
             self._fill(frame, px, py, C_ROCK)
-            self._diamond(frame, px, py, 3.0, C_RIM)
-            self._diamond(frame, px, py, 2.0, C_PIT)
+            self._diamond(frame, px, py, (CELL - 1) / 2.0, C_RIM)
+            self._diamond(frame, px, py, (CELL - 1) / 2.0 - 2.0, C_PIT)
             return
 
         if g.looks[cell] <= 0:                         # scar
             self._fill(frame, px, py, C_SCAR)
             for i in range(CELL):
-                frame[py + i, px + i] = C_ROCK
-                frame[py + i, px + CELL - 1 - i] = C_ROCK
+                for j in (0, 1):
+                    frame[py + i, px + min(i + j, CELL - 1)] = C_ROCK
+                    frame[py + i, px + max(CELL - 1 - i - j, 0)] = C_ROCK
             return
 
         # Ground you can no longer reach collapses back into the rock, leaving only a ghost of
@@ -307,28 +349,65 @@ class Eh01Display(RenderableUserDisplay):
         cut = cell not in reach
         base = C_ROCK if cut else (C_LIT if lit else C_DARK)
         self._fill(frame, px, py, base)
+        if not cut and not lit:
+            self._stipple(frame, px, py, C_NOISE)      # you have no information about this cell
         if cut:                                        # the ground caves in; its outline stays
-            self._ring(frame, px, py, 1, CELL - 2, 1, CELL - 2, C_CUT)
+            self._band(frame, px, py, 1, 1, C_CUT)
 
         if lit:                                        # marks only ever ride an afterimage
             if not cut:                                # ...and mean nothing on ground you lost
                 self._box(frame, px, py, 1, 2, 1, 2, C_MARK)
                 if g.looks[cell] >= 2:
-                    self._box(frame, px, py, 1, 2, 5, 6, C_MARK)
+                    self._box(frame, px, py, 1, 2, CELL - 3, CELL - 2, C_MARK)
 
             if what == KEY:
                 col = C_GHOST if cut else C_KEY
                 if cell in g.keys_taken:
-                    self._box(frame, px, py, 4, 5, 3, 4, col)        # the socket it left
+                    self._box(frame, px, py, 4, 5, 4, 5, col)        # the socket it left
                 else:
-                    self._box(frame, px, py, 3, 6, 2, 5, col)        # the block still lying there
+                    self._box(frame, px, py, 3, 6, 3, 6, col)        # the block still lying there
             elif what == EXIT:
-                if g.keys <= g.keys_taken:
-                    col = C_GHOST if cut else C_OPEN
-                    self._ring(frame, px, py, 3, 6, 1, 6, col)
-                    frame[py + 6, px + 2:px + 6] = base              # the ring breaks open
+                col = C_GHOST if cut else (C_OPEN if g.keys <= g.keys_taken else C_LOCK)
+                self._ring(frame, px, py, 2, CELL - 3, 2, CELL - 3, col)
+                self._ring(frame, px, py, 3, CELL - 4, 3, CELL - 4, col)
+                if g.keys <= g.keys_taken:                           # the ring breaks open
+                    self._box(frame, px, py, CELL - 4, CELL - 3, 4, CELL - 5, base)
+
+    # -- the walker, and the answer to a refused key ------------------------
+
+    def _draw_walker(self, frame, g):
+        px, py = origin(g.pos)
+        color = C_DEAD if g.dead else C_YOU
+        self._band(frame, px, py, 0, 1, color)
+        # Solid when you know your ground; punched through with a window of the stipple itself
+        # when you do not -- the hole in the token IS the texture of the unknown.
+        self._diamond(frame, px, py, (CELL - 1) / 2.0 - 1.0, color,
+                      hole=0 if g.pos in g.revealed else 2.0)
+
+    def _draw_flash(self, frame, g):
+        kind, cell, d = g.flash
+        phase = g.pulse & 1
+        px, py = origin(g.pos)
+        if kind == "block":
+            inside = cell is not None and 0 <= cell[0] < GRID and 0 <= cell[1] < GRID
+            if inside:
+                bx, by = origin(cell)
+                if phase:
+                    self._box(frame, bx, by, 2, CELL - 3, 2, CELL - 3, C_NO)
                 else:
-                    self._ring(frame, px, py, 3, 6, 1, 6, C_GHOST if cut else C_LOCK)
+                    self._fill(frame, bx, by, C_NO)
+            else:
+                # A walk off the edge of the world has no cell to flash, so the walker's own
+                # cell carries it: a red band, which no other refusal draws.
+                self._band(frame, px, py, phase, 2 - phase, C_NO)
+            self._edge_bar(frame, px, py, d, 4 - 2 * phase, C_NO)
+        elif kind == "empty":
+            self._band(frame, px, py, phase, 1, C_BACK)
+            self._band(frame, px, py, 3 + phase, 1, C_BACK)
+        elif kind == "scar":
+            bx, by = origin(cell)
+            self._band(frame, bx, by, phase, 3 - phase, C_BACK)
+            self._edge_bar(frame, px, py, d, 3 - phase, C_BACK)
 
     # -- frame --------------------------------------------------------------
 
@@ -338,17 +417,9 @@ class Eh01Display(RenderableUserDisplay):
         reach = component(g.pos, g.passable()) - g.dead_wings()
         for cell in g.cells:
             self._draw_cell(frame, g, cell, reach)
-
-        px, py = g.pos[0] * CELL, g.pos[1] * CELL
-        color = C_DEAD if g.dead else C_YOU
-        if g.pos in g.revealed:
-            self._ring(frame, px, py, 0, CELL - 1, 0, CELL - 1, color)   # you know your ground
-        else:
-            for r0, dr in ((0, 1), (CELL - 1, -1)):                      # ...or you do not
-                for c0, dc in ((0, 1), (CELL - 1, -1)):
-                    for i in range(3):
-                        frame[py + r0, px + c0 + dc * i] = color
-                        frame[py + r0 + dr * i, px + c0] = color
+        self._draw_walker(frame, g)
+        if g.flash is not None:
+            self._draw_flash(frame, g)
         return frame
 
 
@@ -373,6 +444,8 @@ class Eh01(ARCBaseGame):
         self.keys_taken = set()
         self.trail = None
         self.dead = False
+        self.flash = None
+        self.pulse = 0
 
         levels = [Level(sprites=[], grid_size=(64, 64), data=ldef, name=ldef["name"])
                   for ldef in LEVELS]
@@ -400,6 +473,8 @@ class Eh01(ARCBaseGame):
         self.keys_taken = set()
         self.trail = None
         self.dead = False
+        self.flash = None
+        self.pulse = 0
 
     def handle_reset(self) -> None:
         """The base class promotes a RESET to a full restart whenever `_action_count == 0`,
@@ -414,9 +489,16 @@ class Eh01(ARCBaseGame):
     # -- rules --------------------------------------------------------------
 
     def passable(self):
-        """Cells you may still walk INTO: not scarred, not a trap you have already lit."""
+        """Cells you may still walk INTO: not scarred, not a hole you have already lit."""
         return {c for c in self.cells
                 if self.looks[c] > 0 and not (c in self.revealed and self.content[c] == TRAP)}
+
+    def _refuse(self, kind, cell, d):
+        """A key that does nothing is a broken game, so nothing does nothing: every refusal
+        paints one frame. `pulse` alternates the form so that pressing a refused key twice in
+        a row still moves pixels on the second press as well as the first."""
+        self.flash = (kind, cell, d)
+        self.pulse += 1
 
     def _light(self, cell):
         """Lighting is permanent, and lighting a key is what takes it."""
@@ -428,7 +510,8 @@ class Eh01(ARCBaseGame):
         dx, dy = DIRS[d]
         nxt = (self.pos[0] + dx, self.pos[1] + dy)
         if nxt not in self.passable():
-            return                                   # rock, scar or a lit trap: free no-op
+            self._refuse("block", nxt, d)            # rock, scar or a lit hole: it answers red
+            return
         here = self.pos
         if here not in self.revealed:
             # Stepping on THROUGH an unlit cell resolves it with your feet, not your eyes.
@@ -444,11 +527,15 @@ class Eh01(ARCBaseGame):
         back = self.trail
         # One step deep, deliberately: the retreat is always "back the way you just came", so
         # nothing on this board ever asks the player to remember a route (Son's rule). A
-        # retreat consumes the step it undoes, so UNDO twice in a row is a free no-op.
+        # retreat consumes the step it undoes, so UNDO twice in a row has nothing to undo.
         if back is None:
-            return                                   # nothing to step back along: free no-op
+            self._refuse("empty", None, None)        # a white halo, and no way back out of it
+            return
+        d = next((k for k, (dx, dy) in DIRS.items()
+                  if (self.pos[0] + dx, self.pos[1] + dy) == back), None)
         if self.looks[back] <= 0:
-            return                                   # a scar cannot catch you: free no-op
+            self._refuse("scar", back, d)            # the scar behind you flashes white
+            return
         # A look at ground you have already lit is a look at nothing, and it burns the cell
         # you land on twice as deep. The cell under you is visibly dark or lit, so this asks
         # the player to remember nothing -- only to look where there is something to see.
@@ -501,6 +588,7 @@ class Eh01(ARCBaseGame):
     # -- engine entry point -------------------------------------------------
 
     def step(self) -> None:
+        self.flash = None                            # last frame's answer, spent
         aid = self.action.id.value
         if aid in ACTION_DIR:
             self._walk(ACTION_DIR[aid])
