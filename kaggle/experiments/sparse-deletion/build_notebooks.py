@@ -49,12 +49,23 @@ NULL_CHECK = (
 CONTROL_BUNDLE = "keithtyser/duck-qwen38-nvfp4-mtp-vllm-smoke-v1"
 SPARSE_BUNDLE = "markbarney/taaf-duck-sparse-deletion"
 MECHANICS_BUNDLE = "markbarney/taaf-duck-mechanics-possibility"
+GLYPH_BUNDLE = "markbarney/taaf-duck-glyph-consonants"
+IMAGEFIRST_BUNDLE = "markbarney/taaf-duck-image-first-turn"
+COMMIT_BUNDLE = "markbarney/taaf-duck-commit-hypothesis"
 
 # Strings the control prompt asserts and the deletion arm asserts are gone.
 DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
 
-# Arm C is arm B plus this block, so it must be absent everywhere except arm C.
-MECHANICS_PROBE = "window onto a larger world"
+# Every stacked arm is arm B plus exactly one marker, and each marker must be absent
+# from every other arm. Keyed by arm label so the provenance cell is a table lookup and
+# a new arm cannot be added without declaring what proves it ran.
+ARM_MARKERS = {
+    "C-mechanics": "window onto a larger world",
+    "D-glyph-consonants": "H=light gray",
+    "E-image-first-turn": "On the first turn only,",
+    "F-commit-hypothesis": "Exploration is for building one hypothesis",
+}
+GLYPH_CHARS = "WHGDCBMKRTSYFVZX"
 
 # job id -> (title, kernel slug, bundle dataset, games, n_passes, per-game s, budget s)
 ARMS = {
@@ -73,6 +84,14 @@ ARMS = {
     # Stacked on B: deletion clears the false priors, C lifts the false ceiling.
     "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics",
                        MECHANICS_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "C-mechanics"),
+    # Also stacked on B, one variable each, same seven lanes and the same 1980s cap so
+    # every one of them is directly comparable to job 2.
+    "job6-glyphs": ("ARC3 job6 glyph consonants", "arc3-job6-glyphs",
+                    GLYPH_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "D-glyph-consonants"),
+    "job7-imagefirst": ("ARC3 job7 image first turn", "arc3-job7-imagefirst",
+                        IMAGEFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "E-image-first-turn"),
+    "job8-commit": ("ARC3 job8 commit hypothesis", "arc3-job8-commit",
+                    COMMIT_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "F-commit-hypothesis"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
@@ -109,47 +128,79 @@ print(
 
 
 PROVENANCE_CELL = f'''# Arm provenance. The accelerator taught us that a requested thing is not a delivered
-# thing, so nothing about this run is assumed: the card, the served model, and the exact
-# assembled system prompt are all hashed into this log, and the arm asserts its own
-# prompt text before a single game is played.
+# thing, so nothing about this run is assumed: the card, the served model, the exact
+# assembled system prompt, and the glyphs the board is actually rendered with are all
+# hashed into this log, and the arm asserts its own identity before a game is played.
 import hashlib
 import pathlib
 import subprocess
 
 import inference.agent.prompts as _prompts
+from inference.utils.grid_utils import ARC_COLOR_CHARS, ARC_COLOR_LEGEND, format_grid_ascii
 from inference.agent.tool_agent import _build_system_prompt
 
 _prompts_src = pathlib.Path(_prompts.__file__).read_text()
 _system_prompt = _build_system_prompt(tool_output_tokens=4096)
+_board_row = format_grid_ascii([list(range(16))])
 print(f'ARM_PROVENANCE arm={{ARM_LABEL}}', flush=True)
 print(f'ARM_PROVENANCE prompts_py_sha256={{hashlib.sha256(_prompts_src.encode()).hexdigest()}}')
 print(f'ARM_PROVENANCE system_prompt_chars={{len(_system_prompt)}} '
       f'sha256={{hashlib.sha256(_system_prompt.encode()).hexdigest()}}')
+print(f'ARM_PROVENANCE color_chars={{ARC_COLOR_CHARS!r}} rendered_row={{_board_row!r}}')
+print(f'ARM_PROVENANCE color_legend={{ARC_COLOR_LEGEND}}')
 _probes = {DELETED_PROBES!r}
-_mech = {MECHANICS_PROBE!r}
+_markers = {ARM_MARKERS!r}
 for _probe in _probes:
     print(f'ARM_PROVENANCE probe={{_probe!r}} present={{_probe in _system_prompt}}')
-print(f'ARM_PROVENANCE mechanics_block present={{_mech in _system_prompt}}')
+for _arm, _marker in _markers.items():
+    print(f'ARM_PROVENANCE marker[{{_arm}}] present={{_marker in _system_prompt}}')
 
 # The whole experiment is this difference. If it is not true in this process, stop here
 # rather than spend two hours producing a number that means nothing.
-if ARM_LABEL in ('B-sparse-deletion', 'C-mechanics'):
-    _wrong = [p for p in _probes if p in _system_prompt]
-    if _wrong:
-        raise RuntimeError(f'Deletion arm still carries {{_wrong}} in its system prompt.')
-    _want_mech = ARM_LABEL == 'C-mechanics'
-    if (_mech in _system_prompt) != _want_mech:
-        raise RuntimeError(f'{{ARM_LABEL}} mechanics-block presence is wrong.')
-else:
+if ARM_LABEL == 'A-control':
     _missing = [p for p in _probes if p not in _system_prompt]
     if _missing:
         raise RuntimeError(f'Control arm is missing {{_missing}} from its system prompt.')
-    if _mech in _system_prompt:
-        raise RuntimeError('Control arm carries the mechanics block.')
+else:
+    _wrong = [p for p in _probes if p in _system_prompt]
+    if _wrong:
+        raise RuntimeError(f'Deletion-derived arm still carries {{_wrong}} in its system prompt.')
 
-print(subprocess.run(
-    ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'],
-    capture_output=True, text=True, check=False).stdout.strip(), flush=True)
+# Exactly one stacked marker, and only for the arm that owns it. A control or a bare
+# deletion arm must carry none of them.
+for _arm, _marker in _markers.items():
+    if (_marker in _system_prompt) != (ARM_LABEL == _arm):
+        raise RuntimeError(f'{{ARM_LABEL}} marker for {{_arm}} is on the wrong side.')
+
+# Arm D is the symbol set itself, so the rendered board and the legend the prompt quotes
+# have to agree with each other. A hand-edited legend against a swapped table would make
+# the prompt lie about the board and no prompt-text probe would ever catch it.
+_glyphs = {GLYPH_CHARS!r}
+if ARM_LABEL == 'D-glyph-consonants':
+    if ARC_COLOR_CHARS != _glyphs or _board_row != _glyphs:
+        raise RuntimeError(f'Glyph arm renders {{_board_row!r}} with chars {{ARC_COLOR_CHARS!r}}.')
+    if len(set(_glyphs)) != 16 or any(c in 'AEIOU' for c in _glyphs):
+        raise RuntimeError('Glyph set is not 16 distinct non-vowel capitals.')
+    for _char in _glyphs:
+        if f'{{_char}}=' not in ARC_COLOR_LEGEND:
+            raise RuntimeError(f'Legend does not describe glyph {{_char}}.')
+elif ARC_COLOR_CHARS != 'WwgGcBMPRbSYOrNp':
+    raise RuntimeError(f'Non-glyph arm has color chars {{ARC_COLOR_CHARS!r}}.')
+
+# Arm E withholds both text views of the board until one action has been executed. The
+# gate lives in code, not in the prompt, so probe the running module rather than the text.
+import inference.agent.tool_agent as _ta
+_withheld = getattr(_ta, '_WITHHOLD_TEXT_BOARD_UNTIL_STEP', 0)
+print(f'ARM_PROVENANCE withhold_text_board_until_step={{_withheld}}')
+if (_withheld > 0) != (ARM_LABEL == 'E-image-first-turn'):
+    raise RuntimeError(f'{{ARM_LABEL}} withhold gate is {{_withheld}}.')
+
+try:
+    print(subprocess.run(
+        ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'],
+        capture_output=True, text=True, check=False).stdout.strip(), flush=True)
+except FileNotFoundError:
+    print('ARM_PROVENANCE nvidia-smi absent (expected only off-Kaggle)', flush=True)
 '''
 
 
