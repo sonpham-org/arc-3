@@ -66,6 +66,10 @@ ARMS = {
                     BOTTOM_SEVEN, 4, 1980, 7920, "B-sparse-deletion"),
     "job3-null": ("ARC3 job3 null check", "arc3-job3-null", SPARSE_BUNDLE,
                   NULL_CHECK, 4, 1980, 7920, "B-sparse-deletion"),
+    # The null check needs its own control on the SAME lanes, or "these games did not
+    # move" has no baseline to move against. Same cap as job3 so the pair is symmetric.
+    "job5-nullcontrol": ("ARC3 job5 null control", "arc3-job5-null-control",
+                         CONTROL_BUNDLE, NULL_CHECK, 4, 1980, 7920, "A-control"),
     # Stacked on B: deletion clears the false priors, C lifts the false ceiling.
     "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics",
                        MECHANICS_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "C-mechanics"),
