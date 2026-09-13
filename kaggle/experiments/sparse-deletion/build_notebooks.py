@@ -48,9 +48,13 @@ NULL_CHECK = (
 
 CONTROL_BUNDLE = "keithtyser/duck-qwen38-nvfp4-mtp-vllm-smoke-v1"
 SPARSE_BUNDLE = "markbarney/taaf-duck-sparse-deletion"
+MECHANICS_BUNDLE = "markbarney/taaf-duck-mechanics-possibility"
 
 # Strings the control prompt asserts and the deletion arm asserts are gone.
 DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
+
+# Arm C is arm B plus this block, so it must be absent everywhere except arm C.
+MECHANICS_PROBE = "window onto a larger world"
 
 # job id -> (title, kernel slug, bundle dataset, games, n_passes, per-game s, budget s)
 ARMS = {
@@ -62,6 +66,9 @@ ARMS = {
                     BOTTOM_SEVEN, 4, 1980, 7920, "B-sparse-deletion"),
     "job3-null": ("ARC3 job3 null check", "arc3-job3-null", SPARSE_BUNDLE,
                   NULL_CHECK, 4, 1980, 7920, "B-sparse-deletion"),
+    # Stacked on B: deletion clears the false priors, C lifts the false ceiling.
+    "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics",
+                       MECHANICS_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "C-mechanics"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
@@ -115,19 +122,26 @@ print(f'ARM_PROVENANCE prompts_py_sha256={{hashlib.sha256(_prompts_src.encode())
 print(f'ARM_PROVENANCE system_prompt_chars={{len(_system_prompt)}} '
       f'sha256={{hashlib.sha256(_system_prompt.encode()).hexdigest()}}')
 _probes = {DELETED_PROBES!r}
+_mech = {MECHANICS_PROBE!r}
 for _probe in _probes:
     print(f'ARM_PROVENANCE probe={{_probe!r}} present={{_probe in _system_prompt}}')
+print(f'ARM_PROVENANCE mechanics_block present={{_mech in _system_prompt}}')
 
 # The whole experiment is this difference. If it is not true in this process, stop here
 # rather than spend two hours producing a number that means nothing.
-if ARM_LABEL == 'B-sparse-deletion':
+if ARM_LABEL in ('B-sparse-deletion', 'C-mechanics'):
     _wrong = [p for p in _probes if p in _system_prompt]
     if _wrong:
         raise RuntimeError(f'Deletion arm still carries {{_wrong}} in its system prompt.')
+    _want_mech = ARM_LABEL == 'C-mechanics'
+    if (_mech in _system_prompt) != _want_mech:
+        raise RuntimeError(f'{{ARM_LABEL}} mechanics-block presence is wrong.')
 else:
     _missing = [p for p in _probes if p not in _system_prompt]
     if _missing:
         raise RuntimeError(f'Control arm is missing {{_missing}} from its system prompt.')
+    if _mech in _system_prompt:
+        raise RuntimeError('Control arm carries the mechanics block.')
 
 print(subprocess.run(
     ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'],
