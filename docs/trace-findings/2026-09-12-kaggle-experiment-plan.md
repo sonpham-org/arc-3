@@ -185,3 +185,24 @@ being assumed away by pooling passes from a single job.
 The arms, the deletion-only variant, the bottom-seven game set, and the pre-registered
 prediction all stand. The accelerator gate also stands: no arm launches until an
 `nvidia-smi` probe prints RTX Pro 6000.
+
+---
+
+## Correction — 13-Sep-2026: the shipped cap is 1980s, and 34m21s did not survive contact
+
+The 34m21s (2061s) figure above is **superseded and was never used by a real job.** The Boss
+set the cap to 132 / 4 = **33 minutes (1980s)** before job 1 launched, precisely because
+4 x 2061 = 137m overruns the 132m budget and would truncate the fourth pass.
+
+Shipped caps, read out of the notebooks that actually ran: job 0 = 600s (smoke), jobs 1–3 =
+**1980s**. Job 1's own log confirms it: `per_game_s=1980.0 budget_s=7920.0`.
+
+Stale 2061s copies survived in a `kaggle/experiments/sparse-deletion/push/` staging directory
+— derived re-push bundles, not sources. Sherlock flagged them on PR #7 as a re-push hazard;
+they are now deleted and the directory is gitignored. The generator
+(`build_notebooks.py`) is the single source for all four notebooks.
+
+**And 1980 still truncates pass 3** — see `2026-09-13-job1-control-baseline.md`. 4 x 1980 =
+7920 exactly fills the budget with nothing left for the ~542s of vLLM boot on the same clock.
+Analyze passes 0–2 only; a repaired cap is ~1840s and must not be compared against truncated
+arms.
