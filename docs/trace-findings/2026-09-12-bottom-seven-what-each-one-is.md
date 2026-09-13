@@ -48,7 +48,7 @@ tells the agent about.
 
 ## g50t — your own past run, replayed against you
 
-`ACTION5` is rewind (`:2802` → `pmlawcgvcp`). The grey thing is a replaying ghost of your last
+`ACTION5` (`:2802` → `pmlawcgvcp`) **casts a ghost** that replays your recorded path — the rewind-to-start is the cost, not the point (corrected 13-Sep, see `2026-09-13-g50t-action5-correction.md`). The grey thing is a replaying ghost of your last
 attempt. The timer advances one cell per *two* counted actions (`tmwgfkaqxj`), and actions
 consumed by an animation are not counted at all (`step`, `:2782`).
 

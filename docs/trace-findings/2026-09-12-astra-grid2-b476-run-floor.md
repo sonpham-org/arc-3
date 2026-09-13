@@ -140,7 +140,7 @@ Score 0.28, 1 of 7 levels, 574 actions split **279 on level 1, 295 on level 2**
 
 Mechanics from `g50t-5849a774/g50t.py`:
 
-- `available_actions=[1,2,3,4,5]` (`:2771`). ACTION5 calls `pmlawcgvcp()` — rewind.
+- `available_actions=[1,2,3,4,5]` (`:2771`). ACTION5 calls `pmlawcgvcp()` — **CORRECTED 13-Sep: this casts a ghost that replays your recorded path; the rewind-to-start is the cost of casting, not the mechanic. See `2026-09-13-g50t-action5-correction.md`.**
 - `step()` (`:2782`): while an animation is playing (`jqpwhiraaj`), the agent's action is
   consumed by `vgwycxsxjz.step()` and the move counter `ucorwtereb` is **not** incremented.
 - `tmwgfkaqxj()` advances the timer sprite one cell on every *even* counted action — one cell

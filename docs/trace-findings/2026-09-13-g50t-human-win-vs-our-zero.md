@@ -40,7 +40,7 @@ actions on level 1 and 295 on level 2 before cancelling.
 
 ## ACTION5 is sparse, and it is used immediately
 
-ACTION5 — the rewind — accounts for **25 of 533 actions, 4.7%**. It is not a move you
+**CORRECTED 13-Sep: ACTION5 casts a ghost, see `2026-09-13-g50t-action5-correction.md`.** ACTION5 accounts for **25 of 533 actions, 4.7%**. It is not a move you
 spam. But it appears on **every single level**, and the human reaches for it at global
 action **16**, still on level 1.
 
