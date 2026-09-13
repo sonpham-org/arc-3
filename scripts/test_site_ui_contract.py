@@ -26,6 +26,33 @@ class SiteUiContractTests(unittest.TestCase):
         self.assertIn('row.classList.add("selected-turn")', script)
         self.assertIn("table.log tr.selected-turn", styles)
 
+    def test_viewer_has_turn_links_and_debugger_handoff(self) -> None:
+        viewer = (ROOT / "docs" / "viewer.html").read_text(encoding="utf-8")
+        main = (ROOT / "docs" / "static" / "js" / "main.js").read_text(encoding="utf-8")
+        debugger = (ROOT / "docs" / "arc-debugger.html").read_text(encoding="utf-8")
+        self.assertIn('id="share-turn"', viewer)
+        self.assertIn('id="rt-debugger"', viewer)
+        self.assertIn("parseViewerHash", main)
+        self.assertIn("turn: frame.analysis_step", main)
+        self.assertIn("ARC DEBUGGER", debugger)
+        self.assertIn("Resume this turn on both Sparks", debugger)
+        self.assertIn('id="context-so-far"', debugger)
+        self.assertIn('readonly', debugger)
+        self.assertIn('id="temperature" type="number" min="0" max="2" step="0.1" value="1"', debugger)
+        self.assertIn('id="top-p" type="number" min="0.01" max="1" step="0.01" value="0.95"', debugger)
+        self.assertIn('id="top-k" type="number" min="0" max="100" step="1" value="20"', debugger)
+
+    def test_debugger_uses_authenticated_same_origin_relay(self) -> None:
+        page = (ROOT / "docs" / "arc-debugger.html").read_text(encoding="utf-8")
+        script = (ROOT / "docs" / "static" / "js" / "arc-debugger.js").read_text(encoding="utf-8")
+        entrypoint = (ROOT / "railway" / "entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn('data-debugger-api="/api/v1/debugger"', page)
+        self.assertNotIn("tail1528b6.ts.net", page)
+        self.assertIn("Railway's ARC tailnet relay is offline", script)
+        self.assertIn('/v1/preview', script)
+        self.assertIn("--tun=userspace-networking", entrypoint)
+        self.assertIn('/srv/data/.tailscale', entrypoint)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,14 @@
+FROM tailscale/tailscale:stable AS tailscale
+
 FROM caddy:2.11.4-alpine
 
 ARG TARGETARCH
 ARG OAUTH2_PROXY_VERSION=7.7.1
 
 RUN apk add --no-cache postgresql-client python3 py3-psycopg2
+
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 
 RUN set -eux; \
     case "$TARGETARCH" in \
@@ -21,6 +26,7 @@ RUN set -eux; \
 COPY railway/Caddyfile /etc/caddy/Caddyfile
 COPY railway/entrypoint.sh /entrypoint.sh
 COPY railway/catalog_server.py /catalog_server.py
+COPY railway/debugger_relay.py /debugger_relay.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/publication_store.py /publication_store.py
 COPY railway/model_backfill.py /model_backfill.py
@@ -37,6 +43,8 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -q -- "--custom-templates-dir=/etc/oauth2-proxy/templates" /entrypoint.sh \
     && grep -q "ARC3_PUBLISH_TOKEN" /entrypoint.sh \
     && grep -q "publication_store" /catalog_server.py \
+    && grep -q "DebuggerRelay" /catalog_server.py \
+    && grep -q "ARC DEBUGGER" /srv/arc-debugger.html \
     && chmod 0755 /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

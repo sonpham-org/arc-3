@@ -1234,6 +1234,8 @@ def _compact_viewer_step(step: dict[str, Any]) -> dict[str, Any]:
     absorbed_frames = _compact_absorbed_frames(step.get("absorbedFrames"))
     if absorbed_frames:
         compact["absorbedFrames"] = absorbed_frames
+    if isinstance(step.get("resumeContext"), dict):
+        compact["resumeContext"] = step["resumeContext"]
     return compact
 
 
@@ -1643,6 +1645,62 @@ def _latest_request_snapshot(
             int(snapshot.get("action") or 0),
         ),
     )[-1]
+
+
+def _resume_context_from_request_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the exact text/tool context needed to fork a stored model call.
+
+    Data-URL images are deliberately omitted from the static artifact; the
+    debugger re-renders and attaches the selected board. Everything else keeps
+    its original OpenAI message shape, including tool-call ids.
+    """
+    if not snapshot:
+        return None
+    raw_messages = snapshot.get("messages")
+    if not isinstance(raw_messages, list) or not raw_messages:
+        return None
+
+    had_current_grid = False
+    messages: list[dict[str, Any]] = []
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            continue
+        message = json.loads(json.dumps(raw_message))
+        content = message.get("content")
+        if isinstance(content, list):
+            retained: list[Any] = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") in {"image_url", "input_image"}:
+                    had_current_grid = True
+                    continue
+                retained.append(part)
+            message["content"] = retained
+        messages.append(message)
+
+    tools = snapshot.get("tools")
+    tool_choice = snapshot.get("tool_choice")
+    rendered_messages = json.dumps(messages, ensure_ascii=False)
+    latest_user = ""
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            latest_user = json.dumps(message.get("content"), ensure_ascii=False)
+            break
+    defaults = {
+        "memory": len(messages) > 2 or "Knowledge ledger carried from earlier turns:" in rendered_messages,
+        "tools": bool(tools),
+        "current_grid": had_current_grid,
+        "transition_guidance": "distinguish gameplay change from HUD-only change" in latest_user,
+        "strategy_guidance": "compact inspection/search code" in latest_user,
+        "mouse_guidance": "include integer row and col arguments" in latest_user,
+    }
+    return {
+        "source": "exact_request",
+        "messages": messages,
+        "tools": json.loads(json.dumps(tools)) if isinstance(tools, list) else [],
+        "toolChoice": str(tool_choice or "auto"),
+        "hadCurrentGridImage": had_current_grid,
+        "defaultFlags": defaults,
+    }
 
 
 def _section_signature(section: dict[str, Any]) -> tuple[str, str]:
@@ -2222,6 +2280,9 @@ def _hydrate_lightweight_step(
 
     normalized_event = _normalize_event(analysis_event)
     request_snapshot = _latest_request_snapshot(request_snapshots, analysis_step=analysis_step)
+    resume_context = _resume_context_from_request_snapshot(request_snapshot)
+    if resume_context is not None:
+        step["resumeContext"] = resume_context
     # Exact request logs, when present, are authoritative for this call.  Older
     # native-TAAF archives only retain one transcript per analyzer turn.  For
     # those runs expose an explicit cumulative reconstruction alongside the

@@ -12,6 +12,13 @@ import { renderDecision } from "./decision.js?v=20260817-literal";
 import { EventLog } from "./log.js?v=20260907-turn-groups";
 import { renderOverview } from "./overview.js";
 import { Scrubber } from "./scrubber.js";
+import {
+  canonicalGameRef,
+  framePositionForRoute,
+  parseViewerHash,
+  resolveGameIndex,
+  viewerHash,
+} from "./viewer-route.js?v=20260911-turn-links";
 
 const POLL_MS = 1500;
 
@@ -41,6 +48,7 @@ const el = {
   boardMeta: document.querySelector("#board-meta"),
   boardMode: document.querySelector("#board-mode"),
   decisionMode: document.querySelector("#decision-mode"),
+  shareTurn: document.querySelector("#share-turn"),
 };
 
 // Which board a turn's row shows:
@@ -102,24 +110,38 @@ if (el.decisionMode) {
   syncDecisionModeButtons();
 }
 
-el.back.addEventListener("click", () => location.hash = "");
+el.back.addEventListener("click", () => location.hash = viewerHash({ run: state.run }));
 el.runSelect.addEventListener("change", () => {
-  location.hash = `#run=${encodeURIComponent(el.runSelect.value)}`;
+  location.hash = viewerHash({ run: el.runSelect.value });
 });
 window.addEventListener("hashchange", route);
 
-function parseHash() {
-  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
-  const game = params.get("game");
-  // numeric = game index; anything else is a game_id resolved against the overview
-  return { run: params.get("run"), game: game === null ? null : (/^\d+$/.test(game) ? Number(game) : game) };
+function syncRunTabs() {
+  const suffix = location.hash;
+  const targets = {
+    "rt-viewer": "./viewer.html",
+    "rt-debugger": "./arc-debugger.html",
+    "rt-trace": "./trace.html",
+    "rt-score": "./score-time.html",
+  };
+  Object.entries(targets).forEach(([id, path]) => {
+    const anchor = document.getElementById(id);
+    if (anchor) anchor.href = path + suffix;
+  });
+}
+
+function replaceHash(hash) {
+  if (hash === location.hash) return;
+  history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
+  syncRunTabs();
 }
 
 async function route() {
-  const { run, game } = parseHash();
+  const target = parseViewerHash();
+  const { run, game, instance } = target;
   state.run = run;
   if (game === null) return showOverview();
-  if (typeof game === "string") {
+  if (typeof game === "string" || instance !== null) {
     const payload = state.overview && state.overviewRun === run
       ? state.overview : await fetchRunOverview(run);
     state.overview = payload;
@@ -130,11 +152,11 @@ async function route() {
     // for the no-run default route.
     state.run = run || payload.selected_run;
     state.overviewRun = state.run;
-    const index = payload.games.findIndex((g) => g.game_id === game);
+    const index = resolveGameIndex(payload.games, game, instance);
     if (index < 0) throw new Error(`Game ${game} is not present in ${state.run}`);
-    return showGame(index);
+    return showGame(index, { target });
   }
-  await showGame(game);
+  await showGame(game, { target });
 }
 
 async function showOverview() {
@@ -155,7 +177,10 @@ async function refreshOverview() {
   renderRunSelect(payload);
   el.crumb.innerHTML = `<b>${payload.run_name}</b> · ${payload.games.length} games`;
   renderOverview(el.cards, el.totals, payload, {
-    onOpen: (index) => { location.hash = `#run=${encodeURIComponent(state.run)}&game=${index}`; },
+    onOpen: (index) => {
+      const ref = canonicalGameRef(payload.games, index);
+      location.hash = viewerHash({ run: state.run, ...ref });
+    },
   });
 }
 
@@ -171,7 +196,7 @@ function renderRunSelect(payload) {
   el.runSelect.value = state.run || payload.selected_run;
 }
 
-async function showGame(index) {
+async function showGame(index, { target = null } = {}) {
   state.gameIndex = index;
   state.stepCache.clear();
   el.overview.hidden = true;
@@ -192,10 +217,11 @@ async function showGame(index) {
   // resolves the overview inside route() without ever setting the palette, so keying this off a
   // fresh fetch here would leave the board painting every cell "#000" (all black).
   setPalette(state.overview.arc_palette, state.overview.color_chars);
-  await refreshGame({ resetToLive: true });
+  const hasSelectionTarget = target && (target.turn !== null || target.frame !== null);
+  await refreshGame({ resetToLive: !hasSelectionTarget, target });
 }
 
-async function refreshGame({ resetToLive = false } = {}) {
+async function refreshGame({ resetToLive = false, target = null } = {}) {
   const [game, frames] = await Promise.all([
     fetchGame(state.run, state.gameIndex),
     fetchGameFrames(state.run, state.gameIndex),
@@ -209,6 +235,8 @@ async function refreshGame({ resetToLive = false } = {}) {
   log.render(state.frames, game.viewer_steps);
   if (resetToLive) scrubber.live = true;
   scrubber.setFrames(state.frames, { ended });
+  const targetPosition = framePositionForRoute(state.frames, target || {});
+  if (targetPosition !== null) scrubber.seek(targetPosition, { user: true });
 }
 
 // The board the model reasoned against for this frame's turn: the frame just BEFORE the turn's
@@ -245,6 +273,14 @@ async function selectFrame(index) {
   const frame = state.frames[index];
   if (!frame) return;
 
+  const ref = canonicalGameRef(state.overview?.games || [], state.gameIndex);
+  replaceHash(viewerHash({
+    run: state.run,
+    ...ref,
+    turn: frame.analysis_step ?? null,
+    frame: frame.frameIndex,
+  }));
+
   renderBoardForFrame(frame);
   log.select(index);
 
@@ -274,6 +310,28 @@ async function selectFrame(index) {
     mode: decisionMode,
   });
 }
+
+async function copyTurnLink() {
+  const url = location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch (_) {
+    const input = document.createElement("textarea");
+    input.value = url;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+  if (!el.shareTurn) return;
+  const previous = el.shareTurn.textContent;
+  el.shareTurn.textContent = "Link copied";
+  setTimeout(() => { el.shareTurn.textContent = previous; }, 1400);
+}
+
+el.shareTurn?.addEventListener("click", copyTurnLink);
 
 async function loadStep(stepIndex) {
   if (state.stepCache.has(stepIndex)) return state.stepCache.get(stepIndex);
@@ -318,5 +376,6 @@ window.addEventListener("resize", () => {
   if (frame) renderBoardForFrame(frame);
 });
 
+syncRunTabs();
 route();
 setInterval(poll, POLL_MS);

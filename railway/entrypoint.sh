@@ -8,6 +8,50 @@ set -eu
 : "${DATABASE_URL:?set DATABASE_URL to the Railway Postgres private URL}"
 : "${ARC3_PUBLISH_TOKEN:?set ARC3_PUBLISH_TOKEN for the trace publication API}"
 
+TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/tmp/tailscaled.sock}"
+TAILSCALE_STATE_DIR="${TAILSCALE_STATE_DIR:-/srv/data/.tailscale}"
+TAILSCALE_PROXY_ADDR="${TAILSCALE_PROXY_ADDR:-127.0.0.1:1055}"
+mkdir -p "$TAILSCALE_STATE_DIR" /var/run/tailscale
+
+tailscaled \
+  --tun=userspace-networking \
+  --socket="$TAILSCALE_SOCKET" \
+  --state="$TAILSCALE_STATE_DIR/tailscaled.state" \
+  --socks5-server="$TAILSCALE_PROXY_ADDR" \
+  --outbound-http-proxy-listen="$TAILSCALE_PROXY_ADDR" &
+tailscaled_pid=$!
+
+tailscale_ready=0
+for _attempt in $(seq 1 30); do
+  if [ -S "$TAILSCALE_SOCKET" ]; then
+    tailscale_ready=1
+    break
+  fi
+  if ! kill -0 "$tailscaled_pid" 2>/dev/null; then
+    echo "tailscaled exited during startup" >&2
+    break
+  fi
+  sleep 1
+done
+if [ "$tailscale_ready" = "1" ]; then
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    tailscale --socket="$TAILSCALE_SOCKET" up \
+      --auth-key="$TS_AUTHKEY" \
+      --hostname="${TS_HOSTNAME:-arc3-railway}" \
+      --accept-dns=false &
+  else
+    # First boot prints a one-time login URL. State lives on the Railway volume,
+    # so the site only needs to be enrolled in the tailnet once.
+    tailscale --socket="$TAILSCALE_SOCKET" up \
+      --hostname="${TS_HOSTNAME:-arc3-railway}" \
+      --accept-dns=false &
+  fi
+else
+  echo "warning: Tailscale proxy is not ready; debugger relay will return 503" >&2
+fi
+
+export ARC3_DEBUGGER_PROXY="${ARC3_DEBUGGER_PROXY:-http://$TAILSCALE_PROXY_ADDR}"
+
 printf '%s\n' "$ALLOWED_EMAILS" \
   | tr ', ' '\n\n' \
   | sed '/^[[:space:]]*$/d' \

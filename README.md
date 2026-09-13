@@ -84,6 +84,7 @@ their source and thumbnails stay on disk; delete the entry to bring one back.
 |---|---|
 | `internal.html` | **Scoreboard**: one row per run, one column per game, cell = that run's score |
 | `viewer.html` | **Run inspector**: scrub every board state of a game and read the agent's full decision trace per turn |
+| `arc-debugger.html` | **Context debugger**: inspect and fork the exact prompt, memory, tools, board, and feature flags for one viewer turn on the two-Spark Qwen cluster |
 | `trace.html` | Execution trace for a single run |
 | `signals.html` | **Signal runs**: one game played N times, as a box/whisker score distribution |
 | `usage.html` | Per-run CPU / GPU / RAM / storage over the life of the run |
@@ -91,6 +92,19 @@ their source and thumbnails stay on disk; delete the entry to bring one back.
 | `research.html` | "Beyond the Public 25" — results off the official set |
 
 Static data from finished runs only — no live streaming. 37 runs are published today.
+
+Viewer URLs are canonical down to the selected action frame: `run`, opaque
+`game_id`, duplicate-game `instance` when needed, analyzer `turn`, and `frame`
+are all encoded in the hash. Scrubbing updates the URL in place, and **Copy
+turn link** produces a stable handoff into either Viewer or Debugger.
+
+The Debugger is a model-context fork, not a mutable replay of the archived game
+engine. It reconstructs the exact OpenAI-compatible message/tool payload when
+request logs exist, re-renders the selected pre-turn board, applies only flags
+with a verified request transformation, and asks the live Qwen cluster for a
+continuation. The returned Python tool call is shown for diagnosis; it does not
+execute against or alter the archived game. See
+`ARC3-Inference/debugger/README.md` for the gateway and deployment contract.
 
 ### The metric, and why we don't trust single runs
 
@@ -183,7 +197,14 @@ If the Postgres transaction fails, the newly installed directory is moved to `/s
 and the prior volume copy is restored. Raw artifacts remain canonical in GCS.
 
 The Railway image is built from the root `Dockerfile`. It contains the site shell, game assets,
-and the catalog/publication API. Run metadata lives in Railway Postgres; large immutable viewer
+the catalog/publication API, and a userspace Tailscale client for the ARC Debugger relay. The
+browser calls the same-origin `/api/v1/debugger/*` route after Google authentication; Railway
+then forwards only the debugger API through its local Tailscale HTTP proxy to `a108`. Browser
+devices do not need to join the tailnet, and neither the Tailscale enrollment nor the Spark
+gateway bearer token is sent to them. Tailscale state is retained on the existing `/srv/data`
+volume under `.tailscale/`.
+
+Run metadata lives in Railway Postgres; large immutable viewer
 and trace payloads live under `/srv/data`. `docs/data/`, `logs/`, and experiment work directories
 remain excluded from the image and from new Git commits.
 Deploy code only when the shell or API changes. Ordinary trace publication uses the API and does

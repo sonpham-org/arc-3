@@ -28,6 +28,7 @@ from publication_store import (
     validate_sha256,
 )
 from model_backfill import backfill_catalog_models
+from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -258,6 +259,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
     max_upload_bytes = 4 * 1024 * 1024 * 1024
     max_unpacked_bytes = 12 * 1024 * 1024 * 1024
     max_files = 200_000
+    max_debugger_body_bytes = 16 * 1024 * 1024
+    debugger_relay: DebuggerRelay
 
     def send_json(self, status: HTTPStatus | int, payload: str | dict) -> None:
         if not isinstance(payload, str):
@@ -279,9 +282,38 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if not supplied_token or not secrets.compare_digest(supplied_token, self.publish_token):
             raise PublicationProblem(401, "unauthorized", "invalid publication token")
 
+    def send_relay_response(self, status: int, content_type: str, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def relay_debugger(self, method: str, path: str) -> None:
+        body = None
+        if method == "POST":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError as exc:
+                raise RelayProblem(400, "invalid_content_length", "invalid Content-Length") from exc
+            if length <= 0 or length > self.max_debugger_body_bytes:
+                raise RelayProblem(400, "invalid_request", "request body is empty or too large")
+            body = self.rfile.read(length)
+        response = self.debugger_relay.forward(
+            method=method,
+            public_path=path,
+            headers=self.headers,
+            body=body,
+        )
+        self.send_relay_response(response.status, response.content_type, response.body)
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         try:
+            if path.startswith(PUBLIC_PREFIX):
+                self.relay_debugger("GET", path)
+                return
             if path == "/api/healthz":
                 with connect() as connection, connection.cursor() as cursor:
                     cursor.execute("SELECT count(*) FROM arc3_runs WHERE status = 'published'")
@@ -387,6 +419,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.NOT_FOUND, '{"error":"not found"}')
         except PublicationProblem as exc:
             self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+        except RelayProblem as exc:
+            self.send_json(exc.status, {"error": exc.code, "message": exc.message})
         except Exception as exc:  # Keep the public failure small; full detail goes to Railway logs.
             print(f"catalog request failed for {path}: {exc}", flush=True)
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, '{"error":"catalog unavailable"}')
@@ -479,6 +513,22 @@ class CatalogHandler(BaseHTTPRequestHandler):
             if stage_root is not None:
                 shutil.rmtree(stage_root, ignore_errors=True)
 
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            if path.startswith(PUBLIC_PREFIX):
+                self.relay_debugger("POST", path)
+                return
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        except RelayProblem as exc:
+            self.send_json(exc.status, {"error": exc.code, "message": exc.message})
+        except Exception as exc:
+            print(f"debugger relay failed for {path}: {exc}", flush=True)
+            self.send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": "debugger_relay_unavailable", "message": "Spark relay failed"},
+            )
+
     def log_message(self, format_string: str, *args) -> None:
         print(f"catalog: {format_string % args}", flush=True)
 
@@ -504,9 +554,16 @@ def main() -> int:
         os.environ.get("ARC3_MAX_UNPACKED_BYTES", str(12 * 1024 * 1024 * 1024))
     )
     CatalogHandler.max_files = int(os.environ.get("ARC3_MAX_PUBLICATION_FILES", "200000"))
+    CatalogHandler.debugger_relay = DebuggerRelay(
+        upstream=os.environ.get("ARC3_DEBUGGER_UPSTREAM", ""),
+        bearer_token=os.environ.get("ARC3_DEBUGGER_TOKEN", ""),
+        proxy_url=os.environ.get("ARC3_DEBUGGER_PROXY", "http://127.0.0.1:1055"),
+        timeout=float(os.environ.get("ARC3_DEBUGGER_TIMEOUT_SECONDS", "180")),
+    )
     print(
         f"catalog database ready; api=v1 legacy runs inserted={inserted} "
-        f"publisher={'enabled' if CatalogHandler.publish_token else 'disabled'}",
+        f"publisher={'enabled' if CatalogHandler.publish_token else 'disabled'} "
+        f"debugger_relay={'enabled' if CatalogHandler.debugger_relay.configured else 'disabled'}",
         flush=True,
     )
     server = ThreadingHTTPServer((args.host, args.port), CatalogHandler)
