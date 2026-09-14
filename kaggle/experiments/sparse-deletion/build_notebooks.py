@@ -59,6 +59,7 @@ GLYPH_BUNDLE = "markbarney/taaf-duck-glyph-consonants"
 IMAGEFIRST_BUNDLE = "markbarney/taaf-duck-image-first-turn"
 COMMIT_BUNDLE = "markbarney/taaf-duck-commit-hypothesis"
 VISUALFIRST_BUNDLE = "markbarney/taaf-duck-visual-first"
+ACTION7_BUNDLE = "markbarney/taaf-duck-action7-roundtrip"
 
 # Strings the control prompt asserts and the deletion arm asserts are gone.
 DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
@@ -72,6 +73,7 @@ ARM_MARKERS = {
     "E-image-first-turn": "On the first turn only,",
     "F-commit-prompt": "Exploration is for building one hypothesis",
     "G-visual-first": "measuring instruments, not the board",
+    "H-action7-roundtrip": "valid, executable game action",
 }
 
 def title_slug(title: str) -> str:
@@ -115,6 +117,12 @@ ARMS = {
     # and from D, which changes the alphabet (Sherlock's separation rule, 13-Sep-2026).
     "job9-visualfirst": ("ARC3 job9 visual first", "arc3-job9-visual-first",
                          VISUALFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "G-visual-first"),
+    # The only arm that is a harness fix rather than a prompt edit: ACTION7 was listed in
+    # valid_actions and rejected on call (2026-09-14-action7-is-unexecutable.md). Takes the
+    # map round-trip and the one prompt line from harnesses/action7-anim, and deliberately
+    # NOT that patch's animation-metadata half, so it stays one variable.
+    "job10-action7": ("ARC3 job10 action7 roundtrip", "arc3-job10-action7-roundtrip",
+                      ACTION7_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "H-action7-roundtrip"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]

@@ -69,3 +69,28 @@ from the animation half of the patch. Same bottom-seven lanes, same 1980s cap, n
 
 Prediction, registered before the run: the gain, if any, lands on bp35, lf52 and tn36,
 and the four games that do not expose ACTION7 do not move.
+
+---
+
+## Arm H, built 14-September-2026
+
+Built and verified locally; queued ahead of arm G.
+
+- Bundle `markbarney/taaf-duck-action7-roundtrip`, uploaded with `-r zip` so `src/`
+  actually ships.
+- Full-tree diff against the arm-B bundle: **exactly two files differ.**
+  `action_names.py` gains the `"ACTION7": "ACTION7"` entry, `prompts.py` gains one line.
+  Nothing from the animation half of `harnesses/action7-anim` is taken.
+- The build imports the shipped `action_names.py` and asserts
+  `to_engine_action("ACTION7") == "ACTION7"`, `to_model_action("ACTION7") == "ACTION7"`,
+  and that ACTION1 / ACTION6 / RESET still round-trip unchanged. A string match on the
+  table would not have proved the call path.
+- Every other arm's build now asserts the ACTION7 map entry is **absent**, so the fix
+  cannot leak into a prompt-only arm and be miscredited.
+- The prompt line states ACTION7 is executable and game-specific, and explicitly says not
+  to assume it means undo, confirm, or back. The Boss's point on 14-Sep-2026 stands:
+  undo is not available in every game, and ACTION7 does not mean undo in every game that
+  exposes it.
+
+Job 10: same seven lanes, n_passes 4, 1980s per game, 7920s budget — identical shape to
+jobs 2, 4, 6, 7, 8 and directly comparable to the deletion arm's 15 level clears.

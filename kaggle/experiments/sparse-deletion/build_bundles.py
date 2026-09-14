@@ -22,8 +22,9 @@ PROMPTS = "src/ARC3-Inference/inference/agent/prompts.py"
 TOOL_AGENT = "src/ARC3-Inference/inference/agent/tool_agent.py"
 GRID_UTILS = "src/ARC3-Inference/inference/utils/grid_utils.py"
 SANDBOX = "src/ARC3-Inference/inference/agent/python_tool_sandbox.py"
+ACTION_NAMES = "src/ARC3-Inference/inference/agent/action_names.py"
 
-STACKED_ON_B = ("C", "D", "E", "F")
+STACKED_ON_B = ("C", "D", "E", "F", "G", "H")
 
 # Arm B: the word "puzzle" also appears in the base system prompt line in tool_agent.py,
 # so deleting it from prompts.py alone leaves the assembled prompt carrying it and the
@@ -249,6 +250,38 @@ IMAGE_FIRST = ((IMAGE_FIRST_OLD_1, IMAGE_FIRST_NEW_1), (IMAGE_FIRST_OLD_2, IMAGE
 ANCHOR = '    f"- Color legend: {ARC_COLOR_LEGEND}.\\n"\n'
 
 
+# Arm H: ACTION7 is listed in valid_actions on every step of every game that exposes it,
+# because to_model_action() falls back to the raw string. But ENGINE_TO_MODEL_ACTION never
+# maps it, so to_engine_action() returns None and solver.py rejects the call with
+# "Unknown action at index 1". The agent tries it and is refused - 22 attempts across 12
+# bp35 passes, zero committed. See docs/trace-findings/2026-09-14-action7-is-unexecutable.md.
+# The neutral round-trip below is exactly the first half of harnesses/action7-anim; the
+# animation-metadata half of that patch is deliberately NOT taken, so this arm is one
+# variable.
+ACTION_NAMES_OLD = '    "ACTION6": "MOUSE",\n    "RESET": "RESET",'
+ACTION_NAMES_NEW = (
+    '    "ACTION6": "MOUSE",\n'
+    '    # ACTION7 is exposed by the engine and valid in several games, but was missing\n'
+    '    # here -- so the model could see it in valid_actions yet to_engine_action()\n'
+    '    # returned None and the call was rejected. Neutral round-trip makes it\n'
+    '    # executable; its game-specific meaning is left to the model to probe.\n'
+    '    "ACTION7": "ACTION7",\n'
+    '    "RESET": "RESET",'
+)
+
+# Anchored on the action() contract bullets, not the colour legend, because this is a
+# statement about how actions work. Phrased as executable-and-unknown, never as "undo" -
+# the Boss's point stands that undo is not what ACTION7 means in every game.
+ACTION7_PROMPT_OLD = (
+    '    "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, '
+    '`transitions`, `valid_actions`, and `last_action_result` are refreshed.\\n"'
+)
+ACTION7_PROMPT_NEW = ACTION7_PROMPT_OLD + (
+    '\n    "- `ACTION7` is a valid, executable game action whenever it appears in '
+    '`valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and '
+    'the returned before/after state rather than assuming it means undo, confirm, or back.\\n"'
+)
+
 def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
     if out.exists():
         shutil.rmtree(out)
@@ -282,6 +315,16 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
             if old not in text:
                 raise SystemExit(f"G: image-first anchor missing: {old[:70]!r}")
             text = text.replace(old, new, 1)
+
+    if arm == "H":
+        an_path = out / ACTION_NAMES
+        an_text = an_path.read_text()
+        if ACTION_NAMES_OLD not in an_text:
+            raise SystemExit("H: action_names map anchor missing")
+        an_path.write_text(an_text.replace(ACTION_NAMES_OLD, ACTION_NAMES_NEW, 1))
+        if ACTION7_PROMPT_OLD not in text:
+            raise SystemExit("H: action() contract anchor missing")
+        text = text.replace(ACTION7_PROMPT_OLD, ACTION7_PROMPT_NEW, 1)
 
     if arm == "D":
         gu_path = out / GRID_UTILS
@@ -323,6 +366,7 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
         "E": ("_WITHHOLD_TEXT_BOARD_UNTIL_STEP", ta_text),
         "D": ("ARC_COLOR_NAMES", (out / GRID_UTILS).read_text()),
         "G": ("measuring instruments, not the board", text),
+        "H": ("valid, executable game action", text),
     }
     for probe_arm, (needle, haystack) in exclusive.items():
         present = needle in haystack
@@ -361,10 +405,34 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
             raise SystemExit("D: glyph set is not 16 distinct characters")
         print(f"arm D: chars={GLYPH_CHARS} legend={module.ARC_COLOR_LEGEND}")
 
+    if arm == "H":
+        # The whole arm is that ACTION7 round-trips. Import the shipped module and prove
+        # it, rather than trusting a string match on the table.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(f"an_{arm}", out / ACTION_NAMES)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if module.to_engine_action("ACTION7") != "ACTION7":
+            raise SystemExit("H: to_engine_action('ACTION7') does not round-trip")
+        if module.to_model_action("ACTION7") != "ACTION7":
+            raise SystemExit("H: to_model_action('ACTION7') does not round-trip")
+        for other in ("ACTION1", "ACTION6", "RESET"):
+            if module.to_engine_action(module.to_model_action(other)) != other:
+                raise SystemExit(f"H: {other} round-trip broken")
+        if "undo" not in text.lower():
+            raise SystemExit("H: prompt line lost the do-not-assume-undo clause")
+        print("arm H: to_engine_action('ACTION7') -> ACTION7, other actions unchanged")
+
+    # Arms other than H must not carry the ACTION7 map entry.
+    an_shipped = (out / ACTION_NAMES).read_text()
+    if ('"ACTION7"' in an_shipped) != (arm == "H"):
+        raise SystemExit(f"{arm}: ACTION7 map entry present={not (arm == 'H')}")
+
     print(f"arm {arm}: {out} prompts.py {len(text)} chars")
 
 
 if __name__ == "__main__":
     control = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/armctl")
-    for arm in ("B", "C", "D", "E", "F", "G"):
+    for arm in ("B", "C", "D", "E", "F", "G", "H"):
         build(control, pathlib.Path(f"/tmp/bundle-{arm}"), arm)
