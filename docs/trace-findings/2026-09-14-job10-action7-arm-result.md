@@ -133,16 +133,17 @@ What is settled is that making ACTION7 executable did not buy a level anywhere i
 executable.
 
 **Against the pre-registered criterion this is a negative result**, the same call job 6 got
-at 12. 11 against the deletion arm's 15, and below job 6's 12 — arm H is the weakest arm
-run so far.
+at 12. 11 against the deletion arm's 15: that ties arm E for the joint-lowest of arms B
+through H, with only the control sitting below at 10.
 
 **g50t and tn36 are the two-pass moves** and are the real content of the drop; both went
 from 2 to hard zeros across all three passes. ls20 −1 and sk48 +1 are one pass wide and
 should not be quoted alone.
 
 **lf52 is the one bright spot in the score column**, `1.818, 1.818, 5.455` — the flat
-control ceiling twice, then the highest single-pass score any arm has posted on that game,
-and the only pass in the set that cleared two levels. lf52 is also the heaviest ACTION7
+control ceiling twice, then a 5.455 — above the 4.169 arm B posted, which the job 6 doc
+records as the only prior break of lf52's flat ceiling — and the only pass in the set that
+cleared two levels. lf52 is also the heaviest ACTION7
 user at 10 presses in the window. That is a thread, not a result: it is one pass, and the
 level total held at 4, unchanged from arm B.
 
