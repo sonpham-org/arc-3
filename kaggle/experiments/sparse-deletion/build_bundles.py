@@ -144,11 +144,13 @@ _WITHHOLD_TEXT_BOARD_MESSAGE = (
 )
 
 
-def _ascii_frame_view_payload(frame: Frame | None) -> dict[str, Any] | None:
+def _ascii_frame_view_payload(
+    frame: Frame | None, *, withhold: bool = False
+) -> dict[str, Any] | None:
     view = _to_ascii_frame_view(frame)
     if view is None:
         return None
-    if view.step < _WITHHOLD_TEXT_BOARD_UNTIL_STEP:
+    if withhold and view.step < _WITHHOLD_TEXT_BOARD_UNTIL_STEP:
         return {
             "ascii": _WITHHOLD_TEXT_BOARD_MESSAGE,
             "step": view.step,
@@ -163,6 +165,21 @@ def _ascii_frame_view_payload(frame: Frame | None) -> dict[str, Any] | None:
         "shape": [int(view.shape[0]), int(view.shape[1])],
         "grid": [list(row) for row in frame.grid],
     }'''
+
+# This builder is shared by three payload paths: current_frame, every history frame, and
+# every animation frame. Gating on step alone withholds the step-0 frame FOREVER, so at
+# turn 50 the agent still could not read the starting position out of `history[0]` -- a
+# far stronger manipulation than "no text board on the first turn", and one that would
+# plausibly hurt for a reason having nothing to do with first-turn hypothesis forming.
+# The withhold is therefore requested at the current_frame call site only.
+WITHHOLD_CALLSITE_OLD = (
+    "            current_frame_payload = _ascii_frame_view_payload(refreshed_frame)"
+)
+WITHHOLD_CALLSITE_NEW = (
+    "            current_frame_payload = _ascii_frame_view_payload(\n"
+    "                refreshed_frame, withhold=True\n"
+    "            )"
+)
 
 # With grid == [] the sandbox would hand segment_layer an empty grid and return an empty
 # structure, which reads as "the board is empty" rather than "the board is withheld".
@@ -182,7 +199,7 @@ SANDBOX_NEW = '''        @property
 
 WITHHOLD_PROMPT_BLOCK = (
     '    "- On the first turn only, `current_frame.ascii` and `current_frame.segmentation` are '
-    'withheld and return a short notice instead of the board. The grid image in the user message '
+    'withheld for the current frame and return a short notice instead of the board. The grid image in the user message '
     'is the board. State what you think the game is from the image, then execute an action; both '
     'text views are available from the next turn on.\\n"\n'
 )
@@ -229,6 +246,9 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
         if WITHHOLD_OLD not in ta_text:
             raise SystemExit("E: _ascii_frame_view_payload anchor missing")
         ta_text = ta_text.replace(WITHHOLD_OLD, WITHHOLD_NEW, 1)
+        if WITHHOLD_CALLSITE_OLD not in ta_text:
+            raise SystemExit("E: current_frame payload call site missing")
+        ta_text = ta_text.replace(WITHHOLD_CALLSITE_OLD, WITHHOLD_CALLSITE_NEW, 1)
         sb_path = out / SANDBOX
         sb_text = sb_path.read_text()
         if SANDBOX_OLD not in sb_text:

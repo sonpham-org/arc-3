@@ -130,3 +130,26 @@ remembers. An `ERROR` status holds the queue instead of launching on top of a fa
 
 ~8.8h of the 30h spent or committed after jobs 4 and 5. Four remaining jobs at 2.2h each
 puts the total near 17.6h, leaving ~12h before the Thursday 18-Sep refresh.
+
+## Two arm-E defects caught after the bundle was already uploaded
+
+**1. The withhold was global, not first-turn.** `_ascii_frame_view_payload` is shared by
+three payload paths — `current_frame`, every history entry, and every animation frame.
+Gating on `frame.step` alone therefore withheld the step-0 frame *forever*: at turn 50 the
+agent still could not read the starting position out of `history[0]`. That is a far
+stronger manipulation than "no text board on the first turn" and would plausibly have hurt
+for a reason having nothing to do with first-turn hypothesis forming. The withhold is now
+requested at the `current_frame` call site only (`withhold=True`); history and animation
+frames render normally. Verified in the built bundle: line 462 (history) unflagged, line
+1489 (current frame) flagged.
+
+**2. Uploading a bundle needs `-r zip`, and never `-d`.** `kaggle datasets version`
+defaults to `--dir-mode skip`, which silently drops `src/` — the entire harness — and says
+so only in one line of stdout. Combined with `-d` (delete old versions) that removes the
+working bundle rather than shadowing it. Kaggle expands an uploaded archive server-side,
+so `-r zip` is what produces the per-file `src/ARC3-Inference/...` listing the good
+bundles have. Correct invocation, recorded because it was not recorded before:
+
+    kaggle datasets version -p /tmp/bundle-E -m "..." -r zip
+
+Arm E's dataset was broken and restored this way before the queue reached job 7.
