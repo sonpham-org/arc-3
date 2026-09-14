@@ -94,3 +94,15 @@ budget problem. Level 1 of bp35 is cheap for someone who knows what the verbs ar
   from the original arm list, still unrun.
 - Level 9's 530-action grind is a caution for the arm-F commit-prompt hypothesis: on at
   least one level of one game, the winning human strategy *is* undirected volume.
+
+---
+
+## CORRECTION, 14-September-2026
+
+The claim above that ACTION7 is "pressed zero times" is wrong in its cause. The agent
+**does** attempt it — 22 call-shaped attempts across 12 bp35 passes — and every attempt is
+refused with `Unknown action at index 1: 'ACTION7'`, because `action_names.py` never maps
+ACTION7 to an engine action while still listing it in `valid_actions`. The committed-action
+count of zero is the harness refusing the call, not the agent declining to try.
+
+See `2026-09-14-action7-is-unexecutable.md`.
