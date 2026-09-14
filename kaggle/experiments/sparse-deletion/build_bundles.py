@@ -156,7 +156,7 @@ def _ascii_frame_view_payload(
             "step": view.step,
             "level": view.level,
             "shape": [int(view.shape[0]), int(view.shape[1])],
-            "grid": [],
+            "grid": None,
         }
     return {
         "ascii": view.ascii,
@@ -181,8 +181,11 @@ WITHHOLD_CALLSITE_NEW = (
     "            )"
 )
 
-# With grid == [] the sandbox would hand segment_layer an empty grid and return an empty
+# With an empty grid the sandbox would hand segment_layer nothing and return an empty
 # structure, which reads as "the board is empty" rather than "the board is withheld".
+# grid is None rather than [] so a withheld board is unambiguous even to code that pokes
+# the private _grid attribute (Sherlock, 13-Sep-2026); the guard tests `is None` so a
+# genuinely empty board could never be mistaken for a withheld one.
 SANDBOX_OLD = '''        @property
         def segmentation(self):
             if self._segmentation is None:
@@ -191,7 +194,7 @@ SANDBOX_OLD = '''        @property
 
 SANDBOX_NEW = '''        @property
         def segmentation(self):
-            if not self._grid:
+            if self._grid is None:
                 return self.ascii
             if self._segmentation is None:
                 self._segmentation = segment_layer(self._grid, COLOR_CHARS)
@@ -279,6 +282,20 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
         present = needle in haystack
         if (arm == probe_arm) != present:
             raise SystemExit(f"{arm}: arm-{probe_arm} marker present={present}")
+
+    if arm == "E":
+        # The withhold is three coupled edits across two files; a partial apply would
+        # leak the board or render it as empty rather than withheld.
+        for needle, haystack, label in (
+            ('"grid": None', ta_text, "withheld payload grid is None"),
+            ("withhold=True", ta_text, "current_frame call site requests withholding"),
+            ("if self._grid is None:", (out / SANDBOX).read_text(), "sandbox withhold guard"),
+            ("withheld for the current frame", text, "prompt names the withholding"),
+        ):
+            if needle not in haystack:
+                raise SystemExit(f"E: {label} missing ({needle!r})")
+        if "_ascii_frame_view_payload(refreshed_frame)" in ta_text:
+            raise SystemExit("E: an ungated current_frame payload call site remains")
 
     if arm == "D":
         # The whole arm is the symbol set, and the legend must be derived from it rather

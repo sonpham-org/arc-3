@@ -16,6 +16,7 @@ below, so control and variant can never drift in anything except the bundle + la
 
 import copy
 import json
+import re
 import pathlib
 import sys
 
@@ -63,9 +64,14 @@ ARM_MARKERS = {
     "C-mechanics": "window onto a larger world",
     "D-glyph-consonants": "H=light gray",
     "E-image-first-turn": "On the first turn only,",
-    "F-commit-hypothesis": "Exploration is for building one hypothesis",
+    "F-commit-prompt": "Exploration is for building one hypothesis",
 }
 GLYPH_CHARS = "WHGDCBMKRTSYFVZX"
+
+def title_slug(title: str) -> str:
+    """Kaggle's own slug rule: lowercase, non-alphanumerics to single hyphens."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")
+
 
 # job id -> (title, kernel slug, bundle dataset, games, n_passes, per-game s, budget s)
 ARMS = {
@@ -73,25 +79,31 @@ ARMS = {
                    BOTTOM_SEVEN[:2], 1, 600, 5400, "A-control"),
     "job1-control": ("ARC3 job1 control", "arc3-job1-control", CONTROL_BUNDLE,
                      BOTTOM_SEVEN, 4, 1980, 7920, "A-control"),
-    "job2-sparse": ("ARC3 job2 sparse deletion", "arc3-job2-sparse", SPARSE_BUNDLE,
+    "job2-sparse": ("ARC3 job2 sparse deletion", "arc3-job2-sparse-deletion", SPARSE_BUNDLE,
                     BOTTOM_SEVEN, 4, 1980, 7920, "B-sparse-deletion"),
-    "job3-null": ("ARC3 job3 null check", "arc3-job3-null", SPARSE_BUNDLE,
+    "job3-null": ("ARC3 job3 null check", "arc3-job3-null-check", SPARSE_BUNDLE,
                   NULL_CHECK, 4, 1980, 7920, "B-sparse-deletion"),
     # The null check needs its own control on the SAME lanes, or "these games did not
     # move" has no baseline to move against. Same cap as job3 so the pair is symmetric.
     "job5-nullcontrol": ("ARC3 job5 null control", "arc3-job5-null-control",
                          CONTROL_BUNDLE, NULL_CHECK, 4, 1980, 7920, "A-control"),
     # Stacked on B: deletion clears the false priors, C lifts the false ceiling.
-    "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics",
+    "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics-possibility",
                        MECHANICS_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "C-mechanics"),
     # Also stacked on B, one variable each, same seven lanes and the same 1980s cap so
     # every one of them is directly comparable to job 2.
-    "job6-glyphs": ("ARC3 job6 glyph consonants", "arc3-job6-glyphs",
+    # NOT a pure visual-glyph swap: the consonant set retokenizes the board (measured on
+    # job 1 pass-0 boards, -0.8% overall, ls20 -6.4%, wa30 +0.8%), so it moves context and
+    # runtime budget too. Report it as an encoding intervention (Sherlock, 13-Sep-2026).
+    "job6-glyphs": ("ARC3 job6 glyph consonants", "arc3-job6-glyph-consonants",
                     GLYPH_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "D-glyph-consonants"),
-    "job7-imagefirst": ("ARC3 job7 image first turn", "arc3-job7-imagefirst",
+    "job7-imagefirst": ("ARC3 job7 image first turn", "arc3-job7-image-first-turn",
                         IMAGEFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "E-image-first-turn"),
-    "job8-commit": ("ARC3 job8 commit hypothesis", "arc3-job8-commit",
-                    COMMIT_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "F-commit-hypothesis"),
+    # Prompt-only self-regulation. The harness enforces NO action cap of any kind here,
+    # so this is "does telling it to commit change behavior", not commit-and-execute as a
+    # mechanism (Sherlock, 13-Sep-2026). A bounded-plan mechanism would be a separate arm.
+    "job8-commit": ("ARC3 job8 commit prompt", "arc3-job8-commit-prompt",
+                    COMMIT_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "F-commit-prompt"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
@@ -234,7 +246,15 @@ def patch_run_cell(src, n_lanes):
 
 
 def build(job):
-    title, slug, bundle, games, n_passes, per_game_s, budget_s, arm = ARMS[job]
+    title, _declared_slug, bundle, games, n_passes, per_game_s, budget_s, arm = ARMS[job]
+    # Kaggle derives the kernel slug from the TITLE and ignores a metadata id that does not
+    # match it -- silently, with only a warning on push. job7 pushed as
+    # arc3-job7-imagefirst and landed at arc3-job7-image-first-turn, so every later status
+    # and output call looked up a kernel that does not exist (13-Sep-2026). Derive the slug
+    # from the title so the id we record is the id Kaggle will use.
+    slug = title_slug(title)
+    if slug != _declared_slug:
+        print(f"{job}: slug {_declared_slug!r} -> {slug!r} (derived from title)")
     nb = copy.deepcopy(json.loads(BASE_NB.read_text()))
     cells = nb["cells"]
 
