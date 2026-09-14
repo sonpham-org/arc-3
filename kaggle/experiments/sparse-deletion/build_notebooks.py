@@ -23,6 +23,11 @@ import sys
 HERE = pathlib.Path(__file__).parent
 BASE_NB = pathlib.Path("/tmp/duckbase/duck-qwen3-8-anim-base.ipynb")
 
+# Imported, never restated: build_bundles.py owns the glyph table, and a second copy
+# here is exactly how job 6 came to assert a set the bundle no longer shipped.
+sys.path.insert(0, str(HERE))
+from build_bundles import GLYPH_CHARS, GLYPH_COLORS  # noqa: E402
+
 # The seven lowest-scoring public games (mean score across the 163 FlashNext runs).
 # Exactly 7 lanes, which is the run shape Son's 132-minute job is built around.
 BOTTOM_SEVEN = (
@@ -53,6 +58,7 @@ MECHANICS_BUNDLE = "markbarney/taaf-duck-mechanics-possibility"
 GLYPH_BUNDLE = "markbarney/taaf-duck-glyph-consonants"
 IMAGEFIRST_BUNDLE = "markbarney/taaf-duck-image-first-turn"
 COMMIT_BUNDLE = "markbarney/taaf-duck-commit-hypothesis"
+VISUALFIRST_BUNDLE = "markbarney/taaf-duck-visual-first"
 
 # Strings the control prompt asserts and the deletion arm asserts are gone.
 DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
@@ -62,11 +68,11 @@ DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
 # a new arm cannot be added without declaring what proves it ran.
 ARM_MARKERS = {
     "C-mechanics": "window onto a larger world",
-    "D-glyph-consonants": "H=light gray",
+    "D-glyph-consonants": f"{GLYPH_COLORS[0][1]}=white",
     "E-image-first-turn": "On the first turn only,",
     "F-commit-prompt": "Exploration is for building one hypothesis",
+    "G-visual-first": "measuring instruments, not the board",
 }
-GLYPH_CHARS = "WHGDCBMKRTSYFVZX"
 
 def title_slug(title: str) -> str:
     """Kaggle's own slug rule: lowercase, non-alphanumerics to single hyphens."""
@@ -104,6 +110,11 @@ ARMS = {
     # mechanism (Sherlock, 13-Sep-2026). A bounded-plan mechanism would be a separate arm.
     "job8-commit": ("ARC3 job8 commit prompt", "arc3-job8-commit-prompt",
                     COMMIT_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "F-commit-prompt"),
+    # Arm G keeps the text board available from the first turn and only changes which
+    # view the prompt calls primary. Distinct from E, which withholds text for one turn,
+    # and from D, which changes the alphabet (Sherlock's separation rule, 13-Sep-2026).
+    "job9-visualfirst": ("ARC3 job9 visual first", "arc3-job9-visual-first",
+                         VISUALFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "G-visual-first"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]

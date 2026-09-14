@@ -91,16 +91,19 @@ COMMIT_BLOCK = (
 
 # Arm D: the 16 board glyphs. The control set is "WwgGcBMPRbSYOrNp" -- six case-pairs
 # (W/w, g/G, B/b, R/r, N/n-ish, P/p) that are the same letter in two cases, which is the
-# confusable part. Replacement is 16 distinct consonant capitals drawn from the Boss's
-# allowed set QWRTYSDFGHKZXCVBM (Q dropped -- 17 letters, 16 slots). Initial-letter
-# mnemonics are kept wherever the initial is free (W/G/D/C/B/M/R/S/Y); the remaining six
-# colors take leftovers in color order.
-GLYPH_COLORS = (
-    ("white", "W"), ("light gray", "H"), ("gray", "G"), ("dark gray", "D"),
-    ("charcoal", "C"), ("black", "B"), ("magenta", "M"), ("pink", "K"),
-    ("red", "R"), ("blue", "T"), ("sky blue", "S"), ("yellow", "Y"),
-    ("orange", "F"), ("dark red", "V"), ("light green", "Z"), ("purple", "X"),
+# confusable part. Replacement is the Boss's own allowed set QWRTYSDFGHKZXCVBM in his own
+# order, first 16 letters, assigned to colors 0..15 in index order. NO MNEMONIC -- the
+# characters carry no meaning and are not supposed to; the legend in the system prompt is
+# what tells the model the mapping. Boss directive 13-Sep-2026: "forget the fucking
+# mnemonic, they can just be literally whatever." Keeping them arbitrary also removes the
+# confound in the last build, where seven of sixteen were arbitrary and nine were not.
+_BOSS_GLYPHS = "QWRTYSDFGHKZXCVBM"[:16]
+_COLOR_NAMES = (
+    "white", "light gray", "gray", "dark gray", "charcoal", "black",
+    "magenta", "pink", "red", "blue", "sky blue", "yellow",
+    "orange", "dark red", "light green", "purple",
 )
+GLYPH_COLORS = tuple(zip(_COLOR_NAMES, _BOSS_GLYPHS))
 GLYPH_CHARS = "".join(char for _, char in GLYPH_COLORS)
 
 GRID_UTILS_OLD = '''ARC_COLOR_CHARS = "WwgGcBMPRbSYOrNp"
@@ -207,6 +210,42 @@ WITHHOLD_PROMPT_BLOCK = (
     'text views are available from the next turn on.\\n"\n'
 )
 
+
+# Arm G: make the IMAGE the default view and demote both text renderings to measuring
+# instruments. Boss directive 13-Sep-2026: the worry is the model fixates on the text board
+# and ignores the perfectly good picture it already has, then burns the budget doing
+# arithmetic on a grid whose answer was obvious at a glance. Unlike arm E this withholds
+# nothing -- ascii and segmentation stay available every turn; only the instruction about
+# WHEN to reach for them changes. The two shipped lines below both assert segmentation is
+# the primary view, which is the assertion under test, so both are replaced, not appended to.
+IMAGE_FIRST_OLD_1 = (
+    "    \"- The raw numeric grid is intentionally not exposed. Use `current_frame.segmentation` "
+    "as your primary view of the board -- objects, colors, shapes, containment, adjacency, and "
+    "cross-frame object hashes. Use `current_frame.ascii` only to read a small, specific region; "
+    "do not scan the whole board with it.\\n\"\n"
+)
+IMAGE_FIRST_NEW_1 = (
+    "    \"- The grid image in the user message is your primary view of the board. Look at it "
+    "first and read what the board is doing from it. `current_frame.segmentation` and "
+    "`current_frame.ascii` are measuring instruments, not the board: reach for them when you "
+    "need an exact cell-by-cell or line-and-grid measurement the picture cannot settle -- "
+    "coordinates, pixel counts, alignment, whether two things are adjacent. Most of the time a "
+    "glance at the image is enough to tell whether your hypothesis is holding. The raw numeric "
+    "grid is intentionally not exposed.\\n\"\n"
+)
+IMAGE_FIRST_OLD_2 = (
+    "    \"- Use `current_frame.segmentation` as your primary view of the board -- objects, "
+    "colors, containment, adjacency, and cross-frame object hashes.\\n\"\n"
+    "    \"- Use `current_frame.ascii` only to read a small, specific region of the board when "
+    "`segmentation` is not enough; never use it to scan or summarize the whole board.\\n\"\n"
+)
+IMAGE_FIRST_NEW_2 = (
+    "    \"- Read the board off the image first. Use `current_frame.segmentation` and "
+    "`current_frame.ascii` only when you need an exact measurement the image cannot settle.\\n\"\n"
+)
+IMAGE_FIRST = ((IMAGE_FIRST_OLD_1, IMAGE_FIRST_NEW_1), (IMAGE_FIRST_OLD_2, IMAGE_FIRST_NEW_2))
+
+
 ANCHOR = '    f"- Color legend: {ARC_COLOR_LEGEND}.\\n"\n'
 
 
@@ -229,7 +268,7 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
             raise SystemExit(f"{arm}: deletion anchor missing: {old[:60]!r}")
         text = text.replace(old, new, 1)
 
-    if arm in ("C", "D", "E", "F") and ANCHOR not in text:
+    if arm in ("C", "D", "E", "F", "G") and ANCHOR not in text:
         raise SystemExit(f"{arm}: color-legend anchor missing")
 
     if arm == "C":
@@ -237,6 +276,12 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
 
     if arm == "F":
         text = text.replace(ANCHOR, ANCHOR + COMMIT_BLOCK, 1)
+
+    if arm == "G":
+        for old, new in IMAGE_FIRST:
+            if old not in text:
+                raise SystemExit(f"G: image-first anchor missing: {old[:70]!r}")
+            text = text.replace(old, new, 1)
 
     if arm == "D":
         gu_path = out / GRID_UTILS
@@ -277,6 +322,7 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
         "F": ("Exploration is for building one hypothesis", text),
         "E": ("_WITHHOLD_TEXT_BOARD_UNTIL_STEP", ta_text),
         "D": ("ARC_COLOR_NAMES", (out / GRID_UTILS).read_text()),
+        "G": ("measuring instruments, not the board", text),
     }
     for probe_arm, (needle, haystack) in exclusive.items():
         present = needle in haystack
@@ -320,5 +366,5 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
 
 if __name__ == "__main__":
     control = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/armctl")
-    for arm in ("B", "C", "D", "E", "F"):
+    for arm in ("B", "C", "D", "E", "F", "G"):
         build(control, pathlib.Path(f"/tmp/bundle-{arm}"), arm)
