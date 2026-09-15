@@ -140,9 +140,11 @@ that. Two things step 4 should know before it starts on this run:
 - The level-5 `ACTION5` presses are not a single decision step. The interesting step is the
   **first** one, where the expectation is refuted; the remaining presses to reach full extent
   are execution, not decision.
-- `segment.boundary_reason` still has no value for "a held part changed extent", and it needs
-  one if this run is segmented. That is the same gap already flagged for "recording starts
-  here".
+- ~~`segment.boundary_reason` still has no value for "a held part changed extent", and it needs
+  one if this run is segmented.~~ **Both closed 15-Sep-2026:** `extent_change` and
+  `episode_start` were added, and a third value, `level_advance`, followed once the segmenter
+  ran on this recording's six level transitions. See
+  [SCHEMA.md — Boundary reasons](../../datasets/decision-steps/SCHEMA.md#boundary-reasons).
 
 ## 7. Method note
 

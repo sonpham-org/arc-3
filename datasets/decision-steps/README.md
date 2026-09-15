@@ -92,9 +92,16 @@ unfinished record from being mistaken for a finished one, and each has its own t
 3. the pattern is gitignored, so it cannot be committed by accident.
 
 Where an episode *starts* is an editorial choice and is passed in as `--rows`; what the tool
-derives is where the cuts fall inside that window and what each cut's reason is. One gap is
-refused rather than papered over: `boundary_reason` has no value for a level transition, so a
-window spanning one is rejected with the row to split at.
+derives is where the cuts fall inside that window and what each cut's reason is.
+
+A window spanning a level transition used to be **refused** outright, because
+`boundary_reason` had no value for one. It has one as of 15-Sep-2026 — `level_advance`, cut when
+`levels_completed` rises — and the refusal turned out to be masking two wrong answers rather
+than one: of the 40 level transitions in the six recordings on disk, the frame-delta heuristics
+would have called 25 of them `extent_change` and seen no boundary at all on the other 15. What
+is still refused is a level count that **falls**, which is unobserved on every recording and has
+no reading the tool trusts. See
+[Why `level_advance` exists](SCHEMA.md#why-level_advance-exists-and-what-refusing-it-was-hiding).
 
 ## Running the validator
 

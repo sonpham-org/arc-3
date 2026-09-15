@@ -39,7 +39,7 @@ teach diagnosis instead of imitation.
 
 | field | type | required | notes |
 |---|---|---|---|
-| `schema_version` | `"0.1"` | yes | Constant. Any change to `schema.json` **after v0 lands on main** bumps it; edits made while the defining PR is still open are part of defining `0.1`. |
+| `schema_version` | `"0.1"` | yes | Constant. **Adding a value to a closed enum does not bump it** — every record already written stays valid, and `validate.py` rejects an unknown value either way, so a reader pinned to `0.1` cannot mis-read a `0.1` record. Adding, removing or retyping a **field** does bump it. See [Why `0.1` survives an enum widening](#why-01-survives-an-enum-widening). |
 | `tier` | `"gold"` \| `"silver"` \| `"negative"` | yes | See [Tiers](#tiers). |
 | `game_id` | non-empty string | yes | Opaque id, e.g. `bp35-0a0ad940`. Never a readable title. |
 | `source.kind` | non-empty string | yes | Provenance of the trajectory. Only `"human_replay"` is pinned by the plan. |
@@ -129,6 +129,7 @@ segment vocabulary cannot drift silently between annotators.
 | value | cut here when |
 |---|---|
 | `episode_start` | the episode opens here and no state change precedes it — the recording begins, or the first row of a slice taken mid-recording. |
+| `level_advance` | the previous row completed a level — `levels_completed` rose. |
 | `camera_shift` | the viewport moved. |
 | `bridge_edit` | a bridge segment was placed or removed (bp35). |
 | `ghost_construction` | a ghost was constructed (g50t). |
@@ -136,6 +137,31 @@ segment vocabulary cannot drift silently between annotators.
 | `death` | the run ended and the board went to `GAME_OVER`. |
 | `reset` | `RESET` was issued. |
 | `undo` | `ACTION7` was issued. |
+
+### Why `level_advance` exists, and what refusing it was hiding
+
+Added 15-Sep-2026. Until then a level transition had **no** value, and `tools/segment.py`
+refused any window that spanned one rather than stretching `episode_start` (defined as "no
+state change precedes it") over a real state change. The refusal was honest but it was masking
+two wrong answers, not one. Measured across the **40 level transitions** in the six live-build
+recordings on disk (bp35 9, g50t 7, cd82 6, cn04 6, dc22 6, ft09 6):
+
+- **25** of the 40 would have been labelled **`extent_change`** — a cn04 word about a held part
+  growing, applied to a whole new level being laid out. Wrong, and wrong in a way that reads
+  plausible.
+- **15** would have carried **no boundary at all**, because the frame delta did not clear the
+  whole-board threshold. A segment would have run straight through a level change.
+
+`level_advance` is measured, not read: `levels_completed` on the row against the last settled
+row. Every one of the 40 is **+1**; a fall is unobserved and `segment.py` refuses it rather
+than labelling it, because `RESET` restores a level's opening snapshot and does not un-complete
+a level.
+
+**Where it sits in the segmenter's priority order is a decision, not a measurement.** It is
+below `death`/`reset`/`undo` and above `camera_shift`/`extent_change`. All 40 transition rows
+carry `ACTION1`–`ACTION6` with state `NOT_FINISHED` or `WIN` — never `RESET`, never `ACTION7`,
+never `GAME_OVER` — so the ordering against the hard events is unfalsified *and* unexercised.
+Flagged in `tools/segment.py` rule 6 the same way the `row`/`col` reading of `args` is.
 
 ### Why `extent_change` exists
 
@@ -173,10 +199,36 @@ change. A reader of that record alone cannot tell a fatal step from an ordinary 
 change the plan's §6 does not name, and post-death records are new as of this episode. Flagged
 for the plan owner, alongside the per-game enum limit below.
 
+### Known limit — `level` is a count, and multi-level episodes now show it
+
+`level` is `levels_completed`, so during play of the *N*th level it reads *N*−1: `"level": 5`
+means the 6th. Until `level_advance` existed no episode could span a level boundary, so the
+ambiguity never appeared inside one file. It does now — the records before a `level_advance`
+cut read one lower than the records after it, correctly, and it still looks like an off-by-one
+to a reader who has not read this line. **Not fixed here**: renaming the field or switching it
+to a 1-based index is a field change and would bump `schema_version`. Flagged with the other
+two.
+
+### Why `0.1` survives an enum widening
+
+`schema_version` is a `const`, so bumping it invalidates every record already written. The
+policy, stated because it was previously implied and then quietly relied on:
+
+- **Adding a value to a closed enum does not bump.** No existing record becomes invalid, and
+  `validate.py` rejects an unknown value under either version — a reader pinned to `0.1` cannot
+  be handed a `0.1` record it mis-reads. Commit `73f512415` (`episode_start`, `extent_change`)
+  set the precedent; `level_advance` follows it.
+- **Adding, removing or retyping a field does bump**, because a `0.1` reader would then be
+  wrong about the record's shape.
+- **`0.2` is reserved** for the per-game `boundary_reason` redesign named below, so it is not
+  spent on an enum value.
+
 ### Known limit — per-game values do not scale
 
 `bridge_edit` and `ghost_construction` are game-specific, and `extent_change` was added
-because a third game needed a third word. That pattern does not survive 25 games: it ends in
+because a third game needed a third word. (`episode_start` and `level_advance` are not part
+of this problem — both are universal and measured from `levels_completed`, not from a
+mechanic.) That pattern does not survive 25 games: it ends in
 one enum value per mechanic per game. The plan's §5 step 4 named those two deliberately, so
 this is **flagged, not redesigned** — a v0.2 concern, and the right shape is probably a
 generic reason plus a per-game qualifier field.

@@ -136,7 +136,10 @@ game source, and which are not.
 **Derivable — pass A fills these, measured, never guessed:**
 
 - `segment.boundary_reason` and segment cuts — `death` from a `state` flip to `GAME_OVER`,
-  `reset` from a `RESET` row, `undo` from `ACTION7`, level changes from `levels_completed`,
+  `reset` from a `RESET` row, `undo` from `ACTION7`, `level_advance` from a rise in
+  `levels_completed` (added 15-Sep-2026; a window spanning a level change was refused before
+  that, and the refusal was hiding 25 transitions the heuristics would have mislabelled
+  `extent_change` and 15 they would have missed entirely),
   `camera_shift` and `extent_change` from frame deltas (a painted-cell count that changes is
   an extent change; a whole-board delta with a conserved histogram is a camera shift).
 - `frame_ref` — including the rule that it must never point at a row whose frame list is
@@ -273,13 +276,20 @@ is not a training set anyone should cite as one.
 
 ## 6. Open schema questions, carried not closed
 
-Both are flagged in `datasets/decision-steps/SCHEMA.md` and neither is settled here:
+All are flagged in `datasets/decision-steps/SCHEMA.md` and none is settled here:
 
 1. `last_result` has only `board_changed` and `level_changed`, so it cannot express "that
    action ended the run". Post-death records currently read like ordinary steps.
 2. `boundary_reason` carries per-game values (`bridge_edit`, `ghost_construction`,
    `extent_change`). That does not survive 25 games; the likely shape is a generic reason plus
    a per-game qualifier.
+3. `level` is `levels_completed`, a count, so during play of the *N*th level it reads *N*−1.
+   Latent until now; visible inside any episode that spans a `level_advance` cut.
 
-Pass D will hit both at volume. Whichever bites first gets a schema PR of its own rather than
-a quiet widening mid-grind.
+**Closed since this plan was written:** `boundary_reason` had no value for a level transition,
+so the segmenter refused any window spanning one. `level_advance` was added 15-Sep-2026 and the
+refusal is gone — a *falling* level count is still refused, being unobserved on every recording
+on disk.
+
+Pass D will hit the rest at volume. Whichever bites first gets a schema change of its own
+rather than a quiet widening mid-grind.

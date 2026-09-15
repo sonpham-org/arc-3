@@ -455,6 +455,7 @@ class BoundaryReasonTests(unittest.TestCase):
 
     EXPECTED = [
         "episode_start",
+        "level_advance",
         "camera_shift",
         "bridge_edit",
         "ghost_construction",

@@ -1,6 +1,6 @@
 """
 Author: Claude Opus 5 (Bubba)
-Date: 15-September-2026
+Date: 15-September-2026 (LevelAdvanceTests / LevelFallRefusalTests, same day)
 PURPOSE: Acceptance test for pass A (tools/segment.py). The binding criterion from
 docs/plans/2026-09-15-step4-segment-and-label-execution.md section 3 is that the segmenter
 reproduces the segment cuts, frame refs and outcome.observed numbers of the four hand-built
@@ -230,20 +230,108 @@ class EmptyFrameRowTests(RequiresRecording):
                 self.assertIsNone(segment.boundary_event(self.rows, empty_row))
 
 
-class LevelChangeRefusalTests(RequiresRecording):
-    """boundary_reason has no value for a level transition, so segment.py refuses rather than
-    stretching `episode_start` over a state change."""
+# bp35's nine level transitions, read off the recording. Row -> (levels_completed before,
+# after). These are the rows that used to make segment.py refuse the whole window.
+BP35_LEVEL_TRANSITIONS = {
+    17: (0, 1), 59: (1, 2), 107: (2, 3), 148: (3, 4), 179: (4, 5),
+    265: (5, 6), 353: (6, 7), 497: (7, 8), 1029: (8, 9),
+}
 
-    def test_a_window_spanning_a_level_change_is_refused(self):
-        result = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "tools" / "segment.py"),
-             "--game-id", GAME_ID, "--guid", GUID, "--rows", "176:182",
-             "--segment-prefix", "bp35-l4", "--stdout"],
-            capture_output=True, text=True, cwd=REPO_ROOT,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("spans a level change", result.stderr)
-        self.assertIn("boundary_reason has no value", result.stderr)
+
+class LevelAdvanceTests(RequiresRecording):
+    """Rule 6. A level transition is `level_advance`; it outranks the frame-delta heuristics,
+    which would otherwise call most of them `extent_change`; and a FALL is refused.
+
+    Window 176:182 is the one that used to be rejected outright - the transition at row 179
+    sits inside it."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # frames are only needed by the heuristics, which level_advance short-circuits, so a
+        # one-row frame window is enough to walk the whole 1,030-row recording cheaply.
+        cls.rows = segment.load_rows(RECORDING, 0, 0)
+
+    def test_every_level_transition_in_the_recording_is_level_advance(self):
+        for row, (before, after) in BP35_LEVEL_TRANSITIONS.items():
+            with self.subTest(row=row):
+                previous = segment.previous_settled(self.rows, row)
+                self.assertEqual(
+                    (self.rows[previous].levels_completed, self.rows[row].levels_completed),
+                    (before, after),
+                    "the recording changed; re-derive the transition table",
+                )
+                self.assertEqual(segment.boundary_event(self.rows, row), "level_advance")
+
+    def test_no_other_row_is_level_advance(self):
+        """The guard against the rule firing on rows it has no business on."""
+        for row in range(len(self.rows)):
+            if row in BP35_LEVEL_TRANSITIONS:
+                continue
+            if segment.boundary_event(self.rows, row) == "level_advance":
+                self.fail(f"row {row} is not a level transition but was labelled level_advance")
+
+    def test_the_priority_order_against_the_hard_events_is_unexercised(self):
+        """SCHEMA.md and rule 6 both state that no observed transition row carries RESET,
+        ACTION7 or GAME_OVER, which is why the ordering is a decision rather than a
+        measurement. If this ever fails, that claim is stale and the order needs deciding on
+        evidence."""
+        for row in BP35_LEVEL_TRANSITIONS:
+            with self.subTest(row=row):
+                self.assertNotIn(self.rows[row].action, ("RESET", "ACTION7"))
+                self.assertNotEqual(self.rows[row].state, "GAME_OVER")
+
+    def test_a_window_spanning_a_level_change_is_cut_at_the_advance(self):
+        records = run_segmenter("176:182", prefix="bp35-l4")
+        by_row = {record["source"]["row_index"]: record for record in records}
+        self.assertEqual(sorted(by_row), list(range(176, 183)))
+        self.assertEqual(by_row[180]["segment"]["boundary_reason"], "level_advance")
+        self.assertNotEqual(by_row[179]["segment"]["id"], by_row[180]["segment"]["id"])
+        # every record after the cut shares that segment, and its reason
+        for row in (180, 181, 182):
+            self.assertEqual(by_row[row]["segment"]["id"], by_row[180]["segment"]["id"])
+            self.assertEqual(by_row[row]["segment"]["boundary_reason"], "level_advance")
+
+    def test_level_advance_beats_the_frame_delta_heuristics(self):
+        """Without rule 6's placement, 25 of the 40 transitions on disk read `extent_change`.
+        Row 179 is one of them: strip the level rise and the heuristic still fires."""
+        rows = segment.load_rows(RECORDING, 170, 185)
+        self.assertEqual(segment.boundary_event(rows, 179), "level_advance")
+        previous = segment.previous_settled(rows, 179)
+        rows[179].levels_completed = rows[previous].levels_completed
+        self.assertEqual(segment.boundary_event(rows, 179), "extent_change")
+
+
+class LevelFallRefusalTests(unittest.TestCase):
+    """A fall in levels_completed is unobserved in all 40 transitions on disk, so it is refused
+    rather than labelled. No recording needed - the case does not exist on disk, which is the
+    whole point, so it is built."""
+
+    @staticmethod
+    def _rows(levels: list[int]) -> list[segment.Row]:
+        return [
+            segment.Row(index=index, action="ACTION3", x=None, y=None, state="NOT_FINISHED",
+                        levels_completed=level, frame_count=1, frame=[[0]])
+            for index, level in enumerate(levels)
+        ]
+
+    def test_a_falling_level_count_is_refused(self):
+        rows = self._rows([3, 3, 2, 2])
+        with self.assertRaises(SystemExit) as caught:
+            segment.check_levels_monotonic(rows, 0, 3)
+        message = str(caught.exception)
+        self.assertIn("levels_completed FALLS at row 2", message)
+        self.assertIn("Refused rather than labelled", message)
+
+    def test_a_rising_level_count_is_not_refused(self):
+        """The same guard must not fire on the case it exists to allow."""
+        segment.check_levels_monotonic(self._rows([3, 3, 4, 4]), 0, 3)
+
+    def test_a_fall_before_the_window_is_caught_too(self):
+        """The row before the window can open the first segment, so it is in scope."""
+        rows = self._rows([5, 4, 4])
+        with self.assertRaises(SystemExit):
+            segment.check_levels_monotonic(rows, 1, 2)
 
 
 CN04_GAME = "cn04-2fe56bfb"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.13
 """
 Author: Claude Opus 5 (Bubba)
-Date: 15-September-2026
+Date: 15-September-2026 (rule 6, level_advance, same day)
 PURPOSE: Pass A of step 4 - cut one replay recording into candidate decision-step records with
 every DERIVABLE field measured from the recording plus the per-game dispatch table, and every
 judgment field deliberately absent. Reads
@@ -71,13 +71,34 @@ bp35-0a0ad940__c935ca1b-dfee-4be1-9574-bf4cc80c5b89__l5-death-undo-reset-00.json
    frame[-1] of the decision row. When the decision row's own frame list is empty there is no
    number and the text says so.
 
-A KNOWN GAP, DELIBERATELY NOT PAPERED OVER
-==========================================
-boundary_reason has no value for a level transition, although the plan's section 2 lists level
-changes as derivable. Rather than stretch `episode_start` (whose definition is "no state change
-precedes it") over a state change, this tool REFUSES a window that spans a level change and says
-which row to split at. Widening the enum is a schema PR, per SCHEMA.md's "flagged, not
-redesigned" discipline.
+6. A LEVEL TRANSITION IS `level_advance`, and it outranks the frame-delta heuristics. A row
+   whose levels_completed is higher than the last settled row's completed a level; the next
+   segment opens with `level_advance`. This closed a gap that was previously refused outright,
+   and the refusal was hiding two wrong answers rather than one: across the 40 transitions in
+   the six live-build recordings on disk, the frame-delta heuristics would have called 25 of
+   them `extent_change` - a cn04 word about a held part, not about a new level being laid out -
+   and would have seen no boundary at all on the other 15, letting a segment run straight
+   through a level change. Neither is survivable at volume.
+
+   WHERE IT SITS IN THE PRIORITY ORDER IS A DECISION, NOT A MEASUREMENT. It is below
+   death/reset/undo and above camera_shift/extent_change. Nothing observed ties: all 40
+   transition rows carry ACTION1-ACTION6 with state NOT_FINISHED or WIN, never RESET, never
+   ACTION7, never GAME_OVER. So the ordering against the hard events is unfalsified AND
+   unexercised - it is this tool's choice for a row that has never occurred, flagged the same
+   way the row/col reading of `args` is.
+
+   A FALL in levels_completed is refused, not labelled. It is unobserved in all 40 transitions,
+   and it should be impossible - RESET restores the level's opening snapshot, it does not
+   un-complete a level. If one ever appears, the row schema means something other than what
+   this tool reads, and that is worth stopping for.
+
+A KNOWN READABILITY GAP THIS CHANGE MAKES VISIBLE
+=================================================
+`level` is levels_completed, a COUNT, so during play of the Nth level it reads N-1. Until
+level_advance existed no episode could span a level boundary, so the ambiguity never showed up
+inside one file. Now a multi-level episode carries it in plain sight: the records before the cut
+read one lower than the records after. Unchanged here - it is flagged in SCHEMA.md and it is a
+schema question, not a segmenter bug.
 """
 
 from __future__ import annotations
@@ -198,9 +219,21 @@ def previous_settled(rows: list[Row], index: int) -> int | None:
     return None
 
 
+def level_delta(rows: list[Row], previous: int, index: int) -> int | None:
+    """levels_completed on settled row `index` against settled row `previous`, or None when
+    either row does not report it. Callers must pass settled rows: a degenerate row reports 0
+    regardless of the real level."""
+    before, after = rows[previous].levels_completed, rows[index].levels_completed
+    if before is None or after is None:
+        return None
+    return after - before
+
+
 def boundary_event(rows: list[Row], index: int) -> str | None:
-    """Rules 2 and 3. Returns the boundary_reason this row's event would give the NEXT segment,
-    or None when the row is not a boundary. Priority is death > reset > undo > frame deltas."""
+    """Rules 2, 3 and 6. Returns the boundary_reason this row's event would give the NEXT
+    segment, or None when the row is not a boundary. Priority is
+    death > reset > undo > level_advance > frame deltas; rule 6 records that the placement of
+    level_advance in that order is a decision no observed row exercises."""
     row = rows[index]
     if is_degenerate(row):
         return None  # rule 3: no frames emitted, so no state change, so no boundary
@@ -215,6 +248,11 @@ def boundary_event(rows: list[Row], index: int) -> str | None:
 
     if previous is None:
         return None
+
+    delta = level_delta(rows, previous, index)
+    if delta is not None and delta > 0:
+        return "level_advance"
+
     changed = cells_changed(rows[previous], row)
     if changed is None:
         return None
@@ -229,20 +267,24 @@ def boundary_event(rows: list[Row], index: int) -> str | None:
     return None
 
 
-def check_no_level_change(rows: list[Row], start: int, end: int) -> None:
-    """The deliberate refusal documented in the module docstring."""
+def check_levels_monotonic(rows: list[Row], start: int, end: int) -> None:
+    """Rule 6's refusal. A RISE in levels_completed is labelled `level_advance`; a FALL is
+    refused, because it is unobserved in all 40 transitions on disk and RESET restores a level's
+    opening snapshot rather than un-completing it. The window before the first row is scanned
+    too, since that row can open the first segment."""
     previous = previous_settled(rows, start)
     for index in range(start, end + 1):
         if is_degenerate(rows[index]):
             continue
-        if previous is not None and rows[index].levels_completed != rows[previous].levels_completed:
+        if previous is not None and (level_delta(rows, previous, index) or 0) < 0:
             raise SystemExit(
-                f"segment.py: window {start}:{end} spans a level change at row {index} "
-                f"(levels_completed {rows[previous].levels_completed} -> "
-                f"{rows[index].levels_completed}).\n"
-                f"  boundary_reason has no value for a level transition (see "
-                f"datasets/decision-steps/SCHEMA.md), so this tool will not label the cut.\n"
-                f"  Split the window: --rows {start}:{index - 1} and --rows {index}:{end}."
+                f"segment.py: levels_completed FALLS at row {index} "
+                f"(row {previous}: {rows[previous].levels_completed} -> row {index}: "
+                f"{rows[index].levels_completed}), which is unobserved in every recording on "
+                f"disk.\n"
+                f"  A rise is `level_advance`; a fall has no reading this tool trusts, because "
+                f"RESET restores a level's opening snapshot and does not un-complete a level.\n"
+                f"  Refused rather than labelled: check the recording before segmenting it."
             )
         previous = index
 
@@ -441,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"segment.py: --rows {args.rows} runs past the recording, which has {len(rows)} rows"
         )
-    check_no_level_change(rows, start, end)
+    check_levels_monotonic(rows, start, end)
 
     records = []
     for ordinal, (indices, reason) in enumerate(cut_segments(rows, start, end)):

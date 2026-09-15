@@ -36,7 +36,7 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
 
-**What exists right now.** 81 tests. 273 human replay guids inventoried across two manifests
+**What exists right now.** 88 tests. 273 human replay guids inventoried across two manifests
 that are deliberately not merged. 6 recordings on disk plus 15 for as66. **5 labelled
 records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
@@ -50,16 +50,84 @@ constraint. Execution plan, with the selection rule and the five passes:
 
 **Open questions carried, not closed.** (1) `last_result` cannot express "that action ended
 the run", so post-death records read like ordinary steps. (2) `boundary_reason` carries
-per-game values, which will not survive 25 games. (3) `boundary_reason` has no value for a
-**level transition**, so the segmenter refuses any window that spans one rather than stretching
-`episode_start` over a real state change. (4) `level` is `levels_completed`, a count — during
-play of the Nth level it reads N−1, so `"level": 5` means the 6th. All four are flagged in
-`SCHEMA.md` or the tool docstrings; none has been quietly widened.
+per-game values, which will not survive 25 games. (3) `level` is `levels_completed`, a count —
+during play of the Nth level it reads N−1, so `"level": 5` means the 6th, and an episode
+spanning a `level_advance` cut now shows it. All three are flagged in `SCHEMA.md` or the tool
+docstrings; none has been quietly widened.
+
+**Closed since the last entry.** `boundary_reason` had no value for a level transition and the
+segmenter refused any window spanning one. `level_advance` closed it — see the entry directly
+below, including what the refusal was hiding.
 
 **Next.** Passes C (pull the selected recordings), D (annotate, one agent per game) and E (the
 adversarial falsification gate) of the step-4 plan. E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
+
+---
+
+## 2026-09-15 (latest)
+
+### `boundary_reason` gets a value for a level transition: `level_advance`
+
+Committed direct to `main`. Passes A and B shipped with the level-transition gap **refused**
+rather than papered over: `boundary_reason` had no value for one, so `tools/segment.py` rejected
+any `--rows` window that spanned a level change and named the row to split at. That was the
+honest move at the time. It was also hiding two wrong answers, not one.
+
+**What the refusal was hiding, measured on the 40 level transitions in the six live-build
+recordings on disk** (bp35 9, g50t 7, cd82 6, cn04 6, dc22 6, ft09 6):
+
+| what the segmenter would have said | count |
+|---|---|
+| `extent_change` — a cn04 word about a held part growing, applied to a whole new level | **25** |
+| nothing at all — no boundary, a segment running straight through a level change | **15** |
+
+So the choice was never "refuse or label correctly"; it was "refuse, or ship 25 plausible-looking
+lies and 15 silent misses".
+
+**The fix.**
+
+- **`schema.json`** — `level_advance` added to the `boundary_reason` enum. `enum` is already in
+  `validate.py`'s supported-keyword audit (`validate.py:49`), so this adds **zero new evaluator
+  surface**, the same discipline the turn-0 fix and the dotted `frame_ref.field` followed.
+- **`tools/segment.py` rule 6** — a rise in `levels_completed` on a settled row is
+  `level_advance`, and it **outranks** the frame-delta heuristics. All 40 transitions now label
+  correctly; nothing else on the 1,030-row bp35 recording is labelled `level_advance`, and there
+  is a test that walks every row to prove it.
+- **A falling level count is still refused.** Unobserved in all 40 transitions, and it should be
+  impossible — `RESET` restores a level's opening snapshot, it does not un-complete a level. If
+  one appears, the row schema means something other than what the tool reads, and that is worth
+  stopping for rather than labelling.
+
+**Stated as a decision, not a measurement:** where `level_advance` sits in the priority order —
+below `death`/`reset`/`undo`, above `camera_shift`/`extent_change` — is unfalsified *and*
+unexercised. Every one of the 40 transition rows carries `ACTION1`–`ACTION6` with state
+`NOT_FINISHED` or `WIN`; never `RESET`, never `ACTION7`, never `GAME_OVER`. A test asserts that
+claim so it fails loudly if it ever goes stale.
+
+**`schema_version` stays `0.1`, and the rule is now written down** rather than implied and
+quietly relied on. Adding a value to a closed enum does not bump it: no record already written
+becomes invalid and `validate.py` rejects an unknown value under either version, so a reader
+pinned to `0.1` cannot mis-read a `0.1` record. Adding, removing or retyping a **field** does
+bump it. `0.2` is reserved for the per-game `boundary_reason` redesign, which is the real
+version-worthy change — spending it on an enum value would leave nothing to call that.
+Precedent named, not hidden: commit `73f512415` added `episode_start` and `extent_change` the
+same way.
+
+**Tests: 81 → 88.** Eight new, one deleted (the refusal test). Every new guard was
+poison-checked the way pass B's nine were — the rule broken, the failure confirmed by its own
+message, the file restored. The acceptance gate still holds: the four hand-built bp35 records
+reproduce exactly.
+
+**One thing this makes visible rather than causes.** `level` is `levels_completed`, a count, so
+the records before a `level_advance` cut read one lower than the records after it. That is
+correct and it still reads like an off-by-one. Flagged in `SCHEMA.md`, unchanged here — renaming
+the field or switching it to a 1-based index is a field change and *would* bump
+`schema_version`.
+
+**Not touched:** `last_result` still cannot say "that action ended the run" — a different open
+question, and the plan owner's call.
 
 ---
 
