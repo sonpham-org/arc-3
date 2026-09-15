@@ -4,7 +4,7 @@ Date: 15-September-2026
 PURPOSE: Cold-start operator guide for the decision-step corpus tooling — what the record is,
 why it exists, how to run the validator, what the next pipeline step is, and the verified
 replay-API facts — both endpoints, the not-resumable download, the 250 published guids
-found by step 3, and why the first-party replays are a second manifest rather than 3 more rows
+found by step 3, and why the first-party replays are a second manifest rather than extra rows
 in the first. Written so a
 session with no transcript can act without asking anyone. SCHEMA.md holds the field-by-field
 contract and is not restated here.
@@ -45,7 +45,7 @@ datasets/decision-steps/
 ├── validate.py        the validator CLI
 ├── README.md          this file
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
-├── first-party-replays.json  the 3 replays this project pulled itself, incl. the Boss's cd82 win
+├── first-party-replays.json  the 22 replays the Boss played on his own account
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
@@ -238,46 +238,55 @@ already had are **not** in this set — they were published 2026-09-13/14, the b
 [Two replay manifests](#two-replay-manifests-and-why-they-are-two) for why they are not merged
 into one file.
 
-**Known limit, stated plainly:** we own exactly one bp35 win and one g50t win. "10–20 episodes"
-means 10–20 correlated segments of a single human session, which is fine for a schema shakedown
-and is **not** a corpus. Step zero of any real corpus is scraping more published replay guids,
-not slicing the two we have thinner.
+**Known limit, stated plainly:** we own 5 wins across 17 environments, and no
+recording has been pulled for any of them but bp35, cd82 and g50t. Every other row in the
+first-party manifest is metadata only — a guid we are entitled to pull, not a trace we hold.
+Until those recordings exist, "10–20 episodes" still means correlated segments of a handful of
+human sessions: fine for a schema shakedown, **not** a corpus.
 
 ## Two replay manifests and why they are two
 
 | file | rows | what every row in it is |
 |---|---|---|
 | [`published-replays.json`](published-replays.json) | 250 | a guid linked from the public ARC blog post *"ARC-AGI-3 human dataset"* |
-| [`first-party-replays.json`](first-party-replays.json) | 3 | a replay this project pulled directly, not harvested from a page |
+| [`first-party-replays.json`](first-party-replays.json) | 22 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
 
 **They are not merged, and the reason is the whole point of having either.**
 `published-replays.json`'s provenance is one sentence — "linked from the ARC blog post" — and
-that sentence is only worth anything while it is true of *every* row in the file. Our three
-replays are not in the blog's 250 (the blog set was published 2026-03-22; ours 2026-09-13,
--14 and -15). Appending them would buy one file and cost the ability to say where any given
-row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
+that sentence is only worth anything while it is true of *every* row in the file. None of our 22
+replays is in the blog's 250. Appending them would buy one file and cost the ability to say
+where any given row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
 
 The invariant that keeps this honest — **no guid appears in both files** — is asserted by
 `ReplayManifestTests` in `scripts/test_decision_step_validator.py`, not merely intended.
 
 ### What is in the first-party file
 
-All three are `WIN`s, one per environment:
+22 runs across 17 environments, all played by the Boss on his own
+arcprize.org account: **5 `WIN`, 6 `GAME_OVER`,
+11 `NOT_FINISHED`**, 5,026 actions in total. The wins:
 
 | game | guid | levels | actions | resets |
 |---|---|---|---|---|
-| `bp35-0a0ad940` | `c935ca1b-…` | 9 | 1024 | 13 |
-| `g50t-5849a774` | `4f0689d0-…` | 7 | 533 | 9 |
-| `cd82-fb555c5d` | `496ee425-…` | 6 | 216 | 0 |
+| `bp35-0a0ad940` | `c935ca1b…` | 9 | 1024 | 13 |
+| `g50t-5849a774` | `4f0689d0…` | 7 | 533 | 9 |
+| `ls20-cb3b57cc` | `6184a865…` | 7 | 378 | 0 |
+| `r11l-495a7899` | `60c0af00…` | 6 | 316 | 6 |
+| `cd82-fb555c5d` | `496ee425…` | 6 | 216 | 0 |
 
-The first two are the known-good human wins the corpus was built on, listed in
-`tools/replay_scrape.py`'s `KNOWN_REPLAYS`. The third is **the Boss's own playthrough of cd82
-"Compass Dye"**, won 14–15 Sep 2026.
+"First-party" now means **both** *this project pulled it directly* **and** *the Boss played it*.
+An earlier version of the manifest said only the cd82 row had a named player and that bp35 and
+g50t carried `tags: ["human"]` and nothing finer. That was wrong: all three guids appear on the
+Boss's own scorecards, which all carry `user_name: "Mark"`. The attribution was missing because nobody
+had gone looking, not because it did not exist.
 
-"First-party" means *this project pulled it directly* — it does **not** mean the Boss played
-all three. Only the cd82 row has a named player. The other two carry `tags: ["human"]` from
-`/api/sessions` and nothing finer; no attribution is recorded for them anywhere in this repo,
-so the manifest claims none. Per-guid detail is in that file's `_provenance.attribution`.
+The set is a **floor, not a complete history**. It came from an authenticated
+`/api/user/scorecards` pull on 2026-09-15, and that endpoint returns only the 50 most recent
+cards with no way to page past them. Runs that made no progress (`levels == 0`) are excluded, and
+so are 11 `gpt-5-nano` *agent* runs on `as66-821a4dcad9c2` — this file's row shape has no field
+that could mark a row as agent-played, so carrying them would make the file's own "human" claim
+false. Their guids are listed under `_provenance.excluded_agent_guids` so the exclusion is
+auditable. Read that file's `_provenance` block before treating these rows as a corpus.
 
 `cd82-fb555c5d` is an environment the rest of the corpus tooling has never seen, which makes it
 the first real test of the scraper against a guid it was not written around:
