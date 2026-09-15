@@ -4,7 +4,9 @@ Date: 15-September-2026
 PURPOSE: Tests for datasets/decision-steps/validate.py against the committed fixture corpus.
 Covers, with real fixture files on disk rather than inline literals: every valid-tier record
 passing; one invalid fixture per failure mode producing a specific, human-readable message and
-a non-zero exit; all three frame-reference resolution failures being distinguishable; the
+a non-zero exit; the turn-0 contract (both last_action and last_result null, still required,
+and both-or-neither) and that it is expressed without any keyword the evaluator cannot
+enforce; all three frame-reference resolution failures being distinguishable; the
 summary line announcing SKIPPED when the gitignored recordings are absent, so a green run is
 never mistaken for a resolved one; and the schema evaluator's unsupported-keyword guard firing
 at top level and inside $defs, which is what keeps the hand-rolled draft 2020-12 subset from
@@ -68,6 +70,9 @@ INVALID_EXPECTATIONS = {
     "bad-rationale-provenance": '$.rationale_provenance: "recovered" is not one of ["annotated"]',
     "schema-version-drift": '$.schema_version: expected the constant "0.1", got "0.2"',
     "action-args-missing-col": "$.last_action.args: missing required field 'col'",
+    "turn-zero-null-action-with-result": "$.last_result: expected type null, got object",
+    "turn-zero-null-result-with-action": "$.last_action: expected type null, got object",
+    "turn-zero-last-action-omitted": "$: missing required field 'last_action'",
     "inline-frame-pixels": "looks like an inlined frame (nested array)",
     "negative-without-corrected-decision": "$: missing required field 'corrected_decision'",
     "negative-with-expectation-held": "$.outcome.expectation_held: expected the constant false",
@@ -117,6 +122,49 @@ class ValidRecordTests(unittest.TestCase):
                 if line.strip():
                     tiers.add(json.loads(line)["tier"])
         self.assertEqual(tiers, {"gold", "silver", "negative"})
+
+
+class TurnZeroTests(unittest.TestCase):
+    """The first decision of an episode has no predecessor, so both fields carry null.
+
+    Three things are asserted together because they are one contract: the record is
+    expressible, the keys are still required so a forgotten field errors rather than reading
+    as turn 0, and the pair is both-or-neither.
+    """
+
+    TURN_ZERO = FIXTURES / "valid" / "gold-bp35-turn-zero.jsonl"
+
+    def test_the_turn_zero_fixture_is_genuinely_both_null(self):
+        record = json.loads(self.TURN_ZERO.read_text(encoding="utf-8").splitlines()[0])
+        self.assertIsNone(record["last_action"])
+        self.assertIsNone(record["last_result"])
+        self.assertEqual(record["frame_ref"]["row_index"], 0)
+
+    def test_the_turn_zero_fixture_passes(self):
+        code, output = run_cli(str(self.TURN_ZERO))
+        self.assertEqual(code, 0, output)
+
+    def test_both_fields_stay_required_so_an_omission_is_not_read_as_turn_zero(self):
+        schema = validate.load_schema(CORPUS_DIR / "schema.json")
+        self.assertIn("last_action", schema["required"])
+        self.assertIn("last_result", schema["required"])
+
+    def test_nullability_needs_no_keyword_the_evaluator_cannot_enforce(self):
+        """Nullability is a type array, not anyOf/oneOf. load_schema is the real assertion.
+
+        It audits the whole document and raises UnsupportedKeyword on any keyword outside
+        IMPLEMENTED_KEYWORDS, so this passing means the turn-0 edit did not reach for one.
+        """
+        validate.load_schema(CORPUS_DIR / "schema.json")
+        raw = json.loads((CORPUS_DIR / "schema.json").read_text(encoding="utf-8"))
+        for absent in ("anyOf", "oneOf", "not"):
+            self.assertNotIn(absent, validate.IMPLEMENTED_KEYWORDS)
+        self.assertEqual(
+            raw["properties"]["last_action"]["type"], ["object", "null"]
+        )
+        self.assertEqual(
+            raw["properties"]["last_result"]["type"], ["object", "null"]
+        )
 
 
 class InvalidRecordTests(unittest.TestCase):
@@ -231,7 +279,7 @@ class CliTests(unittest.TestCase):
     def test_directory_targets_are_searched_recursively(self):
         code, output = run_cli(str(FIXTURES / "valid"))
         self.assertEqual(code, 0, output)
-        self.assertIn("4 file(s), 5 record(s)", output)
+        self.assertIn("5 file(s), 6 record(s)", output)
 
 
 if __name__ == "__main__":
