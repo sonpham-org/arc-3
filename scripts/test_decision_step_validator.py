@@ -111,7 +111,7 @@ INVALID_EXPECTATIONS = {
     "negative-row-index": "$.frame_ref.row_index: must be >= 0, got -1",
     "action_role_source-without-line": "$.action_role_source:",
     "bad-rationale-provenance": '$.rationale_provenance: "recovered" is not one of ["annotated"]',
-    "schema-version-drift": '$.schema_version: expected the constant "0.1", got "0.2"',
+    "schema-version-drift": '$.schema_version: expected the constant "0.2", got "0.3"',
     "action-args-missing-col": "$.last_action.args: missing required field 'col'",
     "turn-zero-null-action-with-result": "$.last_result: expected type null, got object",
     "turn-zero-null-result-with-action": "$.last_action: expected type null, got object",
@@ -128,7 +128,7 @@ class SchemaDocumentTests(unittest.TestCase):
     def test_schema_loads_and_every_keyword_is_enforced(self):
         schema = validate.load_schema(CORPUS_DIR / "schema.json")
         self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
-        self.assertEqual(schema["properties"]["schema_version"]["const"], "0.1")
+        self.assertEqual(schema["properties"]["schema_version"]["const"], "0.2")
 
     def test_audit_rejects_an_unimplemented_keyword_at_top_level(self):
         with self.assertRaises(validate.UnsupportedKeyword) as ctx:

@@ -347,16 +347,37 @@ def action_object(row: Row) -> dict:
     return action
 
 
+def run_ended_on(rows: list[Row], index: int) -> bool:
+    """Did the action on row `index` end the run?
+
+    A FLIP to GAME_OVER, not the mere presence of it. Rows 215, 370, 390, 572 and 807 of the
+    bp35 recording all sit at GAME_OVER because the run was already over when they were
+    submitted; reading the state alone would call each of them a fresh death and put five
+    run-ending markers on one death. The transition is the event.
+
+    Schema 0.2 added this. Before it, a record taken after a death read exactly like an ordinary
+    step - which in a corpus built to teach recovery after being wrong is the one thing it must
+    never be unable to say.
+    """
+    if index <= 0:
+        return False  # row 0 is the boot marker; nothing precedes it to have ended
+    return rows[index].state == "GAME_OVER" and rows[index - 1].state != "GAME_OVER"
+
+
 def last_result(rows: list[Row], index: int) -> dict:
     """The measured effect of the action on row `index`."""
     row = rows[index]
     if is_degenerate(row):
-        return {"board_changed": False, "level_changed": False}
+        # A degenerate row changed no board, but it can still be the row that killed the run,
+        # so run_ended is measured here too rather than defaulted with the rest.
+        return {"board_changed": False, "level_changed": False,
+                "run_ended": run_ended_on(rows, index)}
     reference = frame_ref_row(rows, index)
     changed = cells_changed(rows[reference], row)
     return {
         "board_changed": bool(changed),
         "level_changed": rows[reference].levels_completed != row.levels_completed,
+        "run_ended": run_ended_on(rows, index),
     }
 
 

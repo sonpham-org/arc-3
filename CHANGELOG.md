@@ -71,6 +71,86 @@ nor refute gets cut, not softened.
 
 ## 2026-09-15 (latest)
 
+### Schema 0.2: `run_ended`, and the cull is per level not per run
+
+**The gap is closed.** `last_result` gained `run_ended`, so a record can finally say "that action
+ended the run". Without it a post-death record read exactly like an ordinary step, which in a
+corpus built to teach recovery after being wrong was the one thing it must never fail to say.
+Field add, so `schema_version` goes to **0.2**; 0.1 reserved that number for the per-game
+`boundary_reason` redesign and the reservation is **released rather than quietly ignored** -
+this arrived first, and versions are cheaper than two meanings for one number.
+
+The segmenter measures it: a **flip** to `GAME_OVER`, not the presence of it. The five rows of
+the bp35 recording that sit at `GAME_OVER` because the run was already over would otherwise each
+be read as a fresh death - five markers on one death. Measured across the committed records, one
+carries it: the row where the player has just been killed and is about to try the undo that
+fails. Every fixture and record migrated; the version-drift fixture moved to 0.3 so it keeps
+failing for the reason it is named for rather than quietly becoming valid.
+
+**The cull, and the Boss's question that forced it.** Asked why we would want human runs that
+don't win. Mostly right, and the flag was wrong: `teaches_recovery` marked any falsified
+expectation, including the death spiral on the level the player never cleared. Weighting a
+training mix towards those teaches flailing.
+
+The unit is the **level**, not the run - the same rule the distiller already applies to its own
+play. A stumble on a level that was then cleared is a recovery that demonstrably worked; a
+stumble on the level the player died on is flailing. Measured on the eligible material: **only 2
+of 100 published runs cleared nothing at all**, and the 48 that never won still hold **229 of the
+615 solved levels** - 37% of the material. Culling those runs wholesale would throw away more
+than a third of the corpus; culling the unsolved levels inside them throws away exactly the
+flailing. `--keep-unsolved` exists and is off.
+
+Tests 112 -> 121. Two more guards poison-checked: the recovery gate, and culling levels rather
+than runs.
+
+---
+
+### The bridge: a finished record becomes a training example
+
+`tools/build_sft.py`. Steps 1-4 built a labelling machine whose output nothing downstream read -
+the distiller's own SFT builder has never heard of this corpus, so a finished record was a
+document, not training data. This closes that, and it was built before more annotation on
+purpose: annotating at volume without knowing a record can be trained on is the expensive way to
+find out it cannot.
+
+**What it is for.** The distiller rejection-samples the harness's own play and keeps only turns
+on **solved** levels, so it structurally discards every moment where a player was wrong and then
+fixed it. That moment is the one thing this corpus holds and nothing else in the tree can
+produce. Examples carrying it are marked `teaches_recovery` so a training mix can weight them.
+That flag is the payload, not a convenience.
+
+**It runs.** All five committed records convert; three carry a falsified expectation and one
+carries the full arc - a fatal step, an undo that returns nothing on a dead board, and the reset
+that recovers - with the correction **observed in the recording**, not reasoned out by an
+annotator.
+
+**Two things are taken from the harness rather than invented, because getting them wrong is
+train/serve skew:** the board is rendered by the same function that renders it at serve time, and
+actions are emitted in model vocabulary. The system prompt is deliberately **not** - the live one
+is bound to the tool loop and is config-dependent, so it is a flag, and every example records
+which prompt built it. Running a real fine-tune on the built-in stand-in would be a skewed
+fine-tune, and the output says so on every row.
+
+**A defect the tests found, not review.** Annotators write records against the game source, so
+the remembered mechanics and the rationale say `ACTION3` - while the model must answer `LEFT` and
+has never seen an engine name. The prose reads perfectly well either way, which is why nothing
+but an assertion catches it. Engine names are now translated everywhere the model reads, and
+`ACTION7`/`RESET` are left alone because those are already the model's own names for them.
+
+`FrameResolver` gained `resolve()` - `check()` said whether a reference was sound but could not
+hand back the grid, and the alternative was a second recording reader. Same cache, same path
+walk, and it raises rather than returning a board from a row nobody asked for.
+
+Tests 88 -> 112. Three guards poison-checked: prose translation, the unfinished-record refusal,
+and taking the settled frame rather than the first.
+
+**Not done:** no new annotation, no recordings pulled, no schema change. One real gap remains and
+it is now the binding one - a record cannot say "that action ended the run", which is exactly the
+signal the recovery examples exist to teach.
+
+---
+
+
 ### The ka59 and lp85 wins, the undo survey, and a RESET that cannot be cited
 
 Committed direct to `main` at the Boss's instruction. Three pieces of work; the third one
