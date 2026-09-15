@@ -157,6 +157,15 @@ row. Every one of the 40 is **+1**; a fall is unobserved and `segment.py` refuse
 than labelling it, because `RESET` restores a level's opening snapshot and does not un-complete
 a level.
 
+**What `level_advance` does not clean up, and pass D should expect.** The row *before* a level
+completion can still be cut as `extent_change`, and that is the heuristic working, not bleeding
+backward from the level animation. Checked on bp35 rows 176–179: row 178 is a real 27.4%
+whole-board delta with the painted count moving 4,058 → 4,059, one ordinary `ACTION3` before
+the completion on row 179 (36.4%, 4,059 → 4,023, `level_advance`). Two adjacent cuts there are
+two events, not one event labelled twice — but a reader skimming an episode will see
+`extent_change` immediately before a level completion and should not read it as a mislabelled
+level change.
+
 **Where it sits in the segmenter's priority order is a decision, not a measurement.** It is
 below `death`/`reset`/`undo` and above `camera_shift`/`extent_change`. All 40 transition rows
 carry `ACTION1`–`ACTION6` with state `NOT_FINISHED` or `WIN` — never `RESET`, never `ACTION7`,
