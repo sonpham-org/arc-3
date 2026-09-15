@@ -4,8 +4,9 @@ Date: 15-September-2026
 PURPOSE: Running changelog for the decision-step corpus work in this repo, newest first.
 Exists so a reviewer joining cold can see where the work stands without reading fifteen pull
 requests. Covers the corpus pipeline (datasets/decision-steps/, tools/replay_scrape.py,
-scripts/test_decision_step_validator.py) and its trace findings. It does NOT cover
-ARC3-Inference or the harnesses, which predate it and are not changed by this work.
+scripts/test_decision_step_validator.py) and its trace findings. It does NOT change
+ARC3-Inference or the harnesses, which predate it; where an entry documents a harness defect
+it is a written finding about code this work leaves untouched, never a record of a change to it.
 SRP/DRY check: Pass — plans live in docs/plans/ and docs/trace-findings/, schema semantics in
 datasets/decision-steps/SCHEMA.md. This file only records what changed, when, and why.
 -->
@@ -39,9 +40,11 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 **What exists right now.** 101 tests (59 + 11 + 31 across `test_decision_step_validator`,
 `test_dispatch_tables`, `test_segment`). 278 human replay guids inventoried across two manifests
 that are deliberately not merged, plus 250 leaderboard rows that carry no guid and never can be
-fetched. 9 recordings on disk plus 15 for as66 — this line read `8` before the `ka59` and `lp85`
-rows landed and the count was already one high; `ls */*.ndjson` reports 9 live-build recordings
-now and reported 7 then. **6 labelled records** across 3 games — a demonstration of shape, not a corpus. A 7th pass produced 6 more that `validate.py` rejects for a reason no annotator can fix; see the lp85 entry below. `tools/segment.py` now emits the
+fetched. **11 live-build recordings on disk, plus 15 for as66** — counted as
+`find v0/recordings -name '*.ndjson'`, partitioned on the as66 directory. Do not use the
+`ls */*.ndjson` glob a previous revision of this line cited: run from `v0/recordings/` it sweeps
+as66 in with the rest and reports 26. The 11 went 9 → 11 when the `ls20` and `m0r0` recordings
+were pulled this evening. **6 labelled records** across 3 games — a demonstration of shape, not a corpus. A 7th pass produced 6 more that `validate.py` rejects for a reason no annotator can fix; see the lp85 entry below. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
 annotation is three judgment fields rather than a whole record.
 
@@ -59,8 +62,15 @@ spanning a `level_advance` cut now shows it. All three are flagged in `SCHEMA.md
 docstrings; none has been quietly widened.
 
 **Closed since the last entry.** `boundary_reason` had no value for a level transition and the
-segmenter refused any window spanning one. `level_advance` closed it — see the entry directly
-below, including what the refusal was hiding.
+segmenter refused any window spanning one. `level_advance` closed it — see the 15-Sep (earlier)
+entry, including what the refusal was hiding.
+
+**Read the entry directly below before anything else.** It records a defect in
+`ARC3-Inference/inference/framework/solver.py:171-172` that filters `RESET` out of the action
+menu the model is shown, on every game — which, on a game like ls20 whose only recovery
+primitive is RESET, is a candidate mechanical explanation for the agent's scores. **Nothing was
+changed on the strength of it**; it is a written proposal for the Boss and Dr. Fable. That entry
+also withdraws an over-broad claim about the recording reconcile rule and corrects two figures.
 
 **Next.** Passes C (pull the selected recordings), D (annotate, one agent per game) and E (the
 adversarial falsification gate) of the step-4 plan. E is the one that decides whether any of it
@@ -70,6 +80,172 @@ nor refute gets cut, not softened.
 ---
 
 ## 2026-09-15 (latest)
+
+### Evening session: five human wins, and a harness defect that says the agent cannot press RESET
+
+Written for a reviewer picking this up cold. Every file:line below was opened in this tree
+before it was written down; where a claim is not verifiable from this tree it says so.
+
+**No ARC3-Inference or harness code was changed by this entry, and none should be on the
+strength of it.** The `solver.py:171` item is a written proposal. Whether to act on it is the
+Boss's and Dr. Fable's call.
+
+#### The headline: the agent is never shown RESET
+
+`ARC3-Inference/inference/framework/solver.py:171-172` contains `if name == "RESET": continue`,
+inside `_engine_action_names()` (`:164`). That function builds the `valid_actions` list on both
+payload paths — the error payload at `:692` and the per-action payload at `:928` — and
+`valid_actions` is what gets rendered into the model's prompt as "Valid actions right now"
+(`agent/tool_agent.py:1408`). **RESET is filtered out before the model ever sees it.**
+
+The only RESET the harness issues is `_execute_auto_reset()` (`:825-827`), fired by the runner
+loop at `:347-352` *after* `_is_engine_game_over()` is already true. That is cleanup, not
+strategy: by then the run is over and the reset cannot be used to recover from anything.
+
+**Correction to an earlier reading of this, from Sherlock, re-verified here and accepted.** It
+was originally called a two-gate problem, on the claim that the execution-side membership check
+at `solver.py:752` (`if action.id.value not in self.game.current_state.available_actions`) would
+also reject a RESET. That is wrong. `tufa-arc-agi-framework/src/taaf/game.py:188-193` defines
+`available_actions` as "Legal action ids, with RESET (0) always present" and re-adds `0`
+unconditionally when it is absent. The execution gate passes. **Deleting the one filter at
+`:171-172` is the whole fix.**
+
+Sherlock also correctly noted that `taaf/game_api.py:222` sets
+`os.environ["ONLY_RESET_LEVELS"] = "true"` process-wide immediately after `arcade.make`, which
+is what stops an at-level-start RESET from restarting the entire run; the code comment at
+`:215-221` describes precisely the arcengine behaviour we had independently observed on as66.
+One nit for the record: Sherlock cited the filter at `solver.py:119-120`; in this tree it is
+`:171-172`.
+
+#### Why it matters, measured on ls20
+
+`docs/static/games/src/ls20-9607627b/ls20.py` gives a per-level life budget the agent has no
+way to refill:
+
+- `:1821` — `self.aqygnziho = 3`, inside `on_set_level` (`:1778`). Three lives **per level**,
+  not per run.
+- `:1950` + `:1961` — running the per-level step meter out (`not _step_counter_ui.mfyzdfvxsm()`,
+  the decrement-then-test at `:1487-1490`) costs one life.
+- `:1962-1963` — `if self.aqygnziho == 0: self.lose()`. The **third** loss on a single level
+  ends the whole run.
+- `:1525-1529` — the three pips render at frame rows 61–62, x = 56/59/62, colour
+  `tqogkgimes` = 8 (`:1458`), lit while `aqygnziho > i`.
+- `:1778-1782` → `:1794` → `:1773-1776` — RESET re-runs `on_set_level`, which re-clones the
+  pristine level (`:1780`), resets lives to 3 (`:1821`), and calls `wbcenorpju()` (`:1794`),
+  which refills the step meter via `nzukewekzr()` (`:1492-1493`). Note the hop: `:1773-1776`
+  lives in `wbcenorpju`, not in `on_set_level` — an earlier draft of this entry cited it as
+  though it were inline, and it is not. RESET is the only mid-level refill that exists.
+
+Confirmed on tape, not just in source. Tracking `frame[61][56|59|62] == 8` across all 562 rows
+of the Boss's winning run (`ls20-9607627b/7537433d-…`), the pip count changes exactly seven
+times: 3→2 at row 36, 2→3 at 81, 3→2 at 225, 2→3 at 277 (all level advances), then **3→2 at
+408 and 2→1 at 451** on the final level — one timeout from `lose()` — and **1→3 at row 454, a
+RESET**. He went on to win, at score 100. The run's other mid-run RESET, at row 135, left the
+pip count at 3: a reset spent purely to refill the step meter, with no life lost.
+
+ls20 is also one of the **19 live builds with no ACTION7** — checked across
+`docs/static/games/src/*/`, where the six that do carry it are ar25, bp35, lf52 (conditionally,
+`[7] if STORES_UNDO`), sb26, sk48 and su15. So on ls20 the agent's only recovery primitive is
+the one the harness filters out. That is a plausible mechanical cause for ls20 scoring badly,
+and it costs one line to test.
+
+#### Five human wins from the Boss, all re-derived from tape
+
+| game | guid | state | levels | actions | baseline | resets | score |
+|---|---|---|---|---|---|---|---|
+| ka59 | `1333b2ee` | WIN | 7 | 598 | 730 | 2 | 84.57 |
+| lp85 | `129ddf21` | WIN | 8 | 415 | 388 | 6 | 76.39 |
+| ls20 | `7537433d` | WIN | 7 | 561 | 776 | 3 | **100** |
+| m0r0 | `2134c482` | WIN | 6 | 752 | 1107 | 10 | **100** |
+| g50t | `58483738` | WIN | 7 | 536 | 879 | 8 | 82.12 |
+
+Every cell checked against the 18:50 EDT scorecard snapshot
+(`arc3-run/boss-replays/boss-runs-2245.json`); `baseline` is the sum of
+`level_baseline_actions`. The g50t row carried two blanks in draft — they are filled here, not
+dropped. All five recordings are on disk and gitignored
+(`.gitignore:34`, `datasets/decision-steps/v0/recordings/`).
+
+**lp85 is the best tier-3 source in the corpus.** It is a one-action game — `available_actions`
+is `(6,)` on all 416 rows of the tape, a click carrying x/y — with no undo, so its single death
+(row 175, `state: GAME_OVER` on level 6) followed by a working RESET at row 176 is a falsified
+prediction with an observed correction and *no* alternative recovery to argue about. It carries
+five further resets, at rows 269, 294, 311, 365 and 386, every one of them at
+`levels_completed: 7` (the 8th level, per the `level` note at `SCHEMA.md:213`) and every one
+preceded by a `NOT_FINISHED` row — plans abandoned as unwinnable, not boards that killed the
+player.
+
+#### The reconcile rule, stated with its exceptions
+
+The rule is `rows = 1 + api.actions` (plus any rows recorded past the terminal state) and
+`RESET rows = 1 + api.resets`. A previous draft said it "holds exactly on every recording we
+hold." **It does not, and the claim is withdrawn.** Measured across all 26 recordings on disk:
+
+- **Holds exactly on 9 of the 11 live-build recordings** — cd82, cn04, dc22, ft09,
+  `g50t/4f0689d0`, ka59, lp85, ls20, m0r0. Each ends on a single terminal row, so the
+  post-terminal term is zero.
+- **Fails on `bp35/c935ca1b`**: 1030 rows against `1 + 1024 = 1025`. The tape ends cleanly on
+  one `WIN` row, so this is not trailing junk — the API's `actions` is **5 short of the tape**.
+- **Fails on `g50t/58483738`** — a row in the table above: 538 rows against `1 + 536 = 537`,
+  again ending on one clean `WIN` row. The API is **1 short**. Its RESET side still reconciles
+  (9 rows = 1 + 8).
+- **Does not apply to the 15 as66 recordings at all**: they contain **zero** `RESET` rows while
+  the API reports up to 9, and four of them are not in the scorecard snapshot. That is a
+  different recorder, and it should not be counted as agreement or as disagreement.
+
+#### A rule we were following that nobody wrote down
+
+In `arc-explainer`, three consecutive CHANGELOG entries kept the session `score` off the game
+pages, each citing the one before it: 9.74.0 (cd82, 59.9), 9.78.0 (ka59, 84.57) and 9.79.0
+(lp85, 76.39). The stated justification in 9.74.0 is that the score "sits on a different scale
+from the Human Records card." **It does not** — the leaderboard endpoint feeding that card
+returns the same scale, and the ka59 and lp85 entries *say so in writing* while omitting the
+score anyway, attributing the omission to "the owner's direction." The Boss's position, as given
+to this session, is that no such direction was given; that is his account and cannot be
+established from any tree, so it is recorded as his and not as verified.
+
+Two corrections to how this was first written up. **The rule did not suppress two perfect 100s
+— both are on the page.** 9.80.0 prints ls20's `score: 100` and 9.81.0 prints m0r0's, each
+breaking the precedent on the record and explaining why. **And the backfill is promised, not
+landed:** 9.81.0 defers the reconciliation to "9.82.0, immediately below this entry," and
+`### Version 9.82.0` does not exist in `arc-explainer/CHANGELOG.md`. That forward reference is
+dangling as of this commit. cd82, ka59 and lp85 are still without their scores.
+
+Standing note for future agents, which is the durable part: do not carry an editorial omission
+forward as policy because a previous entry did. If an entry says "at the owner's direction,"
+verify that before inheriting it.
+
+#### Inventory, from the 18:50 EDT scorecard pull
+
+Scorecards via `arcprize.org/api/user/scorecards` (browser cookie), detail via
+`arcprize.org/api/user/scorecards/<card_id>` — that second path is the working one;
+`/api/scorecard/<id>` and `/api/scorecards/<id>` both 404. 50 cards, which is a hard cap: `next`
+is a page size, not a cursor.
+
+**The threshold matters, so it is stated.** "Real play" below means `levels_completed > 0`.
+On that threshold: **25 live-build runs with real play, across 18 of the 25 live games; 11 games
+won** (bp35, cd82, cn04, dc22, ft09, g50t, ka59, lp85, ls20, m0r0, r11l); **7 never played on a
+live build** (ar25, s5i5, sb26, su15, tr87, tu93, vc33); **7 played but not won** — sk48 reached
+level 6, tn36 5, sc25 4, lf52 2, and re86 / sp80 / wa30 one each. Switching the threshold to
+`actions > 0` gives 34 runs across 19 games and moves tr87 out of "never played" into "played,
+zero levels," which is why the threshold is written down rather than assumed.
+
+Caveat worth carrying: **110 of the Boss's 144 live-build run rows have zero recorded actions** —
+sessions opened and batch-published. An earlier draft said 117 of 144; 144 is right, 110 is the
+figure the snapshot supports and 117 could not be reproduced from any snapshot on disk. ar25 and
+the live vc33 build (`vc33-5430563c`) look played but are empty shells; vc33's 358-action
+`GAME_OVER` run is on `vc33-9851e02b`, a superseded build.
+
+#### Still open, carried deliberately rather than quietly closed
+
+- `last_result` cannot express "that action ended the run."
+- RESET has no citable `action_role_source` in most games — `arcengine` is not vendored, so only
+  bp35 and lf52 have citable in-source RESET/ACTION7 implementations. This is what blocked the
+  first D pass on lp85.
+- The two reconcile exceptions above: the API's `actions` undercounts the tape on
+  `bp35/c935ca1b` by 5 and on `g50t/58483738` by 1. Cause unknown; not investigated here.
+- Whether to change `solver.py:171`. Not ours to decide.
+
+---
 
 ### Schema 0.2: `run_ended`, and the cull is per level not per run
 
@@ -150,6 +326,7 @@ signal the recovery examples exist to teach.
 
 ---
 
+## 2026-09-15 (earlier)
 
 ### The ka59 and lp85 wins, the undo survey, and a RESET that cannot be cited
 
