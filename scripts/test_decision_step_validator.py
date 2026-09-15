@@ -18,7 +18,8 @@ silently under-validating if schema.json grows a keyword the engine cannot enfor
 test asserts every file under fixtures/invalid/ has an expectation here, so adding a fixture
 without asserting on it fails the suite. Also covers the two replay manifests --
 published-replays.json and first-party-replays.json -- for row shape, per-file guid
-uniqueness, _provenance.count agreeing with the actual row count, every first-party row
+uniqueness, _provenance.count, .games and .state_counts all agreeing with the actual rows
+they summarise, every first-party row
 carrying an attribution, and above all that the two files share no guid, which is the
 invariant that keeps each file's provenance claim true of every row in it. Those manifest
 tests read the committed JSON only and never call the API, so the suite stays green when
@@ -399,6 +400,20 @@ class ReplayManifestTests(unittest.TestCase):
             with self.subTest(manifest=path.name):
                 doc = self.load(path)
                 self.assertEqual(doc["_provenance"]["count"], len(doc["replays"]))
+
+    def test_each_manifest_games_and_state_counts_match_its_rows(self):
+        """Same drift as count, same guard. Both files summarise their own rows in
+        _provenance; a summary nobody checks is just a comment that looks like data."""
+        for path in (self.PUBLISHED, self.FIRST_PARTY):
+            with self.subTest(manifest=path.name):
+                doc = self.load(path)
+                rows = doc["replays"]
+                provenance = doc["_provenance"]
+                self.assertEqual(provenance["games"], len({row["game_id"] for row in rows}))
+                observed: dict[str, int] = {}
+                for row in rows:
+                    observed[row["state"]] = observed.get(row["state"], 0) + 1
+                self.assertEqual(provenance["state_counts"], dict(sorted(observed.items())))
 
     def test_guids_are_unique_within_each_manifest(self):
         for path in (self.PUBLISHED, self.FIRST_PARTY):

@@ -128,7 +128,7 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 33 tests, stdlib only. Five of them
+Matches the existing `scripts/test_*.py` convention. 34 tests, stdlib only. Six of them
 cover the two replay manifests (see [Two replay manifests](#two-replay-manifests-and-why-they-are-two));
 those read the committed JSON only and never call the API, so the suite does not go red when
 `three.arcprize.org` does.
@@ -243,7 +243,7 @@ means 10–20 correlated segments of a single human session, which is fine for a
 and is **not** a corpus. Step zero of any real corpus is scraping more published replay guids,
 not slicing the two we have thinner.
 
-## Two replay manifests, and why they are two
+## Two replay manifests and why they are two
 
 | file | rows | what every row in it is |
 |---|---|---|
