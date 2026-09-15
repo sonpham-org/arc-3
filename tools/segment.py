@@ -334,10 +334,21 @@ def citation(dispatch: dict, action_name: str) -> str:
             f"call can have reached it"
         )
     primary = next(
-        (call for call in entry["calls"] if call["role"].startswith("primary effect")),
-        entry["calls"][0] if entry["calls"] else None,
+        (call for call in entry["calls"] if call["role"].startswith("primary effect")), None
     )
-    tail = f" -> {primary['text']}" if primary else ""
+    if primary is not None:
+        tail = f" -> {primary['text']}"
+    elif entry["calls"]:
+        # No single call IS the effect: the action dispatches again on board state, as cn04's
+        # ACTION5 does on sprite-stack length. Naming one of the conditional calls here would
+        # be a lie by selection, so the citation stops at the branch and says why.
+        tail = (
+            f" (branch-dependent: {len(entry['calls'])} conditional call sites at "
+            + ", ".join(f":{call['line']}" for call in entry["calls"])
+            + ")"
+        )
+    else:
+        tail = ""
     return f"{dispatch['source_file']}:{entry['branch']['line']} {entry['branch']['text']}{tail}"
 
 

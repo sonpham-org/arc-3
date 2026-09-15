@@ -128,6 +128,25 @@ class DispatchTableTests(unittest.TestCase):
                         f"available_actions={declared}",
                     )
 
+    def test_every_offered_action_has_an_entry(self):
+        """Pass B's acceptance criterion, stated verbatim in the execution plan section 3:
+        *every action offered in that game's available_actions has an entry*. The `offered`
+        test above checks the forward direction only - it would pass with an entry missing
+        entirely."""
+        for game_id, table in self.tables.items():
+            available = table["available_actions"]
+            offered = available["declared"]
+            if offered is None:  # cn04 declares none; fall back to what the recording showed
+                offered = available["observed_in_recording"]
+            self.assertIsNotNone(offered, f"{game_id}: no declared or observed action set")
+            for action_id in offered:
+                with self.subTest(game=game_id, action=action_id):
+                    self.assertIn(
+                        f"ACTION{action_id}",
+                        table["actions"],
+                        f"{game_id}: ACTION{action_id} is offered but has no dispatch entry",
+                    )
+
     def test_every_action_entry_has_a_branch_and_an_effect(self):
         for game_id, table in self.tables.items():
             for name, entry in table["actions"].items():

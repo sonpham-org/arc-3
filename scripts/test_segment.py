@@ -246,6 +246,64 @@ class LevelChangeRefusalTests(RequiresRecording):
         self.assertIn("boundary_reason has no value", result.stderr)
 
 
+CN04_GAME = "cn04-2fe56bfb"
+CN04_GUID = "f714032e-914d-4bb5-bc95-386dfacebca0"
+CN04_RECORDING = RECORDINGS / CN04_GAME / f"{CN04_GUID}.ndjson"
+
+
+class Cn04CoverageTests(unittest.TestCase):
+    """bp35 cannot reach two of segment.py's paths: it handles RESET in its own source, and no
+    record in the acceptance set uses a cell-addressed action. cn04 reaches both - it has 5
+    RESET rows that arcengine handles, and 49 ACTION6 rows. Rows 168-178 sit inside level 3."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not CN04_RECORDING.is_file():
+            raise unittest.SkipTest(f"no recording at {CN04_RECORDING}")
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "segment.py"),
+             "--game-id", CN04_GAME, "--guid", CN04_GUID, "--rows", "168:178",
+             "--segment-prefix", "cn04-l3", "--stdout"],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"segment.py failed on cn04:\n{result.stderr}")
+        cls.by_row = {
+            json.loads(line)["source"]["row_index"]: json.loads(line)
+            for line in result.stdout.splitlines() if line.strip()
+        }
+
+    def test_reset_cuts_a_segment(self):
+        self.assertEqual(self.by_row[172]["decision"]["action"]["action"], "RESET")
+        self.assertEqual(self.by_row[173]["segment"]["boundary_reason"], "reset")
+        self.assertNotEqual(
+            self.by_row[172]["segment"]["id"], self.by_row[173]["segment"]["id"]
+        )
+
+    def test_an_action_arcengine_handles_is_marked_uncitable_not_faked(self):
+        """cn04 has no RESET branch - arcengine is not vendored. The tool must say so rather
+        than invent a line, and the marker must fail the schema's citation pattern."""
+        citation = self.by_row[172]["action_role_source"]
+        self.assertTrue(citation.startswith("UNCITABLE:"), citation)
+        self.assertNotRegex(citation, re.compile(r"^[^\s:]+:[0-9]+([ \t].*)?$"))
+
+    def test_cell_addressed_actions_carry_row_col_args(self):
+        action = self.by_row[171]["decision"]["action"]
+        self.assertEqual(action["action"], "ACTION6")
+        self.assertEqual(set(action["args"]), {"row", "col"})
+        for value in action["args"].values():
+            self.assertIsInstance(value, int)
+
+    def test_branch_dependent_actions_do_not_name_one_conditional_call(self):
+        """cn04's ACTION5 is a rotation or an extent change depending on stack length. Naming
+        either call as THE effect would be a lie by selection, so the citation stops at the
+        branch."""
+        citation = self.by_row[174]["action_role_source"]
+        self.assertIn("cn04.py:1067", citation)
+        self.assertIn("branch-dependent", citation)
+        self.assertNotIn("->", citation)
+
+
 class CandidateFileTests(RequiresRecording):
     """The three guarantees an unfinished record must carry."""
 
