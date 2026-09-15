@@ -71,6 +71,52 @@ nor refute gets cut, not softened.
 
 ## 2026-09-15 (latest)
 
+### The bridge: a finished record becomes a training example
+
+`tools/build_sft.py`. Steps 1-4 built a labelling machine whose output nothing downstream read -
+the distiller's own SFT builder has never heard of this corpus, so a finished record was a
+document, not training data. This closes that, and it was built before more annotation on
+purpose: annotating at volume without knowing a record can be trained on is the expensive way to
+find out it cannot.
+
+**What it is for.** The distiller rejection-samples the harness's own play and keeps only turns
+on **solved** levels, so it structurally discards every moment where a player was wrong and then
+fixed it. That moment is the one thing this corpus holds and nothing else in the tree can
+produce. Examples carrying it are marked `teaches_recovery` so a training mix can weight them.
+That flag is the payload, not a convenience.
+
+**It runs.** All five committed records convert; three carry a falsified expectation and one
+carries the full arc - a fatal step, an undo that returns nothing on a dead board, and the reset
+that recovers - with the correction **observed in the recording**, not reasoned out by an
+annotator.
+
+**Two things are taken from the harness rather than invented, because getting them wrong is
+train/serve skew:** the board is rendered by the same function that renders it at serve time, and
+actions are emitted in model vocabulary. The system prompt is deliberately **not** - the live one
+is bound to the tool loop and is config-dependent, so it is a flag, and every example records
+which prompt built it. Running a real fine-tune on the built-in stand-in would be a skewed
+fine-tune, and the output says so on every row.
+
+**A defect the tests found, not review.** Annotators write records against the game source, so
+the remembered mechanics and the rationale say `ACTION3` - while the model must answer `LEFT` and
+has never seen an engine name. The prose reads perfectly well either way, which is why nothing
+but an assertion catches it. Engine names are now translated everywhere the model reads, and
+`ACTION7`/`RESET` are left alone because those are already the model's own names for them.
+
+`FrameResolver` gained `resolve()` - `check()` said whether a reference was sound but could not
+hand back the grid, and the alternative was a second recording reader. Same cache, same path
+walk, and it raises rather than returning a board from a row nobody asked for.
+
+Tests 88 -> 112. Three guards poison-checked: prose translation, the unfinished-record refusal,
+and taking the settled frame rather than the first.
+
+**Not done:** no new annotation, no recordings pulled, no schema change. One real gap remains and
+it is now the binding one - a record cannot say "that action ended the run", which is exactly the
+signal the recovery examples exist to teach.
+
+---
+
+
 ### The ka59 and lp85 wins, the undo survey, and a RESET that cannot be cited
 
 Committed direct to `main` at the Boss's instruction. Three pieces of work; the third one

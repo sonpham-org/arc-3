@@ -302,6 +302,39 @@ class FrameResolver:
             self._lines[path] = path.read_text(encoding="utf-8").splitlines()
         return self._lines[path]
 
+    def resolve(self, record: dict) -> list[list[int]]:
+        """Return the settled grid a record's frame_ref points at.
+
+        `check()` answers "is this reference sound" and returns errors; consumers that need the
+        grid itself had no way to get it without re-reading the recording, so this shares the
+        same line cache and the same dotted-path walk rather than growing a second reader.
+
+        The frame is a LIST of grids and the settled board is the last one -- the convention is
+        cited in SCHEMA.md#frame-references and was settled against taaf/game.py:175. A field
+        that resolves to a single grid is returned as-is, so a non-list frame keeps working.
+
+        Raises ValueError with check()'s own message when the reference does not resolve, so a
+        caller cannot quietly receive a wrong board.
+        """
+        errors = self.check(record, "$.frame_ref")
+        if errors:
+            raise ValueError(errors[0])
+        ref = record["frame_ref"]
+        ndjson = self.recordings_dir / record["game_id"] / f"{ref['recording_guid']}.ndjson"
+        row = json.loads(self._read(ndjson)[ref["row_index"]])
+        current: object = row
+        for segment in ref["field"].split("."):
+            current = current[segment]  # check() already proved every segment resolves
+        if isinstance(current, list) and current and isinstance(current[0], list):
+            first = current[0]
+            if first and isinstance(first[0], list):
+                return current[-1]  # list of grids -> the settled one
+            return current  # a single grid, already
+        raise ValueError(
+            f"$.frame_ref.field: {ref['field']!r} on row {ref['row_index']} of {ndjson} "
+            f"resolved to {_type_name(current)}, which is not a grid or a list of grids"
+        )
+
     def check(self, record: dict, path: str) -> list[str]:
         ref = record.get("frame_ref")
         game_id = record.get("game_id")
