@@ -34,11 +34,13 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 1 | ACTION7 executes end to end | **done**, on `main` |
 | 2 | JSON schema + validator | **done**, on `main` |
 | 3 | replay scraper + guid inventory | **done**, on `main` |
-| 4 | segment and label the corpus | **started** — shape landed, volume not |
+| 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
 
-**What exists right now.** 46 tests. 273 human replay guids inventoried across two manifests
+**What exists right now.** 81 tests. 273 human replay guids inventoried across two manifests
 that are deliberately not merged. 6 recordings on disk plus 15 for as66. **5 labelled
-records** — a demonstration of shape, not a corpus.
+records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
+mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
+annotation is three judgment fields rather than a whole record.
 
 **The one rule that governs step 4.** A run counts only if its `game_id` is **still the live
 build** — an early replay is a replay of a different game. That leaves **100 of the blog's 250**
@@ -48,11 +50,61 @@ constraint. Execution plan, with the selection rule and the five passes:
 
 **Open questions carried, not closed.** (1) `last_result` cannot express "that action ended
 the run", so post-death records read like ordinary steps. (2) `boundary_reason` carries
-per-game values, which will not survive 25 games. Both are flagged in `SCHEMA.md` and neither
-has been quietly widened.
+per-game values, which will not survive 25 games. (3) `boundary_reason` has no value for a
+**level transition**, so the segmenter refuses any window that spans one rather than stretching
+`episode_start` over a real state change. (4) `level` is `levels_completed`, a count — during
+play of the Nth level it reads N−1, so `"level": 5` means the 6th. All four are flagged in
+`SCHEMA.md` or the tool docstrings; none has been quietly widened.
 
-**In flight, not merged as of this entry.** A branch off #16 building `tools/segment.py` and
-the per-game dispatch tables — passes A and B of the step-4 plan.
+**Next.** Passes C (pull the selected recordings), D (annotate, one agent per game) and E (the
+adversarial falsification gate) of the step-4 plan. E is the one that decides whether any of it
+is worth having: a record whose `expected_observation` the cited next frame can neither confirm
+nor refute gets cut, not softened.
+
+---
+
+## 2026-09-15 (later still)
+
+### Step 4 passes A and B: per-game dispatch tables, and `tools/segment.py`
+
+PR #19. The premise, measured on the five hand-built records: most of a decision-step record is
+**mechanical** — segment boundaries, frame references, the observed outcome, the source
+citation. Only three fields need a mind: the rationale, the `expected_observation`, and the
+memory delta. So automate the rest and spend the judgment where it counts.
+
+- **`datasets/decision-steps/dispatch/` — 8 per-game tables** mapping action → handler →
+  file:line, read once per game and reused by every record in it. Citation stops being the
+  bottleneck.
+- **`tools/segment.py`** emits candidate records with the judgment fields **absent**. Candidates
+  are gitignored, are not collected by a directory walk, and are deliberately not schema-valid,
+  so an unfinished record cannot be mistaken for a finished one.
+- **Acceptance: the segmenter reproduced the four hand-built bp35 records exactly, first run** —
+  cuts, frame refs, measured numbers, level, `last_action`/`last_result`. No disagreement to
+  adjudicate.
+
+Four corrections that came out of doing it, worth more than the code:
+
+1. **Line numbers do not transfer between builds of the same game.** `ft09` settles it: two
+   builds with byte-identical dispatch code, citation still off by 22 lines from an added
+   licence header. Semantics transfer; citations must be re-derived per build.
+2. **A branching action must not be cited at one of its branches.** Running the segmenter on
+   cn04 found the segmenter citing `ACTION5`'s rotation call — when the entire cn04 finding is
+   that ACTION5 rotates some parts and expands others. Citation now stops at the branch and
+   lists the sites as `branch-dependent`.
+3. **bp35 declares `available_actions = [3,4,6,7]`**, and its move handler reads only the sign
+   of `dx` — so ACTION1, ACTION2 and ACTION3 are all a step left, and ACTION5 is literally
+   `pass`. The earlier hand-written table implied otherwise.
+4. **`arcengine` is not vendored**, so only bp35 and lf52 can cite `ACTION7`/`RESET` to a line.
+   Elsewhere those rows are described, not cited — marked uncitable rather than faked.
+
+**Not done:** passes C, D and E. No annotation, no recordings pulled for the selected runs, no
+enum widened. `wa30`, `lp85`, `ls20` and `lf52` have source but **no recording on disk**, so
+their tables are unchecked against play. The `camera_shift` / `extent_change` heuristics are the
+weakest output and need pass D to confirm. `args` mapping `row=y, col=x` is an **unverified
+assumption**, flagged in the docstring and covered by no test.
+
+**81 tests pass**, up from 46. Nine guards were poison-checked — each made to fail, confirmed by
+its message, then restored.
 
 ---
 
