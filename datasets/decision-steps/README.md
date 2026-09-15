@@ -3,8 +3,9 @@ Author: Claude Opus 5 (Bubba)
 Date: 15-September-2026
 PURPOSE: Cold-start operator guide for the decision-step corpus tooling — what the record is,
 why it exists, how to run the validator, what the next pipeline step is, and the verified
-replay-API facts — both endpoints, the not-resumable download, and the 250 published guids
-found by step 3. Written so a
+replay-API facts — both endpoints, the not-resumable download, the 250 published guids
+found by step 3, and why the first-party replays are a second manifest rather than 3 more rows
+in the first. Written so a
 session with no transcript can act without asking anyone. SCHEMA.md holds the field-by-field
 contract and is not restated here.
 SRP/DRY check: Pass — schema.json is the executable contract, SCHEMA.md is its field gloss,
@@ -43,7 +44,8 @@ datasets/decision-steps/
 ├── SCHEMA.md          field-by-field gloss, tier definitions, choices made
 ├── validate.py        the validator CLI
 ├── README.md          this file
-├── published-replays.json   250 published human replay guids + their run metadata
+├── published-replays.json    250 blog-linked human replay guids + their run metadata
+├── first-party-replays.json  the 3 replays this project pulled itself, incl. the Boss's cd82 win
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
@@ -126,7 +128,10 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 28 tests, stdlib only.
+Matches the existing `scripts/test_*.py` convention. 34 tests, stdlib only. Six of them
+cover the two replay manifests (see [Two replay manifests](#two-replay-manifests-and-why-they-are-two));
+those read the committed JSON only and never call the API, so the suite does not go red when
+`three.arcprize.org` does.
 
 ## Why the validator is hand-rolled
 
@@ -226,11 +231,65 @@ So the list is harvested from a published page and then resolved guid-by-guid th
 `/api/sessions`; there is no endpoint that will hand you all of them.
 
 Read the caveats in that file's `_provenance` block before treating it as 250 gold episodes.
-The short version: `tags: ["human"]` covers losses as well as wins, and the two replays we
-already had are **not** in this set — they were published 2026-09-14, the blog set on
-2026-03-22.
+The short version: `tags: ["human"]` covers losses as well as wins, and the replays we
+already had are **not** in this set — they were published 2026-09-13/14, the blog set on
+2026-03-22. Ours are listed separately in
+[`first-party-replays.json`](first-party-replays.json); see
+[Two replay manifests](#two-replay-manifests-and-why-they-are-two) for why they are not merged
+into one file.
 
 **Known limit, stated plainly:** we own exactly one bp35 win and one g50t win. "10–20 episodes"
 means 10–20 correlated segments of a single human session, which is fine for a schema shakedown
 and is **not** a corpus. Step zero of any real corpus is scraping more published replay guids,
 not slicing the two we have thinner.
+
+## Two replay manifests and why they are two
+
+| file | rows | what every row in it is |
+|---|---|---|
+| [`published-replays.json`](published-replays.json) | 250 | a guid linked from the public ARC blog post *"ARC-AGI-3 human dataset"* |
+| [`first-party-replays.json`](first-party-replays.json) | 3 | a replay this project pulled directly, not harvested from a page |
+
+**They are not merged, and the reason is the whole point of having either.**
+`published-replays.json`'s provenance is one sentence — "linked from the ARC blog post" — and
+that sentence is only worth anything while it is true of *every* row in the file. Our three
+replays are not in the blog's 250 (the blog set was published 2026-03-22; ours 2026-09-13,
+-14 and -15). Appending them would buy one file and cost the ability to say where any given
+row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
+
+The invariant that keeps this honest — **no guid appears in both files** — is asserted by
+`ReplayManifestTests` in `scripts/test_decision_step_validator.py`, not merely intended.
+
+### What is in the first-party file
+
+All three are `WIN`s, one per environment:
+
+| game | guid | levels | actions | resets |
+|---|---|---|---|---|
+| `bp35-0a0ad940` | `c935ca1b-…` | 9 | 1024 | 13 |
+| `g50t-5849a774` | `4f0689d0-…` | 7 | 533 | 9 |
+| `cd82-fb555c5d` | `496ee425-…` | 6 | 216 | 0 |
+
+The first two are the known-good human wins the corpus was built on, listed in
+`tools/replay_scrape.py`'s `KNOWN_REPLAYS`. The third is **the Boss's own playthrough of cd82
+"Compass Dye"**, won 14–15 Sep 2026.
+
+"First-party" means *this project pulled it directly* — it does **not** mean the Boss played
+all three. Only the cd82 row has a named player. The other two carry `tags: ["human"]` from
+`/api/sessions` and nothing finer; no attribution is recorded for them anywhere in this repo,
+so the manifest claims none. Per-guid detail is in that file's `_provenance.attribution`.
+
+`cd82-fb555c5d` is an environment the rest of the corpus tooling has never seen, which makes it
+the first real test of the scraper against a guid it was not written around:
+
+```bash
+python3.13 tools/replay_scrape.py guid 496ee425-9705-409f-8410-463a2229627e
+```
+
+pulled clean on 2026-09-15 — **217 rows, 10,487,262 bytes** — and its rows carry the same
+`data.frame` shape (a list of 64×64 grids) that the
+[frame convention](SCHEMA.md#frame_reffield-is-a-dotted-path-and-the-frame-is-the-last-grid)
+assumes. No fixture cites cd82 yet; segmentation and labelling is step 4 and has not been done.
+
+Note there is no clean rule from `actions` to recording rows — 1024→1030, 533→534, 216→217.
+Take the row count from the scraper's observed output, never from the session metadata.
