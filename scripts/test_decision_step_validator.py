@@ -16,7 +16,13 @@ never mistaken for a resolved one; and the schema evaluator's unsupported-keywor
 at top level and inside $defs, which is what keeps the hand-rolled draft 2020-12 subset from
 silently under-validating if schema.json grows a keyword the engine cannot enforce. A coverage
 test asserts every file under fixtures/invalid/ has an expectation here, so adding a fixture
-without asserting on it fails the suite.
+without asserting on it fails the suite. Also covers the two replay manifests --
+published-replays.json and first-party-replays.json -- for row shape, per-file guid
+uniqueness, _provenance.count agreeing with the actual row count, every first-party row
+carrying an attribution, and above all that the two files share no guid, which is the
+invariant that keeps each file's provenance claim true of every row in it. Those manifest
+tests read the committed JSON only and never call the API, so the suite stays green when
+three.arcprize.org is not.
 Run from the repo root: python3.13 -m unittest scripts.test_decision_step_validator -v
 SRP/DRY check: Pass — matches the existing scripts/test_*.py unittest convention (see
 scripts/test_run_catalog.py); no shared test helper module exists in scripts/ to reuse, each
@@ -354,6 +360,69 @@ class RealRecordingTests(unittest.TestCase):
         code, output = run_cli(*targets, "--require-frame-resolution")
         self.assertEqual(code, 0, output)
         self.assertIn("FRAME-REF RESOLUTION: ON", output)
+
+
+class ReplayManifestTests(unittest.TestCase):
+    """The two replay manifests, and the one invariant that keeps them worth having.
+
+    published-replays.json claims its rows are "linked from the ARC blog post" and
+    first-party-replays.json claims its rows are ours. Those claims only mean something while
+    no guid sits in both files, so that disjointness is asserted rather than trusted. Offline
+    by design — these read the committed JSON and never call the API, so the suite does not go
+    red when three.arcprize.org does.
+    """
+
+    PUBLISHED = CORPUS_DIR / "published-replays.json"
+    FIRST_PARTY = CORPUS_DIR / "first-party-replays.json"
+    ROW_FIELDS = (
+        "game_id", "guid", "state", "levels_completed", "actions", "resets", "published_at",
+    )
+
+    def load(self, path):
+        return json.loads(path.read_text())
+
+    def test_both_manifests_have_the_same_row_shape(self):
+        for path in (self.PUBLISHED, self.FIRST_PARTY):
+            with self.subTest(manifest=path.name):
+                doc = self.load(path)
+                self.assertEqual(list(doc), ["_provenance", "replays"])
+                for field in ("what", "why", "collected", "count", "caveats", "fields"):
+                    self.assertIn(field, doc["_provenance"])
+                for index, row in enumerate(doc["replays"]):
+                    for field in self.ROW_FIELDS:
+                        self.assertIn(field, row, f"{path.name} row {index} lacks {field}")
+                    self.assertIn(row["state"], {"WIN", "GAME_OVER", "NOT_FINISHED"})
+
+    def test_each_manifest_count_matches_its_row_count(self):
+        """Cheap guard on the real future failure: a row appended, the count left behind."""
+        for path in (self.PUBLISHED, self.FIRST_PARTY):
+            with self.subTest(manifest=path.name):
+                doc = self.load(path)
+                self.assertEqual(doc["_provenance"]["count"], len(doc["replays"]))
+
+    def test_guids_are_unique_within_each_manifest(self):
+        for path in (self.PUBLISHED, self.FIRST_PARTY):
+            with self.subTest(manifest=path.name):
+                guids = [row["guid"] for row in self.load(path)["replays"]]
+                self.assertEqual(len(guids), len(set(guids)))
+
+    def test_the_two_manifests_share_no_guid(self):
+        published = {row["guid"] for row in self.load(self.PUBLISHED)["replays"]}
+        ours = {row["guid"] for row in self.load(self.FIRST_PARTY)["replays"]}
+        self.assertEqual(
+            published & ours,
+            set(),
+            "a guid in both manifests makes one file's provenance claim false for that row",
+        )
+
+    def test_every_first_party_guid_is_attributed(self):
+        """The file exists to carry provenance, so a row with no attribution is a bug."""
+        doc = self.load(self.FIRST_PARTY)
+        attribution = doc["_provenance"]["attribution"]
+        for row in doc["replays"]:
+            with self.subTest(guid=row["guid"]):
+                self.assertIn(row["guid"], attribution)
+                self.assertTrue(attribution[row["guid"]].strip())
 
 
 class CliTests(unittest.TestCase):
