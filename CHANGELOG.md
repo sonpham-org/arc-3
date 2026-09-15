@@ -97,6 +97,42 @@ nor refute gets cut, not softened.
 
 ## 2026-09-15 (latest)
 
+### ls20: three lives a level, a 42 that is often 21, and a RESET that refills both
+
+`docs/trace-findings/2026-09-15-ls20-lives-and-the-filtered-reset.md`. The game mechanic behind
+the Boss's ls20 win, written because `first-party-replays.json`'s ls20 attribution cites it and
+because the step-budget half was not written down anywhere. The harness half is **not**
+duplicated — it is owned by the evening-session entry below and cited from section 4.
+
+**Lives are per LEVEL.** `ls20.py:1821` sets three, inside `on_set_level` (`:1778`); budget
+exhaustion spends one (`:1950`, `:1961`); the third ends the run (`:1962-1963`). RESET re-enters
+the hook through the engine (`base_game.py:205 → :305 → :326 → :328 → :164`) and so refills
+lives *and* the step meter.
+
+**Measured, not inferred.** The pips render at frame row 61, x=56/59/62, colour 8. Across all
+562 rows they take exactly three states — 419 rows at three lives, 140 at two, 3 at one — and
+never reach zero, which is the same fact as the recording carrying no `GAME_OVER` row. **Row 454
+is the mechanic in one row:** one life left, RESET pressed, three lives back, `levels_completed`
+unchanged. All three of that run's resets were taken on a *live* board, so RESET on ls20 is a
+life refill bought for a level restart, not recovery from death.
+
+**The "42-step budget" is 42 on three levels and 21 on four.** All seven declare
+`StepCounter: 42`, but the meter drains by `StepsDecrement`, default **2** (`ls20.py:1771`),
+overridden to 1 only on levels 1, 4 and 6 (`:724`, `:1088`, `:1324`). Derived by *parsing the
+level objects*, not by reading line proximity in `LEVELS_SPEC` — the partial-read mistake
+`AGENTS.md` warns about, which would have mapped the overrides to the wrong levels. A record
+claiming "42 moves on this level" is wrong on four of seven.
+
+**Three of the line numbers this was asked to check were wrong, and section 5 lists them.** Two
+off-by-ones (`:1962` is the test, `:1963` is the `lose()`; the harness filter is
+`solver.py:171-172`, not `:170-171`), and one substantive: the claim that `solver.py:752` would
+reject a RESET anyway is **false** — `taaf/game.py:188-193` always re-adds RESET (0) to
+`available_actions`, so that gate passes. It is one filter, not two, which makes the proposed
+harness fix a one-place change. Verified in this tree, not relayed.
+
+---
+
+
 ### The RESET blocker is cleared: arcengine is vendored, and six stranded records land
 
 Committed direct to `main` at the Boss's instruction.
