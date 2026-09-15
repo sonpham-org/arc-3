@@ -47,6 +47,7 @@ datasets/decision-steps/
 ├── current-builds.json       the 25 live ARC-3 builds; a run is eligible only if its build is current
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
 ├── first-party-replays.json  the 23 replays the Boss played on his own account
+├── dispatch/                 one <game_id>.json per game: action name -> source line (pass B)
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
@@ -55,10 +56,45 @@ datasets/decision-steps/
 │                          flat one, and a 3-row one mirroring the live API row shape
 └── v0/
     ├── recordings/<game_id>/<guid>.ndjson    70–140 MB apiece, gitignored, made by step 3
-    └── episodes/<game_id>__<guid>__<seg>.jsonl   committed — the corpus itself
+    └── episodes/
+        ├── <game_id>__<guid>__<seg>.jsonl             committed — the corpus itself
+        └── <game_id>__<guid>__<seg>.candidate.jsonl   gitignored — unfinished pass-A output
 ```
 
 The scraper that fills `v0/recordings/` lives at [`tools/replay_scrape.py`](../../tools/replay_scrape.py).
+
+## Dispatch tables and the segmenter
+
+Step 4's first two passes are tooling, not annotation:
+
+- **[`dispatch/`](dispatch/)** — one table per game mapping each action name to the source line
+  that handles it, plus the branch conditions that change what it does. Built once, cited by
+  every record in that game as `action_role_source`. It also carries the settled answer to the
+  sibling-build question: **a record may never cite another build's source.** See
+  [`dispatch/README.md`](dispatch/README.md).
+- **[`tools/segment.py`](../../tools/segment.py)** — reads one recording plus its dispatch table
+  and writes **candidates**: records with every derivable field measured and every judgment
+  field absent.
+
+```bash
+python3.13 tools/segment.py --game-id bp35-0a0ad940 \
+  --guid c935ca1b-dfee-4be1-9574-bf4cc80c5b89 --rows 213:216 --segment-prefix bp35-l5
+```
+
+**A candidate is deliberately not schema-valid.** It is missing `tier`, `memory_in`,
+`action_role`, `decision.rationale`, `decision.expected_observation`, `decision.memory_out` and
+`outcome.expectation_held` — the fields passes D and E exist to fill. Three guarantees keep an
+unfinished record from being mistaken for a finished one, and each has its own test in
+`scripts/test_segment.py`:
+
+1. `validate.py <dir>` does **not** collect `*.candidate.jsonl` from a directory walk;
+2. naming one explicitly **does** validate it, and it fails on the missing fields;
+3. the pattern is gitignored, so it cannot be committed by accident.
+
+Where an episode *starts* is an editorial choice and is passed in as `--rows`; what the tool
+derives is where the cuts fall inside that window and what each cut's reason is. One gap is
+refused rather than papered over: `boundary_reason` has no value for a level transition, so a
+window spanning one is rejected with the row to split at.
 
 ## Running the validator
 
