@@ -45,7 +45,7 @@ datasets/decision-steps/
 ├── validate.py        the validator CLI
 ├── README.md          this file
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
-├── first-party-replays.json  the 22 replays the Boss played on his own account
+├── first-party-replays.json  the 23 replays the Boss played on his own account
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
@@ -249,11 +249,11 @@ human sessions: fine for a schema shakedown, **not** a corpus.
 | file | rows | what every row in it is |
 |---|---|---|
 | [`published-replays.json`](published-replays.json) | 250 | a guid linked from the public ARC blog post *"ARC-AGI-3 human dataset"* |
-| [`first-party-replays.json`](first-party-replays.json) | 22 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
+| [`first-party-replays.json`](first-party-replays.json) | 23 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
 
 **They are not merged, and the reason is the whole point of having either.**
 `published-replays.json`'s provenance is one sentence — "linked from the ARC blog post" — and
-that sentence is only worth anything while it is true of *every* row in the file. None of our 22
+that sentence is only worth anything while it is true of *every* row in the file. None of our 23
 replays is in the blog's 250. Appending them would buy one file and cost the ability to say
 where any given row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
 
@@ -262,9 +262,9 @@ The invariant that keeps this honest — **no guid appears in both files** — i
 
 ### What is in the first-party file
 
-22 runs across 17 environments, all played by the Boss on his own
-arcprize.org account: **5 `WIN`, 6 `GAME_OVER`,
-11 `NOT_FINISHED`**, 5,026 actions in total. The wins:
+23 runs across 18 environments, all played by the Boss on his own
+arcprize.org account: **6 `WIN`, 6 `GAME_OVER`,
+11 `NOT_FINISHED`**, 5,480 actions in total. The wins:
 
 | game | guid | levels | actions | resets |
 |---|---|---|---|---|
@@ -272,7 +272,20 @@ arcprize.org account: **5 `WIN`, 6 `GAME_OVER`,
 | `g50t-5849a774` | `4f0689d0…` | 7 | 533 | 9 |
 | `ls20-cb3b57cc` | `6184a865…` | 7 | 378 | 0 |
 | `r11l-495a7899` | `60c0af00…` | 6 | 316 | 6 |
+| `cn04-2fe56bfb` | `f714032e…` | 6 | 454 | 4 |
 | `cd82-fb555c5d` | `496ee425…` | 6 | 216 | 0 |
+
+The `cn04` row is the one exception to everything the next two paragraphs say about where these
+rows came from: it was played *after* the 2026-09-15 scorecard snapshot and was fetched by a
+single direct `/api/sessions` call, not from the inventory. It is also the most useful single row
+in the file so far. `ACTION5` rotates the held part across the whole of levels 1–4 of `cn04`, and
+on level 5's yellow part it never rotates at all — it steps up a 5-deep stack of nested growing
+variants, and the small variants carry fewer marks than the large ones (3 at starting size, 7
+fully expanded), so marks that must be satisfied are **absent from the board** until the part is
+expanded. Verified against `docs/static/games/src/cn04-2fe56bfb/cn04.py:1066-1075`. An agent that
+induced `ACTION5 = rotate` from levels 1–4 arrives at level 5 holding a hypothesis that is false
+rather than incomplete, with nothing on screen to signal the change — which is the
+falsified-prediction material this corpus exists to capture, in a real human run.
 
 "First-party" now means **both** *this project pulled it directly* **and** *the Boss played it*.
 An earlier version of the manifest said only the cd82 row had a named player and that bp35 and
