@@ -102,6 +102,57 @@ def _grid_from_state(state: taaf.game.GameState | None) -> tuple[tuple[int, ...]
     return tuple(tuple(int(cell) for cell in row) for row in rows)
 
 
+def _grid_from_frame(frame) -> tuple[tuple[int, ...], ...]:
+    data = getattr(frame, "data", frame)
+    rows = data.tolist() if hasattr(data, "tolist") else data
+    try:
+        return tuple(tuple(int(cell) for cell in row) for row in rows)
+    except (TypeError, ValueError):
+        return ()
+
+
+def _animation_summary(new_state, previous_grid, board_changed) -> dict[str, Any]:
+    """Compact scalar metadata about the intermediate animation frames (which the
+    settled `current_frame` discards), added to every action result so the model
+    always sees it -- no opt-in. `animation_only_changed` flags an action that
+    showed a real transient change even though the final board matched the previous
+    one (a blocked move, a toggle that reverted). Cheap alternative to full frames."""
+    try:
+        frames = list(getattr(new_state, "all_frames", ()) or ())
+    except Exception:
+        # `all_frames` is an engine-backed property; the adjacent full-frame block
+        # guards it the same way. This summary runs on EVERY action (no opt-in),
+        # so a raise here would take down the whole harness.
+        frames = []
+    grids = [g for g in (_grid_from_frame(f) for f in frames) if g]
+    changed: set[tuple[int, int]] = set()
+    for g in grids:
+        for r in range(max(len(previous_grid), len(g))):
+            pr = previous_grid[r] if r < len(previous_grid) else ()
+            gr = g[r] if r < len(g) else ()
+            for c in range(max(len(pr), len(gr))):
+                pv = pr[c] if c < len(pr) else None
+                gv = gr[c] if c < len(gr) else None
+                if pv != gv:
+                    changed.add((r, c))
+    if changed:
+        rows = [x[0] for x in changed]
+        cols = [x[1] for x in changed]
+        bbox = [min(rows), min(cols), max(rows), max(cols)]
+    else:
+        bbox = None
+    seq = [previous_grid, *grids]
+    transition_count = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
+    return {
+        "animation_frame_count": len(frames),
+        "animation_changed": bool(changed),
+        "animation_only_changed": bool(changed and not board_changed),
+        "animation_changed_cell_count": len(changed),
+        "animation_changed_bbox": bbox,
+        "animation_transition_count": transition_count,
+    }
+
+
 def _level_number(game: taaf.game.Game) -> int:
     state = game.current_state
     completed = int(state.levels_completed)
@@ -747,6 +798,24 @@ class _HarnessGameSession:
         final_payload["board_changed"] = any(
             bool(item.get("board_changed")) for item in executed_payloads
         )
+        # Merge animation metadata across every action in the batch.
+        final_payload["animation_frame_count"] = sum(
+            int(it.get("animation_frame_count", 0) or 0) for it in executed_payloads)
+        final_payload["animation_changed"] = any(
+            bool(it.get("animation_changed")) for it in executed_payloads)
+        final_payload["animation_only_changed"] = bool(
+            final_payload["animation_changed"] and not final_payload["board_changed"])
+        final_payload["animation_changed_cell_count"] = max(
+            (int(it.get("animation_changed_cell_count", 0) or 0) for it in executed_payloads),
+            default=0)
+        final_payload["animation_transition_count"] = sum(
+            int(it.get("animation_transition_count", 0) or 0) for it in executed_payloads)
+        _boxes = [it.get("animation_changed_bbox") for it in executed_payloads
+                  if isinstance(it.get("animation_changed_bbox"), list)
+                  and len(it.get("animation_changed_bbox")) == 4]
+        final_payload["animation_changed_bbox"] = ([
+            min(b[0] for b in _boxes), min(b[1] for b in _boxes),
+            max(b[2] for b in _boxes), max(b[3] for b in _boxes)] if _boxes else None)
         final_payload["stopped_early"] = len(executed_payloads) < batch_size
         if stop_reason is not None:
             final_payload["stop_reason"] = stop_reason
@@ -873,6 +942,7 @@ class _HarnessGameSession:
             "batch_size": batch_size,
             **self.timing_payload(),
         }
+        payload.update(_animation_summary(new_state, previous_grid, board_changed))
         self._append_action_viewer_event(payload, current_frame)
         if flush_viewer_payload:
             self.write_viewer_payload()

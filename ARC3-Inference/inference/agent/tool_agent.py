@@ -1643,6 +1643,13 @@ class ToolAgent:
         for timing_key in ("run_elapsed_seconds", "time_remaining_seconds"):
             if timing_key in payload:
                 compact[timing_key] = payload.get(timing_key)
+        # Always-visible compact animation metadata (see solver._animation_summary):
+        # cheaper than exposing raw frames and surfaced without the agent opting in.
+        for anim_key in ("animation_frame_count", "animation_changed",
+                         "animation_only_changed", "animation_changed_cell_count",
+                         "animation_changed_bbox", "animation_transition_count"):
+            if anim_key in payload:
+                compact[anim_key] = payload.get(anim_key)
         if payload.get("error"):
             compact["error"] = payload.get("error")
         return compact
