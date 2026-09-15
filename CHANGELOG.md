@@ -37,9 +37,11 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — A and B on `main`, first D pass run on lp85 and blocked on `action_role_source` for RESET; C/E not begun |
 
-**What exists right now.** 101 tests (59 + 11 + 31 across `test_decision_step_validator`,
-`test_dispatch_tables`, `test_segment`). 278 human replay guids inventoried across two manifests
-that are deliberately not merged, plus 250 leaderboard rows that carry no guid and never can be
+**What exists right now.** 107 tests (65 + 11 + 31 across `test_decision_step_validator`,
+`test_dispatch_tables`, `test_segment`), all passing — the validator file gained 6 when
+`ProvenanceProseTests` landed in `f7565c9`. **280** human replay guids inventoried across two
+manifests that are deliberately not merged — 250 published plus **30** first-party, the latter
+having gone 28 → 30 in `f7565c9` with the `ls20/7537433d` and `m0r0/2134c482` wins, plus 250 leaderboard rows that carry no guid and never can be
 fetched. **11 live-build recordings on disk, plus 15 for as66** — counted as
 `find v0/recordings -name '*.ndjson'`, partitioned on the as66 directory. Do not use the
 `ls */*.ndjson` glob a previous revision of this line cited: run from `v0/recordings/` it sweeps
