@@ -65,6 +65,7 @@ STRUCTURED_RUNTIME_STATE_ADDENDUM = (
     "- Pass `action(actions)` a list like `['LEFT']` or `[{'action': 'MOUSE', 'row': 4, 'col': 7}]`.\n"
     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
+    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
 )
 
 MULTIMODAL_CONTEXT_ADDENDUM = (
