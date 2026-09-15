@@ -6,7 +6,11 @@ Covers, with real fixture files on disk rather than inline literals: every valid
 passing; one invalid fixture per failure mode producing a specific, human-readable message and
 a non-zero exit; the turn-0 contract (both last_action and last_result null, still required,
 and both-or-neither) and that it is expressed without any keyword the evaluator cannot
-enforce; all three frame-reference resolution failures being distinguishable; the
+enforce; all six frame-reference resolution failures being distinguishable (missing
+recording, row out of range, flat field miss, dotted segment miss, descent into a
+non-object, and an empty frame list); that a dotted frame_ref.field really resolves
+against the re-pulled recordings when they are present, and is skipped rather than
+failed when they are not; the
 summary line announcing SKIPPED when the gitignored recordings are absent, so a green run is
 never mistaken for a resolved one; and the schema evaluator's unsupported-keyword guard firing
 at top level and inside $defs, which is what keeps the hand-rolled draft 2020-12 subset from
@@ -53,6 +57,23 @@ def run_cli(*argv: str) -> tuple[int, str]:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = validate.main(list(argv))
     return code, out.getvalue() + err.getvalue()
+
+
+def absent_recordings_dir() -> str:
+    """A recordings path guaranteed not to exist.
+
+    Deliberately not the default datasets/decision-steps/v0/recordings: step 3's scraper
+    creates that directory, and a test that inherits the default silently changes meaning the
+    day it first runs. It did — the valid/ fixtures cite real bp35 and g50t guids, so once the
+    recordings landed, resolution switched itself on underneath tests that were only ever
+    asserting record shape. Shape-only tests say so explicitly.
+    """
+    return str(Path(tempfile.mkdtemp(prefix="decision-steps-absent-")) / "no-recordings-here")
+
+
+def run_shape_only(*argv: str) -> tuple[int, str]:
+    """Validate structure with frame resolution provably off."""
+    return run_cli(*argv, "--recordings-dir", absent_recordings_dir())
 
 
 # One entry per file in fixtures/invalid/. The substring is the part of the message a human
@@ -111,7 +132,7 @@ class SchemaDocumentTests(unittest.TestCase):
 
 class ValidRecordTests(unittest.TestCase):
     def test_every_tier_fixture_passes(self):
-        code, output = run_cli(str(FIXTURES / "valid"))
+        code, output = run_shape_only(str(FIXTURES / "valid"))
         self.assertEqual(code, 0, output)
         self.assertIn("0 error(s)", output)
 
@@ -141,7 +162,7 @@ class TurnZeroTests(unittest.TestCase):
         self.assertEqual(record["frame_ref"]["row_index"], 0)
 
     def test_the_turn_zero_fixture_passes(self):
-        code, output = run_cli(str(self.TURN_ZERO))
+        code, output = run_shape_only(str(self.TURN_ZERO))
         self.assertEqual(code, 0, output)
 
     def test_both_fields_stay_required_so_an_omission_is_not_read_as_turn_zero(self):
@@ -173,12 +194,12 @@ class InvalidRecordTests(unittest.TestCase):
             with self.subTest(fixture=name):
                 path = FIXTURES / "invalid" / f"{name}.jsonl"
                 self.assertTrue(path.is_file(), f"missing fixture {path}")
-                code, output = run_cli(str(path))
+                code, output = run_shape_only(str(path))
                 self.assertEqual(code, 1, output)
                 self.assertIn(expected, output)
 
     def test_error_lines_carry_file_and_line_number(self):
-        code, output = run_cli(str(FIXTURES / "invalid" / "empty-rationale.jsonl"))
+        code, output = run_shape_only(str(FIXTURES / "invalid" / "empty-rationale.jsonl"))
         self.assertEqual(code, 1)
         self.assertIn("datasets/decision-steps/fixtures/invalid/empty-rationale.jsonl:1:", output)
 
@@ -192,7 +213,7 @@ class InvalidRecordTests(unittest.TestCase):
 
     def test_bad_rows_are_rejected_not_coerced(self):
         """A directory containing one good and one bad row fails the whole run."""
-        code, output = run_cli(
+        code, output = run_shape_only(
             str(FIXTURES / "valid" / "gold-g50t-ghost-construction.jsonl"),
             str(FIXTURES / "invalid" / "wrong-type-level.jsonl"),
         )
@@ -240,15 +261,7 @@ class FrameResolutionTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("has no field 'frame'", output)
 
-    @staticmethod
-    def absent_dir() -> str:
-        """A path guaranteed not to exist.
-
-        Deliberately not datasets/decision-steps/v0/recordings: step 3 creates that directory,
-        and these two tests assert the *absent* behaviour. Pointing them at real project state
-        would make them flip the day the scraper first runs.
-        """
-        return str(Path(tempfile.mkdtemp(prefix="decision-steps-absent-")) / "no-recordings-here")
+    absent_dir = staticmethod(absent_recordings_dir)
 
     def test_absent_recordings_dir_is_announced_as_skipped_in_the_summary(self):
         code, output = run_cli(
@@ -270,6 +283,79 @@ class FrameResolutionTests(unittest.TestCase):
         self.assertIn("--require-frame-resolution was set", output)
 
 
+class DottedFramePathTests(unittest.TestCase):
+    """frame_ref.field is a dotted path, because live API rows nest the frame at data.frame.
+
+    The stand-in recording these resolve against mirrors the live row shape (timestamp + data,
+    frame a list of grids) rather than the flat one the older fixtures use, so both forms stay
+    covered: flat single-segment by FrameResolutionTests, nested by these.
+    """
+
+    RECORDINGS = FIXTURES / "recordings"
+    NESTED = FIXTURES / "frame-resolution"
+
+    def _run(self, name: str) -> tuple[int, str]:
+        return run_cli(str(self.NESTED / f"{name}.jsonl"), "--recordings-dir", str(self.RECORDINGS))
+
+    def test_dotted_path_resolves(self):
+        code, output = self._run("nested-resolvable")
+        self.assertEqual(code, 0, output)
+        self.assertIn("FRAME-REF RESOLUTION: ON", output)
+
+    def test_a_missing_segment_names_the_segment_and_its_container(self):
+        code, output = self._run("nested-path-miss")
+        self.assertEqual(code, 1)
+        self.assertIn("has no field 'frames' under 'data'", output)
+        self.assertIn("path 'data.frames' (segment 2 of 2)", output)
+        self.assertIn("keys there: action_input", output)
+
+    def test_descending_into_a_non_object_is_rejected(self):
+        code, output = self._run("nested-descend-into-non-object")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot descend into 'data.frame'", output)
+        self.assertIn("it is array, not an object", output)
+
+    def test_an_empty_frame_list_is_rejected_not_treated_as_resolved(self):
+        """data.frame: [] resolves as a path and still has no frame in it.
+
+        Five rows of the real 1,030-row bp35 recording are exactly this shape (indices 215,
+        370, 390, 572 and 807). A path-resolved check alone would pass them and every consumer
+        would then fail selecting the last grid.
+        """
+        code, output = self._run("nested-empty-frame-list")
+        self.assertEqual(code, 1)
+        self.assertIn("resolved to an empty list", output)
+
+    def test_the_flat_form_is_just_a_one_segment_path(self):
+        """No churn: a field with no dot still means a top-level key."""
+        errors = validate.FrameResolver._walk(
+            {"frame": [[0]]}, "frame", "$.frame_ref", 0, Path("x.ndjson")
+        )
+        self.assertEqual(errors, [])
+
+
+class RealRecordingTests(unittest.TestCase):
+    """The gold fixtures cite real guids; when step 3 has run, they must really resolve.
+
+    Skipped rather than failed when the recordings are absent — they are gitignored and 200 MB.
+    """
+
+    RECORDINGS = CORPUS_DIR / "v0" / "recordings"
+    GOLD = [
+        "gold-bp35-turn-zero",
+        "gold-bp35-undo-compare",
+        "gold-g50t-ghost-construction",
+    ]
+
+    def test_gold_fixtures_resolve_against_the_re_pulled_recordings(self):
+        if not self.RECORDINGS.is_dir():
+            self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
+        targets = [str(FIXTURES / "valid" / f"{name}.jsonl") for name in self.GOLD]
+        code, output = run_cli(*targets, "--require-frame-resolution")
+        self.assertEqual(code, 0, output)
+        self.assertIn("FRAME-REF RESOLUTION: ON", output)
+
+
 class CliTests(unittest.TestCase):
     def test_missing_target_is_a_usage_error_not_a_pass(self):
         code, output = run_cli(str(FIXTURES / "does-not-exist.jsonl"))
@@ -277,7 +363,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("no such file or directory", output)
 
     def test_directory_targets_are_searched_recursively(self):
-        code, output = run_cli(str(FIXTURES / "valid"))
+        code, output = run_shape_only(str(FIXTURES / "valid"))
         self.assertEqual(code, 0, output)
         self.assertIn("5 file(s), 6 record(s)", output)
 

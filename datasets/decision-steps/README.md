@@ -3,7 +3,8 @@ Author: Claude Opus 5 (Bubba)
 Date: 15-September-2026
 PURPOSE: Cold-start operator guide for the decision-step corpus tooling — what the record is,
 why it exists, how to run the validator, what the next pipeline step is, and the verified
-replay-API facts step 3 inherits. Written so a
+replay-API facts — both endpoints, the not-resumable download, and the 250 published guids
+found by step 3. Written so a
 session with no transcript can act without asking anyone. SCHEMA.md holds the field-by-field
 contract and is not restated here.
 SRP/DRY check: Pass — schema.json is the executable contract, SCHEMA.md is its field gloss,
@@ -42,15 +43,19 @@ datasets/decision-steps/
 ├── SCHEMA.md          field-by-field gloss, tier definitions, choices made
 ├── validate.py        the validator CLI
 ├── README.md          this file
+├── published-replays.json   250 published human replay guids + their run metadata
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
-│   ├── frame-resolution/  records exercising frame_ref lookup
-│   └── recordings/        a 4-row stand-in NDJSON so lookup has something to resolve
+│   ├── frame-resolution/  records exercising frame_ref lookup, flat and dotted
+│   └── recordings/        stand-in NDJSONs so lookup has something to resolve: a 4-row
+│                          flat one, and a 3-row one mirroring the live API row shape
 └── v0/                (not committed — created by step 3)
     ├── recordings/<game_id>/<guid>.ndjson    70–140 MB apiece, gitignored
     └── episodes/<game_id>__<guid>__<seg>.jsonl
 ```
+
+The scraper that fills `v0/recordings/` lives at [`tools/replay_scrape.py`](../../tools/replay_scrape.py).
 
 ## Running the validator
 
@@ -66,10 +71,21 @@ python3.13 datasets/decision-steps/validate.py datasets/decision-steps/v0/episod
 # or single files
 python3.13 datasets/decision-steps/validate.py path/to/one.jsonl path/to/another.jsonl
 
-# prove it works on the fixtures
-python3.13 datasets/decision-steps/validate.py datasets/decision-steps/fixtures/valid
-python3.13 datasets/decision-steps/validate.py datasets/decision-steps/fixtures/invalid   # exits 1
+# prove it works on the fixtures — shape only, frame resolution explicitly off
+python3.13 datasets/decision-steps/validate.py datasets/decision-steps/fixtures/valid \
+  --recordings-dir /nonexistent
+python3.13 datasets/decision-steps/validate.py datasets/decision-steps/fixtures/invalid \
+  --recordings-dir /nonexistent   # exits 1
 ```
+
+**Why `--recordings-dir /nonexistent` on a fixture run.** Once step 3 has pulled the
+recordings, the default recordings directory exists and resolution switches itself on. The
+three gold fixtures cite the two real human-replay guids and do resolve against the re-pulled
+files — that is asserted by `RealRecordingTests`. The silver and negative fixtures cite an
+`agent_transcript` and a `synthetic_rollout` guid that have no recording *by design*, so a
+fixture run with resolution on reports two `recording not found` errors. Pointing a shape-only
+run at a directory that does not exist says which of the two things you are checking, instead
+of letting the answer depend on whether the scraper has run on that machine.
 
 Exit codes: `0` all records valid · `1` at least one record rejected · `2` usage or schema
 error. Bad rows are **rejected, never coerced** — one bad row fails the run.
@@ -110,7 +126,7 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 22 tests, stdlib only.
+Matches the existing `scripts/test_*.py` convention. 28 tests, stdlib only.
 
 ## Why the validator is hand-rolled
 
@@ -135,23 +151,84 @@ Per plan §5:
 
 1. ~~Land the ACTION7 round-trip on `main`~~ — **done**, PR #9, commit `d5339da`.
 2. **Write the schema and validator** — this directory.
-3. **Next: write `tools/replay_scrape.py`** and re-pull the recordings into
-   `datasets/decision-steps/v0/recordings/`. Both known-good replays must come back at their
-   recorded row counts — bp35 `c935ca1b-dfee-4be1-9574-bf4cc80c5b89` at 1,030 rows, g50t
-   `4f0689d0-7d06-4be7-91ac-31cb9a800b85` at 534 — and the number of *additional* published
-   guids found gets written down even if it is zero. A zero is a finding, not a failure.
-   The host was verified by observation on 15-Sep-2026 while settling `row_index`:
-   `https://three.arcprize.org/api/recordings/<game_id>/<guid>` returns the bp35 recording,
-   138 MB and 1,030 lines. Two things the scraper must handle, found the same way and written
-   up in [`SCHEMA.md`](SCHEMA.md#row_index-is-zero-based--settled-against-a-real-recording):
-   the API ignores `Range` and serves the whole file, and each row nests the frame at
-   `data.frame` as a *list* of grids, not at `frame`. **Only the recordings path was
-   observed.** `/api/sessions/<guid>` was never called, on that host or any other — step 3
-   must verify it rather than assume it shares the host.
+3. ~~Write `tools/replay_scrape.py` and re-pull the recordings~~ — **done.** See
+   [The replay scraper](#the-replay-scraper) below. Both known-good replays came back at
+   their recorded counts (1,030 and 534, observed), the frame convention was settled
+   (`data.frame`, last grid — [`SCHEMA.md`](SCHEMA.md#frame_reffield-is-a-dotted-path-and-the-frame-is-the-last-grid)),
+   and **250 additional published human replay guids** were found and are listed in
+   [`published-replays.json`](published-replays.json).
 4. **Then: segment and label.** Boundaries are meaningful state changes, not fixed strides.
    Every record must pass `validate.py`; every gold record's `action_role` must cite a real
    line in the game source under `docs/static/games/src/`; every negative record must pair an
    observed failure with a corrected next decision.
+
+## The replay scraper
+
+`tools/replay_scrape.py` (plan §5 step 3). Stdlib only, Python 3.13, run from the repo root.
+
+```bash
+python3.13 tools/replay_scrape.py known          # re-pull the two known-good human wins
+python3.13 tools/replay_scrape.py session <guid> # print /api/sessions/<guid>; downloads nothing
+python3.13 tools/replay_scrape.py guid <guid>... # resolve game_id via /api/sessions, then pull
+```
+
+Two endpoints, **both verified live on 15-Sep-2026**, both on `https://three.arcprize.org`:
+
+| endpoint | what it gives |
+|---|---|
+| `/api/recordings/<game_id>/<guid>` | the NDJSON recording |
+| `/api/sessions/<guid>` | run metadata — `game_id`, `state`, `levels_completed`, `actions`, `resets`, `score`, `published_at` |
+
+`/api/sessions` had never been called before this step; it exists, it returns 200, and it is
+the **only** way to turn a bare replay guid harvested off a public page into the `game_id` the
+recordings path needs. `HEAD` on the recordings path is `405` (`allow: GET`).
+
+**Rows are written verbatim.** No normalising, no reshaping, no re-serialising — the on-disk
+NDJSON is the source of truth, so a downstream resolver bug never costs a 138 MB re-pull, and
+the row-count acceptance criterion only means something if the bytes are the API's own. Proof
+the committed tool does this: its output is byte-identical (`cmp`) to a plain `curl` of the
+same URL.
+
+**Not resumable, and honest about it.** The API ignores `Range` — a `Range: bytes=0-1023` GET
+returns `200` and the whole 73,579,940-byte g50t body, no `206`, no `Content-Range`. So an
+interrupted pull restarts from zero. What protects you is that the body lands on
+`<guid>.ndjson.part` *in the destination directory*, is proved to parse line-by-line and to end
+in a newline, and is only then `os.replace`d into place. A truncated file is never left behind
+looking complete. A re-run skips a target that already exists and parses; `--force` re-pulls.
+`429` and `5xx` back off using the API's own `x-ratelimit-reset` header.
+
+**Never `git add -f` a recording.** They are ~202 MB combined and `datasets/decision-steps/v0/`
+is gitignored for that reason.
+
+## Published replay guids — 250 found
+
+[`published-replays.json`](published-replays.json) lists every human replay guid linked from
+the public ARC blog post *"ARC-AGI-3 human dataset"* — 10 per environment across 25
+environments. Plan §5 braced for a zero here and §7(a) calls scraping more guids "step zero of
+any real corpus", so the list is committed rather than left in a chat message.
+
+**There is still no guid-enumeration endpoint.** What was probed on 15-Sep-2026, all of it
+time-boxed, before the blog post turned out to carry the list:
+
+| probed | result |
+|---|---|
+| `GET /api/games` (three.arcprize.org) | `401 unauthorized` |
+| `GET /api/sessions` (no guid) | `404` |
+| `GET /api/recordings` (no path) | `404` |
+| `GET /api/cards/<card_id>`, `/api/scorecards/<card_id>` | `404` — a session document does carry a `card_id`, but nothing serves it |
+| `GET /api/leaderboard` | `404` |
+| `/openapi.json`, `/docs` on three.arcprize.org | `301` to the marketing page; no spec |
+| `https://arcprize.org/sitemap.xml` | 60 URLs, **no** `/replay/` entries |
+| `https://arcprize.org/replay/<guid>` HTML | contains only its own guid; no API paths in the markup |
+| `https://arcprize.org/blog/arc-agi-3-human-dataset` | **250 replay links**, 10 per environment × 25 |
+
+So the list is harvested from a published page and then resolved guid-by-guid through
+`/api/sessions`; there is no endpoint that will hand you all of them.
+
+Read the caveats in that file's `_provenance` block before treating it as 250 gold episodes.
+The short version: `tags: ["human"]` covers losses as well as wins, and the two replays we
+already had are **not** in this set — they were published 2026-09-14, the blog set on
+2026-03-22.
 
 **Known limit, stated plainly:** we own exactly one bp35 win and one g50t win. "10–20 episodes"
 means 10–20 correlated segments of a single human session, which is fine for a schema shakedown

@@ -279,6 +279,17 @@ class FrameResolver:
 
     Recordings are 70-140 MB apiece and gitignored, so this is opt-in on the directory
     existing. row_index is zero-based.
+
+    `field` is a **dotted path** into the row, not a flat key: live API rows nest the frame at
+    `data.frame`, so a flat `"frame"` resolves against nothing. A single-segment path is just a
+    top-level key, so the flat form keeps working unchanged. See
+    SCHEMA.md#frame-references for the path convention and for which grid in the list is
+    "the frame".
+
+    An empty list at the resolved path is rejected. Five rows of the real bp35 recording carry
+    `data.frame: []`, and on those the path resolves while there is no grid to select — a
+    "did it resolve" check alone would pass them and every consumer would then fail on
+    `frame[-1]`. That is exactly the false-green shape this repo has been burned by before.
     """
 
     def __init__(self, recordings_dir: Path) -> None:
@@ -311,10 +322,39 @@ class FrameResolver:
             row = json.loads(lines[row_index])
         except json.JSONDecodeError as exc:
             return [f"{path}.row_index: row {row_index} of {ndjson} is not valid JSON: {exc}"]
-        if not isinstance(row, dict) or field not in row:
+        return self._walk(row, field, path, row_index, ndjson)
+
+    @staticmethod
+    def _walk(row: object, field: str, path: str, row_index: int, ndjson: Path) -> list[str]:
+        """Walk the dotted `field` path into `row`, naming the segment that failed."""
+        segments = field.split(".")
+        where = f"row {row_index} of {ndjson}"
+        current: object = row
+        for depth, segment in enumerate(segments):
+            # Say "path 'data.frame' ..." only when there is actually a path to talk about;
+            # a one-segment field keeps the original, shorter sentence.
+            at = "" if len(segments) == 1 else (
+                f"path {field!r} (segment {depth + 1} of {len(segments)}): "
+            )
+            if not isinstance(current, dict):
+                container = "row" if depth == 0 else ".".join(segments[:depth])
+                return [
+                    f"{path}.field: {where}: {at}cannot descend into {container!r} — "
+                    f"it is {_type_name(current)}, not an object"
+                ]
+            if segment not in current:
+                keys = ", ".join(sorted(current)) or "none"
+                container = "row" if depth == 0 else ".".join(segments[:depth])
+                return [
+                    f"{path}.field: {where} has no field {segment!r} under {container!r} "
+                    f"({at}keys there: {keys})"
+                ]
+            current = current[segment]
+        if isinstance(current, list) and not current:
             return [
-                f"{path}.field: row {row_index} of {ndjson} has no field {field!r} "
-                f"(row fields: {', '.join(sorted(row)) if isinstance(row, dict) else _type_name(row)})"
+                f"{path}.field: {where}: {field!r} resolved to an empty list — there is no "
+                f"frame to select. On the real recordings this happens on rows where the "
+                f"engine emitted no frames at all; such a row cannot back a decision step."
             ]
         return []
 

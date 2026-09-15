@@ -4,8 +4,9 @@ Date: 15-September-2026
 PURPOSE: Field-by-field contract for the decision-step corpus record. The machine-readable
 form is schema.json; this file explains each field, records the choices made where the plan
 was silent, and is what an annotator reads before labelling. Also carries the turn-0
-(null last_action/last_result) contract and the evidence that settled row_index as zero-based
-against the real 1,030-line bp35 recording. README.md covers why the corpus
+(null last_action/last_result) contract, the evidence that settled row_index as zero-based
+against the real 1,030-line bp35 recording, and the frame_ref dotted-path / frame[-1]
+convention settled by step 3 against the same file. README.md covers why the corpus
 exists and how to run the validator; it deliberately does not restate this table.
 SRP/DRY check: Pass — schema.json is the only executable contract, this is its prose gloss,
 README.md is the operator guide. No field definition is duplicated between them.
@@ -49,7 +50,7 @@ teach diagnosis instead of imitation.
 | `level` | integer ≥ 0 | yes | Level the decision was taken on. |
 | `frame_ref.recording_guid` | GUID | yes | See [Frame references](#frame-references). |
 | `frame_ref.row_index` | integer ≥ 0 | yes | Zero-based. |
-| `frame_ref.field` | non-empty string | yes | Name of the field on that row carrying the frame. |
+| `frame_ref.field` | non-empty string | yes | **Dotted path** to the field on that row carrying the frame — `data.frame` on live API rows. A path with no dot is a top-level key. See [Frame references](#frame-references). |
 | `ascii` | non-empty string or `null` | yes (may be `null`) | Optional ASCII rendering. |
 | `memory_in.known_mechanics` | array of non-empty strings | yes | May be empty. |
 | `memory_in.tested_actions` | array of action names | yes | May be empty. |
@@ -155,7 +156,7 @@ Checked 15-Sep-2026 against the actual bp35 human-win recording, re-pulled from
 `docs/trace-findings/2026-09-13-bp35-human-win-replay.md` recorded. Not a reading of the plan:
 
 1. **The only authority that resolves a `row_index` is the validator**, and it indexes a
-   Python list: `lines[row_index]` at `datasets/decision-steps/validate.py:311`, documented at
+   Python list: `lines[row_index]` at `datasets/decision-steps/validate.py:322`, documented at
    `validate.py:281`. Run against that real file, indices `0` and `1029` both resolve and
    `1030` is rejected as out of range. One-based would make `0` unusable and `1030` the last
    valid index.
@@ -167,24 +168,60 @@ Checked 15-Sep-2026 against the actual bp35 human-win recording, re-pulled from
    positional index is therefore the only meaning `row_index` can carry.
 4. **Nothing else in the repo reads or writes these recordings**, so there is no competing
    convention to conform to: `ndjson` appears in one tracked file (`validate.py`), `row_index`
-   only in the plan, this directory and its tests, and `tools/replay_scrape.py` does not exist
-   yet (plan §5 step 3). The ambient repo convention is zero-based for programmatic line
+   only in the plan, this directory and its tests. (`tools/replay_scrape.py` did not exist when
+   this was written; it now does, and it writes rows in file order with no header line.) The ambient repo convention is zero-based for programmatic line
    indexing (`ARC3-Inference/inference/utils/viewer_artifacts.py:68`) and 1-based only for
-   human-facing line numbers (`validate.py:341`, `enumerate(..., start=1)`). `row_index` is
+   human-facing line numbers (`validate.py:381`, `enumerate(..., start=1)`). `row_index` is
    programmatic.
 
 **Constraint this puts on step 3.** The scraper writes rows in file order, one JSON object per
 line, no header line. If it ever adds a self-describing index field, that field must equal the
 zero-based line index.
 
-**Finding the scraper has to settle — flagged, not fixed.** On the live API rows the frame is
-at `data.frame`, not `frame`, and it is a *list* of 64×64 grids (five of them on line 1), not
-one grid. So `frame_ref.field: "frame"` — the value the plan §6 example uses — does **not**
-resolve against an unmodified API row; the validator reports
-`has no field 'frame' (row fields: data, timestamp)`. Either the scraper flattens each row to
-the shape the example assumes, or `field` becomes a path into the row and the resolver moves
-with it. v0 keeps the plan's shape, and the stand-in recording under `fixtures/recordings/` is
-flat so lookup has something that resolves. This is a step-3 decision, not a schema edit.
+### `frame_ref.field` is a dotted path, and the frame is the **last** grid
+
+Settled by step 3 (`tools/replay_scrape.py`) against the re-pulled recordings, replacing the
+"flagged, not fixed" note that stood here while only the schema existed.
+
+**The path.** A live API row has exactly two top-level keys, `timestamp` and `data`, and the
+frame lives at `data.frame`. The plan §6 example's flat `"field": "frame"` therefore resolves
+against nothing — the validator reports `has no field 'frame' under 'row' (keys there: data,
+timestamp)`. So `field` is read as a **dotted path** into the row:
+`"field": "data.frame"`. A single-segment value is just a top-level key, so the flat form
+still works and nothing that used it had to change.
+
+This is a resolver change, not a schema change. `field` is still a plain non-empty string in
+`schema.json`; the path is interpreted by `validate.py`'s `FrameResolver._walk`. No keyword
+was added to the evaluator and the unsupported-keyword audit was not touched — the same
+discipline the turn-0 work followed.
+
+**Which grid.** `data.frame` is a **list of 64×64 grids** — the animation the engine emitted
+in response to that action, not a single board. On the real bp35 recording the list runs from
+0 to 57 grids long, most commonly 7 or 5.
+
+> **The rule: the frame is `frame[-1]`, the last grid in the list.** It is the settled board
+> after the action resolved.
+
+That is the repo-wide convention and it is cited, not invented:
+
+- `tufa-arc-agi-framework/src/taaf/game.py:175` — `return Frame(data=self.raw.frame[-1])`,
+  which is how the agent framework turns an API response into the board it reasons about.
+- `harnesses/baseline-v12/src/tufa-arc-agi-framework/src/taaf/game.py:170` — the vendored copy,
+  same line.
+- `docs/static/games/src/kd01/kd01.py:515` — a game-source comment stating it outright:
+  *"Agents read `frame[-1]`"*.
+
+Measured against the real recording: `frame[0]` is **not** the previous row's settled board —
+0 of 1,024 rows match that way — so the list is the post-action animation and only its last
+element is a state any consumer should read. There was no need to normalise at scrape time
+(plan step-3 decision (c)); the rows stay verbatim.
+
+**An empty list is rejected.** Five rows of the 1,030-row bp35 recording — indices 215, 370,
+390, 572 and 807, all `action_input.id: "ACTION7"` with `state: "GAME_OVER"` — carry
+`data.frame: []`. On those the path resolves and there is still no grid to select. The
+resolver rejects an empty list at the resolved path with its own message, because a
+"did the path resolve" check alone would pass them and every downstream consumer would then
+fail on `frame[-1]`. Such a row cannot back a decision step.
 
 ## Choices made where the plan was silent
 
