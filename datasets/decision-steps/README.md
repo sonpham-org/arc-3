@@ -46,7 +46,7 @@ datasets/decision-steps/
 ├── README.md          this file
 ├── current-builds.json       the 25 live ARC-3 builds; a run is eligible only if its build is current
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
-├── first-party-replays.json  the 26 replays the Boss played on his own account
+├── first-party-replays.json  the 28 replays the Boss played on his own account
 ├── human-leaderboards.json   the site's public top-10 human runs per game; a reference,
 │                             NOT a third replay manifest -- the rows carry no guid
 ├── dispatch/                 one <game_id>.json per game: action name -> source line (pass B)
@@ -285,11 +285,11 @@ already had are **not** in this set — they were published 2026-09-13/14, the b
 [Two replay manifests](#two-replay-manifests-and-why-they-are-two) for why they are not merged
 into one file.
 
-**Known limit, stated plainly:** we own 9 wins, but on only 8 distinct environments — two of
-them are the Boss's two `g50t` runs — out of the 20 the file covers. A recording has
-been pulled for 7 of the 26 rows — bp35, cd82, cn04, dc22, ft09 and *both* g50t runs. Every
-other row in the first-party manifest is metadata only — a guid we are entitled to pull, not a
-trace we hold.
+**Known limit, stated plainly:** we own 11 wins, but on only 10 distinct environments — two of
+them are the Boss's two `g50t` runs — out of the 22 the file covers. A recording has
+been pulled for 9 of the 28 rows — bp35, cd82, cn04, dc22, ft09, ka59, lp85 and *both* g50t
+runs. Every other row in the first-party manifest is metadata only — a guid we are entitled to
+pull, not a trace we hold.
 Until those recordings exist, "10–20 episodes" still means correlated segments of a handful of
 human sessions: fine for a schema shakedown, **not** a corpus.
 
@@ -352,11 +352,11 @@ and `lp85` are disjoint, but `bp35` (369–792 vs 322–397), `ft09` and `sb26` 
 | file | rows | what every row in it is |
 |---|---|---|
 | [`published-replays.json`](published-replays.json) | 250 | a guid linked from the public ARC blog post *"ARC-AGI-3 human dataset"* |
-| [`first-party-replays.json`](first-party-replays.json) | 26 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
+| [`first-party-replays.json`](first-party-replays.json) | 28 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
 
 **They are not merged, and the reason is the whole point of having either.**
 `published-replays.json`'s provenance is one sentence — "linked from the ARC blog post" — and
-that sentence is only worth anything while it is true of *every* row in the file. None of our 26
+that sentence is only worth anything while it is true of *every* row in the file. None of our 28
 replays is in the blog's 250. Appending them would buy one file and cost the ability to say
 where any given row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
 
@@ -365,9 +365,9 @@ The invariant that keeps this honest — **no guid appears in both files** — i
 
 ### What is in the first-party file
 
-26 runs across 20 environments, all played by the Boss on his own
-arcprize.org account: **9 `WIN`, 6 `GAME_OVER`,
-11 `NOT_FINISHED`**, 7,469 actions in total. The wins:
+28 runs across 22 environments, all played by the Boss on his own
+arcprize.org account: **11 `WIN`, 6 `GAME_OVER`,
+11 `NOT_FINISHED`**, 8,482 actions in total. The wins:
 
 | game | guid | levels | actions | resets | recording on disk |
 |---|---|---|---|---|---|
@@ -380,6 +380,8 @@ arcprize.org account: **9 `WIN`, 6 `GAME_OVER`,
 | `cn04-2fe56bfb` | `f714032e…` | 6 | 454 | 4 | yes |
 | `cd82-fb555c5d` | `496ee425…` | 6 | 216 | 0 | yes |
 | `ft09-0d8bbf25` | `99084b22…` | 6 | 133 | 4 | yes |
+| `ka59-38d34dbb` | `1333b2ee…` | 7 | 598 | 2 | yes |
+| `lp85-305b61c3` | `129ddf21…` | 8 | 415 | 6 | yes |
 
 **Two of those rows are the same player on the same build**, which nothing else in either
 manifest is: `4f0689d0…` (13-Sep) and `58483738…` (15-Sep) are both the Boss on
@@ -515,7 +517,7 @@ now. A run is eligible for this corpus only when its `game_id` is still the live
 | manifest | eligible | total |
 |---|---|---|
 | `published-replays.json` | **100** | 250 |
-| `first-party-replays.json` | **20** | 25 |
+| `first-party-replays.json` | **23** | 28 |
 
 Neither manifest is filtered — `published-replays.json` is a record of what the blog linked and
 `first-party-replays.json` of what the Boss played, and filtering either would make its own

@@ -805,10 +805,16 @@ class RecordingRowReconcileTests(unittest.TestCase):
     RESETs = 1 + session.resets
 
     The leading 1 in both is row 0, which carries full_reset: true and is counted by the API as
-    neither. Verified on all five recordings on disk. The third term was bp35-only until
-    2026-09-15, when the Boss's second g50t run came back with one: row 347, an ACTION2 sent to a
-    board the previous row had already flipped to GAME_OVER, returning an empty frame list. So it
-    is neither a bp35 quirk nor an ACTION7 quirk.
+    neither. Verified on all seven live-build recordings on disk. The third term was bp35-only
+    until 2026-09-15, when the Boss's second g50t run came back with one: row 347, an ACTION2
+    sent to a board the previous row had already flipped to GAME_OVER, returning an empty frame
+    list. So it is neither a bp35 quirk nor an ACTION7 quirk.
+
+    The lp85 row added 2026-09-15 evening is the case that pins the third term's definition
+    down from the other side: it holds the only GAME_OVER row in any first-party recording
+    (row 175), and the row after it is a RESET that DID execute, so it counts as an action and
+    the dead-row term stays 0. A rule that counted every row following a GAME_OVER would get
+    415 wrong by one.
     Skipped rather than failed when the recordings are absent — they are gitignored and 270 MB.
     """
 
@@ -823,6 +829,8 @@ class RecordingRowReconcileTests(unittest.TestCase):
         ("g50t-5849a774", "58483738-cfaf-4e57-8c55-4c9c593bbab5", 536, 8, 1),
         ("cd82-fb555c5d", "496ee425-9705-409f-8410-463a2229627e", 216, 0, 0),
         ("cn04-2fe56bfb", "f714032e-914d-4bb5-bc95-386dfacebca0", 454, None, 0),
+        ("ka59-38d34dbb", "1333b2ee-cf42-40dc-8994-cff1a5a9c55d", 598, 2, 0),
+        ("lp85-305b61c3", "129ddf21-d7ba-4ca0-9577-0cea2af042b6", 415, 6, 0),
     )
 
     def _tally(self, path):
@@ -927,7 +935,7 @@ class CurrentBuildTests(unittest.TestCase):
         live = self._live()
         for name, expected_eligible, expected_total in (
             ("published-replays.json", 100, 250),
-            ("first-party-replays.json", 21, 26),
+            ("first-party-replays.json", 23, 28),
         ):
             doc = json.loads((CORPUS_DIR / name).read_text())
             replays = doc.get("replays") or doc.get("rows") or doc.get("items")

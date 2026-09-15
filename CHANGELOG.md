@@ -37,15 +37,17 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
 
 **What exists right now.** 101 tests (59 + 11 + 31 across `test_decision_step_validator`,
-`test_dispatch_tables`, `test_segment`). 276 human replay guids inventoried across two manifests
+`test_dispatch_tables`, `test_segment`). 278 human replay guids inventoried across two manifests
 that are deliberately not merged, plus 250 leaderboard rows that carry no guid and never can be
-fetched. 8 recordings on disk plus 15 for as66. **5 labelled records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
+fetched. 9 recordings on disk plus 15 for as66 — this line read `8` before the `ka59` and `lp85`
+rows landed and the count was already one high; `ls */*.ndjson` reports 9 live-build recordings
+now and reported 7 then. **5 labelled records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
 annotation is three judgment fields rather than a whole record.
 
 **The one rule that governs step 4.** A run counts only if its `game_id` is **still the live
 build** — an early replay is a replay of a different game. That leaves **100 of the blog's 250**
-and **21 of the Boss's 26**, and every current build has game source, so citation is no longer a
+and **23 of the Boss's 28**, and every current build has game source, so citation is no longer a
 constraint. Execution plan, with the selection rule and the five passes:
 `docs/plans/2026-09-15-step4-segment-and-label-execution.md`.
 

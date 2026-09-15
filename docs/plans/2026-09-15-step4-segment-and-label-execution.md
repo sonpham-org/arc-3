@@ -49,7 +49,13 @@ What this does to §1 below, which was written before the rule existed:
   | manifest | eligible | total | games | resets |
   |---|---|---|---|---|
   | `published-replays.json` (blog) | **100** | 250 | 10 | 603 |
-  | `first-party-replays.json` (Boss) | **20** | 25 | 16 | 64 |
+  | `first-party-replays.json` (Boss) | **23** | 28 | 18 | 80 |
+
+  The first-party line read **20 | 25 | 16 | 64** when this section was written and drifted
+  three times in one day as runs landed: the Boss's second `g50t` run (~18:00 ET), then `ka59`
+  and `lp85` (~18:20 ET). `games` and `resets` here count the *eligible* subset, not the whole
+  file — that is the reading the original numbers were computed under, recovered by replaying
+  them against the 25-row manifest, and it is restated because nothing in the table said so.
 
   The blog's 250 are all from March 2026 and **15 of the 25 builds they used have since been
   replaced**, so 150 of those rows document games that no longer exist.
@@ -57,7 +63,7 @@ What this does to §1 below, which was written before the rule existed:
 - **One judgement call, stated so it can be reversed in a line.** The rule is applied as
   *build-currency*, not as a date cutoff, which keeps 100 March rows whose builds never changed.
   If the intent was strictly "September only", drop those 100 and the eligible set becomes the
-  Boss's 20 runs alone.
+  Boss's 23 runs alone.
 - **as66 leaves corpus scope entirely.** It is not in the live lineup, so no as66 run is
   eligible under this rule. The finding stands on its own —
   `docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md` — and its 15 recordings stay
