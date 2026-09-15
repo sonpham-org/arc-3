@@ -14,7 +14,8 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 # Changelog
 
 Newest first. Versioning is date-based; this work is pre-1.0 and the schema is pinned at
-`0.1`.
+`0.2` — `run_ended` took that number in `7dcaa62`, and the per-game `boundary_reason` redesign
+that had reserved it no longer has a number reserved.
 
 ---
 
@@ -37,11 +38,14 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — A and B on `main`, first D pass run on lp85 and blocked on `action_role_source` for RESET; C/E not begun |
 
-**What exists right now.** 107 tests (65 + 11 + 31 across `test_decision_step_validator`,
-`test_dispatch_tables`, `test_segment`), all passing — the validator file gained 6 when
-`ProvenanceProseTests` landed in `f7565c9`. **280** human replay guids inventoried across two
-manifests that are deliberately not merged — 250 published plus **30** first-party, the latter
-having gone 28 → 30 in `f7565c9` with the `ls20/7537433d` and `m0r0/2134c482` wins, plus 250 leaderboard rows that carry no guid and never can be
+**What exists right now.** **140 tests, all passing** — 65 + 11 + 31 + 33 across
+`test_decision_step_validator`, `test_dispatch_tables`, `test_segment` and `test_build_sft`.
+Run those four by name: `pytest scripts/` collects 58 errors from unrelated suites in this repo
+and tells you nothing about this work. The validator file gained 6 when `ProvenanceProseTests`
+landed in `1fdfb37`, and `test_build_sft` is new in `2469e82`. **280** human replay guids
+inventoried across two manifests that are deliberately not merged — 250 published plus **30**
+first-party, the latter having gone 28 → 30 in `1fdfb37` with the `ls20/7537433d` and
+`m0r0/2134c482` wins — plus 250 leaderboard rows that carry no guid and never can be
 fetched. **11 live-build recordings on disk, plus 15 for as66** — counted as
 `find v0/recordings -name '*.ndjson'`, partitioned on the as66 directory. Do not use the
 `ls */*.ndjson` glob a previous revision of this line cited: run from `v0/recordings/` it sweeps
@@ -56,16 +60,18 @@ and **23 of the Boss's 28**, and every current build has game source, so citatio
 constraint. Execution plan, with the selection rule and the five passes:
 `docs/plans/2026-09-15-step4-segment-and-label-execution.md`.
 
-**Open questions carried, not closed.** (1) `last_result` cannot express "that action ended
-the run", so post-death records read like ordinary steps. (2) `boundary_reason` carries
+**Open questions carried, not closed.** (1) is **closed** — see below. (2) `boundary_reason` carries
 per-game values, which will not survive 25 games. (3) `level` is `levels_completed`, a count —
 during play of the Nth level it reads N−1, so `"level": 5` means the 6th, and an episode
 spanning a `level_advance` cut now shows it. All three are flagged in `SCHEMA.md` or the tool
 docstrings; none has been quietly widened.
 
-**Closed since the last entry.** `boundary_reason` had no value for a level transition and the
-segmenter refused any window spanning one. `level_advance` closed it — see the 15-Sep (earlier)
-entry, including what the refusal was hiding.
+**Closed since the last entry.** Two. `last_result` could not express "that action ended the
+run", so post-death records read like ordinary steps; schema 0.2's `run_ended` closes it, and
+the segmenter measures a *flip* to `GAME_OVER` rather than its presence, so one death yields one
+marker. And `boundary_reason` had no value for a level transition, so the segmenter refused any
+window spanning one; `level_advance` closed that — see the 15-Sep (earlier) entry, including
+what the refusal was hiding.
 
 **Read the entry directly below before anything else.** It records a defect in
 `ARC3-Inference/inference/framework/solver.py:171-172` that filters `RESET` out of the action
@@ -239,7 +245,6 @@ the live vc33 build (`vc33-5430563c`) look played but are empty shells; vc33's 3
 
 #### Still open, carried deliberately rather than quietly closed
 
-- `last_result` cannot express "that action ended the run."
 - RESET has no citable `action_role_source` in most games — `arcengine` is not vendored, so only
   bp35 and lf52 have citable in-source RESET/ACTION7 implementations. This is what blocked the
   first D pass on lp85.
