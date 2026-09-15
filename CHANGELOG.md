@@ -36,15 +36,16 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
 
-**What exists right now.** 94 tests. 273 human replay guids inventoried across two manifests
-that are deliberately not merged. 6 recordings on disk plus 15 for as66. **5 labelled
-records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
+**What exists right now.** 101 tests (59 + 11 + 31 across `test_decision_step_validator`,
+`test_dispatch_tables`, `test_segment`). 276 human replay guids inventoried across two manifests
+that are deliberately not merged, plus 250 leaderboard rows that carry no guid and never can be
+fetched. 8 recordings on disk plus 15 for as66. **5 labelled records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
 annotation is three judgment fields rather than a whole record.
 
 **The one rule that governs step 4.** A run counts only if its `game_id` is **still the live
 build** — an early replay is a replay of a different game. That leaves **100 of the blog's 250**
-and **20 of the Boss's 25**, and every current build has game source, so citation is no longer a
+and **21 of the Boss's 26**, and every current build has game source, so citation is no longer a
 constraint. Execution plan, with the selection rule and the five passes:
 `docs/plans/2026-09-15-step4-segment-and-label-execution.md`.
 
@@ -67,6 +68,88 @@ nor refute gets cut, not softened.
 ---
 
 ## 2026-09-15 (latest)
+
+### A second g50t win, a caveat withdrawn, and the leaderboard that withdrew it
+
+Committed direct to `main` at the Boss's instruction. Three things, one of which is a
+correction to this repo's own prose rather than to anything upstream.
+
+**1. The Boss won `g50t-5849a774` a second time** — guid `58483738-cfaf-4e57-8c55-4c9c593bbab5`,
+7 levels, 536 actions, 8 resets, score 82.124. Row 26 of `first-party-replays.json`.
+Attribution is a checked match, not an inference from the date: the session document's
+`card_id` `475182c6-…` was looked up in a fresh `/api/user/scorecards` pull and that card carries
+`user_name: "Mark"`. The 70 MB recording stays gitignored, verified with `git check-ignore`
+before the commit.
+
+That row made three things visible that nothing had checked:
+
+- **`_provenance.total_actions` had drifted.** It read `5480` against rows summing to `6933` —
+  the sum through the `cn04` row. The 15:20 ET refresh that appended `dc22` and `ft09` updated
+  `count`, `games` and `state_counts` and left `total_actions` behind. The three that stayed
+  correct are exactly the three `ReplayManifestTests` asserted; the one that drifted is the one
+  nothing asserted. The file's own doctrine — *"a summary nobody checks is just a comment that
+  looks like data"* — was true of the file. Now `7469`, recomputed, with a test.
+- **The reconcile rule's third term is not a bp35 quirk.** This recording carries one of its
+  own: row 347, an `ACTION2` sent to a board the previous row had already flipped to
+  `GAME_OVER`, empty frame list, uncounted by the API. `538 − 1 boot − 1 dead = 536` actions and
+  `9 RESET rows − 1 = 8` resets; the rule holds exactly. One recording had the behaviour, so it
+  got attributed to that recording's game *and* that recording's action — a second game and a
+  second action is the cheapest possible correction of a sample-size-one generalisation.
+  `RecordingRowReconcileTests.EXPECTED` is keyed by guid now, since g50t is the first game with
+  two recordings on disk.
+- **It is the only same-player-same-build pair either manifest holds.** Against the shared
+  baseline `[78,175,179,230,96,54,67]`, `level_actions` went `[43,67,68,55,173,62,65]` →
+  `[17,31,74,94,186,91,43]`. Levels 1, 2 and 7 improved, 3, 4 and 6 got worse, and the total
+  barely moved — 533 → 536 — because the two cancelled. **Levels 5 and 6 are the only ones over
+  baseline on either run**, 1.80× then 1.94× and 1.15× then 1.69×, and the API's own
+  `level_scores` name the same two: 26.6 and 35.2 against 115 everywhere else. Learning showed
+  up as *redistribution*, not net reduction.
+
+**2. A caveat in `published-replays.json` was wrong and is withdrawn.** It said the blog's 250
+were *"a curated best-of, not a random sample of human play."* The best-of half was an inference
+from the list's shape and nobody had measured it. The blog's own heading was **not** re-read and
+is not asserted either way; what is claimed is a comparison.
+
+**3. `datasets/decision-steps/human-leaderboards.json`** is what that comparison is against —
+`POST arcprize.org/api/leaderboards/<4-char id>`, **unauthenticated**, pulled for all 25 current
+builds plus `as66`. A corrected caveat citing numbers nobody can re-read is not a correction, so
+the numbers are committed.
+
+| | leaderboard (250 rows) | blog set (250 rows) |
+|---|---|---|
+| wins | 250 / 250 | 139 / 250 |
+| score | 100 on every row | — |
+| resets | non-zero on 24, max 6 | max 30 |
+| median actions, on the 10 comparable builds | 29,179 total | 64,425 total — **2.21×** |
+
+Higher on *every one* of the ten, 1.55× to 2.93×. **The consequence cuts the opposite way to
+the caveat it replaces: the blog set is not speedrun play.** 111 of its 250 rows are not wins
+and its wins take about twice the actions — exploration, wrong turns and recovery, which is
+exactly what this corpus wants and exactly what a best-of would have stripped out. It is still
+not a *random* sample; nothing measured says how the 250 were chosen, only that it was not for
+speed.
+
+**Disjointness is by timestamp, not action count**, because there is no id to match on: every
+blog row is `published_at 2026-03-22` and no leaderboard row is. That settles all 25 games at
+once. Action ranges do not — `g50t`, `cd82` and `lp85` are disjoint, `bp35`, `ft09` and `sb26`
+overlap. The first framing tried was the ranges; it does not generalise, and the file says so.
+
+Three limits are written into the new file rather than left to be rediscovered: a leaderboard
+row carries a `user_name` and **no guid**, so those 250 runs are visible and permanently
+unfetchable and nothing may try to label or join them; `baseline_total_actions` is a per-**game**
+constant, established by the Boss's two g50t runs reporting identical
+`level_baseline_actions` while their `level_actions` differed on all seven levels; and
+`as66-821a4dcad9c2` returns **zero** rows while all 25 current builds return exactly ten — HTTP
+200, well-formed, empty — recorded as observed, with *why* explicitly not guessed at. That last
+is now a row in the as66 finding doc as an independent surface that omits the game.
+
+`scripts.test_decision_step_validator`: **52 tests → 59**, all passing. Both new guards
+poison-checked — a planted `guid` on a leaderboard row fails with the intended message, an
+`as66` `row_count` of 1 fails the zero-rows assertion — and both restored.
+
+---
+
+## 2026-09-15
 
 ### bp35 recovery mechanics, measured — and a correction to a labelled record
 

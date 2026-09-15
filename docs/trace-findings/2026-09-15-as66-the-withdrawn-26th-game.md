@@ -27,6 +27,7 @@ runs on it are reachable from the Boss's own scorecards** — 2 human and 13 age
 | `GET /api/sessions/<as66 guid>` | **200** |
 | `GET /api/recordings/as66-821a4dcad9c2/<guid>` | **200** |
 | source at `docs/static/games/src/as66*` | **absent** |
+| `POST arcprize.org/api/leaderboards/as66` (unauthenticated, 15-Sep-2026) | **200, empty array — zero rows, while all 25 current builds return exactly 10.** Recorded in [`human-leaderboards.json`](../../datasets/decision-steps/human-leaderboards.json); an independent surface that omits as66, not an explanation of why. |
 
 The live 25 are `ar25 bp35 cd82 cn04 dc22 ft09 g50t ka59 lf52 lp85 ls20 m0r0 r11l re86 s5i5
 sb26 sc25 sk48 sp80 su15 tn36 tr87 tu93 vc33 wa30`. as66 is a 26th id that our data has
