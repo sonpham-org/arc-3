@@ -24,6 +24,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -191,11 +192,21 @@ class FrameResolutionTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("has no field 'frame'", output)
 
+    @staticmethod
+    def absent_dir() -> str:
+        """A path guaranteed not to exist.
+
+        Deliberately not datasets/decision-steps/v0/recordings: step 3 creates that directory,
+        and these two tests assert the *absent* behaviour. Pointing them at real project state
+        would make them flip the day the scraper first runs.
+        """
+        return str(Path(tempfile.mkdtemp(prefix="decision-steps-absent-")) / "no-recordings-here")
+
     def test_absent_recordings_dir_is_announced_as_skipped_in_the_summary(self):
         code, output = run_cli(
             str(FIXTURES / "frame-resolution" / "missing-recording.jsonl"),
             "--recordings-dir",
-            str(REPO_ROOT / "datasets" / "decision-steps" / "v0" / "recordings"),
+            self.absent_dir(),
         )
         self.assertEqual(code, 0, output)
         self.assertIn("FRAME-REF RESOLUTION: SKIPPED", output)
@@ -204,7 +215,7 @@ class FrameResolutionTests(unittest.TestCase):
         code, output = run_cli(
             str(FIXTURES / "valid"),
             "--recordings-dir",
-            str(REPO_ROOT / "datasets" / "decision-steps" / "v0" / "recordings"),
+            self.absent_dir(),
             "--require-frame-resolution",
         )
         self.assertEqual(code, 2)
