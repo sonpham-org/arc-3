@@ -71,6 +71,40 @@ nor refute gets cut, not softened.
 
 ## 2026-09-15 (latest)
 
+### Schema 0.2: `run_ended`, and the cull is per level not per run
+
+**The gap is closed.** `last_result` gained `run_ended`, so a record can finally say "that action
+ended the run". Without it a post-death record read exactly like an ordinary step, which in a
+corpus built to teach recovery after being wrong was the one thing it must never fail to say.
+Field add, so `schema_version` goes to **0.2**; 0.1 reserved that number for the per-game
+`boundary_reason` redesign and the reservation is **released rather than quietly ignored** -
+this arrived first, and versions are cheaper than two meanings for one number.
+
+The segmenter measures it: a **flip** to `GAME_OVER`, not the presence of it. The five rows of
+the bp35 recording that sit at `GAME_OVER` because the run was already over would otherwise each
+be read as a fresh death - five markers on one death. Measured across the committed records, one
+carries it: the row where the player has just been killed and is about to try the undo that
+fails. Every fixture and record migrated; the version-drift fixture moved to 0.3 so it keeps
+failing for the reason it is named for rather than quietly becoming valid.
+
+**The cull, and the Boss's question that forced it.** Asked why we would want human runs that
+don't win. Mostly right, and the flag was wrong: `teaches_recovery` marked any falsified
+expectation, including the death spiral on the level the player never cleared. Weighting a
+training mix towards those teaches flailing.
+
+The unit is the **level**, not the run - the same rule the distiller already applies to its own
+play. A stumble on a level that was then cleared is a recovery that demonstrably worked; a
+stumble on the level the player died on is flailing. Measured on the eligible material: **only 2
+of 100 published runs cleared nothing at all**, and the 48 that never won still hold **229 of the
+615 solved levels** - 37% of the material. Culling those runs wholesale would throw away more
+than a third of the corpus; culling the unsolved levels inside them throws away exactly the
+flailing. `--keep-unsolved` exists and is off.
+
+Tests 112 -> 121. Two more guards poison-checked: the recovery gate, and culling levels rather
+than runs.
+
+---
+
 ### The bridge: a finished record becomes a training example
 
 `tools/build_sft.py`. Steps 1-4 built a labelling machine whose output nothing downstream read -

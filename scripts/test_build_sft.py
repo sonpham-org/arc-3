@@ -43,7 +43,7 @@ SOURCE = "test"
 def record(**overrides) -> dict:
     """A minimal finished record. Overrides replace whole top-level keys."""
     base = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "tier": "gold",
         "game_id": "bp35-0a0ad940",
         "source": {"kind": "human_replay", "recording_guid": "g", "row_index": 10},
@@ -51,7 +51,7 @@ def record(**overrides) -> dict:
         "level": 5,
         "memory_in": {"goal": "clear level 5", "known_mechanics": ["ACTION3 moves left"]},
         "last_action": {"action": "ACTION3"},
-        "last_result": {"board_changed": True, "level_changed": False},
+        "last_result": {"board_changed": True, "level_changed": False, "run_ended": False},
         "decision": {
             "action": {"action": "ACTION3"},
             "rationale": "step left again",
@@ -243,6 +243,62 @@ class RecoveryTests(unittest.TestCase):
             assistant.index("I expect:"), assistant.index("Action:"),
             "the expectation must precede the action or the tool result cannot falsify it",
         )
+
+
+class CullTests(unittest.TestCase):
+    """The unit is the level, not the run. A stumble on a level the player never cleared is
+    flailing, and marking it as recovery would weight a training mix towards losing."""
+
+    SOLVED = {"win-9": 9, "died-on-2": 1, "died-first": 0}
+
+    def _rec(self, guid, level):
+        return record(source={"kind": "human_replay", "recording_guid": guid, "row_index": 1},
+                      level=level)
+
+    def test_a_cleared_level_counts(self):
+        """level is a COUNT, so a record at level 5 was played during the 6th; a run that
+        finished 9 cleared it."""
+        self.assertIs(build_sft.level_was_solved(self._rec("win-9", 5), self.SOLVED), True)
+
+    def test_the_level_the_player_died_on_does_not(self):
+        self.assertIs(build_sft.level_was_solved(self._rec("died-on-2", 1), self.SOLVED), False)
+
+    def test_an_earlier_level_of_a_losing_run_still_counts(self):
+        """This is the whole reason non-winning runs stay in scope: a run that cleared one level
+        and then died still produced that one good level."""
+        self.assertIs(build_sft.level_was_solved(self._rec("died-on-2", 0), self.SOLVED), True)
+
+    def test_a_run_that_cleared_nothing_contributes_nothing(self):
+        self.assertIs(build_sft.level_was_solved(self._rec("died-first", 0), self.SOLVED), False)
+
+    def test_an_unknown_run_is_unknown_not_assumed_good(self):
+        self.assertIsNone(build_sft.level_was_solved(self._rec("not-in-manifest", 3), self.SOLVED))
+
+    def test_a_falsified_expectation_on_an_unsolved_level_is_not_recovery(self):
+        """The gate that makes the flag mean what it says."""
+        outcome = {"observed": "died", "expectation_held": False}
+        example = build_sft.build_example(record(outcome=outcome), GRID, PROMPT, SOURCE, solved=False)
+        self.assertFalse(example["teaches_recovery"])
+
+    def test_the_same_record_on_a_solved_level_is_recovery(self):
+        outcome = {"observed": "recovered", "expectation_held": False}
+        example = build_sft.build_example(record(outcome=outcome), GRID, PROMPT, SOURCE, solved=True)
+        self.assertTrue(example["teaches_recovery"])
+
+
+class RunEndedTests(unittest.TestCase):
+    """Schema 0.2. Without it a post-death record reads like an ordinary step."""
+
+    def test_the_model_is_told_the_run_ended(self):
+        rec = record(last_result={"board_changed": True, "level_changed": False, "run_ended": True})
+        user = next(m["content"] for m in build_sft.build_example(rec, GRID, PROMPT, SOURCE)["messages"]
+                    if m["role"] == "user")
+        self.assertIn("ENDED THE RUN", user)
+
+    def test_an_ordinary_step_is_not_announced_as_a_death(self):
+        user = next(m["content"] for m in build_sft.build_example(record(), GRID, PROMPT, SOURCE)["messages"]
+                    if m["role"] == "user")
+        self.assertNotIn("ENDED THE RUN", user)
 
 
 class ShapeTests(unittest.TestCase):

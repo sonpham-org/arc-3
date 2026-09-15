@@ -50,6 +50,10 @@ from inference.utils.grid_utils import ARC_COLOR_LEGEND, format_grid_ascii  # no
 
 DEFAULT_EPISODES = REPO_ROOT / "datasets" / "decision-steps" / "v0" / "episodes"
 DEFAULT_RECORDINGS = REPO_ROOT / "datasets" / "decision-steps" / "v0" / "recordings"
+MANIFESTS = (
+    REPO_ROOT / "datasets" / "decision-steps" / "published-replays.json",
+    REPO_ROOT / "datasets" / "decision-steps" / "first-party-replays.json",
+)
 
 #: Stand-in only. The real fine-tune must pass --system-prompt with the config it ships.
 DEFAULT_SYSTEM_PROMPT = (
@@ -75,6 +79,44 @@ _ENGINE_TOKEN_RE = re.compile(r"\bACTION[1-7]\b")
 def to_model_vocab(text: str) -> str:
     """Rewrite engine action names in free text into the labels the model actually uses."""
     return _ENGINE_TOKEN_RE.sub(lambda m: ENGINE_TO_MODEL_ACTION.get(m.group(0), m.group(0)), text)
+
+
+def solved_levels_by_guid(manifests: tuple[Path, ...] = MANIFESTS) -> dict[str, int]:
+    """run guid -> how many levels that run actually completed."""
+    solved: dict[str, int] = {}
+    for path in manifests:
+        if not path.is_file():
+            continue
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        for run in blob.get("replays") or blob.get("runs") or []:
+            guid = run.get("guid")
+            if isinstance(guid, str):
+                solved[guid] = run.get("levels_completed") or 0
+    return solved
+
+
+def level_was_solved(record: dict, solved: dict[str, int]) -> bool | None:
+    """Did the player go on to COMPLETE the level this record was taken on?
+
+    This is the cull, and it is the same rule the distiller already applies to its own play
+    (extract_sft.py keeps turns whose level <= levels_completed). Keeping a losing run wholesale
+    would train the model to lose. Throwing the whole run away instead is the opposite mistake:
+    a player who cleared four levels and then died on the fifth produced four levels of good
+    material, and 37% of the eligible published material sits in runs that never won.
+
+    So the unit is the LEVEL, not the run. A stumble on a level that was then cleared is a
+    recovery that demonstrably worked. A stumble on the level the player died on is flailing,
+    and it teaches flailing.
+
+    `level` is levels_completed, a COUNT, so a record written during play of the Nth level reads
+    N-1. The level being played was cleared if the run's final count ever got past it.
+    Returns None when the run is in neither manifest and the question cannot be answered.
+    """
+    guid = (record.get("source") or {}).get("recording_guid")
+    level = record.get("level")
+    if guid not in solved or not isinstance(level, int):
+        return None
+    return solved[guid] > level
 
 
 def _action_text(action: dict[str, Any]) -> str:
@@ -108,7 +150,10 @@ def _user_turn(record: dict, grid: list[list[int]]) -> str:
     if isinstance(last, dict) and last.get("action"):
         result = record.get("last_result") or {}
         changed = "the board changed" if result.get("board_changed") else "the board did not change"
-        parts.append(f"Your last action was {_action_text(last)} and {changed}.")
+        line = f"Your last action was {_action_text(last)} and {changed}."
+        if result.get("run_ended"):
+            line += " That action ENDED THE RUN - the board is dead and will not respond to ordinary moves."
+        parts.append(line)
     return "\n\n".join(parts)
 
 
@@ -146,7 +191,13 @@ def is_finished(record: dict) -> bool:
     return all(str(decision.get(f) or "").strip() for f in JUDGMENT_FIELDS)
 
 
-def build_example(record: dict, grid: list[list[int]], system_prompt: str, prompt_source: str) -> dict:
+def build_example(
+    record: dict,
+    grid: list[list[int]],
+    system_prompt: str,
+    prompt_source: str,
+    solved: bool | None = None,
+) -> dict:
     decision = record.get("decision") or {}
     outcome = record.get("outcome") or {}
     corrected = record.get("corrected_decision")
@@ -158,7 +209,11 @@ def build_example(record: dict, grid: list[list[int]], system_prompt: str, promp
     ]
     # The payload. A falsified expectation is the signal the big pipeline cannot produce; when a
     # verified correction follows it, the example teaches the whole recover-after-being-wrong arc.
-    falsified = outcome.get("expectation_held") is False
+    # A falsified expectation only teaches recovery if the player then RECOVERED -- which the
+    # level being cleared afterwards is the evidence for. Without this gate the flag also marks
+    # the death spiral on the level the player never solved, and weighting a training mix
+    # towards those would teach exactly the behaviour the corpus exists to remove.
+    falsified = outcome.get("expectation_held") is False and solved is not False
     if falsified and isinstance(corrected, dict):
         messages.append({"role": "assistant", "content": _assistant_turn({"decision": corrected})})
     source = record.get("source") or {}
@@ -169,6 +224,7 @@ def build_example(record: dict, grid: list[list[int]], system_prompt: str, promp
         "tier": record.get("tier"),
         "segment_id": (record.get("segment") or {}).get("id"),
         "expectation_held": outcome.get("expectation_held"),
+        "level_was_solved": solved,
         "teaches_recovery": bool(falsified),
         "has_verified_correction": bool(falsified and isinstance(corrected, dict)),
         "action": _action_text(decision.get("action") or {}),
@@ -196,6 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--recordings-dir", type=Path, default=DEFAULT_RECORDINGS)
     p.add_argument("--out", type=Path, help="Output JSONL (omit with --stats-only).")
     p.add_argument("--system-prompt-file", type=Path, help="Pin the system prompt to the fine-tune's own.")
+    p.add_argument(
+        "--keep-unsolved",
+        action="store_true",
+        help="Keep records from levels the player never cleared. Off by default: those are the "
+             "flailing, and training on them teaches flailing.",
+    )
     p.add_argument("--stats-only", action="store_true")
     args = p.parse_args(argv)
     if not args.out and not args.stats_only:
@@ -208,7 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         system_prompt, prompt_source = DEFAULT_SYSTEM_PROMPT, "build_sft.py:DEFAULT_SYSTEM_PROMPT (stand-in)"
 
     resolver = FrameResolver(args.recordings_dir)
-    examples, skipped, failures = [], 0, []
+    solved_by_guid = solved_levels_by_guid()
+    examples, skipped, failures, unsolved = [], 0, [], 0
     for path, lineno, record in iter_records(args.episodes_dir):
         if not is_finished(record):
             skipped += 1
@@ -218,13 +281,18 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             failures.append(f"{path.name}:{lineno}: {exc}")
             continue
-        examples.append(build_example(record, grid, system_prompt, prompt_source))
+        solved = level_was_solved(record, solved_by_guid)
+        if solved is False and not args.keep_unsolved:
+            unsolved += 1
+            continue
+        examples.append(build_example(record, grid, system_prompt, prompt_source, solved))
 
     recovery = [e for e in examples if e["teaches_recovery"]]
     print(f"examples:          {len(examples)}")
     print(f"  teach recovery:  {len(recovery)} ({sum(e['has_verified_correction'] for e in recovery)} with a verified correction)")
     print(f"  games:           {len({e['game_id'] for e in examples})}")
     print(f"unfinished skipped:{skipped}")
+    print(f"unsolved culled:   {unsolved}")
     if failures:
         print(f"UNRESOLVED ({len(failures)}):")
         for f in failures:
