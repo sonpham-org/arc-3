@@ -44,6 +44,7 @@ datasets/decision-steps/
 ├── SCHEMA.md          field-by-field gloss, tier definitions, choices made
 ├── validate.py        the validator CLI
 ├── README.md          this file
+├── current-builds.json       the 25 live ARC-3 builds; a run is eligible only if its build is current
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
 ├── first-party-replays.json  the 23 replays the Boss played on his own account
 ├── fixtures/
@@ -375,3 +376,27 @@ Five records is not a corpus. The plan's §5 step 4 target is 10–20 episodes p
 retrospectively from the game source, never recovered human thought
 (`rationale_provenance: "annotated"`, and the tier definitions in
 [`SCHEMA.md`](SCHEMA.md#tiers) say so).
+
+## Eligibility — only runs on a current build
+
+**Boss directive, 15-Sep-2026.** ARC Prize rebuilt these games as the benchmark firmed up, so an
+early replay is a replay of a *different game* — ls20 in the preview is not the ls20 that ships
+now. A run is eligible for this corpus only when its `game_id` is still the live build.
+
+`current-builds.json` is a dated snapshot of `GET /api/games`, read offline by
+`CurrentBuildTests`. Under it:
+
+| manifest | eligible | total |
+|---|---|---|
+| `published-replays.json` | **100** | 250 |
+| `first-party-replays.json` | **20** | 25 |
+
+Neither manifest is filtered — `published-replays.json` is a record of what the blog linked and
+`first-party-replays.json` of what the Boss played, and filtering either would make its own
+provenance claim false. Eligibility is applied when selecting what to *label*, and the counts
+above are asserted by a test so a lineup change surfaces here rather than mid-labelling.
+
+Two consequences worth stating. **All 25 current builds have game source in the repo**, so
+`action_role_source` is no longer a constraint on what can be labelled. And **as66 is not in the
+live lineup at all**, so none of its 15 recordings are corpus input — see
+[`docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md`](../../docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md).

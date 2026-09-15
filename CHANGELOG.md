@@ -36,13 +36,14 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — shape landed, volume not |
 
-**What exists right now.** 43 tests. 273 human replay guids inventoried across two manifests
+**What exists right now.** 46 tests. 273 human replay guids inventoried across two manifests
 that are deliberately not merged. 6 recordings on disk plus 15 for as66. **5 labelled
 records** — a demonstration of shape, not a corpus.
 
-**The one number that governs step 4.** `action_role_source` must cite a line in the game
-source, and **16 of the 36 game builds in our manifests have no source in the repo**. That
-leaves 130 of 273 runs eligible. Execution plan, with the selection rule and the five passes:
+**The one rule that governs step 4.** A run counts only if its `game_id` is **still the live
+build** — an early replay is a replay of a different game. That leaves **100 of the blog's 250**
+and **20 of the Boss's 25**, and every current build has game source, so citation is no longer a
+constraint. Execution plan, with the selection rule and the five passes:
 `docs/plans/2026-09-15-step4-segment-and-label-execution.md`.
 
 **Open questions carried, not closed.** (1) `last_result` cannot express "that action ended
@@ -52,6 +53,40 @@ has been quietly widened.
 
 **In flight, not merged as of this entry.** A branch off #16 building `tools/segment.py` and
 the per-game dispatch tables — passes A and B of the step-4 plan.
+
+---
+
+## 2026-09-15 (later)
+
+### Eligibility settled: only runs on a **current build** count
+
+Boss directive. ARC Prize rebuilt these games as the benchmark firmed up, so an early replay is
+a replay of a *different game* — ls20 in the preview is not the ls20 that ships now. Encoded as
+**build-currency** rather than a date cutoff, because build id is the precise, checkable form of
+that reasoning: date is the symptom, the build hash is the test.
+
+- `datasets/decision-steps/current-builds.json` — dated snapshot of the 25 live builds, read
+  **offline** by `CurrentBuildTests`; the tests never call the API.
+- **The source-coverage constraint is gone.** All 25 current builds have a directory under
+  `docs/static/games/src/`. The earlier "16 of 36 builds have no source" figure was counting
+  *stale* builds, which this rule excludes anyway. `action_role_source` is no longer a limit on
+  what can be labelled.
+- **Eligible material:** 100 of the blog's 250 (the other 150 sit on 15 builds that have since
+  been replaced) and 20 of the Boss's 25. Neither manifest is filtered — each is a record of
+  what it claims to be, and filtering would make its own provenance false — so eligibility is
+  applied at selection time and the counts are asserted by a test.
+- **as66 leaves corpus scope.** Not in the live lineup, so none of its 15 recordings are corpus
+  input. The finding stands on its own and the recordings stay on disk.
+- **One judgement call, reversible in a line:** build-currency keeps 100 March rows whose builds
+  never changed. If the intent was strictly "September only", drop those and the eligible set is
+  the Boss's 20 runs alone.
+- **Reservation:** build id is the only version signal the API exposes; that it changes when and
+  only when the game changes is **assumed, not verified**. Re-snapshot after any lineup change.
+
+Also: episode globs now exclude `*.candidate.jsonl`, matching what `validate.py` already did.
+Segmenter candidates carry no judgment fields and are deliberately not schema-valid, so an
+unfinished record can never be mistaken for a finished one. 46 tests pass; the new build guard
+was poison-checked.
 
 ---
 

@@ -25,7 +25,57 @@ The acceptance criterion is unchanged and comes from the plan of record §5 step
 
 ---
 
+## 0. Eligibility — settled by the Boss, 15-Sep-2026
+
+**A run is eligible only if its `game_id` is still the live build.**
+
+The Boss's reasoning: ARC Prize did not have this settled early on, and the games themselves
+changed underneath the early replays — *ls20 in the preview is not the ls20 that ships now*. A
+replay of a replaced build is a replay of a different game, whatever its date.
+
+**Build id is the checkable form of that rule, and it is stricter and more precise than a date
+cutoff.** Date is the symptom; the build hash is the test. The live set is snapshotted at
+`datasets/decision-steps/current-builds.json` and asserted by `CurrentBuildTests`, which reads
+the snapshot offline and never calls the API.
+
+What this does to §1 below, which was written before the rule existed:
+
+- **The source-coverage constraint disappears.** All **25** current builds have a directory
+  under `docs/static/games/src/`. The "16 of 36 builds have no source" measurement was counting
+  *stale* builds, which this rule excludes anyway. `action_role_source` is no longer a
+  constraint on what can be labelled — it is simply a step in labelling it.
+- **Eligible material, recounted under the rule:**
+
+  | manifest | eligible | total | games | resets |
+  |---|---|---|---|---|
+  | `published-replays.json` (blog) | **100** | 250 | 10 | 603 |
+  | `first-party-replays.json` (Boss) | **20** | 25 | 16 | 64 |
+
+  The blog's 250 are all from March 2026 and **15 of the 25 builds they used have since been
+  replaced**, so 150 of those rows document games that no longer exist.
+
+- **One judgement call, stated so it can be reversed in a line.** The rule is applied as
+  *build-currency*, not as a date cutoff, which keeps 100 March rows whose builds never changed.
+  If the intent was strictly "September only", drop those 100 and the eligible set becomes the
+  Boss's 20 runs alone.
+- **as66 leaves corpus scope entirely.** It is not in the live lineup, so no as66 run is
+  eligible under this rule. The finding stands on its own —
+  `docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md` — and its 15 recordings stay
+  on disk, but they are not corpus input.
+
+**Reservation, stated not buried:** build id is the only version signal the API exposes. That it
+changes when and only when the game changes was **not** verified; it is assumed. Re-snapshot
+`current-builds.json` after any lineup change.
+
+---
+
 ## 1. Two measurements that shape everything
+
+> **Superseded in part by §0.** The source-coverage constraint below no longer binds, because
+> every current build has source. The reset-density selection rule in §1(b) stands, and is the
+> part that still drives which recordings get pulled. Kept as written, with §0 taking precedence,
+> rather than rewritten — the measurement was real and the reasoning from it is worth keeping.
+
 
 Both taken 15-Sep-2026 against the two committed manifests and `docs/static/games/src/`.
 

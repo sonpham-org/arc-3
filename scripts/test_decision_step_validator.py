@@ -83,6 +83,16 @@ def run_shape_only(*argv: str) -> tuple[int, str]:
     return run_cli(*argv, "--recordings-dir", absent_recordings_dir())
 
 
+def finished_episodes(directory):
+    """Episode files that are FINISHED records, never segmenter candidates.
+
+    tools/segment.py writes *.candidate.jsonl with the judgment fields absent, so a candidate is
+    deliberately not schema-valid -- an unfinished record must never be mistakable for a finished
+    one. validate.py does not collect them either; these globs must agree with it.
+    """
+    return [p for p in sorted(directory.glob("*.jsonl")) if not p.name.endswith(".candidate.jsonl")]
+
+
 # One entry per file in fixtures/invalid/. The substring is the part of the message a human
 # needs in order to fix the row.
 INVALID_EXPECTATIONS = {
@@ -475,7 +485,7 @@ class BoundaryReasonTests(unittest.TestCase):
         for root in roots:
             if not root.is_dir():
                 continue
-            for path in sorted(root.glob("*.jsonl")):
+            for path in (finished_episodes(root) if root.name == "episodes" else sorted(root.glob("*.jsonl"))):
                 for line in path.read_text().splitlines():
                     if line.strip():
                         seen.add(json.loads(line)["segment"]["boundary_reason"])
@@ -514,7 +524,7 @@ class RealEpisodeTests(unittest.TestCase):
         on this row", which is not what it is called.
         """
         by_segment: dict[str, set[str]] = {}
-        for path in sorted(self.EPISODES.glob("*.jsonl")):
+        for path in finished_episodes(self.EPISODES):
             for line in path.read_text().splitlines():
                 if not line.strip():
                     continue
@@ -527,7 +537,7 @@ class RealEpisodeTests(unittest.TestCase):
 
     def test_negative_records_carry_a_corrected_decision(self):
         found = 0
-        for path in sorted(self.EPISODES.glob("*.jsonl")):
+        for path in finished_episodes(self.EPISODES):
             for line in path.read_text().splitlines():
                 if not line.strip():
                     continue
@@ -603,7 +613,7 @@ class RecordingRowReconcileTests(unittest.TestCase):
         """The five bp35 dead-board rows carry an empty frame list; a frame_ref there is a bug."""
         episodes = CORPUS_DIR / "v0" / "episodes"
         forbidden = {("c935ca1b-dfee-4be1-9574-bf4cc80c5b89", row) for row in (215, 370, 390, 572, 807)}
-        for path in sorted(episodes.glob("*.jsonl")):
+        for path in finished_episodes(episodes):
             for line in path.read_text().splitlines():
                 if not line.strip():
                     continue
@@ -613,6 +623,66 @@ class RecordingRowReconcileTests(unittest.TestCase):
                     (reference["recording_guid"], reference["row_index"]),
                     forbidden,
                     f"{path.name} points frame_ref at a dead-board row with no frame",
+                )
+
+
+class CurrentBuildTests(unittest.TestCase):
+    """Boss directive 15-Sep-2026: a run is only usable if its build is still the live build.
+
+    ls20 in the ARC-3 preview is not the ls20 that ships now, so a replay on a replaced build is
+    a replay of a different game whatever its date. Build id is the checkable form of that rule.
+    current-builds.json is a dated snapshot; these tests read it offline and never call the API.
+    """
+
+    BUILDS = CORPUS_DIR / "current-builds.json"
+    EPISODES = CORPUS_DIR / "v0" / "episodes"
+
+    def _live(self):
+        doc = json.loads(self.BUILDS.read_text())
+        return {b["game_id"] for b in doc["builds"]}
+
+    def test_snapshot_holds_twenty_five_builds_with_source(self):
+        live = self._live()
+        self.assertEqual(len(live), 25)
+        src = REPO_ROOT / "docs" / "static" / "games" / "src"
+        missing = sorted(g for g in live if not (src / g).is_dir())
+        self.assertEqual(missing, [], "current builds with no game source in the repo")
+
+    def test_every_labelled_record_is_on_a_current_build(self):
+        """The corpus itself. A record on a replaced build documents a game that no longer exists."""
+        live = self._live()
+        checked = 0
+        for path in finished_episodes(self.EPISODES):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if not line.strip():
+                    continue
+                checked += 1
+                record = json.loads(line)
+                with self.subTest(file=path.name, line=number):
+                    self.assertIn(record["game_id"], live)
+        self.assertGreater(checked, 0, "no labelled records found to check")
+
+    def test_manifest_eligibility_is_reported_not_silently_assumed(self):
+        """Both manifests legitimately carry ineligible rows; the counts must stay stated.
+
+        published-replays.json is a record of what the blog linked and first-party-replays.json of
+        what the Boss played -- neither is filtered, on purpose. This asserts the split is the one
+        the README documents, so a lineup change surfaces here rather than in a labelling pass.
+        """
+        live = self._live()
+        for name, expected_eligible, expected_total in (
+            ("published-replays.json", 100, 250),
+            ("first-party-replays.json", 20, 25),
+        ):
+            doc = json.loads((CORPUS_DIR / name).read_text())
+            replays = doc.get("replays") or doc.get("rows") or doc.get("items")
+            eligible = [r for r in replays if r["game_id"] in live]
+            with self.subTest(manifest=name):
+                self.assertEqual(len(replays), expected_total)
+                self.assertEqual(
+                    len(eligible),
+                    expected_eligible,
+                    "eligibility drifted -- re-snapshot current-builds.json and update the README",
                 )
 
 
