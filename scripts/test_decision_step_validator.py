@@ -22,7 +22,11 @@ uniqueness, _provenance.count, .games, .state_counts and (first-party only)
 .total_actions all agreeing with the actual rows
 they summarise, every first-party row
 carrying an attribution, and above all that the two files share no guid, which is the
-invariant that keeps each file's provenance claim true of every row in it. Those manifest
+invariant that keeps each file's provenance claim true of every row in it. And the leaderboard
+reference file human-leaderboards.json: its entry shape, that as66 is the only game returning
+zero rows, that all 250 rows are WIN at score 100 while the blog's 250 are not, and above all
+that no row carries a guid -- the property that makes those runs permanently unfetchable and
+this file a measurement rather than a third replay manifest. Those manifest
 tests read the committed JSON only and never call the API, so the suite stays green when
 three.arcprize.org is not.
 Run from the repo root: python3.13 -m unittest scripts.test_decision_step_validator -v
@@ -594,6 +598,104 @@ class ReplayManifestTests(unittest.TestCase):
             with self.subTest(guid=row["guid"]):
                 self.assertIn(row["guid"], attribution)
                 self.assertTrue(attribution[row["guid"]].strip())
+
+
+class HumanLeaderboardTests(unittest.TestCase):
+    """human-leaderboards.json -- the reference measurement, and the limit that makes it one.
+
+    The file exists because published-replays.json's "curated best-of" caveat was an inference
+    nobody had measured. These rows are the real best-of it now gets compared against. The one
+    property that must never be assumed away: a leaderboard row has a user_name and NO guid, so
+    those runs are permanently unfetchable and nothing downstream may try to label or join them.
+    Asserted here rather than left in prose, so the day the endpoint starts returning a guid the
+    suite says so. Offline by design -- reads the committed JSON, never calls the API.
+    """
+
+    LEADERBOARDS = CORPUS_DIR / "human-leaderboards.json"
+    ROW_FIELDS = ("user_name", "end_state", "score", "actions", "resets", "published_at")
+    GUID_LIKE = ("guid", "replay_guid", "recording_guid", "session_guid", "id", "uuid")
+
+    def load(self):
+        return json.loads(self.LEADERBOARDS.read_text())
+
+    def test_provenance_matches_the_shape_the_sibling_manifests_are_held_to(self):
+        doc = self.load()
+        self.assertEqual(list(doc), ["_provenance", "leaderboards"])
+        for field in ("what", "why", "collected", "count", "caveats", "fields"):
+            self.assertIn(field, doc["_provenance"])
+
+    def test_every_entry_has_the_declared_shape(self):
+        doc = self.load()
+        live = {b["game_id"] for b in json.loads((CORPUS_DIR / "current-builds.json").read_text())["builds"]}
+        for entry in doc["leaderboards"]:
+            with self.subTest(game=entry["game_id"]):
+                self.assertEqual(entry["leaderboard_id"], entry["game_id"].split("-")[0])
+                self.assertEqual(len(entry["leaderboard_id"]), 4)
+                self.assertEqual(entry["row_count"], len(entry["rows"]))
+                baseline = entry["baseline_actions"]
+                if entry["game_id"] in live:
+                    self.assertEqual(entry["baseline_total_actions"], sum(baseline))
+                else:
+                    self.assertIsNone(baseline, "only as66 is off current-builds.json")
+                    self.assertIsNone(entry["baseline_total_actions"])
+                for index, row in enumerate(entry["rows"]):
+                    self.assertEqual(list(row), list(self.ROW_FIELDS), f"row {index} shape drifted")
+
+    def test_no_leaderboard_row_carries_a_guid(self):
+        """The whole reason this file is not a third replay manifest.
+
+        No guid means no /api/sessions document and no recording -- these runs are visible and
+        permanently unfetchable. A row that grew one would be a new capability, not a detail.
+        """
+        for entry in self.load()["leaderboards"]:
+            for index, row in enumerate(entry["rows"]):
+                with self.subTest(game=entry["game_id"], row=index):
+                    for key in row:
+                        self.assertNotIn(
+                            key.lower(),
+                            self.GUID_LIKE,
+                            "a leaderboard row grew an identifier; it may now be fetchable, "
+                            "and the file's central caveat needs re-reading rather than patching",
+                        )
+
+    def test_summary_fields_match_the_rows_they_summarise(self):
+        """Same guard as the manifests', and for the same reason: first-party-replays.json's
+        total_actions drifted precisely because nothing checked it."""
+        doc = self.load()
+        provenance, entries = doc["_provenance"], doc["leaderboards"]
+        rows = [row for entry in entries for row in entry["rows"]]
+        self.assertEqual(provenance["count"], len(entries))
+        self.assertEqual(provenance["games"], len({e["game_id"] for e in entries}))
+        self.assertEqual(provenance["total_rows"], len(rows))
+        observed: dict[str, int] = {}
+        for row in rows:
+            observed[row["end_state"]] = observed.get(row["end_state"], 0) + 1
+        self.assertEqual(provenance["state_counts"], dict(sorted(observed.items())))
+
+    def test_as66_is_the_only_game_with_no_leaderboard_rows(self):
+        """Observed 2026-09-15: all 25 current builds return 10, as66 returns 0. Recorded as a
+        fact about the endpoint, not as an explanation of why as66 left the lineup."""
+        empty = sorted(e["game_id"] for e in self.load()["leaderboards"] if e["row_count"] == 0)
+        self.assertEqual(empty, ["as66-821a4dcad9c2"])
+
+    def test_the_leaderboard_is_a_best_of_and_the_blog_set_is_not(self):
+        """The measurement the corrected published-replays.json caveat rests on.
+
+        If this ever fails, that caveat is citing numbers the files no longer carry.
+        """
+        rows = [r for e in self.load()["leaderboards"] for r in e["rows"]]
+        self.assertEqual(len(rows), 250)
+        self.assertTrue(all(r["end_state"] == "WIN" for r in rows))
+        self.assertTrue(all(r["score"] == 100 for r in rows))
+
+        blog = json.loads((CORPUS_DIR / "published-replays.json").read_text())["replays"]
+        self.assertEqual(sum(1 for r in blog if r["state"] != "WIN"), 111)
+        self.assertEqual({r["published_at"][:10] for r in blog}, {"2026-03-22"})
+        self.assertEqual(
+            {r["published_at"][:10] for r in rows} & {"2026-03-22"},
+            set(),
+            "the two sets are disjoint by timestamp; there is no guid to disjoin them by",
+        )
 
 
 class BoundaryReasonTests(unittest.TestCase):

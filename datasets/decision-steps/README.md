@@ -47,6 +47,8 @@ datasets/decision-steps/
 ├── current-builds.json       the 25 live ARC-3 builds; a run is eligible only if its build is current
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
 ├── first-party-replays.json  the 26 replays the Boss played on his own account
+├── human-leaderboards.json   the site's public top-10 human runs per game; a reference,
+│                             NOT a third replay manifest -- the rows carry no guid
 ├── dispatch/                 one <game_id>.json per game: action name -> source line (pass B)
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
@@ -172,8 +174,9 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 53 tests, stdlib only. Seven of them
-cover the two replay manifests (see [Two replay manifests](#two-replay-manifests-and-why-they-are-two));
+Matches the existing `scripts/test_*.py` convention. 59 tests, stdlib only. Thirteen of them
+cover the two replay manifests (see [Two replay manifests](#two-replay-manifests-and-why-they-are-two))
+and the leaderboard reference file;
 those read the committed JSON only and never call the API, so the suite does not go red when
 `three.arcprize.org` does.
 
@@ -288,6 +291,60 @@ other row in the first-party manifest is metadata only — a guid we are entitle
 trace we hold.
 Until those recordings exist, "10–20 episodes" still means correlated segments of a handful of
 human sessions: fine for a schema shakedown, **not** a corpus.
+
+## The human leaderboard — what a real best-of looks like
+
+[`human-leaderboards.json`](human-leaderboards.json) holds the top-10 human runs
+`arcprize.org` publishes for each of the 25 current builds, plus `as66`. The endpoint is
+**unauthenticated** — no key, no cookie:
+
+```bash
+curl -s -X POST https://arcprize.org/api/leaderboards/g50t \
+  -H 'Content-Type: application/json' -d '{"ai":false,"game_id":"g50t"}'
+```
+
+**It is not a third replay manifest and must never be treated as one.** A row is
+`{user_name, end_state, score, actions, resets, published_at}` — a *name* and no `guid`. No
+guid means no `/api/sessions` document and no `/api/recordings` download, so all 250 of these
+runs are visible and permanently unfetchable. `HumanLeaderboardTests` asserts no row carries
+an identifier, so if the endpoint ever grows one that is a test failure and a decision, not a
+silent change under an assumption.
+
+Two facts about the numbers it carries:
+
+- **`baseline_total_actions` is a per-*game* constant**, the sum of the per-level baseline the
+  site shows as the human average. It is a property of the build, not of any run. The check
+  that establishes it: the Boss played `g50t-5849a774` twice and both session documents report
+  `level_baseline_actions [78,175,179,230,96,54,67]` — 879 — while his own `level_actions`
+  differed on all seven levels.
+- **`as66-821a4dcad9c2` returns zero rows** while all 25 current builds return exactly ten.
+  HTTP 200, well-formed, empty array. Recorded as observed; *why* is not guessed at. See
+  [the as66 finding](../../docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md).
+
+### What it corrected
+
+`published-replays.json` used to caveat that the blog's 250 were "a curated best-of, not a
+random sample of human play." The first half was an inference from the list's shape and it is
+now withdrawn, because this file is what a curated best-of actually looks like: **250/250 WIN,
+250/250 score exactly 100**, resets non-zero on 24 rows and never above 6. The blog's 250 are
+139 WIN / 70 GAME_OVER / 41 NOT_FINISHED with resets to 30. On the 10 environments where a
+comparison is legitimate — the ones whose build is still live — the blog set's median action
+count is *higher* on every single one, by 1.55× to 2.93×; 64,425 actions over those 100 rows
+against the leaderboard's 29,179, a ratio of 2.21×.
+
+The consequence cuts the opposite way to the caveat it replaces. **The blog set is not
+speedrun play.** 111 of its 250 rows are not wins and its wins take about twice the actions of
+the leaderboard's, which is exactly the exploration, wrong turns and recovery a decision-step
+corpus wants and exactly what a best-of would have stripped out. What it is *not* is a random
+sample — nothing measured establishes how those 250 were chosen, only that it was not for
+speed. The blog's own heading was not re-read for this and is deliberately not asserted either
+way; the claim being made is the comparison.
+
+Disjointness of the two sets is established **by timestamp, not by action count**, because
+there is no id to match on. Every row in `published-replays.json` carries `published_at`
+`2026-03-22`; leaderboard rows run `2026-04-14` to `2026-09-11` and not one is `2026-03-22`,
+which settles all 25 games at once. Action ranges do not: `g50t` (446–1173 vs 274–323), `cd82`
+and `lp85` are disjoint, but `bp35` (369–792 vs 322–397), `ft09` and `sb26` overlap.
 
 ## Two replay manifests and why they are two
 
