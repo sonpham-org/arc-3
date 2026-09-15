@@ -121,11 +121,15 @@ The mechanic first, because it is the durable half. `lp85` has no hazard: you lo
 out of steps on a level (`lp85.py:21416`, counter at `:21282-21284`). The counter **decrements
 then tests**, so the step that zeroes it *is* the losing step — there is no state between "one
 left" and `GAME_OVER` — and the win test runs first (`:21412`), so a final click that clears the
-level still clears it. Column 0 of the frame is a 64-cell bar rendering the budget. Confirmed
-across the recording: one cell per **effective** click, a no-op click does not advance it (rows
-172 → 173), `63 → 64` at the death, and every one of the six RESETs refills it to zero consumed.
-**20 of the 101 clicks on level 6 did nothing at all**, and the bar is the only feedback channel
-that distinguishes them. This makes `lp85` the second game after `bp35` whose recovery
+level still clears it. Column 0 of the frame is a 64-cell bar rendering the consumed
+**fraction** of the budget — it advances by `64/StepCounter` cells per **effective** click and
+never on a click that hit no button, which is 1 cell per click on levels 2–8 and **5 on level
+1**, so cells read as steps only where the budget is 64. A first draft of the write-up claimed
+1:1 generally; it was wrong and the correction is in the doc. Confirmed across the recording:
+a no-op click does not advance the bar (rows 172 → 173), `63 → 64` at the death, and every one
+of the six RESETs refills it to zero consumed. **20 of the 101 clicks on level 6 and 34 of the
+157 on level 8 did nothing at all**, and the bar is the only feedback channel that distinguishes
+them. This makes `lp85` the second game after `bp35` whose recovery
 economics are measured rather than assumed, and the two agree where they overlap: RESET refunds
 the whole level budget at no step cost. The undo doc's "not measured" line now points here.
 
