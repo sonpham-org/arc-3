@@ -42,6 +42,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -600,6 +601,174 @@ class ReplayManifestTests(unittest.TestCase):
                 self.assertTrue(attribution[row["guid"]].strip())
 
 
+class ProvenanceProseTests(unittest.TestCase):
+    """The summaries written as PROSE, asserted against the rows like the JSON fields are.
+
+    Eight separate count drifts were found in first-party-replays.json on 2026-09-15, and every
+    one of them was in a sentence sitting beside a field a test already checked. `count`,
+    `games`, `state_counts` and `total_actions` stayed right all day because ReplayManifestTests
+    reads them; the caveats and the selection paragraph next to them went stale repeatedly
+    because nothing did. These tests close that gap by parsing the numbers back out of the prose
+    and recomputing them, so the prose is data with a guard rather than a comment that looks
+    like data. The same treatment is applied to the two derived tables outside the file --
+    README.md's eligibility table and the step-4 plan's section 0 table -- which have each
+    drifted once already.
+
+    Offline like the rest of the manifest tests, except the recordings check, which is skipped
+    rather than faked when the gitignored recordings are absent.
+    """
+
+    FIRST_PARTY = CORPUS_DIR / "first-party-replays.json"
+    PUBLISHED = CORPUS_DIR / "published-replays.json"
+    BUILDS = CORPUS_DIR / "current-builds.json"
+    RECORDINGS = CORPUS_DIR / "v0" / "recordings"
+    README = CORPUS_DIR / "README.md"
+    PLAN = REPO_ROOT / "docs" / "plans" / "2026-09-15-step4-segment-and-label-execution.md"
+
+    def setUp(self):
+        self.doc = json.loads(self.FIRST_PARTY.read_text())
+        self.rows = self.doc["replays"]
+        self.provenance = self.doc["_provenance"]
+
+    def _caveat(self, prefix):
+        hits = [c for c in self.provenance["caveats"] if c.startswith(prefix)]
+        self.assertEqual(len(hits), 1, f"expected exactly one caveat starting {prefix!r}")
+        return hits[0]
+
+    def _live(self):
+        return {b["game_id"] for b in json.loads(self.BUILDS.read_text())["builds"]}
+
+    def test_the_win_share_caveat_matches_state_counts(self):
+        """'Only N of these M are WINs; the rest are A GAME_OVER and B NOT_FINISHED'."""
+        caveat = self._caveat("Only ")
+        match = re.search(
+            r"Only (\d+) of these (\d+) are WINs; the rest are (\d+) GAME_OVER and "
+            r"(\d+) NOT_FINISHED",
+            caveat,
+        )
+        self.assertIsNotNone(match, "the WIN-share caveat no longer has the shape this parses")
+        wins, total, over, unfinished = (int(g) for g in match.groups())
+        counts = self.provenance["state_counts"]
+        self.assertEqual(wins, counts["WIN"])
+        self.assertEqual(over, counts["GAME_OVER"])
+        self.assertEqual(unfinished, counts["NOT_FINISHED"])
+        self.assertEqual(total, len(self.rows))
+        self.assertEqual(wins + over + unfinished, total, "the caveat's own three do not sum")
+
+    def test_the_selection_running_total_is_the_row_count(self):
+        """The selection paragraph ends in arithmetic; the arithmetic must be true.
+
+        It also claimed to be _provenance.count in two places at once after the ~23:00 UTC
+        refresh appended a second running total without retiring the first. Exactly one
+        sentence may make that claim.
+        """
+        selection = self.provenance["selection"]
+        finals = re.findall(
+            r"Running total: (\d+) from the inventory plus (\d+) direct fetches = (\d+), "
+            r"which is _provenance\.count",
+            selection,
+        )
+        self.assertEqual(len(finals), 1, "exactly one sentence may claim to be the count")
+        inventory, fetched, total = (int(g) for g in finals[0])
+        self.assertEqual(inventory + fetched, total, "the running total does not add up")
+        self.assertEqual(total, self.provenance["count"])
+        self.assertEqual(total, len(self.rows))
+
+    def test_the_recordings_caveat_matches_the_recordings_on_disk(self):
+        """Skipped, not faked, when the gitignored recordings are absent."""
+        if not self.RECORDINGS.is_dir():
+            self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
+        caveat = self._caveat("A recording has been pulled for")
+        match = re.search(
+            r"A recording has been pulled for (\d+) of the (\d+) rows\. (\d+) of those \d+ are "
+            r"on live builds, across (\d+) builds",
+            caveat,
+        )
+        self.assertIsNotNone(match, "the recordings caveat no longer has the shape this parses")
+        held, total, on_live, builds = (int(g) for g in match.groups())
+        remaining = re.search(r"The remaining (\d+) rows are metadata only", caveat)
+        self.assertIsNotNone(remaining, "the caveat no longer states the metadata-only count")
+
+        on_disk = {path.stem for path in self.RECORDINGS.glob("*/*.ndjson")}
+        live = self._live()
+        have = [row for row in self.rows if row["guid"] in on_disk]
+        have_live = [row for row in have if row["game_id"] in live]
+        self.assertEqual(held, len(have), "rows with a recording on disk")
+        self.assertEqual(total, len(self.rows))
+        self.assertEqual(on_live, len(have_live), "live-build rows with a recording on disk")
+        self.assertEqual(builds, len({row["game_id"] for row in have_live}))
+        self.assertEqual(int(remaining.group(1)), len(self.rows) - len(have))
+
+    def test_the_readme_eligibility_table_matches_the_manifests(self):
+        """README.md's table is derived from both manifests and nothing recomputed it."""
+        text = self.README.read_text()
+        live = self._live()
+        for name in ("published-replays.json", "first-party-replays.json"):
+            rows = json.loads((CORPUS_DIR / name).read_text())["replays"]
+            match = re.search(
+                rf"\| `{re.escape(name)}` \| \*\*(\d+)\*\* \| (\d+) \|", text
+            )
+            with self.subTest(manifest=name):
+                self.assertIsNotNone(match, f"no README eligibility row for {name}")
+                eligible, total = (int(g) for g in match.groups())
+                self.assertEqual(total, len(rows))
+                self.assertEqual(
+                    eligible,
+                    len([r for r in rows if r["game_id"] in live]),
+                    "README eligibility drifted from the manifest it summarises",
+                )
+
+    def test_the_step4_plan_eligibility_table_matches_the_manifests(self):
+        """Same table, four columns wider, in the plan. `games` and `resets` count the
+        ELIGIBLE subset -- that reading is the one the original numbers were computed under and
+        is stated in the paragraph below the table."""
+        text = self.PLAN.read_text()
+        live = self._live()
+        for name, label in (
+            ("published-replays.json", "blog"),
+            ("first-party-replays.json", "Boss"),
+        ):
+            rows = json.loads((CORPUS_DIR / name).read_text())["replays"]
+            eligible = [r for r in rows if r["game_id"] in live]
+            match = re.search(
+                rf"\| `{re.escape(name)}` \({label}\) \| \*\*(\d+)\*\* \| (\d+) \| (\d+) \| (\d+) \|",
+                text,
+            )
+            with self.subTest(manifest=name):
+                self.assertIsNotNone(match, f"no plan eligibility row for {name}")
+                count, total, games, resets = (int(g) for g in match.groups())
+                self.assertEqual(count, len(eligible))
+                self.assertEqual(total, len(rows))
+                self.assertEqual(games, len({r["game_id"] for r in eligible}))
+                self.assertEqual(resets, sum(r["resets"] for r in eligible))
+
+    def test_every_attribution_that_quotes_a_row_count_agrees_with_the_recording(self):
+        """Attribution prose quotes 'N rows, B bytes, sha256 H' for each pulled recording.
+
+        Those three are the most-copied numbers in the file and the easiest to transcribe from
+        an analysis note instead of measuring. Re-measured here against the file on disk.
+        """
+        if not self.RECORDINGS.is_dir():
+            self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
+        import hashlib
+
+        checked = 0
+        for row in self.rows:
+            path = self.RECORDINGS / row["game_id"] / f"{row['guid']}.ndjson"
+            text = self.provenance["attribution"][row["guid"]]
+            match = re.search(r"([\d,]+) rows, ([\d,]+) bytes, sha256 ([0-9a-f]{64})", text)
+            if match is None:
+                continue
+            with self.subTest(guid=row["guid"]):
+                self.assertTrue(path.is_file(), "attribution quotes a recording that is absent")
+                raw = path.read_bytes()
+                self.assertEqual(int(match.group(1).replace(",", "")), raw.count(b"\n"))
+                self.assertEqual(int(match.group(2).replace(",", "")), len(raw))
+                self.assertEqual(match.group(3), hashlib.sha256(raw).hexdigest())
+                checked += 1
+        self.assertGreater(checked, 0, "no attribution quoted a recording measurement")
+
+
 class HumanLeaderboardTests(unittest.TestCase):
     """human-leaderboards.json -- the reference measurement, and the limit that makes it one.
 
@@ -935,7 +1104,7 @@ class CurrentBuildTests(unittest.TestCase):
         live = self._live()
         for name, expected_eligible, expected_total in (
             ("published-replays.json", 100, 250),
-            ("first-party-replays.json", 23, 28),
+            ("first-party-replays.json", 25, 30),
         ):
             doc = json.loads((CORPUS_DIR / name).read_text())
             replays = doc.get("replays") or doc.get("rows") or doc.get("items")

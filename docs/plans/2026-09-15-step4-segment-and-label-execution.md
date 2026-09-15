@@ -49,13 +49,18 @@ What this does to §1 below, which was written before the rule existed:
   | manifest | eligible | total | games | resets |
   |---|---|---|---|---|
   | `published-replays.json` (blog) | **100** | 250 | 10 | 603 |
-  | `first-party-replays.json` (Boss) | **23** | 28 | 18 | 80 |
+  | `first-party-replays.json` (Boss) | **25** | 30 | 18 | 93 |
 
-  The first-party line read **20 | 25 | 16 | 64** when this section was written and drifted
-  three times in one day as runs landed: the Boss's second `g50t` run (~18:00 ET), then `ka59`
-  and `lp85` (~18:20 ET). `games` and `resets` here count the *eligible* subset, not the whole
-  file — that is the reading the original numbers were computed under, recovered by replaying
-  them against the 25-row manifest, and it is restated because nothing in the table said so.
+  The first-party line read **20 | 25 | 16 | 64** when this section was written and has now
+  drifted four times in one day as runs landed: the Boss's second `g50t` run (~18:00 ET),
+  then `ka59` and `lp85` (~18:20 ET), then `ls20` and `m0r0` (~23:00 UTC). `games` and
+  `resets` here count the *eligible* subset, not the whole file — that is the reading the
+  original numbers were computed under, recovered by replaying them against the 25-row
+  manifest, and it is restated because nothing in the table said so. Both rows of this table
+  are now recomputed from the manifests and asserted by `ProvenanceProseTests` in
+  `scripts/test_decision_step_validator.py`, so the fifth drift is a test failure rather than
+  a number a later reader has to re-derive. `games` staying at 18 across this refresh is
+  correct, not stale: the Boss already had eligible `ls20` and `m0r0` rows.
 
   The blog's 250 are all from March 2026 and **15 of the 25 builds they used have since been
   replaced**, so 150 of those rows document games that no longer exist.

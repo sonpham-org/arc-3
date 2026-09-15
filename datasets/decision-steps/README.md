@@ -517,7 +517,7 @@ now. A run is eligible for this corpus only when its `game_id` is still the live
 | manifest | eligible | total |
 |---|---|---|
 | `published-replays.json` | **100** | 250 |
-| `first-party-replays.json` | **23** | 28 |
+| `first-party-replays.json` | **25** | 30 |
 
 Neither manifest is filtered — `published-replays.json` is a record of what the blog linked and
 `first-party-replays.json` of what the Boss played, and filtering either would make its own
