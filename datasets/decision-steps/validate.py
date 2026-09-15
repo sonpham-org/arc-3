@@ -4,7 +4,8 @@ Author: Claude Opus 5 (Bubba)
 Date: 15-September-2026
 PURPOSE: Validate decision-step corpus JSONL against datasets/decision-steps/schema.json and
 reject — never coerce — malformed records. Reads one or more .jsonl files, or directories that
-are searched recursively for .jsonl, and emits one human-actionable message per failing field,
+are searched recursively for .jsonl — excluding *.candidate.jsonl, the unfinished output of
+tools/segment.py — and emits one human-actionable message per failing field,
 prefixed with file, 1-based line number, and a JSON-pointer-ish path into the record. Exits
 non-zero if any record fails. Runs three layers of checking: (1) a self-contained draft
 2020-12 evaluator covering exactly the keyword subset schema.json uses, which raises
@@ -359,11 +360,27 @@ class FrameResolver:
         return []
 
 
+#: Suffix written by tools/segment.py. A candidate carries only the fields pass A can measure;
+#: the judgment fields are absent on purpose, so a candidate is deliberately NOT schema-valid.
+#: Collecting one from a directory walk would turn `validate.py v0/episodes` red for a file that
+#: is not meant to be finished yet, and — worse — would invite someone to "fix" the candidate by
+#: filling the fields with anything that passes. They are skipped by directory walk, and still
+#: validated (and rejected) when a caller names one explicitly, so the escape is deliberate
+#: rather than silent.
+CANDIDATE_SUFFIX = ".candidate.jsonl"
+
+
 def collect_jsonl(targets: list[Path]) -> list[Path]:
     files: list[Path] = []
     for target in targets:
         if target.is_dir():
-            files.extend(sorted(target.rglob("*.jsonl")))
+            files.extend(
+                sorted(
+                    path
+                    for path in target.rglob("*.jsonl")
+                    if not path.name.endswith(CANDIDATE_SUFFIX)
+                )
+            )
         elif target.is_file():
             files.append(target)
         else:
@@ -404,7 +421,11 @@ def main(argv: list[str] | None = None) -> int:
         description="Validate ARC-3 decision-step corpus JSONL against schema.json."
     )
     parser.add_argument(
-        "targets", nargs="+", type=Path, help=".jsonl files, or directories searched recursively"
+        "targets",
+        nargs="+",
+        type=Path,
+        help=".jsonl files, or directories searched recursively for .jsonl "
+             "(*.candidate.jsonl is skipped by a directory walk; name one to validate it)",
     )
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     parser.add_argument(
