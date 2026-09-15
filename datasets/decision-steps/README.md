@@ -2,7 +2,8 @@
 Author: Claude Opus 5 (Bubba)
 Date: 15-September-2026
 PURPOSE: Cold-start operator guide for the decision-step corpus tooling — what the record is,
-why it exists, how to run the validator, and what the next pipeline step is. Written so a
+why it exists, how to run the validator, what the next pipeline step is, and the verified
+replay-API facts step 3 inherits. Written so a
 session with no transcript can act without asking anyone. SCHEMA.md holds the field-by-field
 contract and is not restated here.
 SRP/DRY check: Pass — schema.json is the executable contract, SCHEMA.md is its field gloss,
@@ -42,7 +43,7 @@ datasets/decision-steps/
 ├── validate.py        the validator CLI
 ├── README.md          this file
 ├── fixtures/
-│   ├── valid/             one file per tier, all must pass
+│   ├── valid/             one file per tier plus a turn-0 record, all must pass
 │   ├── invalid/           one file per failure mode, each must be rejected
 │   ├── frame-resolution/  records exercising frame_ref lookup
 │   └── recordings/        a 4-row stand-in NDJSON so lookup has something to resolve
@@ -109,7 +110,7 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 18 tests, stdlib only.
+Matches the existing `scripts/test_*.py` convention. 22 tests, stdlib only.
 
 ## Why the validator is hand-rolled
 
@@ -122,6 +123,12 @@ to run if it finds a keyword it does not enforce.** Adding, say, `uniqueItems` t
 produces `SCHEMA ERROR` and exit 2 rather than a quietly weaker validation pass. That guard is
 what makes a homegrown engine safe; without it, the dependency-free choice would be a liability.
 
+That guard also constrains how the schema is allowed to grow. Turn-0 records — the first
+decision of an episode, where `last_action` and `last_result` are both `null` — are expressed
+with a `type` array rather than `anyOf`, precisely so the evaluator needed no new keyword and
+the audit was neither extended nor relaxed to land them. See
+[`SCHEMA.md`](SCHEMA.md#turn-0-the-first-decision-of-an-episode).
+
 ## Where this sits in the pipeline
 
 Per plan §5:
@@ -133,9 +140,12 @@ Per plan §5:
    recorded row counts — bp35 `c935ca1b-dfee-4be1-9574-bf4cc80c5b89` at 1,030 rows, g50t
    `4f0689d0-7d06-4be7-91ac-31cb9a800b85` at 534 — and the number of *additional* published
    guids found gets written down even if it is zero. A zero is a finding, not a failure.
-   The base host is inferred from `https://arcprize.org/replay/<guid>` and **must be verified
-   by the session, not asserted**; our docs record only the path forms `/api/sessions/<guid>`
-   and `/api/recordings/<game_id>/<guid>`.
+   The host was verified by observation on 15-Sep-2026 while settling `row_index`:
+   `https://three.arcprize.org/api/recordings/<game_id>/<guid>` returns the bp35 recording,
+   138 MB and 1,030 lines. Two things the scraper must handle, found the same way and written
+   up in [`SCHEMA.md`](SCHEMA.md#row_index-is-zero-based--settled-against-a-real-recording):
+   the API ignores `Range` and serves the whole file, and each row nests the frame at
+   `data.frame` as a *list* of grids, not at `frame`.
 4. **Then: segment and label.** Boundaries are meaningful state changes, not fixed strides.
    Every record must pass `validate.py`; every gold record's `action_role` must cite a real
    line in the game source under `docs/static/games/src/`; every negative record must pair an
