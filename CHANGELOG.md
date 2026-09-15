@@ -34,14 +34,14 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 1 | ACTION7 executes end to end | **done**, on `main` |
 | 2 | JSON schema + validator | **done**, on `main` |
 | 3 | replay scraper + guid inventory | **done**, on `main` |
-| 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
+| 4 | segment and label the corpus | **started** — A and B on `main`, first D pass run on lp85 and blocked on `action_role_source` for RESET; C/E not begun |
 
 **What exists right now.** 101 tests (59 + 11 + 31 across `test_decision_step_validator`,
 `test_dispatch_tables`, `test_segment`). 278 human replay guids inventoried across two manifests
 that are deliberately not merged, plus 250 leaderboard rows that carry no guid and never can be
 fetched. 9 recordings on disk plus 15 for as66 — this line read `8` before the `ka59` and `lp85`
 rows landed and the count was already one high; `ls */*.ndjson` reports 9 live-build recordings
-now and reported 7 then. **5 labelled records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
+now and reported 7 then. **6 labelled records** across 3 games — a demonstration of shape, not a corpus. A 7th pass produced 6 more that `validate.py` rejects for a reason no annotator can fix; see the lp85 entry below. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
 annotation is three judgment fields rather than a whole record.
 
@@ -70,6 +70,90 @@ nor refute gets cut, not softened.
 ---
 
 ## 2026-09-15 (latest)
+
+### The ka59 and lp85 wins, the undo survey, and a RESET that cannot be cited
+
+Committed direct to `main` at the Boss's instruction. Three pieces of work; the third one
+stopped short of its target on purpose and the stop is the interesting part.
+
+**1. Two rows, both re-fetched rather than transcribed.** `ka59-38d34dbb` /
+`1333b2ee-…` (WIN, 7 levels, 598 actions, 2 resets, 84.574) and `lp85-305b61c3` /
+`129ddf21-…` (WIN, 8 levels, 415 actions, 6 resets, 76.389). Every field was pulled from
+`/api/sessions` at ingest and compared against the analysis notes that proposed them; all
+agreed. Attribution is a checked `card_id` match against a fresh `/api/user/scorecards` pull —
+both cards carry `user_name: "Mark"`. Recordings on disk, gitignored, both reconciling:
+`599 = 1 + 598 + 0` with 3 RESET rows, `416 = 1 + 415 + 0` with 7.
+
+`lp85` pins the reconcile rule's third term from the side `g50t` could not. It holds the only
+`GAME_OVER` row in any first-party recording (175), and the row after it is a `RESET` that
+**executed**, so it counts as an action and the dead-row term stays 0. A rule that counted every
+row following a `GAME_OVER` would read 415 as 414.
+
+**Five derived fields were stranded by the row count, not three.** Two are new drift from this
+change; three were already stale. `README.md`'s eligibility table read `20 | 25` against a test
+asserting `21 | 26`, left behind by the 18:00 `g50t` row. The step-4 plan's §0 table read
+`20 | 25 | 16 | 64`, and its `games` and `resets` columns count the *eligible* subset — which
+nothing stated, recovered by replaying the definition against the 25-row manifest. This file's
+own standing status said 8 recordings on disk when there were 7. Everything is recomputed from
+the rows now.
+
+**2. Undo is a per-game design axis, not a platform affordance.**
+`docs/trace-findings/2026-09-15-undo-is-not-a-platform-default.md` surveys `ACTION7` across all
+25 live builds with a `file:line` for every one. **6 offer it** — `ar25`, `bp35`, `lf52`,
+`sb26`, `sk48`, `su15` — and **19 do not**, with zero occurrences of `GameAction.ACTION7` in all
+nineteen sources. The Retrodict harness's "prefer undo over RESET" rule is therefore not risky
+advice on 19 of 25 games; it is **unimplementable**. This also promotes the earlier `as66`
+observation from a quirk of a withdrawn game to the majority case.
+
+Derived twice, because static enumeration under-reports and we can prove it: `cn04` passes no
+`available_actions` at all (`cn04.py:824`), `arcengine` is not vendored, and `:1171`'s
+`[1,2,3,4,5]` is a filter *over* the offered set rather than the set. Static would have said
+five actions; row 0 of its recording says six. The guard that makes the 19 negatives safe is the
+whole-file `GameAction.ACTION7` grep, not the declaration. Two decoys are documented so a
+word-search does not re-find them: `ls20`'s `_undo_x`/`_undo_y` is the engine rolling NPC movers
+back on a blocked move (`ls20.py:1947`, its only call site), and `sc25`'s `_undo_state`
+(`sc25.py:1833`) is assigned once and never read.
+
+**3. `lp85`'s loss condition is a step budget — and its RESET steps cannot be labelled.**
+`docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md`.
+
+The mechanic first, because it is the durable half. `lp85` has no hazard: you lose by running
+out of steps on a level (`lp85.py:21416`, counter at `:21282-21284`). The counter **decrements
+then tests**, so the step that zeroes it *is* the losing step — there is no state between "one
+left" and `GAME_OVER` — and the win test runs first (`:21412`), so a final click that clears the
+level still clears it. Column 0 of the frame is a 64-cell bar rendering the budget. Confirmed
+across the recording: one cell per **effective** click, a no-op click does not advance it (rows
+172 → 173), `63 → 64` at the death, and every one of the six RESETs refills it to zero consumed.
+**20 of the 101 clicks on level 6 did nothing at all**, and the bar is the only feedback channel
+that distinguishes them. This makes `lp85` the second game after `bp35` whose recovery
+economics are measured rather than assumed, and the two agree where they overlap: RESET refunds
+the whole level budget at no step cost. The undo doc's "not measured" line now points here.
+
+It also reframes the five level-8 resets. At **11, 19, 13, 42 and 16 of 64** steps consumed,
+none was under budget pressure — they are plans abandoned as unwinnable, on a game where RESET
+is the only way to unwind an arrangement because there is no undo.
+
+**The stop.** `tools/segment.py` cut all seven wanted rows without refusing anything, but six of
+the seven are `RESET` steps, and it emits `UNCITABLE: RESET has no dispatch branch in …` for
+every one — correctly: `Lp85.step` has exactly one branch, `ACTION6`, and RESET is handled by
+`arcengine`, which is not vendored. `schema.json`'s `action_role_source` pattern
+`^[^\s:]+:[0-9]+([ \t].*)?$` admits no spelling of "engine-level, source not in this repo", so
+`validate.py` rejects all six. **Nothing was overridden and no schema or tool was changed** —
+the standing rule is to stop and report. The six records are carried verbatim in the write-up,
+because `*.candidate.jsonl` is gitignored and they would otherwise have been lost.
+
+This is not an `lp85` quirk. The one RESET record the corpus already holds validates only
+because `bp35` *happens* to carry its own `GameAction.RESET` branch (`bp35.py:4529`). Put beside
+the undo survey it composes into a selection effect: on 19 of 25 builds RESET is the sole
+recovery primitive, recovery-after-falsification is the metric this corpus exists to move, and
+recovery steps can currently only be labelled on builds that happen to vendor a RESET branch.
+Four options are listed for whoever owns the call; none is implemented.
+
+**What did land from pass 3:** one record,
+`lp85-305b61c3__129ddf21-…__l6-budget-exhaustion.jsonl`, row 175, tier `negative`, passing
+`validate.py --require-frame-resolution`. It is the **falsified half of a pair whose corrected
+half is blocked** and is not the pair that was asked for.
+
 
 ### A second g50t win, a caveat withdrawn, and the leaderboard that withdrew it
 

@@ -188,9 +188,14 @@ Stated as claims about our own side, with what was and was not measured marked:
    it, and what the API returns when it does. That is a live-API question and no request was
    made for this document. The claim here is about what the 25 sources offer, which is checkable
    offline and is checked above.
-5. **Not measured:** the *other* 24 games' recovery economics. Only `bp35` has had its budget
-   arithmetic read. Whether RESET refunds a level budget on `lp85` or `ka59` is unknown and is
-   not assumed from `bp35`.
+5. **Partly measured since this was written:** `lp85`'s recovery economics. Its loss condition
+   is a per-level step budget (`lp85.py:21416`, counter at `:21282-21284`) and RESET refunds it
+   in full at no step cost — read from source and confirmed against all 416 rows of the Boss's
+   win in
+   [`2026-09-15-lp85-step-budget-and-the-uncitable-reset.md`](2026-09-15-lp85-step-budget-and-the-uncitable-reset.md).
+   That makes two games whose recovery arithmetic is measured rather than assumed, and they
+   agree on the half they share: RESET refunds the level budget. The other 23 are still
+   unmeasured and nothing here assumes `bp35`'s numbers carry to them.
 
 ---
 
