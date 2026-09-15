@@ -149,6 +149,40 @@ class DispatchTableTests(unittest.TestCase):
                 )
                 self.assertTrue(sib["reason"].strip())
 
+    def test_every_in_scope_game_is_itself_a_live_build(self):
+        """The eligibility rule from commit 649e53a: a run counts only if its game_id is still
+        the live build. A table for a stale build would be labelling a game that no longer
+        ships."""
+        live = {
+            build["game_id"]
+            for build in json.loads(
+                (REPO_ROOT / "datasets" / "decision-steps" / "current-builds.json").read_text()
+            )["builds"]
+        }
+        for game_id in self.tables:
+            with self.subTest(game=game_id):
+                self.assertIn(game_id, live, f"{game_id} is no longer a live build")
+
+    def test_no_sibling_named_in_a_table_is_a_live_build(self):
+        """Ties the measured finding to the eligibility rule: citations do not transfer between
+        builds, AND every sibling we could have been tempted to cite is out of scope anyway. If
+        a lineup change ever makes a named sibling live, that is worth failing over."""
+        live = {
+            build["game_id"]
+            for build in json.loads(
+                (REPO_ROOT / "datasets" / "decision-steps" / "current-builds.json").read_text()
+            )["builds"]
+        }
+        named = 0
+        for game_id, table in self.tables.items():
+            sib = table["sibling_builds"]
+            for sibling in sib["siblings_in_manifests"]:
+                named += 1
+                with self.subTest(game=game_id, sibling=sibling):
+                    self.assertNotIn(sibling, live)
+                    self.assertIs(sib["sibling_is_a_live_build"], False)
+        self.assertEqual(named, 2, "expected exactly cn04-65d47d14 and ls20-cb3b57cc")
+
     def test_the_two_games_with_a_real_sibling_record_the_measurement(self):
         self.assertEqual(
             self.tables["ls20-9607627b"]["sibling_builds"]["siblings_with_source"],

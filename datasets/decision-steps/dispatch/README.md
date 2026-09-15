@@ -66,11 +66,14 @@ measured, on every pair in the repo where both builds are present.
 
 Three pairs have both builds under `docs/static/games/src/`, so three pairs could be diffed:
 
-| pair | changed lines | dispatch line, build A → B | what changed |
+| pair (live / stale) | changed lines | dispatch line, live → stale | what changed |
 |---|---|---|---|
 | `ls20-9607627b` / `ls20-cb3b57cc` | 3,256 | 1921 → 1420 | re-obfuscated: different identifiers, `GameAction.ACTION1` → `self.action.id.value == 1`, 482 fewer lines |
 | `vc33-5430563c` / `vc33-9851e02b` | 2,851 | 2085 → 2112 | 22-line MIT header added, and `GameAction.ACTION6` → `.value == 6` |
 | `ft09-0d8bbf25` / `ft09-9ab2447a` | 43 | 2329 → 2351 | **identical dispatch code**, shifted +22 by an added MIT header; `_get_valid_actions` and `available_actions=[6]` dropped entirely |
+
+In all three pairs exactly one build is live and one is stale, per
+[`current-builds.json`](../current-builds.json).
 
 `ft09` is the one that makes the rule airtight. Its dispatch is byte-for-byte the same code,
 and the citation is still wrong by 22 lines, because a licence header moved every line beneath
@@ -103,10 +106,25 @@ ineligible: a run on `cn04-65d47d14` cannot produce a record meeting the accepta
 because the only source that could back its citation is not in this repo. That is a finding
 about repo coverage, not a labelling problem to work around.
 
-**One useful exception, in the other direction.** The first-party `ls20` win
-(`6184a865…`, 7 levels, 378 actions) is on `ls20-cb3b57cc`, whose source **is** in the repo.
-That run is eligible — it just has to cite `ls20-cb3b57cc/ls20.py`, not the `ls20-9607627b`
-table in this directory. A table for it can be built when pass C pulls the recording.
+### The live-build rule reaches the same answer by a different route
+
+Commit `649e53a` landed the Boss's eligibility rule while this pass was being built: a run
+counts only if its `game_id` is still the live build, because ARC Prize rebuilt these games and
+an early replay is a replay of a *different game*. That rule and the measurement above agree,
+and each covers the other's gap:
+
+- **The measurement** says a citation cannot cross a build boundary. That holds whatever the
+  lineup does.
+- **The rule** says you would never want to, because the other build's runs are out of scope.
+  Every sibling named in these eight tables — `cn04-65d47d14` and `ls20-cb3b57cc` — is a stale
+  build. `sibling_is_a_live_build` records this per game and
+  `test_no_sibling_named_in_a_table_is_a_live_build` asserts it, so a lineup change surfaces as
+  a test failure rather than mid-labelling.
+
+**A correction this forces.** An earlier draft of the `ls20` table said the first-party `ls20`
+win (`6184a865…`, 7 levels, 378 actions, 0 resets) was eligible and simply had to cite
+`ls20-cb3b57cc/ls20.py`. Under the live-build rule it is **not corpus input at all** —
+`ls20-cb3b57cc` is not in the current lineup. The table now says so.
 
 ## Cross-game findings
 
