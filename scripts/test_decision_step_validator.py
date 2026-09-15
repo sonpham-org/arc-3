@@ -6,7 +6,11 @@ Covers, with real fixture files on disk rather than inline literals: every valid
 passing; one invalid fixture per failure mode producing a specific, human-readable message and
 a non-zero exit; the turn-0 contract (both last_action and last_result null, still required,
 and both-or-neither) and that it is expressed without any keyword the evaluator cannot
-enforce; all three frame-reference resolution failures being distinguishable; the
+enforce; all six frame-reference resolution failures being distinguishable (missing
+recording, row out of range, flat field miss, dotted segment miss, descent into a
+non-object, and an empty frame list); that a dotted frame_ref.field really resolves
+against the re-pulled recordings when they are present, and is skipped rather than
+failed when they are not; the
 summary line announcing SKIPPED when the gitignored recordings are absent, so a green run is
 never mistaken for a resolved one; and the schema evaluator's unsupported-keyword guard firing
 at top level and inside $defs, which is what keeps the hand-rolled draft 2020-12 subset from
