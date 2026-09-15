@@ -36,7 +36,7 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 3 | replay scraper + guid inventory | **done**, on `main` |
 | 4 | segment and label the corpus | **started** — passes A and B on `main`; C/D/E not begun |
 
-**What exists right now.** 88 tests. 273 human replay guids inventoried across two manifests
+**What exists right now.** 94 tests. 273 human replay guids inventoried across two manifests
 that are deliberately not merged. 6 recordings on disk plus 15 for as66. **5 labelled
 records** — a demonstration of shape, not a corpus. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
@@ -67,6 +67,57 @@ nor refute gets cut, not softened.
 ---
 
 ## 2026-09-15 (latest)
+
+### bp35 recovery mechanics, measured — and a correction to a labelled record
+
+Committed direct to `main`. The Boss pushed back on this repo's reading of bp35's ACTION7/RESET
+behaviour, and on a claim that it conflicted with the Retrodict harness's "prefer undo over RESET,
+never two RESETs in a row" heuristic. He was right on every count. Going back to the traces turned
+up something better than what was given up. Full write-up:
+`docs/trace-findings/2026-09-15-bp35-undo-costs-a-move.md`.
+
+**The find: bp35 has a per-level move budget and undo spends from it.** The move counter increments
+on every action *including* ACTION7 (`bp35.py:4528`) and is zeroed only by RESET (`:4533`) and by a
+level change (`:4543`). `render_interface` loses the level on exact equality with a level-dependent
+budget — 64 for levels 1–6 (`:4413`, `:4421`), 128 for 7–9 (`:4436`), 192 for 10 (`:4404`).
+Reconstructed across all 1,030 rows: **no row exceeds its budget**, and the counter reaches it
+exactly twice, both `GAME_OVER` — row 806 (`ACTION6`) and row **936 (`ACTION7`), an undo that ended
+the level**. So RESET refunds the whole level budget and undo does not, which makes "prefer undo
+over RESET" a budget tradeoff rather than free advice.
+
+**The correction: the empty ACTION7 rows are refusals, not undos that returned nothing.** The game
+code cannot emit an empty frame list — `bp35.py:1455` always returns at least one grid. The five
+rows carry `win_levels: 0` alongside `frame: []`, where all 1,029 other rows carry `win_levels: 9`;
+that is an unpopulated envelope, so the action was refused in the engine layer above `bp35.py`. The
+distinction is the difference between "retry the undo" and "this action is unavailable in this
+state", so the negative record's `outcome.observed` and `action_role_source` were corrected. Its
+`rationale` was **not** — it is a correct statement of what the player believed, which is the point
+of a rationale.
+
+**The RESET rule, sharpened.** Confirmed against all 302 non-initial RESET rows in the fifteen as66
+recordings, zero exceptions: RESET restores the current level's start snapshot, and when the board is
+*already* at that snapshot it escalates to a full restart to level 1. Retrodict's "never two RESETs
+in a row" catches 2 of the 3 observed restarts and misses the third — a single RESET issued right
+after completing a level. The correct guard is *never RESET a board you have not yet changed*.
+
+**Also settled.** The preview set had no undo: January as66 rows carry
+`"available_actions": [1, 2, 3, 4, 6]`, and RESET is present throughout as id 0. And bp35's 16
+`GAME_OVER` rows decompose as **11 real deaths** (9 in-game, 2 budget) plus **5 refused envelopes** —
+an earlier summary said "five", counting only the refusals.
+
+**Not confirmed, and left that way.** RESET as a visible no-op has a source mechanism
+(`bp35.py:447`) but **no instance in our six live-build recordings**; every RESET row's settled frame
+differs from the one before it. Source explanation is not an observation.
+
+**Guards.** +6 tests (88 → 94), each poison-checked: the budget holds on every row, only rows 806 and
+936 reach it, row 936 is an `ACTION7`, the empty-frame rows are exactly the five known refusals and
+carry `win_levels: 0`, and every other row carries 9.
+
+**For step 4.** A budget death and an in-game death both land on `boundary_reason: death` today and
+call for opposite corrections — "take a different route" versus "take a shorter one". Flagged, not
+widened.
+
+---
 
 ### `boundary_reason` gets a value for a level transition: `level_advance`
 

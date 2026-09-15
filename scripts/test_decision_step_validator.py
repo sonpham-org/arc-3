@@ -373,6 +373,135 @@ class RealRecordingTests(unittest.TestCase):
         self.assertIn("FRAME-REF RESOLUTION: ON", output)
 
 
+class Bp35MoveBudgetTests(unittest.TestCase):
+    """The bp35 per-level move budget, asserted against the recording rather than described.
+
+    bp35 increments a move counter on every action including ACTION7 (bp35.py:4528) and zeroes it
+    on RESET (bp35.py:4533) and on level change (bp35.py:4543). render_interface loses the level
+    when that counter hits a level-dependent budget: 64 for levels 1-6 (bp35.py:4413, :4421), 128
+    for 7-9 (bp35.py:4436), 192 for level 10 (bp35.py:4404), where the level number is
+    _current_level_index + 1 (bp35.py:4537) and levels_completed is that index.
+
+    The falsifiable part is the "never above" half: the loss checks are exact equality, so a
+    reconstructed counter that sails past its budget while the state is still NOT_FINISHED would
+    refute the whole reading. Skipped when the gitignored recording is absent.
+    """
+
+    RECORDING = (
+        CORPUS_DIR / "v0" / "recordings" / "bp35-0a0ad940"
+        / "c935ca1b-dfee-4be1-9574-bf4cc80c5b89.ndjson"
+    )
+
+    @staticmethod
+    def budget(level_index):
+        level_number = level_index + 1
+        if level_number == 10:
+            return 192
+        return 64 if level_number <= 6 else 128
+
+    def rows(self):
+        if not self.RECORDING.is_file():
+            self.skipTest(f"no recording at {self.RECORDING}; run tools/replay_scrape.py known")
+        with self.RECORDING.open() as handle:
+            return [json.loads(line)["data"] for line in handle]
+
+    def counters(self):
+        """Yield (row_index, level_index, counter, state, action) for every executed row.
+
+        Refused rows — frame [] — are skipped: the action never reached the game, so it cannot
+        have moved the counter.
+        """
+        counter = 0
+        previous_level = None
+        for index, row in enumerate(self.rows()):
+            if not (row.get("frame") or []):
+                continue
+            level = row.get("levels_completed")
+            if previous_level is not None and level != previous_level:
+                counter = 0
+            previous_level = level
+            action = (row.get("action_input") or {}).get("id")
+            counter = 0 if action == "RESET" else counter + 1
+            yield index, level, counter, row.get("state"), action
+
+    def test_no_row_ever_exceeds_its_level_budget(self):
+        over = [
+            (index, level, counter)
+            for index, level, counter, _, _ in self.counters()
+            if counter > self.budget(level)
+        ]
+        self.assertEqual(over, [], "counter passed a budget the source loses at on equality")
+
+    def test_every_row_that_reaches_its_budget_is_a_loss(self):
+        at_budget = [
+            (index, level, counter, state, action)
+            for index, level, counter, state, action in self.counters()
+            if counter == self.budget(level)
+        ]
+        self.assertEqual(
+            [(index, action) for index, _, _, _, action in at_budget],
+            [(806, "ACTION6"), (936, "ACTION7")],
+        )
+        for index, _, _, state, _ in at_budget:
+            self.assertEqual(state, "GAME_OVER", f"row {index} hit budget without losing")
+
+    def test_undo_spends_from_the_budget_it_does_not_refund_it(self):
+        """Row 936 is the load-bearing observation: an ACTION7 that ended the level.
+
+        If undo were free, or refunded the move it reverted, no ACTION7 could ever be the row
+        that reaches the budget.
+        """
+        budget_deaths = [
+            (index, action)
+            for index, level, counter, state, action in self.counters()
+            if counter == self.budget(level) and state == "GAME_OVER"
+        ]
+        self.assertIn((936, "ACTION7"), budget_deaths)
+
+
+class RefusedActionRowTests(unittest.TestCase):
+    """The five ACTION7-on-a-dead-board rows are refusals, not undos that did nothing.
+
+    win_levels is a per-game constant — 9 on every bp35 row that carries a game state. The rows
+    with an empty frame list carry win_levels 0 as well, which no game state can produce, so the
+    envelope was never populated. That distinction is what the negative record's outcome.observed
+    now asserts, and it is the difference between "retry the undo" and "this action is unavailable
+    in this state".
+    """
+
+    RECORDING = Bp35MoveBudgetTests.RECORDING
+    REFUSED = [215, 370, 390, 572, 807]
+
+    def rows(self):
+        if not self.RECORDING.is_file():
+            self.skipTest(f"no recording at {self.RECORDING}; run tools/replay_scrape.py known")
+        with self.RECORDING.open() as handle:
+            return [json.loads(line)["data"] for line in handle]
+
+    def test_empty_frame_rows_are_exactly_the_known_refusals(self):
+        rows = self.rows()
+        empty = [i for i, row in enumerate(rows) if not (row.get("frame") or [])]
+        self.assertEqual(empty, self.REFUSED)
+
+    def test_refused_rows_carry_an_unpopulated_envelope(self):
+        rows = self.rows()
+        for index in self.REFUSED:
+            row = rows[index]
+            self.assertEqual((row.get("action_input") or {}).get("id"), "ACTION7")
+            self.assertEqual(row.get("state"), "GAME_OVER")
+            self.assertEqual(row.get("win_levels"), 0, f"row {index} looks populated")
+            self.assertEqual(row.get("levels_completed"), 0)
+
+    def test_every_other_row_carries_the_real_win_levels(self):
+        rows = self.rows()
+        others = {
+            row.get("win_levels")
+            for i, row in enumerate(rows)
+            if i not in set(self.REFUSED)
+        }
+        self.assertEqual(others, {9})
+
+
 class ReplayManifestTests(unittest.TestCase):
     """The two replay manifests, and the one invariant that keeps them worth having.
 
