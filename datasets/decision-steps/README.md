@@ -95,7 +95,7 @@ python3.13 datasets/decision-steps/validate.py <target> --require-frame-resoluti
 Every run ends with a summary line stating which mode it ran in:
 
 ```
-4 file(s), 5 record(s), 0 error(s) | FRAME-REF RESOLUTION: SKIPPED (no recordings at ...)
+5 file(s), 6 record(s), 0 error(s) | FRAME-REF RESOLUTION: SKIPPED (no recordings at ...)
 ```
 
 **Read that line.** A green run with `SKIPPED` has checked the record's shape but has not
@@ -145,7 +145,9 @@ Per plan §5:
    138 MB and 1,030 lines. Two things the scraper must handle, found the same way and written
    up in [`SCHEMA.md`](SCHEMA.md#row_index-is-zero-based--settled-against-a-real-recording):
    the API ignores `Range` and serves the whole file, and each row nests the frame at
-   `data.frame` as a *list* of grids, not at `frame`.
+   `data.frame` as a *list* of grids, not at `frame`. **Only the recordings path was
+   observed.** `/api/sessions/<guid>` was never called, on that host or any other — step 3
+   must verify it rather than assume it shares the host.
 4. **Then: segment and label.** Boundaries are meaningful state changes, not fixed strides.
    Every record must pass `validate.py`; every gold record's `action_role` must cite a real
    line in the game source under `docs/static/games/src/`; every negative record must pair an
