@@ -52,9 +52,9 @@ datasets/decision-steps/
 │   ├── frame-resolution/  records exercising frame_ref lookup, flat and dotted
 │   └── recordings/        stand-in NDJSONs so lookup has something to resolve: a 4-row
 │                          flat one, and a 3-row one mirroring the live API row shape
-└── v0/                (not committed — created by step 3)
-    ├── recordings/<game_id>/<guid>.ndjson    70–140 MB apiece, gitignored
-    └── episodes/<game_id>__<guid>__<seg>.jsonl
+└── v0/
+    ├── recordings/<game_id>/<guid>.ndjson    70–140 MB apiece, gitignored, made by step 3
+    └── episodes/<game_id>__<guid>__<seg>.jsonl   committed — the corpus itself
 ```
 
 The scraper that fills `v0/recordings/` lives at [`tools/replay_scrape.py`](../../tools/replay_scrape.py).
@@ -311,7 +311,67 @@ python3.13 tools/replay_scrape.py guid 496ee425-9705-409f-8410-463a2229627e
 pulled clean on 2026-09-15 — **217 rows, 10,487,262 bytes** — and its rows carry the same
 `data.frame` shape (a list of 64×64 grids) that the
 [frame convention](SCHEMA.md#frame_reffield-is-a-dotted-path-and-the-frame-is-the-last-grid)
-assumes. No fixture cites cd82 yet; segmentation and labelling is step 4 and has not been done.
+assumes. No episode cites cd82 yet. Step 4 has started — see [The corpus so far](#the-corpus-so-far).
 
-Note there is no clean rule from `actions` to recording rows — 1024→1030, 533→534, 216→217.
-Take the row count from the scraper's observed output, never from the session metadata.
+### Session `actions` versus recording rows — reconciled
+
+The counts differ (1024→1030, 533→534, 216→217, 454→455) and the rule is exact:
+
+```
+recording rows = 1 + session.actions + rows submitted while the board was already GAME_OVER
+RESET rows     = 1 + session.resets
+```
+
+The leading `1` in both is row 0, which carries `full_reset: true` — the boot reset, which the
+session API counts as neither an action nor a reset. The third term is only non-zero on bp35,
+where it is **5**: rows 215, 370, 390, 572 and 807 each submit `ACTION7` to a board that the
+preceding row already flipped to `GAME_OVER`. Each returns `data.frame: []`, changes nothing,
+is not counted by the API, and is followed immediately by a `RESET`. Verified against all four
+recordings on disk — bp35, g50t, cd82, cn04 — both numbers matching on every one, and asserted
+by `RecordingRowReconcileTests` in `scripts/test_decision_step_validator.py`.
+
+Two consequences for labelling. A record must never point `frame_ref` at one of those five
+rows: the frame list is empty and the resolver rejects it — point at the preceding row, which
+is the board the player was actually looking at. And the row count still comes from the
+scraper's observed output; the formula explains the gap, it does not replace the count.
+
+## The corpus so far
+
+`v0/episodes/` holds the labelled records. Every one cites a real row of a real recording and
+is validated with frame resolution **required**, so a bad row index is a test failure rather
+than a quiet pass.
+
+| episode | records | tiers | what it covers |
+|---|---|---|---|
+| `bp35-0a0ad940__c935ca1b…__l5-death-undo-reset-00` | 4 | 3 gold, 1 negative | two segments: `bp35-l5-approach-00` (`episode_start`) is the traversal step that kills the run; `bp35-l5-recovery-01` (`death`) is `ACTION7` failing on the dead board and the `RESET` that recovers |
+| `cn04-2fe56bfb__f714032e…__l4-extent-change-00` | 1 | 1 gold | `ACTION5` growing a part instead of rotating it |
+
+Both are worth reading before adding more, because they are the two shapes this corpus exists
+to hold. `boundary_reason` is a property of the **segment**, so every record sharing a
+`segment.id` carries the same value — see
+[SCHEMA.md](SCHEMA.md#boundary_reason-is-a-property-of-the-segment-not-of-the-record).
+
+**The bp35 episode is the tier-3 shape, taken from human play rather than mined.** The plan §2
+requires a negative record to pair a failed probe with a *verified corrected next decision*,
+and warns that our own failed agent transcripts cannot supply one. Here the correction is
+observed: the player pressed `ACTION7`, got nothing, and pressed `RESET`, which worked. The
+source says why — `ACTION7` is the one branch of `bp35.py`'s dispatch that does not first push
+an undo snapshot (`bp35.py:4524`, against `:4496`, `:4501`, `:4506`, `:4511`, `:4516`, `:4521`),
+and `RESET` restores the level-start snapshot instead (`bp35.py:4529` → `:447`). The same
+death → failed undo → reset triple appears five times in that one recording.
+
+**The cn04 record is a refuted rule, and the refutation is measurable.** `ACTION5` dispatches on
+the *selected part*: `cn04.py:1070` steps that part through its sprite stack when it has more
+than one entry, and only `cn04.py:1072` rotates it 90°. Measured across the recording, all 12
+`ACTION5` presses on level indices 0–2 conserved the painted-cell count exactly; from level
+index 3 on, 39 of 65 did not (77 ACTION5 presses in the recording, 12 + 65). Three levels teach "this action is a rotation" before the
+rule stops holding — full write-up in
+[`docs/trace-findings/2026-09-15-cn04-object-dependent-verb.md`](../../docs/trace-findings/2026-09-15-cn04-object-dependent-verb.md).
+
+### Known limit
+
+Five records is not a corpus. The plan's §5 step 4 target is 10–20 episodes per game, and
+`expected_observation` and `rationale` on every record are **annotated** — attached
+retrospectively from the game source, never recovered human thought
+(`rationale_provenance: "annotated"`, and the tier definitions in
+[`SCHEMA.md`](SCHEMA.md#tiers) say so).

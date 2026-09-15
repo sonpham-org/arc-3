@@ -46,7 +46,7 @@ teach diagnosis instead of imitation.
 | `source.recording_guid` | GUID | yes | Lowercase `8-4-4-4-12` hex. |
 | `source.row_index` | integer ≥ 0 | yes | **Zero-based** line index into the NDJSON recording. Settled against a real recording — see [`row_index` is zero-based](#row_index-is-zero-based--settled-against-a-real-recording). |
 | `segment.id` | non-empty string | yes | e.g. `bp35-l7-undo-compare-03`. |
-| `segment.boundary_reason` | enum | yes | `camera_shift`, `bridge_edit`, `ghost_construction`, `death`, `reset`, `undo`. |
+| `segment.boundary_reason` | enum | yes | `episode_start`, `camera_shift`, `bridge_edit`, `ghost_construction`, `extent_change`, `death`, `reset`, `undo`. See [Boundary reasons](#boundary-reasons). |
 | `level` | integer ≥ 0 | yes | Level the decision was taken on. |
 | `frame_ref.recording_guid` | GUID | yes | See [Frame references](#frame-references). |
 | `frame_ref.row_index` | integer ≥ 0 | yes | Zero-based. |
@@ -112,13 +112,74 @@ carries `last_action: {"action": "RESET"}` with a real `last_result`.
   is exactly right at turn 0 — nothing has been tested yet. Same for `known_mechanics` and
   `hypotheses`. `goal` and `current_plan` are non-empty strings, which a turn-0 annotator can
   still fill in: the plan the record is about to test is what those fields hold.
-- **`segment.boundary_reason` does assume one.** All six values — `camera_shift`,
-  `bridge_edit`, `ghost_construction`, `death`, `reset`, `undo` — name a state *change*, so
-  none of them describes "this is where the recording starts". The turn-0 fixture uses `reset`
-  because line 0 of the recording is literally the boot reset row, which is the nearest honest
-  fit. **Not fixed here:** adding an `episode_start` value would invent vocabulary the plan's
-  §5 step 4 boundary list does not name. Flagged for the plan owner.
+- **`segment.boundary_reason` did assume one, and no longer does.** The original six values —
+  `camera_shift`, `bridge_edit`, `ghost_construction`, `death`, `reset`, `undo` — all name a
+  state *change*, so none of them described "this is where the recording starts". **Fixed
+  15-Sep-2026:** `episode_start` was added. The turn-0 fixture still uses `reset`, which stays
+  correct — line 0 of the bp35 recording is literally a `RESET` row with `full_reset: true` —
+  but an episode that opens mid-recording now has an honest value. See
+  [Boundary reasons](#boundary-reasons).
 - `outcome` does not. It describes the *next* frame, which exists at turn 0.
+
+## Boundary reasons
+
+`segment.boundary_reason` is a **closed** enum. Adding a value is a schema edit on purpose, so
+segment vocabulary cannot drift silently between annotators.
+
+| value | cut here when |
+|---|---|
+| `episode_start` | the episode opens here and no state change precedes it — the recording begins, or the first row of a slice taken mid-recording. |
+| `camera_shift` | the viewport moved. |
+| `bridge_edit` | a bridge segment was placed or removed (bp35). |
+| `ghost_construction` | a ghost was constructed (g50t). |
+| `extent_change` | a held or selected part changed **extent** — grew or shrank — rather than orientation or position. |
+| `death` | the run ended and the board went to `GAME_OVER`. |
+| `reset` | `RESET` was issued. |
+| `undo` | `ACTION7` was issued. |
+
+### Why `extent_change` exists
+
+Added 15-Sep-2026 from cn04 (`f714032e-914d-4bb5-bc95-386dfacebca0`). In cn04 the same
+action is a rotation on most parts and an **expansion** on one of them, and a part that has
+not been fully expanded hides the features an agent needs to see. That is a different event
+from a rotation and from a placement, and none of the six original values named it. Written
+as an observable event, matching the rest of the enum — the mechanic *name* for it
+(`object-dependent-verb`) lives in the trace finding at
+`docs/trace-findings/2026-09-15-cn04-object-dependent-verb.md`, not here.
+
+### `boundary_reason` is a property of the segment, not of the record
+
+Every record carrying the same `segment.id` **must** carry the same `boundary_reason`. A
+segment is the slice cut *at* an event; the reason names that event once, for the whole slice,
+and `RealEpisodeTests.test_boundary_reason_is_constant_within_a_segment` enforces it.
+
+Decided 15-Sep-2026, and it is a decision rather than a reading — the field's name admits
+either. The bp35 death episode was first written as four records under one `segment.id` with
+three different reasons, which made `boundary_reason` mean "what happened on this row" and left
+the field misnamed. It is now two segments: `bp35-l5-approach-00` (`episode_start`, the two
+steps up to and including the fatal one) and `bp35-l5-recovery-01` (`death`, the failed undo
+and the reset that followed it).
+
+### Known limit — `last_result` cannot say the run ended
+
+`last_result` has exactly two fields, `board_changed` and `level_changed`. Neither can express
+"the previous action ended the run". On the bp35 record at row 215 the previous action killed
+the board — 1,661 cells changed and the state flipped to `GAME_OVER` — and the honest encoding
+is still `board_changed: true, level_changed: false`, because the level index genuinely did not
+change. A reader of that record alone cannot tell a fatal step from an ordinary one; only
+`memory_in` and the rationale carry it, in prose.
+
+**Not fixed here.** Adding a `run_ended` or a `state` field to `last_result` is a schema
+change the plan's §6 does not name, and post-death records are new as of this episode. Flagged
+for the plan owner, alongside the per-game enum limit below.
+
+### Known limit — per-game values do not scale
+
+`bridge_edit` and `ghost_construction` are game-specific, and `extent_change` was added
+because a third game needed a third word. That pattern does not survive 25 games: it ends in
+one enum value per mechanic per game. The plan's §5 step 4 named those two deliberately, so
+this is **flagged, not redesigned** — a v0.2 concern, and the right shape is probably a
+generic reason plus a per-game qualifier field.
 
 ## Tiers
 
@@ -238,7 +299,8 @@ Each of these took the narrower reading. All are one-line schema edits if a revi
 4. **`segment.boundary_reason` is a closed enum** drawn from the §5 step 4 boundary list, with
    bp35's bridge edit and g50t's ghost construction as separate values. Only `"undo"` is
    pinned by the example. A new boundary kind needs a schema edit — deliberate, so boundary
-   vocabulary cannot drift silently across annotators.
+   vocabulary cannot drift silently across annotators. Two values were added 15-Sep-2026 by
+   exactly that route; see [Boundary reasons](#boundary-reasons).
 5. **`rationale_provenance` is a closed enum of `"annotated"`.** §2 pins it for human replays
    and nothing else is named. Silver carries `"annotated"` too on the reading that a
    source-verified synthetic rationale is still attached and verified by the annotator.

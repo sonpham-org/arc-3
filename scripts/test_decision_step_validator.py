@@ -440,6 +440,182 @@ class ReplayManifestTests(unittest.TestCase):
                 self.assertTrue(attribution[row["guid"]].strip())
 
 
+class BoundaryReasonTests(unittest.TestCase):
+    """boundary_reason is a closed enum; the schema, the docs and the episodes must agree."""
+
+    EXPECTED = [
+        "episode_start",
+        "camera_shift",
+        "bridge_edit",
+        "ghost_construction",
+        "extent_change",
+        "death",
+        "reset",
+        "undo",
+    ]
+
+    def _enum(self):
+        schema = json.loads((CORPUS_DIR / "schema.json").read_text())
+        return schema["properties"]["segment"]["properties"]["boundary_reason"]["enum"]
+
+    def test_enum_is_exactly_the_documented_set(self):
+        self.assertEqual(self._enum(), self.EXPECTED)
+
+    def test_every_value_is_documented_in_schema_md(self):
+        doc = (CORPUS_DIR / "SCHEMA.md").read_text()
+        table = doc.split("## Boundary reasons", 1)
+        self.assertEqual(len(table), 2, "SCHEMA.md has no 'Boundary reasons' section")
+        for value in self._enum():
+            self.assertIn(f"`{value}`", table[1], f"{value} is not documented")
+
+    def test_every_value_used_by_an_episode_or_fixture_is_in_the_enum(self):
+        allowed = set(self._enum())
+        seen = set()
+        roots = [CORPUS_DIR / "v0" / "episodes", FIXTURES / "valid"]
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for path in sorted(root.glob("*.jsonl")):
+                for line in path.read_text().splitlines():
+                    if line.strip():
+                        seen.add(json.loads(line)["segment"]["boundary_reason"])
+        self.assertTrue(seen, "no records found to check")
+        self.assertEqual(seen - allowed, set())
+
+
+class RealEpisodeTests(unittest.TestCase):
+    """The labelled episodes under v0/episodes are the corpus itself.
+
+    Unlike fixtures/, these cite real rows of real recordings, so they are validated with
+    frame resolution REQUIRED — a record that points at a row that does not exist, or at an
+    empty frame list, is a labelling bug and must fail here rather than pass quietly.
+    """
+
+    EPISODES = CORPUS_DIR / "v0" / "episodes"
+    RECORDINGS = CORPUS_DIR / "v0" / "recordings"
+
+    def test_every_episode_validates_with_frame_resolution_required(self):
+        if not self.RECORDINGS.is_dir():
+            self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
+        self.assertTrue(self.EPISODES.is_dir(), f"no episodes at {self.EPISODES}")
+        code, output = run_cli(str(self.EPISODES), "--require-frame-resolution")
+        self.assertEqual(code, 0, output)
+        self.assertIn("FRAME-REF RESOLUTION: ON", output)
+
+    def test_shape_is_valid_even_without_the_recordings(self):
+        self.assertTrue(self.EPISODES.is_dir(), f"no episodes at {self.EPISODES}")
+        code, output = run_shape_only(str(self.EPISODES))
+        self.assertEqual(code, 0, output)
+
+    def test_boundary_reason_is_constant_within_a_segment(self):
+        """boundary_reason names the event a segment was cut at — one value per segment.id.
+
+        SCHEMA.md states this; without the test the field silently degrades into "what happened
+        on this row", which is not what it is called.
+        """
+        by_segment: dict[str, set[str]] = {}
+        for path in sorted(self.EPISODES.glob("*.jsonl")):
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                segment = json.loads(line)["segment"]
+                by_segment.setdefault(segment["id"], set()).add(segment["boundary_reason"])
+        self.assertTrue(by_segment, "no records found to check")
+        for segment_id, reasons in sorted(by_segment.items()):
+            with self.subTest(segment=segment_id):
+                self.assertEqual(len(reasons), 1, f"{segment_id} carries {sorted(reasons)}")
+
+    def test_negative_records_carry_a_corrected_decision(self):
+        found = 0
+        for path in sorted(self.EPISODES.glob("*.jsonl")):
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if record["tier"] == "negative":
+                    found += 1
+                    self.assertIn("corrected_decision", record, path.name)
+                    self.assertFalse(record["outcome"]["expectation_held"], path.name)
+        self.assertGreater(found, 0, "no negative-tier records in the corpus")
+
+
+class RecordingRowReconcileTests(unittest.TestCase):
+    """The session API's action/reset totals against the NDJSON row counts.
+
+    rows  = 1 + session.actions + rows submitted while the board was already GAME_OVER
+    RESETs = 1 + session.resets
+
+    The leading 1 in both is row 0, which carries full_reset: true and is counted by the API as
+    neither. Verified on all four recordings on disk; the third term is non-zero only on bp35.
+    Skipped rather than failed when the recordings are absent — they are gitignored and 200 MB.
+    """
+
+    RECORDINGS = CORPUS_DIR / "v0" / "recordings"
+
+    # game_id -> (guid, api_actions, api_resets, expected rows submitted while GAME_OVER)
+    EXPECTED = {
+        "bp35-0a0ad940": ("c935ca1b-dfee-4be1-9574-bf4cc80c5b89", 1024, 13, 5),
+        "g50t-5849a774": ("4f0689d0-7d06-4be7-91ac-31cb9a800b85", 533, 9, 0),
+        "cd82-fb555c5d": ("496ee425-9705-409f-8410-463a2229627e", 216, 0, 0),
+        "cn04-2fe56bfb": ("f714032e-914d-4bb5-bc95-386dfacebca0", 454, None, 0),
+    }
+
+    def _tally(self, path):
+        rows = resets = dead = 0
+        first_is_full_reset = False
+        previous_state = None
+        with path.open() as handle:
+            for index, line in enumerate(handle):
+                if not line.strip():
+                    continue
+                data = json.loads(line)["data"]
+                rows += 1
+                action_id = (data.get("action_input") or {}).get("id")
+                if action_id == "RESET":
+                    resets += 1
+                if index == 0 and data.get("full_reset"):
+                    first_is_full_reset = True
+                if previous_state == "GAME_OVER" and action_id != "RESET":
+                    dead += 1
+                previous_state = data.get("state")
+        return rows, resets, dead, first_is_full_reset
+
+    def test_row_counts_reconcile_against_the_session_totals(self):
+        if not self.RECORDINGS.is_dir():
+            self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
+        checked = 0
+        for game_id, (guid, actions, resets, dead_rows) in self.EXPECTED.items():
+            path = self.RECORDINGS / game_id / f"{guid}.ndjson"
+            if not path.is_file():
+                continue
+            checked += 1
+            with self.subTest(game=game_id):
+                rows, reset_rows, dead, first_is_full_reset = self._tally(path)
+                self.assertTrue(first_is_full_reset, "row 0 is not the full_reset row")
+                self.assertEqual(dead, dead_rows, "rows submitted while GAME_OVER")
+                self.assertEqual(rows - 1 - dead, actions, "rows - 1 - dead != session actions")
+                if resets is not None:
+                    self.assertEqual(reset_rows - 1, resets, "RESET rows - 1 != session resets")
+        if checked == 0:
+            self.skipTest("none of the expected recordings are on disk")
+
+    def test_no_record_points_at_a_row_submitted_while_dead(self):
+        """The five bp35 dead-board rows carry an empty frame list; a frame_ref there is a bug."""
+        episodes = CORPUS_DIR / "v0" / "episodes"
+        forbidden = {("c935ca1b-dfee-4be1-9574-bf4cc80c5b89", row) for row in (215, 370, 390, 572, 807)}
+        for path in sorted(episodes.glob("*.jsonl")):
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                reference = record["frame_ref"]
+                self.assertNotIn(
+                    (reference["recording_guid"], reference["row_index"]),
+                    forbidden,
+                    f"{path.name} points frame_ref at a dead-board row with no frame",
+                )
+
+
 class CliTests(unittest.TestCase):
     def test_missing_target_is_a_usage_error_not_a_pass(self):
         code, output = run_cli(str(FIXTURES / "does-not-exist.jsonl"))
