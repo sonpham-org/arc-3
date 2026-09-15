@@ -285,7 +285,8 @@ already had are **not** in this set — they were published 2026-09-13/14, the b
 [Two replay manifests](#two-replay-manifests-and-why-they-are-two) for why they are not merged
 into one file.
 
-**Known limit, stated plainly:** we own 9 wins across 20 environments, and a recording has
+**Known limit, stated plainly:** we own 9 wins, but on only 8 distinct environments — two of
+them are the Boss's two `g50t` runs — out of the 20 the file covers. A recording has
 been pulled for 7 of the 26 rows — bp35, cd82, cn04, dc22, ft09 and *both* g50t runs. Every
 other row in the first-party manifest is metadata only — a guid we are entitled to pull, not a
 trace we hold.
