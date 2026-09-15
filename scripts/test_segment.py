@@ -368,10 +368,37 @@ class Cn04CoverageTests(unittest.TestCase):
             self.by_row[172]["segment"]["id"], self.by_row[173]["segment"]["id"]
         )
 
-    def test_an_action_arcengine_handles_is_marked_uncitable_not_faked(self):
-        """cn04 has no RESET branch - arcengine is not vendored. The tool must say so rather
-        than invent a line, and the marker must fail the schema's citation pattern."""
+    def test_an_action_arcengine_handles_cites_the_vendored_engine(self):
+        """cn04 has no RESET branch of its own, and this used to be UNCITABLE.
+
+        That was the blocker: RESET could only be cited on the two of eight in-scope games that
+        happen to carry their own branch, which put a selection effect on recovery -- the exact
+        behaviour the corpus exists to measure. arcengine is vendored now (vendor/README.md), so
+        the citation resolves into the engine that actually runs the action, carries the engine
+        version so the scope of the claim is stated, and SATISFIES the schema pattern, which is
+        the whole difference. The line it names is re-read and checked by
+        scripts/test_dispatch_tables.py.
+        """
         citation = self.by_row[172]["action_role_source"]
+        self.assertNotIn("UNCITABLE", citation)
+        self.assertRegex(citation, re.compile(r"^[^\s:]+:[0-9]+([ \t].*)?$"))
+        self.assertTrue(
+            citation.startswith("vendor/arcengine-0.9.3/arcengine/base_game.py:"), citation
+        )
+        self.assertIn("arcengine 0.9.3", citation)
+        self.assertIn("engine-level", citation)
+
+    def test_an_action_with_no_branch_anywhere_is_still_marked_uncitable(self):
+        """Vendoring the engine must not have turned the honest refusal into a rubber stamp.
+
+        ACTION7 has no branch in cn04 and none in the engine either, so it stays uncitable and
+        the marker must still fail the schema's citation pattern -- a record naming it cannot
+        be written, which is correct.
+        """
+        import segment as _segment
+
+        dispatch = json.loads((CORPUS / "dispatch" / "cn04-2fe56bfb.json").read_text())
+        citation = _segment.citation(dispatch, "ACTION7")
         self.assertTrue(citation.startswith("UNCITABLE:"), citation)
         self.assertNotRegex(citation, re.compile(r"^[^\s:]+:[0-9]+([ \t].*)?$"))
 
@@ -430,6 +457,24 @@ class CandidateFileTests(RequiresRecording):
         )
         self.assertEqual(result.returncode, 0, "candidate files are not gitignored")
         self.assertIn("*.candidate.jsonl", result.stdout)
+
+
+class SchemaVersionTests(unittest.TestCase):
+    """The segmenter's version constant against the schema's, because they silently diverged.
+
+    schema 0.2 migrated every fixture and every committed record and added run_ended to the
+    segmenter's output, but left tools/segment.py's SCHEMA_VERSION at "0.1". Every record pass A
+    emitted was therefore rejected by validate.py on the version alone -- a whole-pipeline stop,
+    invisible until someone tried to land one, because no test compared the two constants.
+    """
+
+    def test_the_segmenter_emits_the_version_the_schema_requires(self):
+        schema = json.loads((CORPUS / "schema.json").read_text())
+        self.assertEqual(
+            segment.SCHEMA_VERSION,
+            schema["properties"]["schema_version"]["const"],
+            "tools/segment.py emits a schema_version validate.py will reject",
+        )
 
 
 if __name__ == "__main__":

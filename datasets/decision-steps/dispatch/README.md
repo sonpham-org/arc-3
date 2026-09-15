@@ -55,6 +55,23 @@ docs/static/games/src/bp35-0a0ad940/bp35.py:4524 GameAction.ACTION7 -> svmaaixut
 Take `<path>` from `source_file`, `<line>` from `actions.<NAME>.branch.line` for "which branch
 ran" or from a `calls[].line` for "what it did".
 
+**Engine-level actions.** `RESET` is dispatched by the engine before the game's `step()` is
+reached, so on the six games with no `RESET` branch of their own the citation comes from the
+table's `engine` block instead, and points into `vendor/arcengine-0.9.3/`:
+
+```
+vendor/arcengine-0.9.3/arcengine/base_game.py:205 if action_input.id == GameAction.RESET: -> self.level_reset() [arcengine 0.9.3, engine-level: RESET is dispatched by the engine, not by this game]
+```
+
+The trailing bracket is not decoration: it names the engine build the line was read from,
+because it is **not** verifiable from this repo that the hosted service runs that build. See
+[`vendor/README.md`](../../../vendor/README.md). `tools/segment.py` writes this for you and
+prefers a game's own branch when it has one — `bp35` and `lf52` still cite their own source,
+which is the better citation because it is what distinguishes that build.
+
+Engine anchors are drift-checked against the vendored file exactly as game anchors are, and the
+vendored tree is sha256-guarded per file, by `scripts/test_dispatch_tables.py`.
+
 ## The sibling-build question — settled
 
 Plan §1(a) found 16 of 36 manifest builds have no source in the repo, noted that several look
@@ -130,11 +147,18 @@ win (`6184a865…`, 7 levels, 378 actions, 0 resets) was eligible and simply had
 
 Four things fell out of reading eight dispatch regions that no single table says:
 
-1. **`arcengine` is not vendored.** Only `bp35` and `lf52` handle `ACTION7` and `RESET` in
-   their own source. For the other six games those actions have no citable line anywhere in
-   this repo, so an `action_role_source` for a `RESET` record on `g50t`, `cd82`, `cn04`,
-   `wa30`, `lp85` or `ls20` **cannot be written**. `cn04`'s recording contains 5 `RESET` rows
-   and `cd82`'s contains 1; those rows can be described but not cited.
+1. **`arcengine` is vendored — this finding is RESOLVED, and it is kept because the resolution
+   is the point.** Only `bp35` and `lf52` handle `ACTION7` and `RESET` in their own source. For
+   the other six games that meant `RESET` had no citable line anywhere in this repo, so a
+   `RESET` record on `g50t`, `cd82`, `cn04`, `wa30`, `lp85` or `ls20` could not be written at
+   all — while `RESET` is the only recovery primitive on 19 of the 25 live builds and recovery
+   is the metric the corpus exists to move. The corpus could record recovery only on the games
+   least representative of it. **The engine is now vendored at `vendor/arcengine-0.9.3/`** and
+   every table carries an `engine` block holding the citation; see
+   [`../../../docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md`](../../../docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md)
+   §5 for why that option and not the three alternatives. **`ACTION7` is NOT resolved by this**:
+   it has no engine branch either, and on the 19 builds that do not offer it there is nothing to
+   cite because there is nothing that runs.
 
 2. **Dead dispatch branches are common.** `bp35` handles `ACTION1`, `ACTION2` and `ACTION5`
    but offers none of them; `lf52` handles `ACTION5` and does not offer it. A table entry with

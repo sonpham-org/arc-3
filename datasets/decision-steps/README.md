@@ -474,9 +474,11 @@ than a quiet pass.
 |---|---|---|---|
 | `bp35-0a0ad940__c935ca1b…__l5-death-undo-reset-00` | 4 | 3 gold, 1 negative | two segments: `bp35-l5-approach-00` (`episode_start`) is the traversal step that kills the run; `bp35-l5-recovery-01` (`death`) is `ACTION7` failing on the dead board and the `RESET` that recovers |
 | `cn04-2fe56bfb__f714032e…__l4-extent-change-00` | 1 | 1 gold | `ACTION5` growing a part instead of rotating it |
+| `lp85-305b61c3__129ddf21…__l6-budget-exhaustion` | 1 | 1 negative | the click that spends the last step of the level's budget and ends the run |
+| `lp85-305b61c3__129ddf21…__reset-recovery-and-abandonment` | 6 | 6 gold | **`RESET` in both of its roles.** Row 176 is the observed correction of the negative record above — recovery from a dead board. Rows 269, 294, 311, 365 and 386 are `RESET` on a *live* board with the budget bar barely touched: plan abandonment, not recovery |
 
-Both are worth reading before adding more, because they are the two shapes this corpus exists
-to hold. `boundary_reason` is a property of the **segment**, so every record sharing a
+The first two are worth reading before adding more, because they are the two shapes this corpus
+exists to hold. `boundary_reason` is a property of the **segment**, so every record sharing a
 `segment.id` carries the same value — see
 [SCHEMA.md](SCHEMA.md#boundary_reason-is-a-property-of-the-segment-not-of-the-record).
 
@@ -497,9 +499,24 @@ index 3 on, 39 of 65 did not (77 ACTION5 presses in the recording, 12 + 65). Thr
 rule stops holding — full write-up in
 [`docs/trace-findings/2026-09-15-cn04-object-dependent-verb.md`](../../docs/trace-findings/2026-09-15-cn04-object-dependent-verb.md).
 
+**The lp85 pair is the first completed falsification/correction pair whose two halves are
+separate records.** `l6-budget-exhaustion` row 175 is the falsified decision and
+`reset-recovery-and-abandonment` row 176 is the correction the player actually made, observed
+rather than proposed. It could not be written until the engine was vendored: `lp85` has no
+`RESET` branch of its own, so its `action_role_source` had nowhere to point — the six records
+sat stranded verbatim in a trace-findings doc for exactly that reason. See
+[`docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md`](../../docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md)
+§5.
+
+**And the five level-8 rows are the distinction the corpus needed and did not have.** Every
+`RESET` record before them followed a death. These five follow no death at all — the board is
+alive and 11 to 42 of 64 budget cells are spent — so `action_role` separates *recovery from a
+dead board* from *abandoning a plan on a live one*. A corpus that cannot tell those apart
+teaches "reset when dead", which is the easy half.
+
 ### Known limit
 
-Five records is not a corpus. The plan's §5 step 4 target is 10–20 episodes per game, and
+Twelve records is not a corpus. The plan's §5 step 4 target is 10–20 episodes per game, and
 `expected_observation` and `rationale` on every record are **annotated** — attached
 retrospectively from the game source, never recovered human thought
 (`rationale_provenance: "annotated"`, and the tier definitions in

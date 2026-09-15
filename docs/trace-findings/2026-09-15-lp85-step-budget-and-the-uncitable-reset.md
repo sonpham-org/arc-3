@@ -17,7 +17,13 @@ listed lp85's recovery economics as explicitly not measured. They are measured h
 
 # lp85: the budget is the board, and its RESET cannot be cited
 
-**Status:** finding plus a blocker, 15-Sep-2026. Mechanic read from
+**Status:** finding plus a blocker that is now CLOSED, 15-Sep-2026. The blocker in section 2
+was resolved the same evening by **option 3, vendoring the engine** — see
+[section 5](#5-resolution-option-3-the-engine-is-vendored) — and the six records in section 3
+are landed at
+`datasets/decision-steps/v0/episodes/lp85-305b61c3__129ddf21-…__reset-recovery-and-abandonment.jsonl`.
+Sections 2 and 3 are kept as written, in the state that produced the decision, because the
+argument for the option chosen is only legible beside the problem it solves. Mechanic read from
 `docs/static/games/src/lp85-305b61c3/lp85.py` and confirmed against all 416 rows of
 `129ddf21-d7ba-4ca0-9577-0cea2af042b6`. The blocker is reproduced below with the real
 `validate.py` output.
@@ -177,7 +183,9 @@ regex, and it should be decided deliberately rather than discovered later as a s
 
 ### Options, not a recommendation
 
-Listed for whoever owns the call. **None is implemented here.**
+Listed for whoever owns the call. **None was implemented at the time this section was
+written.** Option 3 was chosen and implemented later the same evening; section 5 says why,
+and why it turned out to be the cheapest of the four rather than the most expensive.
 
 1. **Relax the pattern** to admit a sentinel form (e.g. `engine:RESET` with prose), accepting
    that `action_role_source` no longer always resolves to a readable line.
@@ -215,6 +223,14 @@ Row 176 is the correction half of the pair the labelling pass was asked for. Row
 {"schema_version": "0.1", "game_id": "lp85-305b61c3", "source": {"kind": "human_replay", "recording_guid": "129ddf21-d7ba-4ca0-9577-0cea2af042b6", "row_index": 386}, "segment": {"id": "lp85-l8-abandon-386-00", "boundary_reason": "episode_start"}, "level": 7, "frame_ref": {"recording_guid": "129ddf21-d7ba-4ca0-9577-0cea2af042b6", "row_index": 385, "field": "data.frame"}, "ascii": null, "last_action": {"action": "ACTION6", "args": {"row": 58, "col": 37}}, "last_result": {"board_changed": true, "level_changed": false}, "decision": {"memory_out": {"current_plan": "rebuild this level's arrangement from the opening layout on a different ordering of button presses"}, "action": {"action": "RESET"}, "rationale": "the board is alive and the bar shows only 16 of 64 steps consumed, so this is not budget pressure -- the arrangement reached from here cannot be finished, and RESET is the only way to unwind it because lp85 has no undo", "expected_observation": "state stays NOT_FINISHED, levels_completed stays 7, and the column-0 bar returns to 0 of 64 cells consumed from 16"}, "outcome": {"observed": "176 cells changed between the settled frame of row 385 and that of row 386; state NOT_FINISHED -> NOT_FINISHED; levels_completed 7 -> 7; painted cells 4096 -> 4096; the row carries 1 frames against 1 on row 385", "expectation_held": true}, "action_role_source": "UNCITABLE: RESET has no dispatch branch in docs/static/games/src/lp85-305b61c3/lp85.py - see unhandled_actions in datasets/decision-steps/dispatch/lp85-305b61c3.json", "rationale_provenance": "annotated", "tier": "gold", "memory_in": {"known_mechanics": ["ACTION6 is the only action this game offers; available_actions is [6] on every row", "ACTION6 is a click -- action_input.data carries {game_id, x, y}", "a click only does something when it lands on a sprite whose first tag contains 'button'; any other click is a total no-op", "the 64-cell bar in column 0 of the frame renders the consumed FRACTION of the level's step budget: it advances only on an effective click, never on a click that hit no button, and it advances by 64/StepCounter cells -- 1 cell per click on this level, but 5 on level 1, so cells are steps only where the level's budget is 64", "RESET restores the level's opening arrangement and refills the step budget bar to zero cells consumed"], "tested_actions": ["ACTION6", "RESET"], "hypotheses": ["the level clears when every marker sits on its goal cell, and pressing a button shifts a whole row or column of pieces at once"], "goal": "clear this level's arrangement before the column-0 step bar fills", "current_plan": "abandon the arrangement built so far on this level and start it again from the opening layout"}, "action_role": "plan abandonment on a live board -- RESET used to unwind an arrangement rather than to recover from a death"}
 ```
 
+> **These six have since landed.** They are kept verbatim above as the segmenter emitted them
+> under schema 0.1, with the `UNCITABLE` marker intact, because that marker is the evidence for
+> the decision in section 5. The landed versions differ in exactly three mechanical ways, none
+> of them a judgment change: `schema_version` is `0.2`, `last_result` carries the `run_ended`
+> flag 0.2 added, and `action_role_source` is a real citation into the vendored engine. Every
+> other field was re-emitted by `tools/segment.py` and compared field-for-field against the
+> transcription above before landing; all agreed.
+
 ### What did land
 
 One record: `datasets/decision-steps/v0/episodes/lp85-305b61c3__129ddf21-d7ba-4ca0-9577-0cea2af042b6__l6-budget-exhaustion.jsonl`,
@@ -238,3 +254,82 @@ what separates the two readings. One row out of 416 carries the distinction.
 
 Nothing here was taken from the analysis notes that proposed this run. Every number was
 re-measured from the NDJSON in this pass.
+
+---
+
+## 5. Resolution: option 3, the engine is vendored
+
+**Decided and implemented 15-Sep-2026, after the four options above were written.** The blocker
+is closed. What follows is why option 3 and not the other three.
+
+### The fact that changed the arithmetic
+
+Section 2 called vendoring "the largest change". That was an assumption, and it was wrong.
+Measured:
+
+| | |
+|---|---|
+| size | **2,342 lines** across 7 modules — smaller than any single game file it serves |
+| licence | **MIT**, © 2026 ARC Prize Foundation, redistribution expressly granted |
+| availability | **public on PyPI**, and `0.9.3` is the *only release arcengine has ever had* |
+| already a dependency | `tufa-arc-agi-framework/pyproject.toml:9`, `arcengine>=0.9.3` |
+| already pinned | `tufa-arc-agi-framework/uv.lock`, sdist sha256 `76441c15…fffcdfe` |
+| precedent | this repo already carries ARC Prize's MIT-licensed game source under `docs/static/games/src/` |
+
+The sdist was downloaded from PyPI and its sha256 checked against the one `uv.lock` had pinned
+*before this work started*, so the provenance chain does not depend on anything written today.
+It is unpacked unmodified at `vendor/arcengine-0.9.3/`; `vendor/README.md` carries the chain.
+
+### Why not the other three
+
+- **Option 1, relax the pattern to a sentinel.** Permanently weakens `action_role_source` for
+  every record in the corpus in order to fix one action on six games. The field's whole value is
+  that it always resolves to a readable line; a sentinel makes "does this citation resolve?"
+  unanswerable without parsing the value first. It also forces the `schema_version` question
+  section 2 flagged, and buys a worse field for it.
+- **Option 2, cite the dispatch table's `unhandled_actions`.** Superficially the cheapest — the
+  existing pattern already admits `…/lp85-305b61c3.json:42` — and it was the front-runner until
+  two things killed it. It cites **an absence**: the line it would point at is the sentence
+  saying RESET has no branch here, which is not evidence for what RESET *does*. And JSON line
+  numbers are not anchor-checked by `test_dispatch_tables.py`, so it would have been the one
+  citation class in the corpus with no drift guard — precisely the property the citation exists
+  to provide.
+- **Option 4, accept and document the bias.** This is the option that costs the most and looks
+  like it costs nothing. It writes down, permanently, that the corpus can record recovery only
+  on the 2 of 8 in-scope games that happen to vendor their own RESET branch — on a corpus whose
+  stated metric is recovery after falsification. A documented selection effect is still a
+  selection effect.
+
+Option 3 is the only one that makes the citation point at **the code that actually ran**, needs
+**no schema change and no version bump**, and **removes** the bias rather than describing it.
+
+### What it cost, concretely
+
+`tools/segment.py`'s `citation()` gained an engine fallback: game source first — a game's own
+branch is the better citation because it is what distinguishes this build — then the engine
+block. Every dispatch table gained an `engine` block with 13 anchors, drift-checked against the
+vendored file by `test_dispatch_tables.py` exactly as game anchors already were, plus a sha256
+guard per vendored file and a check that `uv.lock` still pins the sdist this tree came from.
+
+### The scope limit, stated not implied
+
+**It is not verifiable from here that `three.arcprize.org` runs 0.9.3.** The hosted service
+exposes no engine version. What is true is that 0.9.3 is the only arcengine ever published, is
+what this repo pins, and is what the vendored game sources are written against — so a citation
+into it is a citation into *the only arcengine anyone can read*. The emitted citation carries
+`[arcengine 0.9.3, engine-level: …]` so it claims that and not more.
+
+**One prediction of the vendored build was checked against play and resolved a real tension.**
+`base_game.py:278` skips the action-count increment for `RESET`, which appears to contradict the
+reconcile rule in `datasets/decision-steps/README.md`, where RESET rows *are* counted. They are
+two different counters: `ls20` reports 561 actions over 562 rows containing 3 non-boot RESETs,
+where `ARCBaseGame._action_count` would give 558. The session API's counter is not the engine's.
+That is now stated in `vendor/README.md` rather than left as an apparent contradiction.
+
+### A defect this uncovered on `main`
+
+Landing the records surfaced an unrelated stop: schema 0.2 migrated every fixture and record and
+added `run_ended` to the segmenter's output, but left `tools/segment.py`'s `SCHEMA_VERSION` at
+`"0.1"`. Every record pass A emitted was therefore rejected by `validate.py` on the version
+alone — a whole-pipeline stop, invisible because no test compared the two constants. Fixed, and
+`SchemaVersionTests` now asserts they agree.

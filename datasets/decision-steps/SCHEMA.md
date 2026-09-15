@@ -71,7 +71,7 @@ teach diagnosis instead of imitation.
 | `outcome.observed` | non-empty string | yes | What the next frame actually showed. |
 | `outcome.expectation_held` | boolean | yes | Must be `false` on tier `negative`. |
 | `action_role` | non-empty string | yes | What the action was for, e.g. `falsification probe`. |
-| `action_role_source` | `<path>:<line>[ note]` | yes | Citation into the game source under `docs/static/games/src/`. Checked against source, not guessed from the frame. |
+| `action_role_source` | `<path>:<line>[ note]` | yes | Citation into the game source under `docs/static/games/src/`, or into the vendored engine under `vendor/arcengine-0.9.3/` for an action the engine dispatches rather than the game — `RESET`. Checked against source, not guessed from the frame. |
 | `rationale_provenance` | `"annotated"` | yes | Replays carry no `<think>` channel. |
 
 **Action names:** `ACTION1` … `ACTION7`, `RESET`. `ACTION7` is included because PR #9

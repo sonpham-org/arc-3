@@ -33,6 +33,45 @@ IN_SCOPE = [
     "lf52-271a04aa",
 ]
 
+VENDORED_ENGINE_VERSION = "0.9.3"
+VENDORED_ENGINE_DIR = f"arcengine-{VENDORED_ENGINE_VERSION}"
+ENGINE_REL = Path("vendor") / VENDORED_ENGINE_DIR / "arcengine" / "base_game.py"
+# sha256 of the sdist the vendored tree was unpacked from, as pinned in
+# tufa-arc-agi-framework/uv.lock before this tree existed. See vendor/README.md.
+VENDORED_ENGINE_SDIST_SHA256 = (
+    "76441c15fde092a071ca95edce5e643385ab270304f59c1172b460048fffcdfe"
+)
+VENDORED_ENGINE_SHA256 = {
+    "LICENSE":
+        "007869cd1102b771aa889a7669138fd95239259ff0b6dd943e926910e54aefe7",
+    "PKG-INFO":
+        "daa4cb74147139e896b7ca4953b2fc5caa3b375b0bc3b89c073db1efa98efd14",
+    "README.md":
+        "a077b1a5246494d012534dea4cd6ba4715021cc564a24622f0e9dedde0923ea9",
+    "arcengine/OVERVIEW.md":
+        "65f20764d5e3cd8efc55f55508046c29b75cb27e22d70eaa7f76b400cf5abd0d",
+    "arcengine/README.md":
+        "2cc4693553c2dd7342ae0cadf5a335f377c4d6cea9c2d8a29ec63468e26bbd21",
+    "arcengine/__init__.py":
+        "538961ed7fcd09401dc7157c5611ee9f1fdaa177eae751a4b61b16844ab4304b",
+    "arcengine/base_game.py":
+        "5b5f41f3bec4c0c97a727fda7326114991dc0d4a5642d489b40ee4aa87e6b15f",
+    "arcengine/camera.py":
+        "f06e16807b0f97d86cafb5481bb3969213f27768f789d898c6b8b07e957de397",
+    "arcengine/enums.py":
+        "94ebef48f6fe950a18679a1b991c366e8e28c32ab58c9335f385e19bea21950e",
+    "arcengine/interfaces.py":
+        "0cfc24178e9f1102fb4ccb5892141d91c3a9eec88eccab3402b9777a76532cd8",
+    "arcengine/level.py":
+        "f74db969772b251018b2fcce6ec42f3522adeef4e9c03c036e455d2a35e3215a",
+    "arcengine/py.typed":
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "arcengine/sprites.py":
+        "ea9d3d02c7db0814954134a0e0ea6a3cb9b80066930dbdbfc5865befb54c493f",
+    "pyproject.toml":
+        "e7119efd519d6ef680065dc5b2d905f33aa45b7b2a4d5682305f869b105bff5b",
+}
+
 ACTION_NAMES = {f"ACTION{i}" for i in range(1, 8)} | {"RESET"}
 
 
@@ -83,7 +122,12 @@ class DispatchTableTests(unittest.TestCase):
         checked = 0
         for game_id, table in self.tables.items():
             lines = self.sources[game_id]
-            for json_path, anchor in iter_anchors(table):
+            # The `engine` block cites a DIFFERENT source file and is checked against it by
+            # test_every_engine_anchor_still_contains_its_cited_text below. Sweeping it in here
+            # would resolve engine line numbers against game source and fail for the right
+            # reason with entirely the wrong message.
+            game_only = {k: v for k, v in table.items() if k != "engine"}
+            for json_path, anchor in iter_anchors(game_only):
                 with self.subTest(game=game_id, at=json_path, line=anchor["line"]):
                     self.assertTrue(
                         1 <= anchor["line"] <= len(lines),
@@ -153,6 +197,107 @@ class DispatchTableTests(unittest.TestCase):
                 with self.subTest(game=game_id, action=name):
                     self.assertIsInstance(entry["branch"]["line"], int)
                     self.assertTrue(entry["effect"].strip())
+
+    def test_every_table_carries_the_engine_block(self):
+        """RESET is dispatched by the engine on every game, whether or not the game also has a
+        branch of its own, so every table must carry the citation for it."""
+        for game_id, table in self.tables.items():
+            with self.subTest(game=game_id):
+                engine = table["engine"]
+                self.assertEqual(engine["package"], "arcengine")
+                self.assertEqual(engine["version"], VENDORED_ENGINE_VERSION)
+                self.assertEqual(engine["source_file"], str(ENGINE_REL))
+                self.assertIn("RESET", engine["actions"])
+                self.assertTrue(engine["actions"]["RESET"]["effect"].strip())
+                self.assertTrue(engine["actions"]["RESET"]["offered"])
+
+    def test_every_engine_anchor_still_contains_its_cited_text(self):
+        """The same drift check, against the vendored engine instead of the game source.
+
+        Before the engine was vendored, a RESET record could only be cited on the two games
+        that carry their own RESET branch, which biased the corpus toward exactly the games
+        least representative of how recovery works on this platform. The citation is only worth
+        having if it is checked like every other one.
+        """
+        lines = (REPO_ROOT / ENGINE_REL).read_text().splitlines()
+        checked = 0
+        for game_id, table in self.tables.items():
+            engine = table["engine"]
+            self.assertEqual(
+                engine["source_line_count"],
+                len(lines),
+                f"{game_id}: vendored engine line count changed; every anchor has moved",
+            )
+            for json_path, anchor in iter_anchors(engine):
+                with self.subTest(game=game_id, at=json_path, line=anchor["line"]):
+                    self.assertTrue(
+                        1 <= anchor["line"] <= len(lines),
+                        f"{game_id} {json_path}: line {anchor['line']} is outside "
+                        f"{ENGINE_REL} (1..{len(lines)})",
+                    )
+                    actual = lines[anchor["line"] - 1]
+                    self.assertIn(
+                        anchor["text"],
+                        actual,
+                        f"{game_id} {json_path}: {ENGINE_REL}:{anchor['line']} no longer "
+                        f"contains the cited text.\n"
+                        f"  cited:  {anchor['text']}\n"
+                        f"  actual: {actual.strip()}",
+                    )
+                checked += 1
+        self.assertGreater(checked, 80, "engine anchor discovery found suspiciously few anchors")
+
+    def test_the_vendored_engine_is_the_pinned_upstream_artefact(self):
+        """The vendored tree is only a citable source while it is unmodified upstream code.
+
+        Two independent checks, because the point of vendoring was to make the citation
+        CHECKABLE and a tree anyone can quietly edit is not. The per-file digests catch a local
+        edit; uv.lock carries the sdist sha256 that was pinned before this tree existed and
+        catches the wrong version being dropped in wholesale.
+        """
+        import hashlib
+
+        for relative, expected in VENDORED_ENGINE_SHA256.items():
+            path = REPO_ROOT / "vendor" / VENDORED_ENGINE_DIR / relative
+            with self.subTest(file=relative):
+                self.assertTrue(path.is_file(), f"vendored {relative} is gone")
+                self.assertEqual(
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    expected,
+                    f"vendored {relative} has been modified; it is upstream code and every "
+                    f"engine citation in the dispatch tables is measured against it",
+                )
+        lock = (REPO_ROOT / "tufa-arc-agi-framework" / "uv.lock").read_text()
+        self.assertIn(
+            VENDORED_ENGINE_SDIST_SHA256,
+            lock,
+            "uv.lock no longer pins the sdist this tree was unpacked from",
+        )
+        # The package's own stanza, not the bare `{ name = "arcengine" }` dependency
+        # references that appear first in the file.
+        _, _, stanza = lock.partition('\nname = "arcengine"\n')
+        self.assertTrue(stanza, "uv.lock has no arcengine package stanza")
+        self.assertIn(
+            f'version = "{VENDORED_ENGINE_VERSION}"',
+            stanza[:200],
+            "uv.lock pins a different arcengine version than the one vendored",
+        )
+
+    def test_reset_is_never_reported_as_uncitable(self):
+        """The blocker this vendoring exists to clear, asserted so it cannot come back.
+
+        Six real lp85 RESET records sat unlandable in a trace-findings doc because the segmenter
+        had no citation to emit for them. If any table ever again describes RESET as having no
+        citable source, that state is back.
+        """
+        for game_id, table in self.tables.items():
+            with self.subTest(game=game_id):
+                note = table["unhandled_actions"]["note"]
+                self.assertNotIn(
+                    "which is not vendored",
+                    note,
+                    f"{game_id}: unhandled_actions still says the engine is not vendored",
+                )
 
     def test_sibling_verdicts_are_present_and_decided(self):
         """Pass B was told to settle this per game; an absent verdict is a failure."""

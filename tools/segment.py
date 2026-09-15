@@ -114,7 +114,10 @@ DEFAULT_RECORDINGS = REPO_ROOT / "datasets" / "decision-steps" / "v0" / "recordi
 DEFAULT_DISPATCH = REPO_ROOT / "datasets" / "decision-steps" / "dispatch"
 DEFAULT_EPISODES = REPO_ROOT / "datasets" / "decision-steps" / "v0" / "episodes"
 
-SCHEMA_VERSION = "0.1"
+# Must equal schema.json's schema_version const. The 0.2 bump migrated every fixture and
+# record but left this at "0.1", so pass A emitted records validate.py rejected on the
+# version alone. scripts/test_segment.py asserts the two agree.
+SCHEMA_VERSION = "0.2"
 FRAME_FIELD = "data.frame"
 CANDIDATE_SUFFIX = ".candidate.jsonl"
 
@@ -381,13 +384,45 @@ def last_result(rows: list[Row], index: int) -> dict:
     }
 
 
+def engine_citation(engine: dict, action_name: str, entry: dict) -> str:
+    """A citation into the vendored engine, carrying the version so the scope is stated.
+
+    The version matters and is not decoration. 0.9.3 is the only arcengine ever published and
+    is what this repo pins, but it is NOT verifiable from here that three.arcprize.org runs it
+    -- so the citation says which engine it read rather than implying it read the one that
+    served the recording. vendor/README.md carries the full provenance chain.
+    """
+    primary = next(
+        (call for call in entry["calls"] if call["role"].startswith("primary effect")), None
+    )
+    tail = f" -> {primary['text']}" if primary is not None else ""
+    return (
+        f"{engine['source_file']}:{entry['branch']['line']} {entry['branch']['text']}{tail}"
+        f" [{engine['package']} {engine['version']}, engine-level: {action_name} is dispatched"
+        f" by the engine, not by this game]"
+    )
+
+
 def citation(dispatch: dict, action_name: str) -> str:
-    """action_role_source, from the dispatch table built by pass B."""
+    """action_role_source, from the dispatch table built by pass B.
+
+    Game source first, engine second. When a game carries its own branch for an action the
+    game's line is the better citation -- it is what distinguishes this build from every other
+    one. Only two of the eight in-scope games carry a RESET branch, and for the other six the
+    engine block is the citation, which is the whole reason arcengine was vendored: before it
+    was, a RESET step could only be labelled on the two games that happen to handle it
+    themselves, which is a selection effect on the exact behaviour the corpus exists to measure.
+    """
     entry = dispatch["actions"].get(action_name)
     if entry is None:
+        engine = dispatch.get("engine", {}).get("actions", {}).get(action_name)
+        if engine is not None:
+            return engine_citation(dispatch["engine"], action_name, engine)
         return (
             f"UNCITABLE: {action_name} has no dispatch branch in "
-            f"{dispatch['source_file']} - see unhandled_actions in "
+            f"{dispatch['source_file']} and none in "
+            f"{dispatch.get('engine', {}).get('source_file', 'the engine')} - see "
+            f"unhandled_actions in "
             f"datasets/decision-steps/dispatch/{dispatch['game_id']}.json"
         )
     if not entry["offered"]:

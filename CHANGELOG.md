@@ -36,13 +36,21 @@ hold. Spec: `docs/trace-findings/2026-09-14-decision-step-corpus-v0-plan.md`.
 | 1 | ACTION7 executes end to end | **done**, on `main` |
 | 2 | JSON schema + validator | **done**, on `main` |
 | 3 | replay scraper + guid inventory | **done**, on `main` |
-| 4 | segment and label the corpus | **started** — A and B on `main`, first D pass run on lp85 and blocked on `action_role_source` for RESET; C/E not begun |
+| 4 | segment and label the corpus | **started** — A and B on `main`; the first D pass ran on lp85, was blocked on `action_role_source` for RESET, and is now **unblocked and landed** (the engine is vendored); C/E not begun |
 
-**What exists right now.** **140 tests, all passing** — 65 + 11 + 31 + 33 across
+**What exists right now.** **146 tests, all passing** — 65 + 15 + 33 + 33 across
 `test_decision_step_validator`, `test_dispatch_tables`, `test_segment` and `test_build_sft`.
 Run those four by name: `pytest scripts/` collects 58 errors from unrelated suites in this repo
 and tells you nothing about this work. The validator file gained 6 when `ProvenanceProseTests`
-landed in `1fdfb37`, and `test_build_sft` is new in `2469e82`. **280** human replay guids
+landed in `1fdfb37`, `test_build_sft` is new in `2469e82`, and the dispatch and segment files
+gained 4 and 2 with the engine vendoring.
+
+**That 146 assumes the recordings are on disk, and no single total is reproducible without
+them.** From a genuinely clean clone it is **65 (11 skipped) + 15 + 4-of-9 (5 skipped) + 33 (2
+skipped)**. `test_segment` *collects a different number of tests* in the two cases — five of its
+classes skip in `setUpClass`, which unittest reports as one skip per class rather than per test,
+so 4 + 5 class-skips expands to 4 + 29 when the recordings are there. Both numbers are real;
+quote the split rather than a bare total, or the next reader cannot reproduce either. **280** human replay guids
 inventoried across two manifests that are deliberately not merged — 250 published plus **30**
 first-party, the latter having gone 28 → 30 in `1fdfb37` with the `ls20/7537433d` and
 `m0r0/2134c482` wins — plus 250 leaderboard rows that carry no guid and never can be
@@ -50,13 +58,13 @@ fetched. **11 live-build recordings on disk, plus 15 for as66** — counted as
 `find v0/recordings -name '*.ndjson'`, partitioned on the as66 directory. Do not use the
 `ls */*.ndjson` glob a previous revision of this line cited: run from `v0/recordings/` it sweeps
 as66 in with the rest and reports 26. The 11 went 9 → 11 when the `ls20` and `m0r0` recordings
-were pulled this evening. **6 labelled records** across 3 games — a demonstration of shape, not a corpus. A 7th pass produced 6 more that `validate.py` rejects for a reason no annotator can fix; see the lp85 entry below. `tools/segment.py` now emits the
+were pulled this evening. **12 labelled records** across 3 games — still a demonstration of shape, not a corpus, but it now holds a completed falsification/correction pair and the recovery-versus-abandonment distinction. The 6 that `validate.py` used to reject for a reason no annotator could fix have landed; see the entry directly below. `tools/segment.py` now emits the
 mechanical portion of a record (cuts, frame refs, measured outcome, source citation) so that
 annotation is three judgment fields rather than a whole record.
 
 **The one rule that governs step 4.** A run counts only if its `game_id` is **still the live
 build** — an early replay is a replay of a different game. That leaves **100 of the blog's 250**
-and **23 of the Boss's 28**, and every current build has game source, so citation is no longer a
+and **25 of the Boss's 30**, and every current build has game source, so citation is no longer a
 constraint. Execution plan, with the selection rule and the five passes:
 `docs/plans/2026-09-15-step4-segment-and-label-execution.md`.
 
@@ -88,6 +96,78 @@ nor refute gets cut, not softened.
 ---
 
 ## 2026-09-15 (latest)
+
+### The RESET blocker is cleared: arcengine is vendored, and six stranded records land
+
+Committed direct to `main` at the Boss's instruction.
+
+**The blocker, restated in one line.** `action_role_source` must cite a `<path>:<line>`, `RESET`
+is dispatched by the engine rather than by the games, and the engine was not in this repo — so a
+`RESET` step could only be labelled on the 2 of 8 in-scope games (`bp35`, `lf52`) that happen to
+carry their own branch. `RESET` is the only recovery primitive on **19 of the 25 live builds**,
+and recovery after falsification is the metric this corpus exists to move. The corpus could
+record recovery only on the games least representative of how recovery works. That is a
+selection effect introduced by a regex.
+
+**Resolved by option 3 of the four the lp85 doc listed: vendor the engine.** That doc called it
+"the largest change"; measured, it is the smallest. `arcengine` is **2,342 lines**, **MIT**, the
+**only release ever published** on PyPI, already declared at
+`tufa-arc-agi-framework/pyproject.toml:9` and already pinned in `uv.lock` — whose sdist sha256
+the downloaded tarball matched exactly, a chain that predates this work. It is unpacked
+unmodified at `vendor/arcengine-0.9.3/`; `vendor/README.md` carries the provenance and the scope
+limit. Why not the other three, in one line each: relaxing the pattern (1) permanently weakens
+the field for every record to fix one action on six games; citing the dispatch table (2) cites
+*an absence* and would have been the only citation class with no drift guard; accepting the bias
+(4) writes the selection effect down permanently instead of removing it. Full argument:
+`docs/trace-findings/2026-09-15-lp85-step-budget-and-the-uncitable-reset.md` §5.
+
+**What landed.** `tools/segment.py`'s `citation()` gained an engine fallback — game source
+first, because a game's own branch is what distinguishes that build, then the engine. All eight
+dispatch tables gained an `engine` block with 13 anchors each, drift-checked against the
+vendored file exactly as game anchors already were, plus a per-file sha256 guard and a check
+that `uv.lock` still pins the sdist the tree came from. And the six records that had been
+carried verbatim in that doc because they could not be written are now at
+`v0/episodes/lp85-305b61c3__129ddf21…__reset-recovery-and-abandonment.jsonl`, 6 records, 0
+errors, frame resolution **ON**. They were re-emitted by the segmenter and compared
+field-for-field against the doc's transcription before landing rather than pasted; every
+mechanical field agreed.
+
+**The five level-8 rows are the reason this was worth doing.** Every `RESET` record before them
+followed a death. These follow none — the board is alive, 11 to 42 of 64 budget cells spent — so
+`action_role` now separates *recovery from a dead board* from *abandoning a plan on a live one*.
+A corpus that cannot tell those apart teaches "reset when dead", which is the easy half. Row 176
+is also the first completed falsification/correction pair whose halves are separate records: the
+negative record on row 175 is the falsified decision, and 176 is the correction the player
+actually made.
+
+**A defect on `main` that this uncovered, and that was stopping everything.** Schema 0.2
+migrated every fixture and every committed record and added `run_ended` to the segmenter's
+output — but left `tools/segment.py`'s `SCHEMA_VERSION` at `"0.1"`. **Every record pass A
+emitted was rejected by `validate.py` on the version alone.** A whole-pipeline stop, invisible
+because no test compared the two constants. Fixed; `SchemaVersionTests` now asserts they agree.
+
+**An apparent contradiction the vendored source resolved rather than left hanging.**
+`base_game.py:278` skips the action-count increment for `RESET`, which looks like it contradicts
+the reconcile rule in `datasets/decision-steps/README.md`, where `RESET` rows *are* counted as
+actions. They are two different counters: `ls20` reports 561 actions over 562 rows containing 3
+non-boot `RESET`s, where `ARCBaseGame._action_count` would give 558. The session API's counter is
+not the engine's, and `vendor/README.md` says so.
+
+**Scope limit, stated not implied.** It is **not** verifiable from this repo that
+`three.arcprize.org` runs 0.9.3 — the service exposes no engine version. 0.9.3 is the only
+arcengine ever published and the one this repo pins, so a citation into it is a citation into
+the only arcengine anyone can read. Every emitted citation carries
+`[arcengine 0.9.3, engine-level: …]` so it claims that and not more.
+
+**Not done, deliberately.** No harness code was touched. `ACTION7` is **not** resolved by this —
+it has no engine branch either, and on the 19 builds that do not offer it there is nothing to
+cite because there is nothing that runs. Five new guards were poison-checked: vendored-file
+edit, engine anchor drift, a note reverting to "not vendored", segmenter/schema version drift,
+and the `uv.lock` pin.
+
+---
+
+## 2026-09-15
 
 ### Evening session: five human wins, and a harness defect that says the agent cannot press RESET
 
