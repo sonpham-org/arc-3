@@ -18,7 +18,8 @@ silently under-validating if schema.json grows a keyword the engine cannot enfor
 test asserts every file under fixtures/invalid/ has an expectation here, so adding a fixture
 without asserting on it fails the suite. Also covers the two replay manifests --
 published-replays.json and first-party-replays.json -- for row shape, per-file guid
-uniqueness, _provenance.count, .games and .state_counts all agreeing with the actual rows
+uniqueness, _provenance.count, .games, .state_counts and (first-party only)
+.total_actions all agreeing with the actual rows
 they summarise, every first-party row
 carrying an attribution, and above all that the two files share no guid, which is the
 invariant that keeps each file's provenance claim true of every row in it. Those manifest
@@ -554,6 +555,22 @@ class ReplayManifestTests(unittest.TestCase):
                     observed[row["state"]] = observed.get(row["state"], 0) + 1
                 self.assertEqual(provenance["state_counts"], dict(sorted(observed.items())))
 
+    def test_first_party_total_actions_matches_its_rows(self):
+        """The summary field that actually drifted, now checked like the three that did not.
+
+        total_actions sat at 5480 from 2026-09-15 until the evening of the same day, while the
+        rows summed to 6933 -- the 15:20 ET refresh appended dc22 (1320) and ft09 (133), updated
+        count, games and state_counts, and left this one behind. The three that stayed correct
+        are exactly the three this class already asserted. published-replays.json has no such
+        field, so this is first-party only.
+        """
+        doc = self.load(self.FIRST_PARTY)
+        self.assertEqual(
+            doc["_provenance"]["total_actions"],
+            sum(row["actions"] for row in doc["replays"]),
+            "total_actions drifted from the rows it summarises",
+        )
+
     def test_guids_are_unique_within_each_manifest(self):
         for path in (self.PUBLISHED, self.FIRST_PARTY):
             with self.subTest(manifest=path.name):
@@ -686,19 +703,25 @@ class RecordingRowReconcileTests(unittest.TestCase):
     RESETs = 1 + session.resets
 
     The leading 1 in both is row 0, which carries full_reset: true and is counted by the API as
-    neither. Verified on all four recordings on disk; the third term is non-zero only on bp35.
-    Skipped rather than failed when the recordings are absent — they are gitignored and 200 MB.
+    neither. Verified on all five recordings on disk. The third term was bp35-only until
+    2026-09-15, when the Boss's second g50t run came back with one: row 347, an ACTION2 sent to a
+    board the previous row had already flipped to GAME_OVER, returning an empty frame list. So it
+    is neither a bp35 quirk nor an ACTION7 quirk.
+    Skipped rather than failed when the recordings are absent — they are gitignored and 270 MB.
     """
 
     RECORDINGS = CORPUS_DIR / "v0" / "recordings"
 
-    # game_id -> (guid, api_actions, api_resets, expected rows submitted while GAME_OVER)
-    EXPECTED = {
-        "bp35-0a0ad940": ("c935ca1b-dfee-4be1-9574-bf4cc80c5b89", 1024, 13, 5),
-        "g50t-5849a774": ("4f0689d0-7d06-4be7-91ac-31cb9a800b85", 533, 9, 0),
-        "cd82-fb555c5d": ("496ee425-9705-409f-8410-463a2229627e", 216, 0, 0),
-        "cn04-2fe56bfb": ("f714032e-914d-4bb5-bc95-386dfacebca0", 454, None, 0),
-    }
+    # (game_id, guid, api_actions, api_resets, expected rows submitted while GAME_OVER).
+    # A tuple rather than a game_id-keyed dict since 2026-09-15: g50t now has two recordings on
+    # disk, the Boss's two runs on the same build, and a game_id key could only hold one.
+    EXPECTED = (
+        ("bp35-0a0ad940", "c935ca1b-dfee-4be1-9574-bf4cc80c5b89", 1024, 13, 5),
+        ("g50t-5849a774", "4f0689d0-7d06-4be7-91ac-31cb9a800b85", 533, 9, 0),
+        ("g50t-5849a774", "58483738-cfaf-4e57-8c55-4c9c593bbab5", 536, 8, 1),
+        ("cd82-fb555c5d", "496ee425-9705-409f-8410-463a2229627e", 216, 0, 0),
+        ("cn04-2fe56bfb", "f714032e-914d-4bb5-bc95-386dfacebca0", 454, None, 0),
+    )
 
     def _tally(self, path):
         rows = resets = dead = 0
@@ -724,12 +747,12 @@ class RecordingRowReconcileTests(unittest.TestCase):
         if not self.RECORDINGS.is_dir():
             self.skipTest(f"no recordings at {self.RECORDINGS}; run tools/replay_scrape.py known")
         checked = 0
-        for game_id, (guid, actions, resets, dead_rows) in self.EXPECTED.items():
+        for game_id, guid, actions, resets, dead_rows in self.EXPECTED:
             path = self.RECORDINGS / game_id / f"{guid}.ndjson"
             if not path.is_file():
                 continue
             checked += 1
-            with self.subTest(game=game_id):
+            with self.subTest(game=game_id, guid=guid):
                 rows, reset_rows, dead, first_is_full_reset = self._tally(path)
                 self.assertTrue(first_is_full_reset, "row 0 is not the full_reset row")
                 self.assertEqual(dead, dead_rows, "rows submitted while GAME_OVER")
@@ -802,7 +825,7 @@ class CurrentBuildTests(unittest.TestCase):
         live = self._live()
         for name, expected_eligible, expected_total in (
             ("published-replays.json", 100, 250),
-            ("first-party-replays.json", 20, 25),
+            ("first-party-replays.json", 21, 26),
         ):
             doc = json.loads((CORPUS_DIR / name).read_text())
             replays = doc.get("replays") or doc.get("rows") or doc.get("items")

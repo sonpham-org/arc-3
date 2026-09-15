@@ -46,7 +46,7 @@ datasets/decision-steps/
 ├── README.md          this file
 ├── current-builds.json       the 25 live ARC-3 builds; a run is eligible only if its build is current
 ├── published-replays.json    250 blog-linked human replay guids + their run metadata
-├── first-party-replays.json  the 23 replays the Boss played on his own account
+├── first-party-replays.json  the 26 replays the Boss played on his own account
 ├── dispatch/                 one <game_id>.json per game: action name -> source line (pass B)
 ├── fixtures/
 │   ├── valid/             one file per tier plus a turn-0 record, all must pass
@@ -172,7 +172,7 @@ cd <repo root>
 python3.13 -m unittest scripts.test_decision_step_validator -v
 ```
 
-Matches the existing `scripts/test_*.py` convention. 34 tests, stdlib only. Six of them
+Matches the existing `scripts/test_*.py` convention. 53 tests, stdlib only. Seven of them
 cover the two replay manifests (see [Two replay manifests](#two-replay-manifests-and-why-they-are-two));
 those read the committed JSON only and never call the API, so the suite does not go red when
 `three.arcprize.org` does.
@@ -246,7 +246,7 @@ in a newline, and is only then `os.replace`d into place. A truncated file is nev
 looking complete. A re-run skips a target that already exists and parses; `--force` re-pulls.
 `429` and `5xx` back off using the API's own `x-ratelimit-reset` header.
 
-**Never `git add -f` a recording.** They are ~202 MB combined and `datasets/decision-steps/v0/`
+**Never `git add -f` a recording.** They are ~354 MB combined and `datasets/decision-steps/v0/`
 is gitignored for that reason.
 
 ## Published replay guids — 250 found
@@ -282,9 +282,10 @@ already had are **not** in this set — they were published 2026-09-13/14, the b
 [Two replay manifests](#two-replay-manifests-and-why-they-are-two) for why they are not merged
 into one file.
 
-**Known limit, stated plainly:** we own 5 wins across 17 environments, and no
-recording has been pulled for any of them but bp35, cd82 and g50t. Every other row in the
-first-party manifest is metadata only — a guid we are entitled to pull, not a trace we hold.
+**Known limit, stated plainly:** we own 9 wins across 20 environments, and a recording has
+been pulled for 7 of the 26 rows — bp35, cd82, cn04, dc22, ft09 and *both* g50t runs. Every
+other row in the first-party manifest is metadata only — a guid we are entitled to pull, not a
+trace we hold.
 Until those recordings exist, "10–20 episodes" still means correlated segments of a handful of
 human sessions: fine for a schema shakedown, **not** a corpus.
 
@@ -293,11 +294,11 @@ human sessions: fine for a schema shakedown, **not** a corpus.
 | file | rows | what every row in it is |
 |---|---|---|
 | [`published-replays.json`](published-replays.json) | 250 | a guid linked from the public ARC blog post *"ARC-AGI-3 human dataset"* |
-| [`first-party-replays.json`](first-party-replays.json) | 23 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
+| [`first-party-replays.json`](first-party-replays.json) | 26 | a replay the Boss played on his own arcprize.org account, not harvested from a page |
 
 **They are not merged, and the reason is the whole point of having either.**
 `published-replays.json`'s provenance is one sentence — "linked from the ARC blog post" — and
-that sentence is only worth anything while it is true of *every* row in the file. None of our 23
+that sentence is only worth anything while it is true of *every* row in the file. None of our 26
 replays is in the blog's 250. Appending them would buy one file and cost the ability to say
 where any given row came from. So they sit in a sibling with the same row shape and their own `_provenance`.
 
@@ -306,18 +307,32 @@ The invariant that keeps this honest — **no guid appears in both files** — i
 
 ### What is in the first-party file
 
-23 runs across 18 environments, all played by the Boss on his own
-arcprize.org account: **6 `WIN`, 6 `GAME_OVER`,
-11 `NOT_FINISHED`**, 5,480 actions in total. The wins:
+26 runs across 20 environments, all played by the Boss on his own
+arcprize.org account: **9 `WIN`, 6 `GAME_OVER`,
+11 `NOT_FINISHED`**, 7,469 actions in total. The wins:
 
-| game | guid | levels | actions | resets |
-|---|---|---|---|---|
-| `bp35-0a0ad940` | `c935ca1b…` | 9 | 1024 | 13 |
-| `g50t-5849a774` | `4f0689d0…` | 7 | 533 | 9 |
-| `ls20-cb3b57cc` | `6184a865…` | 7 | 378 | 0 |
-| `r11l-495a7899` | `60c0af00…` | 6 | 316 | 6 |
-| `cn04-2fe56bfb` | `f714032e…` | 6 | 454 | 4 |
-| `cd82-fb555c5d` | `496ee425…` | 6 | 216 | 0 |
+| game | guid | levels | actions | resets | recording on disk |
+|---|---|---|---|---|---|
+| `bp35-0a0ad940` | `c935ca1b…` | 9 | 1024 | 13 | yes |
+| `dc22-fdcac232` | `d13d39eb…` | 6 | 1320 | 8 | yes |
+| `g50t-5849a774` | `4f0689d0…` | 7 | 533 | 9 | yes |
+| `g50t-5849a774` | `58483738…` | 7 | 536 | 8 | yes |
+| `ls20-cb3b57cc` | `6184a865…` | 7 | 378 | 0 | no |
+| `r11l-495a7899` | `60c0af00…` | 6 | 316 | 6 | no |
+| `cn04-2fe56bfb` | `f714032e…` | 6 | 454 | 4 | yes |
+| `cd82-fb555c5d` | `496ee425…` | 6 | 216 | 0 | yes |
+| `ft09-0d8bbf25` | `99084b22…` | 6 | 133 | 4 | yes |
+
+**Two of those rows are the same player on the same build**, which nothing else in either
+manifest is: `4f0689d0…` (13-Sep) and `58483738…` (15-Sep) are both the Boss on
+`g50t-5849a774`. Against the shared baseline `[78,175,179,230,96,54,67]` his `level_actions`
+went `[43,67,68,55,173,62,65]` → `[17,31,74,94,186,91,43]`. Levels 1, 2 and 7 improved; 3, 4
+and 6 got worse; the total barely moved, 533 → 536, because the two cancelled. Levels **5 and
+6 are the only ones over baseline on either run** — level 5 at 1.80× then 1.94×, level 6 at
+1.15× then 1.69× — and the API's own `level_scores` name the same two, 26.6 and 35.2 against
+115 on every other level. Anything treating manifest rows as independent samples needs to know
+this pair exists; anything studying learning across repeated attempts should start here,
+because it is the only such pair we hold.
 
 The `cn04` row is the one exception to everything the next two paragraphs say about where these
 rows came from: it was played *after* the 2026-09-15 scorecard snapshot and was fetched by a
@@ -359,7 +374,8 @@ assumes. No episode cites cd82 yet. Step 4 has started — see [The corpus so fa
 
 ### Session `actions` versus recording rows — reconciled
 
-The counts differ (1024→1030, 533→534, 216→217, 454→455) and the rule is exact:
+The counts differ (1024→1030, 533→534, 536→538, 216→217, 454→455, 1320→1321, 133→134) and
+the rule is exact:
 
 ```
 recording rows = 1 + session.actions + rows submitted while the board was already GAME_OVER
@@ -367,16 +383,25 @@ RESET rows     = 1 + session.resets
 ```
 
 The leading `1` in both is row 0, which carries `full_reset: true` — the boot reset, which the
-session API counts as neither an action nor a reset. The third term is only non-zero on bp35,
-where it is **5**: rows 215, 370, 390, 572 and 807 each submit `ACTION7` to a board that the
-preceding row already flipped to `GAME_OVER`. Each returns `data.frame: []`, changes nothing,
-is not counted by the API, and is followed immediately by a `RESET`. Verified against all four
-recordings on disk — bp35, g50t, cd82, cn04 — both numbers matching on every one, and asserted
-by `RecordingRowReconcileTests` in `scripts/test_decision_step_validator.py`.
+session API counts as neither an action nor a reset. The third term is non-zero on bp35, where
+it is **5**: rows 215, 370, 390, 572 and 807 each submit `ACTION7` to a board that the preceding
+row already flipped to `GAME_OVER`. Each returns `data.frame: []`, changes nothing, is not
+counted by the API, and is followed immediately by a `RESET`.
 
-Two consequences for labelling. A record must never point `frame_ref` at one of those five
-rows: the frame list is empty and the resolver rejects it — point at the preceding row, which
-is the board the player was actually looking at. And the row count still comes from the
+**It is not a bp35 quirk, and it is not an `ACTION7` quirk.** That was the reading until
+15-Sep-2026, when the Boss's second g50t run (`58483738…`) came back with one of its own: row
+347, an `ACTION2`, same empty frame list, same non-count. One recording had the behaviour, so it
+got attributed to that recording's game and that recording's action; a second game and a second
+action is the cheapest possible correction of a sample-size-one generalisation. Read the third
+term as what the API does with *any* action sent to a dead board.
+
+Verified against all five recordings the rule is asserted on — bp35, both g50t runs, cd82, cn04
+— both numbers matching on every one, and asserted by `RecordingRowReconcileTests` in
+`scripts/test_decision_step_validator.py`.
+
+Two consequences for labelling. A record must never point `frame_ref` at one of those six
+rows (five on bp35, one on g50t `58483738…`): the frame list is empty and the resolver rejects
+it — point at the preceding row, which is the board the player was actually looking at. And the row count still comes from the
 scraper's observed output; the formula explains the gap, it does not replace the count.
 
 ## The corpus so far
