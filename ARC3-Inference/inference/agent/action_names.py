@@ -13,8 +13,10 @@ ENGINE_TO_MODEL_ACTION = {
     "ACTION6": "MOUSE",
     # ACTION7 is exposed by the engine and valid in several games, but was missing
     # here -- so the model could see it in valid_actions yet to_engine_action()
-    # returned None and it silently no-op'd. Neutral round-trip makes it executable;
-    # its game-specific meaning is left to the model to probe (see the prompt).
+    # returned None, and HarnessSolver._normalize_actions rejected the entire
+    # request with "Unknown action at index N" before any action executed. Neutral
+    # round-trip makes it executable; its game-specific meaning is left to the
+    # model to probe (see the prompt).
     "ACTION7": "ACTION7",
     "RESET": "RESET",
 }

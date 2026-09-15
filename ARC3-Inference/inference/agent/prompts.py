@@ -66,7 +66,7 @@ STRUCTURED_RUNTIME_STATE_ADDENDUM = (
     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
     "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
-    "- `last_action_result` may include `animation_frame_count`, `animation_changed`, `animation_only_changed`, `animation_changed_bbox`, and `animation_transition_count`. These summarize intermediate animation frames that are not present in `current_frame`; an `animation_only_changed` result means the action displayed a real transient change even though its final board matched the pre-action board.\n"
+    "- `last_action_result` may include `animation_frame_count`, `animation_changed`, `animation_only_changed`, `animation_changed_cell_count`, `animation_changed_bbox`, and `animation_transition_count`. These summarize intermediate animation frames that are not present in `current_frame`; an `animation_only_changed` result means the action displayed a real transient change even though its final board matched the pre-action board.\n"
 )
 
 MULTIMODAL_CONTEXT_ADDENDUM = (

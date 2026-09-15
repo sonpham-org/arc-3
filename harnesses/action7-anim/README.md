@@ -55,7 +55,8 @@ the other two as well.
 
 > Note: the comment inside the original source patch describes this as "silently no-op'd."
 > That is inaccurate against current `main`; it is a whole-batch rejection with a visible
-> error string. The commit message and this README use the verified behaviour.
+> error string. The commit message, the comment as landed in `action_names.py`, and this
+> README all use the verified behaviour.
 
 ## 2. Why it matters
 
@@ -139,6 +140,11 @@ Ported hunk by hunk instead. Adaptations, all of them:
   it the same way. This summary runs on **every** action with no opt-in, so an exception here
   would take down the whole harness rather than degrade one action result. On failure it
   falls back to `frames = []`, which yields the all-false summary. Not in the source patch.
+- **The animation prompt bullet lists all six scalars.** The July patch's bullet named only
+  five, omitting `animation_changed_cell_count` while the code passed it — the model was
+  handed a field it was never told about. The omission carries no rationale in the patch, so
+  the bullet was completed rather than reproduced. Revert is one word if a reviewer wants the
+  asymmetry back.
 - **Insertion points relocated, content unchanged**, for the four anchors listed above. The
   `solver.py` batch-merge block sits immediately after the existing `final_payload["board_changed"]`
   assignment, as in the patch.
