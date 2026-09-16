@@ -115,6 +115,8 @@ not — and either answer is reported at the same volume of words.
 Two hard gates, added 16-Sep: (1) the seven held-out games must score above zero on the base
 27B, or the split is redrawn on measured agent difficulty; (2) the result is labelled as
 transfer within the public 25, with `as66` run and reported as the one out-of-lineup probe.
+**Gate 1 met, 16-Sep:** 5 of the 7 held-out games score above zero on the base 27B, so the split
+stands. See [`2026-09-16-qwen38-27b-baseline-result.md`](../trace-findings/2026-09-16-qwen38-27b-baseline-result.md).
 
 ---
 
