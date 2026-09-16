@@ -6,7 +6,7 @@ Re-reads every cited game source and fails if a cited line no longer contains it
 which is the failure mode that would silently turn every action_role_source citation in the
 corpus into a lie after an upstream source refresh. Also checks the internal consistency the
 tables claim for themselves: line numbers in range, no duplicate action entries, offered flags
-agreeing with the declared available_actions, and the eight in-scope games all present.
+agreeing with the declared available_actions, and the twelve in-scope games all present.
 SRP/DRY check: Pass - scripts/test_decision_step_validator.py covers the record schema and the
 recordings; this covers only the dispatch tables. Nothing about the record contract is retested
 here.
@@ -21,7 +21,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DISPATCH_DIR = REPO_ROOT / "datasets" / "decision-steps" / "dispatch"
 
-# The eight games pass B was scoped to, from the execution plan section 1(b).
+# The eight games pass B was scoped to, from the execution plan section 1(b), plus the four that
+# have a recording on disk but had no table until 16-Sep-2026 (docs/plans/2026-09-16-pass-d-e-pilot.md).
 IN_SCOPE = [
     "bp35-0a0ad940",
     "g50t-5849a774",
@@ -31,6 +32,10 @@ IN_SCOPE = [
     "lp85-305b61c3",
     "ls20-9607627b",
     "lf52-271a04aa",
+    "dc22-fdcac232",
+    "ft09-0d8bbf25",
+    "ka59-38d34dbb",
+    "m0r0-492f87ba",
 ]
 
 VENDORED_ENGINE_VERSION = "0.9.3"
@@ -337,15 +342,19 @@ class DispatchTableTests(unittest.TestCase):
                 (REPO_ROOT / "datasets" / "decision-steps" / "current-builds.json").read_text()
             )["builds"]
         }
-        named = 0
+        named = []
         for game_id, table in self.tables.items():
             sib = table["sibling_builds"]
             for sibling in sib["siblings_in_manifests"]:
-                named += 1
+                named.append(sibling)
                 with self.subTest(game=game_id, sibling=sibling):
                     self.assertNotIn(sibling, live)
                     self.assertIs(sib["sibling_is_a_live_build"], False)
-        self.assertEqual(named, 2, "expected exactly cn04-65d47d14 and ls20-cb3b57cc")
+        self.assertEqual(
+            sorted(named),
+            ["cn04-65d47d14", "dc22-4c9bff3e", "ka59-9f096b4a", "ls20-cb3b57cc", "m0r0-dadda488"],
+            "the stale builds the replay manifests name for in-scope games",
+        )
 
     def test_the_two_games_with_a_real_sibling_record_the_measurement(self):
         self.assertEqual(

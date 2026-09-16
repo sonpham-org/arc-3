@@ -118,6 +118,22 @@ lines.
 Six of the eight have no sibling at all, so the question the plan raised turns out not to
 arise for most of this scope. It arises for `cn04` and `ls20`, and the answer is no in both.
 
+**Added 16-Sep-2026: the four games with a recording on disk but no table** (pass B for the
+pilot in `docs/plans/2026-09-16-pass-d-e-pilot.md`):
+
+| game | sibling in manifests | sibling source in repo | may cite sibling |
+|---|---|---|---|
+| `dc22-fdcac232` | `dc22-4c9bff3e` | **no** | no — cannot be diffed |
+| `ft09-0d8bbf25` | none | `ft09-9ab2447a` (no replay of it) | **no** — 43 lines differ, ACTION6 branch 22 lines apart |
+| `ka59-38d34dbb` | `ka59-9f096b4a` | **no** | no — cannot be diffed |
+| `m0r0-492f87ba` | `m0r0-dadda488` | **no** | no — cannot be diffed |
+
+Three of the four have a stale build in `published-replays.json` (10 rows each) with no source,
+the same situation as `cn04`; none is a live build. Worth knowing when reading these tables:
+two games fall back to the level's starting layout **without a RESET row** — m0r0 when a piece
+touches a hazard, dc22 when the player sinks (which also costs 20 steps) — and in ka59 a click
+on nothing still spends a step, where in ft09 and lp85 it is free.
+
 **The consequence plan §1(a) was bracing for holds.** The 16 source-less builds stay
 ineligible: a run on `cn04-65d47d14` cannot produce a record meeting the acceptance criterion,
 because the only source that could back its citation is not in this repo. That is a finding
@@ -133,8 +149,8 @@ and each covers the other's gap:
 - **The measurement** says a citation cannot cross a build boundary. That holds whatever the
   lineup does.
 - **The rule** says you would never want to, because the other build's runs are out of scope.
-  Every sibling named in these eight tables — `cn04-65d47d14` and `ls20-cb3b57cc` — is a stale
-  build. `sibling_is_a_live_build` records this per game and
+  Every sibling named in these tables — `cn04-65d47d14`, `ls20-cb3b57cc`, and since 16-Sep
+  `dc22-4c9bff3e`, `ka59-9f096b4a` and `m0r0-dadda488` — is a stale build. `sibling_is_a_live_build` records this per game and
   `test_no_sibling_named_in_a_table_is_a_live_build` asserts it, so a lineup change surfaces as
   a test failure rather than mid-labelling.
 
