@@ -186,13 +186,17 @@ This also explains the prior session's "Blocker 1" as the *same* bug: `lm_head` 
 its input is detached, so its output carried no `grad_fn` at all, and there was no LoRA branch on
 it to disguise the fact.
 
-**One secondary detail not explained.** On a424, `k_proj` and `v_proj` reported `p.grad is None`
-(16/16 each) where `q_proj` reported an allocated all-zero grad. In the CPU simulation all five
-starved buckets report allocated-zero, none report `None`. So the mechanism above accounts for
-"no gradient", but the `None`-versus-zero split is a downstream artifact — most plausibly the
-fused CUDA SDPA backward returning undefined grads for `key`/`value` when its `grad_output` is
-exactly zero, while `q_proj` keeps a live edge through the `attn_output * sigmoid(gate)` gate.
-**That explanation is unverified** and it does not change the diagnosis or the fix.
+**One secondary detail not explained — open question, with the check named.** On a424,
+`k_proj` and `v_proj` reported `p.grad is None` (16/16 each) where `q_proj` reported an allocated
+all-zero grad. In the CPU simulation all five starved buckets report allocated-zero, none report
+`None`. So the mechanism above accounts for "no gradient", but the `None`-versus-zero split is a
+downstream artifact of the GPU run and I have two candidates and no evidence separating them: the
+fused CUDA SDPA backward returning undefined grads for `key`/`value` at exactly-zero
+`grad_output`, or accelerate's dispatch (`device_map="cuda:0"` installs hooks, and
+`Qwen3_5GatedDeltaNet.forward` carries `@force_accelerate_hooks("conv1d")`). **The discriminating
+check is one read-only line on the next session:** print `hasattr(mod, "_hf_hook")` for one leaf
+of each of the seven target types and see whether `k_proj`/`v_proj` differ from `q_proj`. This
+does not block and does not change the fix.
 
 **`fla` is in play on the GPU and was not exercised on CPU.** The hub-kernel decorator
 `@use_kernel_func_from_hub_with_fallback("chunk_gated_delta_rule", "fla")` binds fla's Triton
@@ -223,7 +227,15 @@ for m in model.modules():
 ```
 
 `quantized_forward` reads `getattr(self, "quantization_enabled", True)` and, when false, skips
-both the input and weight QDQ and calls `self.__class__.forward(self, input)` directly. With
+both the input and weight QDQ and calls `self.__class__.forward(self, input)` directly. The fallthrough
+is safe on the weight path for two independent reasons. First, `quantized_forward` only fake-quants
+the weight when `status < COMPRESSED`, and this checkpoint's status *is* `compressed`, so the weight
+QDQ was already being skipped — turning `enabled` off changes nothing there. Second, the prior
+session's `lm_head` autopsy is direct evidence that `decompress_model` leaves a module
+`nn.Linear.forward` can consume: it reported `Linear(in_features=5120, out_features=248320,
+bias=False)` with a real BF16 `weight` of shape `(248320, 5120)`, and `F.linear(x, lm_head.weight)`
+on that same weight object returned a correct differentiable tensor. The leftover `weight_scale` /
+`quantization_scheme` / `quantization_status` attributes are inert once `enabled` is false. With
 `dequantize=True` the weights are already plain BF16, so skipping QDQ is also the numerically
 correct thing to do for a BF16 LoRA — it removes activation rounding that has no business being
 in a fine-tune. Side benefit: `lm_head` becomes differentiable again, so the
