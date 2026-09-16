@@ -130,14 +130,18 @@ def timeline_line(rec: Recording, i: int) -> str:
 
 
 def diff_text(rec: Recording, i: int, j: int, pad: int = 2) -> str:
-    before, _ = rec.settled(i)
-    after, _ = rec.settled(j)
+    return diff_grids(rec.settled(i)[0], rec.settled(j)[0], f"rows {i} -> {j}", f"BEFORE (row {i}):", f"AFTER (row {j}):", pad)
+
+
+def diff_grids(before: list[list[int]], after: list[list[int]], title: str, before_label: str,
+               after_label: str, pad: int = 2) -> str:
+    """The changed region between two boards, cropped per change cluster; diff_text labels it with recording rows."""
     cells = changed_cells(before, after)
     if not cells:
-        return f"rows {i} -> {j}: no cell changed"
+        return f"{title}: no cell changed"
     h, w = len(after), len(after[0])
     groups = clusters(cells) if len(cells) <= 1500 else [cells]
-    out = [f"rows {i} -> {j}: {len(cells)} cells changed in {len(groups)} group(s)"]
+    out = [f"{title}: {len(cells)} cells changed in {len(groups)} group(s)"]
     for n, group in enumerate(groups[:4], start=1):
         box = bbox(group)
         r0, c0 = max(0, box[0] - pad), max(0, box[1] - pad)
@@ -146,9 +150,9 @@ def diff_text(rec: Recording, i: int, j: int, pad: int = 2) -> str:
         if (r1 - r0 + 1) * (c1 - c0 + 1) > 1400:
             out.append("  (too large to crop usefully; compare the whole boards)")
             continue
-        out.append(f"BEFORE (row {i}):")
+        out.append(before_label)
         out.append(render(before, r0, c0, r1, c1))
-        out.append(f"AFTER (row {j}):")
+        out.append(after_label)
         out.append(render(after, r0, c0, r1, c1))
     if len(groups) > 4:
         out.append(f"... {len(groups) - 4} smaller group(s) not drawn")

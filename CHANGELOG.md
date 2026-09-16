@@ -115,6 +115,28 @@ nor refute gets cut, not softened.
 
 ---
 
+## 2026-09-16 — The recovery eval runner
+
+`tools/recovery_eval.py`, questions in `datasets/decision-steps/v0/recovery-eval/items.jsonl`, how
+to run and read it in that directory's `README.md`. The step-5 plan's §3 check, built.
+
+**One question per fork.** A player chose X on a board and the attempt failed; later, on the same
+board, chose Y and cleared the level. The model gets the board and is asked for one action, once
+told that X failed here and once not told. **The answer is played on the real game.** The
+recording is replayed in the offline engine to the fork and the answer applied, and the result is
+compared with the boards X and Y leave. So it scores choices, not action text. Every recording on
+disk replays frame for frame.
+
+**23 questions, 7 of them with a pass-E-kept record.** The other 16 come straight from the
+recordings, so they need no annotation and no review calls. They include the 9 forks in dc22, ft09,
+ka59 and m0r0. The reading is fixed in the README before any full run: the paired difference in
+how often the model repeats X, with history against without. `scripts/test_recovery_eval.py` (18
+tests) holds the prompts to showing no Y and no record judgments, and checks that each recorded
+choice scores as itself in the engine. `frame_evidence.diff_text` now delegates to `diff_grids`,
+with identical output.
+
+---
+
 ## 2026-09-16 — Passes D and E, piloted on the recordings on disk
 
 `docs/plans/2026-09-16-pass-d-e-pilot.md`. Dr. Fable's item 2.
