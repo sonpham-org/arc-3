@@ -105,7 +105,8 @@ also withdraws an over-broad claim about the recording reconcile rule and correc
 
 **Next.** Passes D (annotate, one agent per game) and E (the adversarial falsification gate) on
 the 13 recordings already on disk. Pass C (pull the rest) is **off** unless the eval needs more
-rows. On the harness track, the RESET-guard arm. E is the one that decides whether any of it
+rows. On the harness track, the RESET-guard arm is built and verified (`harnesses/reset-guard/`),
+run as Kaggle jobs 11 and 12 with a same-cap arm-B control. E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
 
