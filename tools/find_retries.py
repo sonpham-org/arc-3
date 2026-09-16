@@ -91,6 +91,16 @@ def forks(rec: Recording) -> list[dict]:
             continue
         j, a, acts = best
         b_fail, b_win = rec.settled(a["moves"][j] - 1)[0], rec.settled(win["moves"][j] - 1)[0]
+        # Every earlier choice made from this same board, in any failed attempt. If one of them
+        # left the board the winning choice leaves, the winning move is not a change of choice at
+        # all -- the difference lies in something the board does not show -- so it is flagged.
+        after_win = rec.settled(win["moves"][j])[0]
+        earlier = []
+        for f in failed:
+            for i in f["moves"]:
+                if same_board(rec.settled(i - 1)[0], b_win):
+                    earlier.append({"row": i, "action": rec.action_text(i), "attempt_end": f["end"],
+                                    "same_result_as_win": same_board(rec.settled(i)[0], after_win)})
         found.append({
             "level": win["level"], "fork_index": j,
             "win_row": win["moves"][j], "win_action": win_acts[j], "win_start": win["start"], "cleared_at": win["end_row"],
@@ -98,6 +108,8 @@ def forks(rec: Recording) -> list[dict]:
             "failed_end": a["end"], "failed_end_row": a["end_row"], "failed_moves": len(acts),
             "earlier_failed_attempts": len(failed),
             "board_diff": len(changed_cells(b_fail, b_win)) if len(b_fail) == len(b_win) else None,
+            "earlier_choices_here": earlier,
+            "repeats_earlier_choice": any(e["same_result_as_win"] for e in earlier),
         })
     return found
 
@@ -116,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{f['failed_row']} {f['failed_action']} (attempt from row {f['failed_start']}, {f['failed_end']} at "
             f"{f['failed_end_row']} after {f['failed_moves']} moves; {f['earlier_failed_attempts']} failed attempt(s) "
             f"on this level); boards differ by {f['board_diff']}"
+            + ("; REPEATS an earlier choice from this board" if f["repeats_earlier_choice"] else "")
         )
     return 0
 
