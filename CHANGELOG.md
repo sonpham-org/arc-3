@@ -105,9 +105,30 @@ also withdraws an over-broad claim about the recording reconcile rule and correc
 
 **Next.** Passes D (annotate, one agent per game) and E (the adversarial falsification gate) on
 the 13 recordings already on disk. Pass C (pull the rest) is **off** unless the eval needs more
-rows. On the harness track, the RESET-guard arm. E is the one that decides whether any of it
+rows. On the harness track, the RESET-guard arm. **Update 16-Sep: D and E piloted, see the entry below -- the gate cut 12 of 23 and the corpus holds 11 records.** E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
+
+---
+
+## 2026-09-16 — Passes D and E, piloted on the recordings on disk
+
+`docs/plans/2026-09-16-pass-d-e-pilot.md`. Dr. Fable's item 2.
+
+**Pass E is built and it cuts about half.** `tools/pass_e_review.py` sends each record to a
+separate headless Opus reviewer with no tools and no project context, with evidence rendered from
+the recording by `tools/frame_evidence.py`. On the 12 records already on `main` it cut 8, all
+for source knowledge in `memory_in` (all seven lp85 records, and bp35 row 214). A control of
+three planted defects was cut 3 of 3. Cut records are deleted.
+
+**Pass D writes fork records.** `tools/find_retries.py` finds where the attempt that cleared a
+level chose differently from a failed attempt on the identical board. 11 written, 7 survived pass
+E. The corpus now holds 11 records. The recount of the material (11 recordings, 117 moments, no
+cull) does not match the step-5 plan's 13 / 132 / 128.
+
+The segmenter's acceptance test now reads a frozen copy of the four bp35 records under
+`fixtures/segmenter/`, since one of them was cut. The split's pinned-game list gains g50t and ls20;
+the partition itself is unchanged.
 
 ---
 

@@ -179,10 +179,13 @@ def evidence(rec: Recording, record: dict, history_limit: int = 60) -> str:
         + (f"; showing the last {history_limit} rows" if lo > start else "") + "):",
     ]
     parts += [timeline_line(rec, k) for k in range(lo, before_row + 1)]
+    painted = lambda grid: sum(1 for line in grid for cell in line if cell != 0)  # segment.py's definition
     parts += [
         "",
         f"THE DECISION (row {decision_row}), and what it did:",
         timeline_line(rec, decision_row),
+        f"painted cells (value not 0, glyph not W): {painted(rec.settled(before_row)[0])} before -> "
+        f"{painted(rec.settled(decision_row)[0])} after",
         "",
         f"BOARD BEFORE THE DECISION (settled board of row {before_row}):",
         render(rec.settled(before_row)[0]),
