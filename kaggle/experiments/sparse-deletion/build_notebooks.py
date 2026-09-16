@@ -7,7 +7,9 @@ Qwen3.8-Flash-Next-NVFP4 on an RTX PRO 6000) as the chassis and rewrites exactly
 things: the run-shape cell (7 bottom-seven lanes x N passes, per-game and total caps),
 the game-selection/audit gates in the run cell (they hard-require all 25 games x 1 pass),
 and an inserted arm-provenance cell that hashes the assembled system prompt and asserts
-the arm's prompt text is what we think it is inside the running process.
+the arm's prompt text is what we think it is inside the running process. Since job 11
+(16-Sep-2026) that cell also asserts the card, the reset guard and ONLY_RESET_LEVELS; the
+committed notebooks for jobs 0-10 are the as-ran record and were not regenerated.
 Consumes: /tmp/duckbase/duck-qwen3-8-anim-base.ipynb. Emits notebooks + kernel-metadata
 next to this file.
 SRP/DRY check: Pass - one generator for every arm; arms differ only by the ARMS table
@@ -60,6 +62,15 @@ IMAGEFIRST_BUNDLE = "markbarney/taaf-duck-image-first-turn"
 COMMIT_BUNDLE = "markbarney/taaf-duck-commit-hypothesis"
 VISUALFIRST_BUNDLE = "markbarney/taaf-duck-visual-first"
 ACTION7_BUNDLE = "markbarney/taaf-duck-action7-roundtrip"
+RESET_GUARD_BUNDLE = "markbarney/taaf-duck-reset-guard"
+
+# Per-game cap that lets all four passes finish. Jobs 1-10 ran 1980s, and pass 3 was
+# cancelled in every one of them at ~7321s into the notebook: TAAF's inline deploy ends the
+# benchmark at max_runtime_s minus a 600s soft-deadline buffer (taaf/deploy_inline.py,
+# _SOFT_DEADLINE_BUFFER_S), and games only start once vLLM is up (523-616s in jobs 1, 2, 9,
+# 10). The 1840s repair proposed in 2026-09-13-job1-control-baseline.md missed the buffer and
+# would still cut pass 3 to ~1260s. 616 + 4 x 1620 + ~90s of lane drift = ~7186s < 7320s.
+FULL_PASS_CAP_S = 1620
 
 # Strings the control prompt asserts and the deletion arm asserts are gone.
 DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
@@ -74,6 +85,7 @@ ARM_MARKERS = {
     "F-commit-prompt": "Exploration is for building one hypothesis",
     "G-visual-first": "measuring instruments, not the board",
     "H-action7-roundtrip": "valid, executable game action",
+    "I-reset-guard": "restarts the current level from its starting state",
 }
 
 def title_slug(title: str) -> str:
@@ -123,6 +135,16 @@ ARMS = {
     # NOT that patch's animation-metadata half, so it stays one variable.
     "job10-action7": ("ARC3 job10 action7 roundtrip", "arc3-job10-action7-roundtrip",
                       ACTION7_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "H-action7-roundtrip"),
+    # Dr. Fable's step-5 call 1.2: RESET offered behind a guard, stacked on B. Runs at the
+    # full-pass cap so n=4 is real, which makes it incomparable with job 2's 1980s numbers.
+    "job11-resetguard": ("ARC3 job11 reset guard", "arc3-job11-reset-guard",
+                         RESET_GUARD_BUNDLE, BOTTOM_SEVEN, 4, FULL_PASS_CAP_S, 7920,
+                         "I-reset-guard"),
+    # ...so arm B is re-measured at the same cap, launched alongside job 11, and that pair is
+    # the comparison. Same bundle as job 2; only the cap differs from job 2.
+    "job12-deletion-cap1620": ("ARC3 job12 deletion cap1620", "arc3-job12-deletion-cap1620",
+                               SPARSE_BUNDLE, BOTTOM_SEVEN, 4, FULL_PASS_CAP_S, 7920,
+                               "B-sparse-deletion"),
 }
 
 RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
@@ -226,10 +248,31 @@ print(f'ARM_PROVENANCE withhold_text_board_until_step={{_withheld}}')
 if (_withheld > 0) != (ARM_LABEL == 'E-image-first-turn'):
     raise RuntimeError(f'{{ARM_LABEL}} withhold gate is {{_withheld}}.')
 
+# Arm I's RESET guard is also code, in the solver. Same rule: probe the running module.
+import os
+import inference.framework.solver as _solver
+_reset_gap = getattr(_solver, '_RESET_MIN_ACTION_GAP', 0)
+print(f'ARM_PROVENANCE reset_min_action_gap={{_reset_gap}}')
+if (_reset_gap > 0) != (ARM_LABEL == 'I-reset-guard'):
+    raise RuntimeError(f'{{ARM_LABEL}} reset guard gap is {{_reset_gap}}.')
+if ARM_LABEL == 'I-reset-guard' and _reset_gap != 20:
+    raise RuntimeError(f'Reset guard gap is {{_reset_gap}}, not the 20 that was reviewed.')
+
+# RESET must be a level reset. Without this pin arcengine full-restarts to level 1 when no
+# action has been taken on the current level, and a guard arm would be measuring that.
+_only_reset_levels = os.environ.get('ONLY_RESET_LEVELS')
+print(f'ARM_PROVENANCE only_reset_levels={{_only_reset_levels!r}}')
+if _only_reset_levels != 'true':
+    raise RuntimeError(f'ONLY_RESET_LEVELS is {{_only_reset_levels!r}}, not "true".')
+
 try:
-    print(subprocess.run(
+    _gpu = subprocess.run(
         ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'],
-        capture_output=True, text=True, check=False).stdout.strip(), flush=True)
+        capture_output=True, text=True, check=False).stdout.strip()
+    print(_gpu, flush=True)
+    # Kaggle substituted a P100 silently once (2026-09-12-kaggle-experiment-plan.md).
+    if 'RTX PRO 6000' not in _gpu:
+        raise RuntimeError(f'Expected an RTX PRO 6000, got {{_gpu!r}}.')
 except FileNotFoundError:
     print('ARM_PROVENANCE nvidia-smi absent (expected only off-Kaggle)', flush=True)
 '''

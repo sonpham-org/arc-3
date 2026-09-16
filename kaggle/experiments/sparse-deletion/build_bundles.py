@@ -7,7 +7,8 @@ the control minus four assertions; arms C/D/E/F each stack exactly one further c
 top of B, because B is the measured reference arm (it beat control 10 -> 15 level clears).
 C adds a mechanics-possibility block, D swaps the 16 board glyphs for distinct consonant
 capitals, E withholds the text board until one action has been executed, F adds a
-commit-to-hypothesis rule. Consumes the unpacked control bundle
+commit-to-hypothesis rule. I (16-Sep-2026, Dr. Fable's step-5 call 1.2) offers RESET to
+the model behind a rate guard enforced in the solver. Consumes the unpacked control bundle
 (keithtyser/duck-qwen38-nvfp4-mtp-vllm-smoke-v1). Emits a bundle directory per arm,
 ready for `kaggle datasets create/version`.
 SRP/DRY check: Pass - single definition of what each arm changes; build_notebooks.py
@@ -23,8 +24,9 @@ TOOL_AGENT = "src/ARC3-Inference/inference/agent/tool_agent.py"
 GRID_UTILS = "src/ARC3-Inference/inference/utils/grid_utils.py"
 SANDBOX = "src/ARC3-Inference/inference/agent/python_tool_sandbox.py"
 ACTION_NAMES = "src/ARC3-Inference/inference/agent/action_names.py"
+SOLVER = "src/ARC3-Inference/inference/framework/solver.py"
 
-STACKED_ON_B = ("C", "D", "E", "F", "G", "H")
+STACKED_ON_B = ("C", "D", "E", "F", "G", "H", "I")
 
 # Arm B: the word "puzzle" also appears in the base system prompt line in tool_agent.py,
 # so deleting it from prompts.py alone leaves the assembled prompt carrying it and the
@@ -282,6 +284,178 @@ ACTION7_PROMPT_NEW = ACTION7_PROMPT_OLD + (
     'the returned before/after state rather than assuming it means undo, confirm, or back.\\n"'
 )
 
+
+# Arm I: RESET offered to the model behind a guard (docs/plans/
+# 2026-09-16-dr-fable-calls-on-the-step5-review.md, call 1.2). Two facts from the source
+# shape this patch:
+# 1. RESET is hidden, not blocked. TAAF's GameState.available_actions always includes id 0,
+#    to_engine_action("RESET") resolves, and step_env only checks available_actions -- so a
+#    model that typed RESET in arms A-H would have executed it. None did: every RESET in
+#    jobs 1, 2, 4 and 10 followed a GAME_OVER. The guard therefore lives in step_env, and
+#    the menu only advertises what step_env will accept.
+# 2. On Kaggle every RESET is a level reset. The notebook pins ONLY_RESET_LEVELS=true, so
+#    arcengine never escalates to a full restart; the provenance cell asserts the pin.
+# "Never two in a row" counts the harness's own auto-reset after GAME_OVER as the previous
+# RESET (a second RESET on a just-reset level only spends an action), and the game's
+# opening counts too. The one-per-20 window counts model-chosen RESETs only, so a death
+# never uses up the model's budget.
+SOLVER_NAMES_OLD = '''def _engine_action_names(game: taaf.game.Game) -> list[str]:
+    names: list[str] = []
+    for action_id in game.current_state.available_actions:
+        try:
+            name = arcengine.GameAction.from_id(int(action_id)).name
+        except Exception:
+            continue
+        if name == "RESET":
+            continue'''
+SOLVER_NAMES_NEW = '''# RESET guard: a model-chosen RESET is refused when the previous executed action was a
+# RESET (including the harness auto-reset and the game's opening), or when it would land
+# within _RESET_MIN_ACTION_GAP actions of the last model-chosen RESET.
+_RESET_MIN_ACTION_GAP = 20
+
+
+def _engine_action_names(
+    game: taaf.game.Game, *, include_reset: bool = False
+) -> list[str]:
+    names: list[str] = []
+    for action_id in game.current_state.available_actions:
+        try:
+            name = arcengine.GameAction.from_id(int(action_id)).name
+        except Exception:
+            continue
+        if name == "RESET" and not include_reset:
+            continue'''
+
+SOLVER_FIELDS_OLD = '''    last_engine_action: str | None = None
+    token_baseline: int = 0
+'''
+SOLVER_FIELDS_NEW = '''    last_engine_action: str | None = None
+    token_baseline: int = 0
+    model_reset_positions: list[int] = field(default_factory=list)
+    reset_refusals: int = 0
+'''
+
+SOLVER_METHODS_OLD = '''    _viewer_events_flushed: int = field(default=0, init=False, repr=False)
+
+    def current_frame(self) -> Frame:'''
+SOLVER_METHODS_NEW = '''    _viewer_events_flushed: int = field(default=0, init=False, repr=False)
+
+    def reset_refusal(self) -> str | None:
+        if self.last_engine_action in (None, "RESET"):
+            return (
+                "RESET refused: the previous action was already a RESET, so the level "
+                "is at its starting state."
+            )
+        if self.model_reset_positions:
+            gap = self.action_count + 1 - self.model_reset_positions[-1]
+            if gap < _RESET_MIN_ACTION_GAP:
+                return (
+                    f"RESET refused: at most one RESET per {_RESET_MIN_ACTION_GAP} actions, "
+                    f"and the last one was {gap - 1} actions ago."
+                )
+        return None
+
+    def model_action_names(self) -> list[str]:
+        return _engine_action_names(
+            self.game, include_reset=self.reset_refusal() is None
+        )
+
+    def log_reset_guard(self, outcome: str, detail: str = "") -> None:
+        run = self.game.game_run
+        game_id = run.game_id if run is not None else self.game_index
+        print(
+            f"RESET_GUARD {outcome} game={game_id} pass={self.pass_index} "
+            f"action_num={self.action_count} {detail}".rstrip(),
+            flush=True,
+        )
+
+    def current_frame(self) -> Frame:'''
+
+SOLVER_ANALYZER_OLD = "                        valid_actions=_engine_action_names(self.game),"
+SOLVER_ANALYZER_NEW = "                        valid_actions=self.model_action_names(),"
+
+# Both remaining call sites (_error_payload and the per-action payload) are session methods.
+SOLVER_PAYLOAD_OLD = '"valid_actions": to_model_actions(_engine_action_names(self.game)),'
+SOLVER_PAYLOAD_NEW = '"valid_actions": to_model_actions(self.model_action_names()),'
+
+SOLVER_STEP_INIT_OLD = '''        stop_reason: str | None = None
+        batch_size = len(requested_actions)
+'''
+SOLVER_STEP_INIT_NEW = '''        stop_reason: str | None = None
+        reset_refusal_detail: str | None = None
+        batch_size = len(requested_actions)
+'''
+
+SOLVER_STEP_GUARD_OLD = '''            if action.id.value not in self.game.current_state.available_actions:
+                message = f"{_format_action_display(action.id.name, dict(action.data))} is not valid right now."'''
+SOLVER_STEP_GUARD_NEW = '''            if action.id == arcengine.GameAction.RESET:
+                reset_refusal_detail = self.reset_refusal()
+                if reset_refusal_detail is not None:
+                    self.reset_refusals += 1
+                    self.log_reset_guard("refused", reset_refusal_detail)
+                    if executed_payloads:
+                        stop_reason = "reset_rate_limited"
+                        break
+                    refused_payload = self._error_payload(reset_refusal_detail)
+                    refused_payload["stop_reason"] = "reset_rate_limited"
+                    return refused_payload
+''' + SOLVER_STEP_GUARD_OLD
+
+SOLVER_STEP_ACCEPT_OLD = '''            executed_payloads.append(payload)
+            total_reward += float(payload.get("reward", 0.0) or 0.0)
+'''
+SOLVER_STEP_ACCEPT_NEW = '''            executed_payloads.append(payload)
+            total_reward += float(payload.get("reward", 0.0) or 0.0)
+            if action.id == arcengine.GameAction.RESET:
+                self.model_reset_positions.append(self.action_count)
+                self.log_reset_guard("accepted")
+'''
+
+SOLVER_STEP_DETAIL_OLD = '''        if stop_reason is not None:
+            final_payload["stop_reason"] = stop_reason
+        self.write_viewer_payload()'''
+SOLVER_STEP_DETAIL_NEW = '''        if stop_reason is not None:
+            final_payload["stop_reason"] = stop_reason
+        if stop_reason == "reset_rate_limited" and reset_refusal_detail:
+            final_payload["stop_detail"] = reset_refusal_detail
+        self.write_viewer_payload()'''
+
+SOLVER_SUMMARY_OLD = '''                run.solver_note = f"tokens={total_tokens}"
+            self._finish_if_needed()
+'''
+SOLVER_SUMMARY_NEW = '''                run.solver_note = f"tokens={total_tokens}"
+            self._finish_if_needed()
+            print(
+                f"RESET_GUARD_SUMMARY game={run.game_id} pass={self.pass_index} "
+                f"model_resets={len(self.model_reset_positions)} "
+                f"refused={self.reset_refusals} actions={self.action_count}",
+                flush=True,
+            )
+'''
+
+SOLVER_EDITS = (
+    ("names", SOLVER_NAMES_OLD, SOLVER_NAMES_NEW, 1),
+    ("fields", SOLVER_FIELDS_OLD, SOLVER_FIELDS_NEW, 1),
+    ("methods", SOLVER_METHODS_OLD, SOLVER_METHODS_NEW, 1),
+    ("analyzer call site", SOLVER_ANALYZER_OLD, SOLVER_ANALYZER_NEW, 1),
+    ("payload call sites", SOLVER_PAYLOAD_OLD, SOLVER_PAYLOAD_NEW, 2),
+    ("step_env init", SOLVER_STEP_INIT_OLD, SOLVER_STEP_INIT_NEW, 1),
+    ("step_env guard", SOLVER_STEP_GUARD_OLD, SOLVER_STEP_GUARD_NEW, 1),
+    ("step_env accept", SOLVER_STEP_ACCEPT_OLD, SOLVER_STEP_ACCEPT_NEW, 1),
+    ("step_env detail", SOLVER_STEP_DETAIL_OLD, SOLVER_STEP_DETAIL_NEW, 1),
+    ("summary", SOLVER_SUMMARY_OLD, SOLVER_SUMMARY_NEW, 1),
+)
+
+# The one prompt line. States only what is true on every game under the pinned harness:
+# a level reset that keeps completed levels and costs an action. What it restores (lives,
+# a step meter) differs by game, so that is left to the model to probe.
+RESET_PROMPT_NEW = ACTION7_PROMPT_OLD + (
+    '\n    "- `RESET` restarts the current level from its starting state; completed levels '
+    'stay completed, and it counts as an action. It is rate-limited: never twice in a row, '
+    'at most once per 20 actions, and it is absent from `valid_actions` while unavailable.\\n"'
+)
+
+
 def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
     if out.exists():
         shutil.rmtree(out)
@@ -326,6 +500,19 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
             raise SystemExit("H: action() contract anchor missing")
         text = text.replace(ACTION7_PROMPT_OLD, ACTION7_PROMPT_NEW, 1)
 
+    if arm == "I":
+        solver_path = out / SOLVER
+        solver_text = solver_path.read_text()
+        for label, old, new, count in SOLVER_EDITS:
+            found = solver_text.count(old)
+            if found != count:
+                raise SystemExit(f"I: solver {label} anchor found {found}x, expected {count}")
+            solver_text = solver_text.replace(old, new)
+        solver_path.write_text(solver_text)
+        if ACTION7_PROMPT_OLD not in text:
+            raise SystemExit("I: action() contract anchor missing")
+        text = text.replace(ACTION7_PROMPT_OLD, RESET_PROMPT_NEW, 1)
+
     if arm == "D":
         gu_path = out / GRID_UTILS
         gu_text = gu_path.read_text()
@@ -367,10 +554,12 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
         "D": ("ARC_COLOR_NAMES", (out / GRID_UTILS).read_text()),
         "G": ("measuring instruments, not the board", text),
         "H": ("valid, executable game action", text),
+        "I": ("_RESET_MIN_ACTION_GAP", (out / SOLVER).read_text()),
+        "I-prompt": ("restarts the current level from its starting state", text),
     }
     for probe_arm, (needle, haystack) in exclusive.items():
         present = needle in haystack
-        if (arm == probe_arm) != present:
+        if (arm == probe_arm.split("-")[0]) != present:
             raise SystemExit(f"{arm}: arm-{probe_arm} marker present={present}")
 
     if arm == "E":
@@ -424,6 +613,18 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
             raise SystemExit("H: prompt line lost the do-not-assume-undo clause")
         print("arm H: to_engine_action('ACTION7') -> ACTION7, other actions unchanged")
 
+    if arm == "I":
+        # The guard is code, so a string match proves little. The shipped solver must parse,
+        # and no call site may still build the menu without asking the guard. The behaviour
+        # itself is exercised against a real offline game by test_reset_guard.py.
+        solver_text = (out / SOLVER).read_text()
+        compile(solver_text, str(out / SOLVER), "exec")
+        if "_engine_action_names(self.game)" in solver_text:
+            raise SystemExit("I: an unguarded _engine_action_names call site remains")
+        if solver_text.count("self.model_action_names()") != 3:
+            raise SystemExit("I: expected 3 guarded menu call sites")
+        print("arm I: solver compiles, 3 guarded menu call sites, guard in step_env")
+
     # Arms other than H must not carry the ACTION7 map entry.
     an_shipped = (out / ACTION_NAMES).read_text()
     if ('"ACTION7"' in an_shipped) != (arm == "H"):
@@ -434,5 +635,7 @@ def build(src: pathlib.Path, out: pathlib.Path, arm: str) -> None:
 
 if __name__ == "__main__":
     control = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/armctl")
-    for arm in ("B", "C", "D", "E", "F", "G", "H"):
+    # Optional arm list, so building a new arm does not rmtree the already-uploaded bundle
+    # directories (and their dataset-metadata.json) of every earlier arm.
+    for arm in (sys.argv[2:] or ("B",) + STACKED_ON_B):
         build(control, pathlib.Path(f"/tmp/bundle-{arm}"), arm)
