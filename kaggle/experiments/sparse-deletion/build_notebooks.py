@@ -65,10 +65,10 @@ ACTION7_BUNDLE = "markbarney/taaf-duck-action7-roundtrip"
 RESET_GUARD_BUNDLE = "markbarney/taaf-duck-reset-guard"
 
 # Per-game cap that lets all four passes finish. Jobs 1-10 ran 1980s, and pass 3 was
-# cancelled in every one of them at ~7321s into the notebook: TAAF's inline deploy ends the
-# benchmark at max_runtime_s minus a 600s soft-deadline buffer (taaf/deploy_inline.py,
-# _SOFT_DEADLINE_BUFFER_S), and games only start once vLLM is up (523-616s in jobs 1, 2, 9,
-# 10). The 1840s repair proposed in 2026-09-13-job1-control-baseline.md missed the buffer and
+# cancelled in every one of them at ~7321s into the notebook: the base notebook's run cell
+# sets soft_end = NOTEBOOK_START_EPOCH + (max_runtime_s - 600), a teardown reserve counted
+# from notebook start, and games only start once vLLM is up (523-616s in jobs 1, 2, 9, 10).
+# The 1840s repair proposed in 2026-09-13-job1-control-baseline.md missed the reserve and
 # would still cut pass 3 to ~1260s. 616 + 4 x 1620 + ~90s of lane drift = ~7186s < 7320s.
 FULL_PASS_CAP_S = 1620
 

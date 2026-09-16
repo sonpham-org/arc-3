@@ -85,9 +85,12 @@ pinned harness that only costs one action, and Dr. Fable's rule does not forbid 
 
 **The cap.** Dr. Fable asked for n=4 "with the corrected per-pass cap". Jobs 1–10 ran 1980s and
 lost pass 3 every time. The repair on record, ~1840s, is wrong: it allowed for vLLM boot but
-not for TAAF's 600s soft-deadline buffer (`taaf/deploy_inline.py`, `_SOFT_DEADLINE_BUFFER_S`).
-In jobs 1, 2, 9 and 10 every lane was cancelled at 7321–7346s into the notebook (7920 − 600
-= 7320), whatever time vLLM came up (521–613s). At 1840s pass 3 would still get ~1260s. At
+not for the 600s teardown reserve. The duck notebook's run cell sets
+`soft_end = NOTEBOOK_START_EPOCH + (max_runtime_s − 600)` ("stop ~10 min before the wall-clock
+budget"; TAAF's `deploy_kaggle.py` carries the same `_SOFT_DEADLINE_BUFFER_S = 600`). In jobs
+1, 2, 9 and 10 every lane was cancelled at 7321–7346s into the notebook (7920 − 600 = 7320),
+whatever time vLLM came up (521–613s), because the clock starts at notebook start, not at
+the first game. At 1840s pass 3 would still get ~1260s. At
 1620s: 616 + 4 × 1620 + ~90s of lane drift ≈ 7186s, under 7320s.
 
 **The paired control.** Arm B's 15 clears were measured at 1980s over passes 0–2. A guard arm
@@ -112,11 +115,20 @@ all four passes; passes 0–2 as well, for continuity with the older arms.
   the RL harness.
 - **Clears down, or the rate at the cap** → option (a) wins: RESET stays hidden, and the
   corpus's "chose RESET on a live board" rows are retargeted to noticing the refutation earlier.
+- **The model barely uses it** (model RESETs near zero, as in every job so far) → the arm says
+  nothing about RESET's value. Report it as "the model declined the offer", read job 11
+  against job 12 only as the cost of a 251-character prompt line (the confound that sank arm
+  H, whose whole loss sat in lanes that never pressed ACTION7), and leave the RESET decision
+  open. Added before any number exists, because it is the likeliest single outcome.
 - The 27B baseline is not touched by this arm either way. It runs on the pinned harness, RESET
   hidden.
 
 Stated limits: n=4 per game on a benchmark where a single pass often carries a game's whole
 score. A one-pass difference on one game is noise and gets called noise.
+
+**Metric deviation, on purpose.** Like arm B, this scores the bottom seven only, not the house
+ex-`ft09` all-25 number (`harnesses/README.md` rule 5). Job 11's score is not a harness score
+and must not be quoted next to `baseline-v12`'s.
 
 ## Provenance to check in the job 11 log
 
