@@ -1,0 +1,359 @@
+"""
+Author: Claude Opus 5 (Bubba)
+Date: 12-September-2026
+PURPOSE: Generate the Kaggle notebooks for the sparse-deletion prompt A/B experiment.
+Takes the duck harness notebook (keithtyser/duck-qwen3-8-anim-base, which serves
+Qwen3.8-Flash-Next-NVFP4 on an RTX PRO 6000) as the chassis and rewrites exactly three
+things: the run-shape cell (7 bottom-seven lanes x N passes, per-game and total caps),
+the game-selection/audit gates in the run cell (they hard-require all 25 games x 1 pass),
+and an inserted arm-provenance cell that hashes the assembled system prompt and asserts
+the arm's prompt text is what we think it is inside the running process. Since job 11
+(16-Sep-2026) that cell also asserts the card, the reset guard and ONLY_RESET_LEVELS; the
+committed notebooks for jobs 0-10 are the as-ran record and were not regenerated.
+Consumes: /tmp/duckbase/duck-qwen3-8-anim-base.ipynb. Emits notebooks + kernel-metadata
+next to this file.
+SRP/DRY check: Pass - one generator for every arm; arms differ only by the ARMS table
+below, so control and variant can never drift in anything except the bundle + label.
+"""
+
+import copy
+import json
+import re
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).parent
+BASE_NB = pathlib.Path("/tmp/duckbase/duck-qwen3-8-anim-base.ipynb")
+
+# Imported, never restated: build_bundles.py owns the glyph table, and a second copy
+# here is exactly how job 6 came to assert a set the bundle no longer shipped.
+sys.path.insert(0, str(HERE))
+from build_bundles import GLYPH_CHARS, GLYPH_COLORS  # noqa: E402
+
+# The seven lowest-scoring public games (mean score across the 163 FlashNext runs).
+# Exactly 7 lanes, which is the run shape Son's 132-minute job is built around.
+BOTTOM_SEVEN = (
+    "sk48-d8078629",
+    "bp35-0a0ad940",
+    "ls20-9607627b",
+    "g50t-5849a774",
+    "lf52-271a04aa",
+    "wa30-ee6fef47",
+    "tn36-ef4dde99",
+)
+
+# Games we already solve, plus four mid-table games: the null check. If the deletion
+# arm moves these, the effect is not the one being claimed.
+NULL_CHECK = (
+    "cd82-fb555c5d",
+    "lp85-305b61c3",
+    "sb26-7fbdac44",
+    "cn04-2fe56bfb",
+    "r11l-495a7899",
+    "sc25-635fd71a",
+    "ka59-38d34dbb",
+)
+
+CONTROL_BUNDLE = "keithtyser/duck-qwen38-nvfp4-mtp-vllm-smoke-v1"
+SPARSE_BUNDLE = "markbarney/taaf-duck-sparse-deletion"
+MECHANICS_BUNDLE = "markbarney/taaf-duck-mechanics-possibility"
+GLYPH_BUNDLE = "markbarney/taaf-duck-glyph-consonants"
+IMAGEFIRST_BUNDLE = "markbarney/taaf-duck-image-first-turn"
+COMMIT_BUNDLE = "markbarney/taaf-duck-commit-hypothesis"
+VISUALFIRST_BUNDLE = "markbarney/taaf-duck-visual-first"
+ACTION7_BUNDLE = "markbarney/taaf-duck-action7-roundtrip"
+RESET_GUARD_BUNDLE = "markbarney/taaf-duck-reset-guard"
+
+# Per-game cap that lets all four passes finish. Jobs 1-10 ran 1980s, and pass 3 was
+# cancelled in every one of them at ~7321s into the notebook: the base notebook's run cell
+# sets soft_end = NOTEBOOK_START_EPOCH + (max_runtime_s - 600), a teardown reserve counted
+# from notebook start, and games only start once vLLM is up (523-616s in jobs 1, 2, 9, 10).
+# The 1840s repair proposed in 2026-09-13-job1-control-baseline.md missed the reserve and
+# would still cut pass 3 to ~1260s. 616 + 4 x 1620 + ~90s of lane drift = ~7186s < 7320s.
+FULL_PASS_CAP_S = 1620
+
+# Strings the control prompt asserts and the deletion arm asserts are gone.
+DELETED_PROBES = ("DON'T DO THIS", "remaining-steps bar", "64 x 64", "puzzle")
+
+# Every stacked arm is arm B plus exactly one marker, and each marker must be absent
+# from every other arm. Keyed by arm label so the provenance cell is a table lookup and
+# a new arm cannot be added without declaring what proves it ran.
+ARM_MARKERS = {
+    "C-mechanics": "window onto a larger world",
+    "D-glyph-consonants": f"{GLYPH_COLORS[0][1]}=white",
+    "E-image-first-turn": "On the first turn only,",
+    "F-commit-prompt": "Exploration is for building one hypothesis",
+    "G-visual-first": "measuring instruments, not the board",
+    "H-action7-roundtrip": "valid, executable game action",
+    "I-reset-guard": "restarts the current level from its starting state",
+}
+
+def title_slug(title: str) -> str:
+    """Kaggle's own slug rule: lowercase, non-alphanumerics to single hyphens."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")
+
+
+# job id -> (title, kernel slug, bundle dataset, games, n_passes, per-game s, budget s)
+ARMS = {
+    "job0-smoke": ("ARC3 job0 smoke", "arc3-job0-smoke", CONTROL_BUNDLE,
+                   BOTTOM_SEVEN[:2], 1, 600, 5400, "A-control"),
+    "job1-control": ("ARC3 job1 control", "arc3-job1-control", CONTROL_BUNDLE,
+                     BOTTOM_SEVEN, 4, 1980, 7920, "A-control"),
+    "job2-sparse": ("ARC3 job2 sparse deletion", "arc3-job2-sparse-deletion", SPARSE_BUNDLE,
+                    BOTTOM_SEVEN, 4, 1980, 7920, "B-sparse-deletion"),
+    "job3-null": ("ARC3 job3 null check", "arc3-job3-null-check", SPARSE_BUNDLE,
+                  NULL_CHECK, 4, 1980, 7920, "B-sparse-deletion"),
+    # The null check needs its own control on the SAME lanes, or "these games did not
+    # move" has no baseline to move against. Same cap as job3 so the pair is symmetric.
+    "job5-nullcontrol": ("ARC3 job5 null control", "arc3-job5-null-control",
+                         CONTROL_BUNDLE, NULL_CHECK, 4, 1980, 7920, "A-control"),
+    # Stacked on B: deletion clears the false priors, C lifts the false ceiling.
+    "job4-mechanics": ("ARC3 job4 mechanics possibility", "arc3-job4-mechanics-possibility",
+                       MECHANICS_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "C-mechanics"),
+    # Also stacked on B, one variable each, same seven lanes and the same 1980s cap so
+    # every one of them is directly comparable to job 2.
+    # NOT a pure visual-glyph swap: the consonant set retokenizes the board (measured on
+    # job 1 pass-0 boards, -0.8% overall, ls20 -6.4%, wa30 +0.8%), so it moves context and
+    # runtime budget too. Report it as an encoding intervention (Sherlock, 13-Sep-2026).
+    "job6-glyphs": ("ARC3 job6 glyph consonants", "arc3-job6-glyph-consonants",
+                    GLYPH_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "D-glyph-consonants"),
+    "job7-imagefirst": ("ARC3 job7 image first turn", "arc3-job7-image-first-turn",
+                        IMAGEFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "E-image-first-turn"),
+    # Prompt-only self-regulation. The harness enforces NO action cap of any kind here,
+    # so this is "does telling it to commit change behavior", not commit-and-execute as a
+    # mechanism (Sherlock, 13-Sep-2026). A bounded-plan mechanism would be a separate arm.
+    "job8-commit": ("ARC3 job8 commit prompt", "arc3-job8-commit-prompt",
+                    COMMIT_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "F-commit-prompt"),
+    # Arm G keeps the text board available from the first turn and only changes which
+    # view the prompt calls primary. Distinct from E, which withholds text for one turn,
+    # and from D, which changes the alphabet (Sherlock's separation rule, 13-Sep-2026).
+    "job9-visualfirst": ("ARC3 job9 visual first", "arc3-job9-visual-first",
+                         VISUALFIRST_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "G-visual-first"),
+    # The only arm that is a harness fix rather than a prompt edit: ACTION7 was listed in
+    # valid_actions and rejected on call (2026-09-14-action7-is-unexecutable.md). Takes the
+    # map round-trip and the one prompt line from harnesses/action7-anim, and deliberately
+    # NOT that patch's animation-metadata half, so it stays one variable.
+    "job10-action7": ("ARC3 job10 action7 roundtrip", "arc3-job10-action7-roundtrip",
+                      ACTION7_BUNDLE, BOTTOM_SEVEN, 4, 1980, 7920, "H-action7-roundtrip"),
+    # Dr. Fable's step-5 call 1.2: RESET offered behind a guard, stacked on B. Runs at the
+    # full-pass cap so n=4 is real, which makes it incomparable with job 2's 1980s numbers.
+    "job11-resetguard": ("ARC3 job11 reset guard", "arc3-job11-reset-guard",
+                         RESET_GUARD_BUNDLE, BOTTOM_SEVEN, 4, FULL_PASS_CAP_S, 7920,
+                         "I-reset-guard"),
+    # ...so arm B is re-measured at the same cap, launched alongside job 11, and that pair is
+    # the comparison. Same bundle as job 2; only the cap differs from job 2.
+    "job12-deletion-cap1620": ("ARC3 job12 deletion cap1620", "arc3-job12-deletion-cap1620",
+                               SPARSE_BUNDLE, BOTTOM_SEVEN, 4, FULL_PASS_CAP_S, 7920,
+                               "B-sparse-deletion"),
+}
+
+RUNTIME_DATASETS = ["keithtyser/qwen38-flash-next-vllm-nvfp4-runtime-v1"]
+MODEL_SOURCES = ["keithtyser/qwen3-8-flash-next-nvfp4/PyTorch/radixark-modelopt-fp4/1"]
+DOCKER = ("gcr.io/kaggle-private-byod/python@sha256:"
+          "57e612b484cf3df5026ee4dcc3cb176974b22b2bc0937fb1e16132a8be4cb13c")
+
+
+def shape_cell(games, n_passes, per_game_s, budget_s, arm):
+    """Replaces the duck notebook's fixed public-25 settings cell."""
+    return f'''# Experiment run shape. Replaces the duck notebook's public-25 settings cell, which
+# pinned 7920s per game against a 32400s notebook budget and hard-raised on anything else.
+ARM_LABEL = {arm!r}
+EXP_GAME_IDS = {json.dumps(list(games), indent=4)}
+EXP_N_PASSES = {n_passes}
+EXP_PER_GAME_S = {per_game_s}
+EXP_BUDGET_S = {budget_s}
+
+bm.solver.max_runtime_s_per_game = float(EXP_PER_GAME_S)
+bm.solver.analyzer_timeout = 900.0
+# One concurrent lane per game, so the passes run as {n_passes} sequential waves of
+# {len(games)} rather than all {len(games) * n_passes} game-runs sharing the card at once.
+bm.solver.concurrency = len(EXP_GAME_IDS)
+bm.solver.max_actions_per_game = None
+bm.solver.save_request_logs = False
+target.max_runtime_s = float(EXP_BUDGET_S)
+print(
+    f'EXP_SETTINGS arm={{ARM_LABEL}} lanes={{len(EXP_GAME_IDS)}} passes={{EXP_N_PASSES}} '
+    f'per_game_s={{bm.solver.max_runtime_s_per_game}} budget_s={{target.max_runtime_s}} '
+    f'concurrency={{bm.solver.concurrency}}',
+    flush=True,
+)
+'''
+
+
+PROVENANCE_CELL = f'''# Arm provenance. The accelerator taught us that a requested thing is not a delivered
+# thing, so nothing about this run is assumed: the card, the served model, the exact
+# assembled system prompt, and the glyphs the board is actually rendered with are all
+# hashed into this log, and the arm asserts its own identity before a game is played.
+import hashlib
+import pathlib
+import subprocess
+
+import inference.agent.prompts as _prompts
+from inference.utils.grid_utils import ARC_COLOR_CHARS, ARC_COLOR_LEGEND, format_grid_ascii
+from inference.agent.tool_agent import _build_system_prompt
+
+_prompts_src = pathlib.Path(_prompts.__file__).read_text()
+_system_prompt = _build_system_prompt(tool_output_tokens=4096)
+_board_row = format_grid_ascii([list(range(16))])
+print(f'ARM_PROVENANCE arm={{ARM_LABEL}}', flush=True)
+print(f'ARM_PROVENANCE prompts_py_sha256={{hashlib.sha256(_prompts_src.encode()).hexdigest()}}')
+print(f'ARM_PROVENANCE system_prompt_chars={{len(_system_prompt)}} '
+      f'sha256={{hashlib.sha256(_system_prompt.encode()).hexdigest()}}')
+print(f'ARM_PROVENANCE color_chars={{ARC_COLOR_CHARS!r}} rendered_row={{_board_row!r}}')
+print(f'ARM_PROVENANCE color_legend={{ARC_COLOR_LEGEND}}')
+_probes = {DELETED_PROBES!r}
+_markers = {ARM_MARKERS!r}
+for _probe in _probes:
+    print(f'ARM_PROVENANCE probe={{_probe!r}} present={{_probe in _system_prompt}}')
+for _arm, _marker in _markers.items():
+    print(f'ARM_PROVENANCE marker[{{_arm}}] present={{_marker in _system_prompt}}')
+
+# The whole experiment is this difference. If it is not true in this process, stop here
+# rather than spend two hours producing a number that means nothing.
+if ARM_LABEL == 'A-control':
+    _missing = [p for p in _probes if p not in _system_prompt]
+    if _missing:
+        raise RuntimeError(f'Control arm is missing {{_missing}} from its system prompt.')
+else:
+    _wrong = [p for p in _probes if p in _system_prompt]
+    if _wrong:
+        raise RuntimeError(f'Deletion-derived arm still carries {{_wrong}} in its system prompt.')
+
+# Exactly one stacked marker, and only for the arm that owns it. A control or a bare
+# deletion arm must carry none of them.
+for _arm, _marker in _markers.items():
+    if (_marker in _system_prompt) != (ARM_LABEL == _arm):
+        raise RuntimeError(f'{{ARM_LABEL}} marker for {{_arm}} is on the wrong side.')
+
+# Arm D is the symbol set itself, so the rendered board and the legend the prompt quotes
+# have to agree with each other. A hand-edited legend against a swapped table would make
+# the prompt lie about the board and no prompt-text probe would ever catch it.
+_glyphs = {GLYPH_CHARS!r}
+if ARM_LABEL == 'D-glyph-consonants':
+    if ARC_COLOR_CHARS != _glyphs or _board_row != _glyphs:
+        raise RuntimeError(f'Glyph arm renders {{_board_row!r}} with chars {{ARC_COLOR_CHARS!r}}.')
+    if len(set(_glyphs)) != 16 or any(c in 'AEIOU' for c in _glyphs):
+        raise RuntimeError('Glyph set is not 16 distinct non-vowel capitals.')
+    for _char in _glyphs:
+        if f'{{_char}}=' not in ARC_COLOR_LEGEND:
+            raise RuntimeError(f'Legend does not describe glyph {{_char}}.')
+elif ARC_COLOR_CHARS != 'WwgGcBMPRbSYOrNp':
+    raise RuntimeError(f'Non-glyph arm has color chars {{ARC_COLOR_CHARS!r}}.')
+
+# Arm E withholds both text views of the board until one action has been executed. The
+# gate lives in code, not in the prompt, so probe the running module rather than the text.
+import inference.agent.tool_agent as _ta
+_withheld = getattr(_ta, '_WITHHOLD_TEXT_BOARD_UNTIL_STEP', 0)
+print(f'ARM_PROVENANCE withhold_text_board_until_step={{_withheld}}')
+if (_withheld > 0) != (ARM_LABEL == 'E-image-first-turn'):
+    raise RuntimeError(f'{{ARM_LABEL}} withhold gate is {{_withheld}}.')
+
+# Arm I's RESET guard is also code, in the solver. Same rule: probe the running module.
+import os
+import inference.framework.solver as _solver
+_reset_gap = getattr(_solver, '_RESET_MIN_ACTION_GAP', 0)
+print(f'ARM_PROVENANCE reset_min_action_gap={{_reset_gap}}')
+if (_reset_gap > 0) != (ARM_LABEL == 'I-reset-guard'):
+    raise RuntimeError(f'{{ARM_LABEL}} reset guard gap is {{_reset_gap}}.')
+if ARM_LABEL == 'I-reset-guard' and _reset_gap != 20:
+    raise RuntimeError(f'Reset guard gap is {{_reset_gap}}, not the 20 that was reviewed.')
+
+# RESET must be a level reset. Without this pin arcengine full-restarts to level 1 when no
+# action has been taken on the current level, and a guard arm would be measuring that.
+_only_reset_levels = os.environ.get('ONLY_RESET_LEVELS')
+print(f'ARM_PROVENANCE only_reset_levels={{_only_reset_levels!r}}')
+if _only_reset_levels != 'true':
+    raise RuntimeError(f'ONLY_RESET_LEVELS is {{_only_reset_levels!r}}, not "true".')
+
+try:
+    _gpu = subprocess.run(
+        ['nvidia-smi', '--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'],
+        capture_output=True, text=True, check=False).stdout.strip()
+    print(_gpu, flush=True)
+    # Kaggle substituted a P100 silently once (2026-09-12-kaggle-experiment-plan.md).
+    if 'RTX PRO 6000' not in _gpu:
+        raise RuntimeError(f'Expected an RTX PRO 6000, got {{_gpu!r}}.')
+except FileNotFoundError:
+    print('ARM_PROVENANCE nvidia-smi absent (expected only off-Kaggle)', flush=True)
+'''
+
+
+def patch_run_cell(src, n_lanes):
+    """Loosen the run cell's all-25-games/one-pass gates onto the experiment's shape."""
+    subs = [
+        ("bm.games = [offline_by_id[game_id] for game_id in PUBLIC_GAME_IDS]",
+         "bm.games = [offline_by_id[game_id] for game_id in EXP_GAME_IDS]"),
+        ("    if len(bm.games) != 25:\n"
+         "        raise RuntimeError(f'Expected 25 public games, got {len(bm.games)}.')",
+         "    if len(bm.games) != len(EXP_GAME_IDS):\n"
+         "        raise RuntimeError(f'Expected {len(EXP_GAME_IDS)} games, got {len(bm.games)}.')"),
+        ("    print(f'PUBLIC25_SELECTION games={len(bm.games)} passes=1', flush=True)",
+         "    print(f'EXP_SELECTION games={len(bm.games)} passes={EXP_N_PASSES}', flush=True)"),
+        ("bm.n_passes = 1", "bm.n_passes = EXP_N_PASSES"),
+        ("        if len(public_runs) != 25 or public_run_ids != list(PUBLIC_GAME_IDS):",
+         "        expected_run_ids = list(EXP_GAME_IDS) * EXP_N_PASSES\n"
+         "        if public_run_ids != expected_run_ids:"),
+        ("                f'Public run coverage changed: count={len(public_runs)} ids={public_run_ids}.'",
+         "                f'Run coverage changed: count={len(public_runs)} ids={public_run_ids} '\n"
+         "                f'expected={expected_run_ids}.'"),
+        ("            f'PUBLIC25_AUDIT runs=25 actions={total_actions} score_path={score_path}',",
+         "            f'EXP_AUDIT runs={len(public_runs)} actions={total_actions} '\n"
+         "            f'score_path={score_path}',"),
+    ]
+    for old, new in subs:
+        if old not in src:
+            raise SystemExit(f"run-cell anchor missing:\n{old}")
+        src = src.replace(old, new, 1)
+    return src
+
+
+def build(job):
+    title, _declared_slug, bundle, games, n_passes, per_game_s, budget_s, arm = ARMS[job]
+    # Kaggle derives the kernel slug from the TITLE and ignores a metadata id that does not
+    # match it -- silently, with only a warning on push. job7 pushed as
+    # arc3-job7-imagefirst and landed at arc3-job7-image-first-turn, so every later status
+    # and output call looked up a kernel that does not exist (13-Sep-2026). Derive the slug
+    # from the title so the id we record is the id Kaggle will use.
+    slug = title_slug(title)
+    if slug != _declared_slug:
+        print(f"{job}: slug {_declared_slug!r} -> {slug!r} (derived from title)")
+    nb = copy.deepcopy(json.loads(BASE_NB.read_text()))
+    cells = nb["cells"]
+
+    # Cell 13 is the settings cell, cell 15 the run cell (verified by anchor text).
+    if "PUBLIC25_SETTINGS" not in "".join(cells[13]["source"]):
+        raise SystemExit("cell 13 is not the settings cell")
+    if "PUBLIC_GAME_IDS" not in "".join(cells[15]["source"]):
+        raise SystemExit("cell 15 is not the run cell")
+
+    cells[13]["source"] = shape_cell(games, n_passes, per_game_s, budget_s, arm).splitlines(True)
+    cells[15]["source"] = patch_run_cell("".join(cells[15]["source"]), len(games)).splitlines(True)
+    cells.insert(14, {"cell_type": "code", "metadata": {}, "execution_count": None,
+                      "outputs": [], "source": PROVENANCE_CELL.splitlines(True)})
+
+    nb_path = HERE / f"{slug}.ipynb"
+    nb_path.write_text(json.dumps(nb, indent=1))
+    (HERE / f"{slug}.kernel-metadata.json").write_text(json.dumps({
+        "id": f"markbarney/{slug}",
+        "title": title,
+        "code_file": f"{slug}.ipynb",
+        "language": "python",
+        "kernel_type": "notebook",
+        "is_private": True,
+        "enable_gpu": True,
+        "enable_tpu": False,
+        "enable_internet": False,
+        "dataset_sources": [bundle] + RUNTIME_DATASETS,
+        "kernel_sources": [],
+        "competition_sources": ["arc-prize-2026-arc-agi-3"],
+        "model_sources": MODEL_SOURCES,
+        "docker_image": DOCKER,
+        # PascalCase, and only delivered because the competition is attached above.
+        "machine_shape": "NvidiaRtxPro6000",
+    }, indent=2))
+    print(f"{job}: {nb_path.name} arm={arm} lanes={len(games)} passes={n_passes} bundle={bundle}")
+
+
+if __name__ == "__main__":
+    for job in (sys.argv[1:] or list(ARMS)):
+        build(job)

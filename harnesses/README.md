@@ -37,3 +37,7 @@ artifact; experiments copy from it and never edit it in place.**
 - `action7-anim/` — variant of `baseline-v12`: ACTION7 round-trip fix + compact
   always-visible animation metadata (ported from the 1.47 dark-agi notebook). Score pending.
 - `world-model/` — stub for the OPINE-style verified-world-model harness (new loop).
+- `sparse-deletion/` — Kaggle prompt arm B (four false assertions deleted), bottom seven, and the
+  base every Kaggle arm since stacks on. Builder: `kaggle/experiments/sparse-deletion/`.
+- `reset-guard/` — arm I on arm B: RESET offered to the model behind a rate guard (never twice
+  in a row, one per 20 actions). Jobs 11-12, paired with an arm-B control at the same cap. Pending.

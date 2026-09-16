@@ -132,11 +132,13 @@ To check that the gate can fail at all, three records with a defect planted on p
 
 ### The gate cuts about half, and it can fail
 
-| run | records | kept | cut | cost |
-|---|---|---|---|---|
-| the 12 records already on `main` | 12 | 4 | **8** | $4.85 |
-| the 11 fork records from this pass | 11 | 7 | **4** | $5.87 |
-| planted defects (control) | 3 | 0 | **3** | $0.92 |
+| run | records | kept | cut |
+|---|---|---|---|
+| the 12 records already on `main` | 12 | 4 | **8** |
+| the 11 fork records from this pass | 11 | 7 | **4** |
+| planted defects (control) | 3 | 0 | **3** |
+
+One model call per record, 26 in all, about two and a half minutes each.
 
 Verdicts, with the reviewer's reasons: `datasets/decision-steps/v0/pass-e/2026-09-16-*.jsonl`.
 
