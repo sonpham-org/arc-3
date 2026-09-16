@@ -146,12 +146,15 @@ file size and byte comparison reports 0/17 on frames that are pixel-identical.
 
 The run configs carry no multimodal block, so the `--upscale 4 --style plain` defaults were
 unverified. A sweep settles it: that combination reproduces 55/58 frames, every other combination
-of `upscale ∈ {1,2,3,4,6,8} × style ∈ {plain, outline}` reproduces 0. On the baseline run, all
-frames match 399/415 and **every frame that reaches the corpus matches, 102/102**; on the
-massdata run, 115/115 and 77/77. The residual baseline mismatches are in games and levels the
-rejection sampler discards, where the harness emitted fewer images than analysis events; cause
-not established, and it touches no training record. The module's `FIDELITY CAVEAT`
-(`save_request_logs: false`, "exact image bytes are not stored") was stale and is rewritten.
+of `upscale ∈ {1,2,3,4,6,8} × style ∈ {plain, outline}` reproduces 0. Coverage is complete — all
+25 baseline games and both passes of all 14 contributing massdata games, i.e. every image part in
+the corpus. Baseline: 399/415 frames overall, **102/102 of the frames that reach the corpus**.
+Massdata: 480/511 and 251/253. Across the combined corpus that is **353/355 (99.4%)**. The two
+exceptions are isolated single frames (`sp80-589a99af_p0` index 12, `tu93-0768757b_p0` index 1)
+with matching frames either side; cause not established. Nearly all other divergence is in games
+and levels the rejection sampler discards, where the harness emitted fewer images than analysis
+events. The module's `FIDELITY CAVEAT` (`save_request_logs: false`, "exact image bytes are not
+stored") was stale and is rewritten.
 
 **New: `distill/corpus_stats.py`.** Token and shape measurement over an emitted corpus. Text is
 tokenized; base64 image payloads are excluded and image tokens reported separately as a labelled
@@ -160,7 +163,9 @@ relationship to what the vision encoder charges.
 
 **What the corpus actually is.** Baseline plus both massdata passes on disk: 41 records, **381
 trainable assistant turns**, 355 image parts, 1,270,599 measured text tokens. Nothing exceeds the
-~64K trainer budget — largest record 53,258 tokens, median 34,829, **0 of 41 over**. Yield by
+~64K trainer budget — largest record 53,258 tokens, median 34,829, **0 of 41 over**, and that
+holds regardless of the vision-token estimate (that record carries 27 frames; at 4× the estimate
+it reaches ~58.4K). Yield by
 pass: baseline 23.9% (233/973 env actions at cleared levels, 11/25 games), massdata p0 34.8%
 (411/1,182, 12/25), massdata p1 in progress 30.5% (267/875, 12/25).
 
