@@ -50,7 +50,9 @@ pinned Kaggle duck harness, then SFT/RL until *held-out* games improve. The trai
 partition it needs is done and guarded — `datasets/splits/public25-train-test-split.json`,
 18 training / 7 held out. The hardware it needs is not: see
 `docs/trace-findings/2026-09-15-qwen27b-finetune-readiness.md` for the measured state of the
-two Sparks and the checkpoint-format blocker. That line does not change this corpus work; the
+two Sparks and the checkpoint-format blocker. **Update 16-Sep: the base 27B baseline ran on a108 and 5 of the 7
+held-out games score above zero, so the split stands** —
+`docs/trace-findings/2026-09-16-qwen38-27b-baseline-result.md`. That line does not change this corpus work; the
 corpus is its teacher data, which is why the three games carrying labelled episodes are
 forced into the training half.
 
@@ -112,6 +114,18 @@ run as Kaggle jobs 11 and 12 with a same-cap arm-B control. **Update 16-Sep: D a
 see the entry below -- the gate cut 12 of 23 and the corpus holds 11 records.** E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
+
+---
+
+## 2026-09-16 — The Qwen3.8-27B baseline lands in the repo, and gate 1 is met
+
+`docs/trace-findings/2026-09-16-qwen38-27b-baseline-result.md`. The baseline Son directed ran on
+a108 overnight, but its report existed only on that machine. All 25 public games, one pass each:
+mean score 1.55, no wins, 11 games cleared a level. **5 of the 7 held-out games score above zero
+(vc33 8.99), so Dr. Fable's hard gate 1 is met and the split is not redrawn.** Every game stopped
+on the 90-minute wall at about 30% of its token budget, so the numbers are a floor. The per-game
+scores were checked against the harness's own `score.json`. The step-5 plan's gate line now
+points to the result.
 
 ---
 
