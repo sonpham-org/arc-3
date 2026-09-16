@@ -28,14 +28,57 @@ model. **Tearing down Flash Next frees both GPUs at once.** Recorded as inferenc
 degree, the single local GPU and the private GCS address; `ray status` was not runnable
 (no `ray` module on the a108 system Python).
 
-## 2. Flash Next is idle, and Sherlock is not using it
+## 2. Flash Next held BOTH GPUs, was idle, and is now stopped
+
+`ray status` inside the container is decisive, and it is the headline finding:
+
+```
+Active:  2 nodes
+Resources:  2.0/2.0 GPU  (2.0 used of 2.0 reserved in placement groups)
+```
+
+**Every GPU on both Sparks was reserved by the Flash Next placement group.** Nothing in the
+directive — no baseline, no rollout collection, no learner qualification — could have started
+while it was up. That makes the teardown the unblocker, not a housekeeping step.
+
+It runs as a container, not bare processes:
+
+- container `arc3-flashnext-ray-head-04a25`, image `vllm/vllm-openai:qwen38-flash-next-ray256`
+  (20.8GB), restart policy **`no`**, started 2026-09-13T05:48:20Z
+- `/model` is a **read-only** bind of `~/models/Qwen3.8-Flash-Next-NVFP4`
+- four read-only binds from `~/flash-next-work/` patch vLLM's PLE layer, GPU worker and
+  offload connector — that is hand-written work and must survive any cleanup
+- ray head runs *inside* the container; a424 runs a matching worker container joined to it
+
+### What was done, and how to undo it
+
+**Stopped, not deleted.** `docker stop -t 60 arc3-flashnext-ray-head-04a25` on a108,
+2026-09-15 ~21:20 EDT. Verified afterwards: `:1234` closed, **zero GPU compute processes**
+(`nvidia-smi --query-compute-apps` returns an empty table), no containers running, no stray
+ray or vLLM host processes. Weights (126G), image, and the `~/flash-next-work/` PLE patches
+are all still on disk. Ollama on `:11434` is untouched and answering.
+
+Restart is one command, and the container was not removed:
+
+```bash
+docker start arc3-flashnext-ray-head-04a25    # a108; then the worker container on a424
+```
+
+**The 126G was deliberately NOT deleted — see §8.** a424's worker container is still up and
+still holds its GPU; that half needs access this account does not have.
+
+## 3. Flash Next was idle, and Sherlock is not using it
 
 - PID `584393`, `vllm serve /model --served-model-name RadixArk/Qwen3.8-Flash-Next-NVFP4`,
   `--max-model-len 32768 --max-num-seqs 22`, up since **Sun 13 Sep 02:37:16** (2d 18h).
 - `/metrics` at the time of writing: `num_requests_running 0`, `num_requests_waiting 0`.
   Nothing is in flight; the teardown does not interrupt work.
+- Lifetime counters before the stop: **54 requests total**, 3,551 prompt tokens, 13,314
+  generated, every one finishing on `length`. About 65 prompt tokens per request — smoke
+  probes, not work. An ARC-3 harness run would show tens of thousands of prompt tokens per
+  request. Nothing production depended on this server.
 - Weights: `~/models/Qwen3.8-Flash-Next-NVFP4` = **126G** on a108. Removing it takes a108
-  from 178G free to roughly 304G free, which is what makes §4 possible.
+  from 178G free to roughly 304G free, which is what makes the learner checkpoint possible.
 
 **Sherlock does not depend on it.** `~/.hermes/config.yaml` on a108 has
 `provider: "custom"`, `base_url: "http://localhost:11434/v1"`, `default: "qwen3.6:35b"` —
@@ -51,7 +94,7 @@ against the running process rather than the file.
 `~/.hermes` and no such model is pulled in Ollama. This needs Son: cloud endpoint plus key, or
 a local pull? If local, note that the 126G deletion is what buys the room for it.
 
-## 3. The blocker: the 27B on disk is a serving artifact, not a training artifact
+## 4. The blocker: the 27B on disk is a serving artifact, not a training artifact
 
 `~/models/Qwen3.8-27B-NVFP4` is present (22,568,192,096 bytes) and its `config.json` reads:
 
@@ -84,7 +127,7 @@ and for rollout collection, on one Spark, while the other trains.
 requires its ARM-compatible stack") and nothing here tests it. The 50–100 step qualification
 on one node settles it; do not plan DDP before it passes.
 
-## 4. The local configs do not mimic the Kaggle pins
+## 5. The local configs do not mimic the Kaggle pins
 
 Son asked for the Kaggle settings mirrored on tokens, context and lanes. Neither committed
 config does:
@@ -111,7 +154,7 @@ Two notes that matter more than the table:
 3. Prompt token counts must be recounted with the 27B processor and chat template. Flash Next
    counts do not transfer.
 
-## 5. What is already verified
+## 6. What is already verified
 
 The duck harness pins its lineup in `ARC3-Inference/inference/framework/kaggle.py` as
 `DUCK_HARNESS_PUBLIC_GAME_IDS`. Those 25 build ids are **byte-identical** to the 25 in
@@ -120,7 +163,7 @@ The duck harness pins its lineup in `ARC3-Inference/inference/framework/kaggle.p
 the harness runs, and `scripts/test_train_test_split.py` asserts it — that guard fires when the
 official lineup changes, which would silently invalidate any measurement taken across the split.
 
-## 6. Order of operations
+## 7. Order of operations
 
 1. Confirm Sherlock's *effective* backend (process, not config), and get `5.6-terra` defined.
 2. Get a424 SSH access. Item 1 cannot be completed without it: the ray worker and probably a
@@ -137,10 +180,21 @@ official lineup changes, which would silently invalidate any measurement taken a
    and it must be redrawn against measured difficulty rather than human difficulty.
 7. Only then: exact-response capture, dataset conversion, the 50–100 step qualification.
 
-## 7. Open items owned by a human
+## 8. Open items owned by a human
 
-- `5.6-terra`: undefined here.
-- a424 credentials.
+- **`5.6-terra`: undefined here.** Not a string in `~/.hermes`, not a model in `ollama list`.
+  Cloud endpoint plus key, or a local pull? If local, the 126G deletion is what buys the room.
+- **a424 credentials.** `son@100.106.31.61` refuses this account's key. Item 1 cannot be
+  finished without it: a424's worker container is still up and still holds its GPU.
+- **Delete the 126G, or keep Flash Next as the SFT teacher?** These conflict, and the conflict
+  is between the directive and the runbook attached to it. The directive says remove Flash
+  Next from both Sparks; §5 of the runbook says "Flash Next can generate teacher traces through
+  this same harness for 27B SFT." Both cannot hold on current disk: keeping the 126G leaves
+  178G free, and the learner needs a ~54G BF16 checkpoint plus adapters, optimizer state,
+  50-step checkpoints and trace logs on top of it. So it is teacher traces **or** the training
+  run, until something is deleted or storage is added. Stopping the server (done) costs
+  nothing either way — `docker start` brings it back. Deleting the weights forecloses the
+  teacher option, which is why it was not done.
 - Whether `as66` is used as a free generalisation probe. It is outside the live 25 by
   definition, so it is excluded from the split, and 15 recordings for it are already on disk —
   a never-trained-on environment at zero collection cost.

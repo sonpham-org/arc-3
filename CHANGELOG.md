@@ -167,10 +167,16 @@ harness actually runs — verified byte-identical between `kaggle.py` and
 
 Written against the boxes, not against the runbook. Three findings worth carrying:
 
-1. **The two Sparks are one cluster.** The Flash Next server runs tensor-parallel 2 over ray
-   at a private GCS address while a108 reports a single GB10, so rank 1 is on a424. Tearing
-   Flash Next down frees both GPUs at once. It is currently idle — 0 running, 0 waiting — so
-   the teardown interrupts nothing.
+1. **The two Sparks are one cluster, and Flash Next held every GPU on it.** `ray status`
+   reports 2 active nodes and `2.0/2.0 GPU (2.0 used of 2.0 reserved in placement groups)`.
+   Nothing in the directive could have started while it was up, so the teardown is the
+   unblocker rather than housekeeping. It was idle when measured — 0 running, 0 waiting, and
+   54 requests across its whole 2d18h lifetime, all finishing on `length` at ~65 prompt tokens
+   each, i.e. smoke probes. **The a108 container has been stopped** (`docker stop`, restart
+   policy `no`); a108's GPU now shows zero compute processes. The 126G of weights, the image
+   and the hand-written PLE patches in `~/flash-next-work/` were all left in place, and
+   `docker start arc3-flashnext-ray-head-04a25` puts it back. a424's worker container still
+   holds its GPU and needs access this account does not have.
 2. **Sherlock is not on Flash Next**, so the removal and the model repoint are independent
    changes and neither gates the other. Its config points at Ollama on `:11434`; that is a
    file read, and the effective runtime backend should be confirmed against the process
@@ -187,6 +193,13 @@ axes the directive named — context 32,768 against 102,985, lanes 2 or 25 again
 temperature 0.6 against 1.0 — and 7 lanes at ~103K context on one GB10 is the likeliest
 failure point. The directive authorised adapting the time limit and nothing else, so maximum
 feasible lanes × context is to be measured and reported, not quietly reduced.
+
+The 126G was deliberately not deleted: the directive says remove Flash Next, while §5 of the
+runbook attached to it proposes Flash Next as the SFT teacher. Both cannot hold on current
+disk — 178G free against a ~54G BF16 learner checkpoint plus adapters, optimizer state and
+trace logs — so it is teacher traces or the training run until something gives. Stopping the
+server costs nothing either way; deleting the weights forecloses one option, so that call is
+left to Son.
 
 Nothing in `ARC3-Inference` was touched.
 
