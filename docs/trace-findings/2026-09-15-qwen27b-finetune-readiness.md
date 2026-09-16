@@ -64,8 +64,24 @@ Restart is one command, and the container was not removed:
 docker start arc3-flashnext-ray-head-04a25    # a108; then the worker container on a424
 ```
 
-**The 126G was deliberately NOT deleted — see §8.** a424's worker container is still up and
-still holds its GPU; that half needs access this account does not have.
+### The weights are gone; the conversion record is not
+
+Son resolved the teacher question at 21:19 EDT (§9): RL is on-policy, so no teacher is needed,
+and the directive stands. The 126G of `.safetensors` — 206 shards — were removed from a108.
+
+**The 58MB of non-weight files were preserved first**, at
+`~/models/flash-next-nvfp4-conversion-record/`: `config.json`, `chat_template.jinja`, the
+tokenizer, the shard index, `conversion_environment.json`, `audit_unchanged_report.json`, and
+the `aime26`/`gsm8k` metrics. All 549 files were counted at source and re-counted at the
+destination before a single shard was deleted; a mismatch was set to abort. That is the record
+of how the NVFP4 conversion was done and what it scored, and it is what makes the model
+re-creatable from a fresh weight download rather than from scratch.
+
+a108 went **178G free → 304G free (66%)**, which clears the ~54G BF16 learner checkpoint with
+room for adapters, optimizer state, checkpoints and trace logs.
+
+**a424 is not done.** Its worker container is still up and still holds its GPU, and it likely
+holds its own weight copy. That half needs access this account does not have.
 
 ## 3. Flash Next was idle, and Sherlock is not using it
 
@@ -186,15 +202,48 @@ official lineup changes, which would silently invalidate any measurement taken a
   Cloud endpoint plus key, or a local pull? If local, the 126G deletion is what buys the room.
 - **a424 credentials.** `son@100.106.31.61` refuses this account's key. Item 1 cannot be
   finished without it: a424's worker container is still up and still holds its GPU.
-- **Delete the 126G, or keep Flash Next as the SFT teacher?** These conflict, and the conflict
-  is between the directive and the runbook attached to it. The directive says remove Flash
-  Next from both Sparks; §5 of the runbook says "Flash Next can generate teacher traces through
-  this same harness for 27B SFT." Both cannot hold on current disk: keeping the 126G leaves
-  178G free, and the learner needs a ~54G BF16 checkpoint plus adapters, optimizer state,
-  50-step checkpoints and trace logs on top of it. So it is teacher traces **or** the training
-  run, until something is deleted or storage is added. Stopping the server (done) costs
-  nothing either way — `docker start` brings it back. Deleting the weights forecloses the
-  teacher option, which is why it was not done.
+- ~~Delete the 126G, or keep Flash Next as the SFT teacher?~~ **Resolved 21:19 EDT — see §9.**
 - Whether `as66` is used as a free generalisation probe. It is outside the live 25 by
   definition, so it is excluded from the split, and 15 recordings for it are already on disk —
   a never-trained-on environment at zero collection cost.
+
+---
+
+## 9. No teacher. Settled 2026-09-15 21:19 EDT.
+
+Son's objection, and it is correct: *"we are doing RL. We are supposed to let the Qwen3.8 27B
+just keep playing and get better. Why do we need Flash Next as a teacher?"*
+
+RL is on-policy. The 27B generates its own trajectories, the engine scores them, the adapter
+moves. A second model has no role in that loop, and the runbook says so itself in three
+separate places — teacher traces are *"off-policy demonstrations"* (§5), their token ids must
+never be reused because the tokenizer and template differ (§6), and they must not be used as
+current-policy GRPO samples (§10). They were only ever proposed as an **SFT bootstrap**, not
+as RL data.
+
+### The one thing an SFT bootstrap actually buys, and it is not game knowledge
+
+**Reward variance.** Group-relative RL learns from differences *within* a group. Sample four
+continuations from one start state; if all four score identically, the standardised advantage
+is zero and the update is zero. So if the base 27B completes no levels on a game, that game
+contributes nothing but spend. The runbook names the failure — *"Skip groups with zero or
+negligible useful reward variance... change the curriculum if almost all groups fail"* (§10) —
+and gates on it: *"Start RL only if useful reward-bearing rollouts and policy/log-probability
+consistency are established"* (§11, milestone 6).
+
+A bootstrap exists to move the base off the floor far enough that rollouts differ from each
+other. Whether it is needed **is an empirical question the baseline answers**, which is why the
+directive's own ordering — baseline first — is right.
+
+### And if a bootstrap is needed, the 27B is its own best teacher
+
+Rejection sampling on the base model's own rollouts: run the baseline, keep the trajectories
+that completed a level, SFT on those. Same tokenizer, same chat template, same policy family,
+no train/serve skew, and the data is collected during a run that has to happen anyway. That is
+strictly better than another model's traces, which have to be re-rendered through the 27B
+processor and are off-policy the moment they arrive.
+
+**Decision:** no teacher. Flash Next weights removed. If the baseline shows the 27B emitting
+valid tool calls and clearing some level 1s, go straight to RL. If it clears nothing anywhere,
+bootstrap from its own rare successes — and if there are none at all, that is a finding about
+the harness or the prompt, not a reason to reach for a different model.

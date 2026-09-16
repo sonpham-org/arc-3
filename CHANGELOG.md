@@ -194,12 +194,28 @@ temperature 0.6 against 1.0 — and 7 lanes at ~103K context on one GB10 is the 
 failure point. The directive authorised adapting the time limit and nothing else, so maximum
 feasible lanes × context is to be measured and reported, not quietly reduced.
 
-The 126G was deliberately not deleted: the directive says remove Flash Next, while §5 of the
-runbook attached to it proposes Flash Next as the SFT teacher. Both cannot hold on current
-disk — 178G free against a ~54G BF16 learner checkpoint plus adapters, optimizer state and
-trace logs — so it is teacher traces or the training run until something gives. Stopping the
-server costs nothing either way; deleting the weights forecloses one option, so that call is
-left to Son.
+**No teacher — settled at 21:19 EDT, and Son was right.** The runbook proposed Flash Next as an
+SFT teacher; the directive said remove it. Son's objection is that RL is on-policy, so a second
+model has no role in the loop, and the runbook concedes the point three times over: teacher
+traces are off-policy demonstrations (§5), their token ids cannot be reused across a different
+tokenizer and template (§6), and they must not be used as current-policy GRPO samples (§10).
+They were only ever an SFT *bootstrap*.
+
+The one thing a bootstrap buys is **reward variance**, not game knowledge: group-relative RL
+learns from differences within a group, so a game the base model never scores on contributes
+zero gradient and pure spend. Whether that bootstrap is needed is what the baseline measures —
+which is why the directive's own ordering is right. And if it is needed, the better source is
+the 27B's own successful rollouts by rejection sampling: same tokenizer, same template, no
+train/serve skew, collected during a run that has to happen anyway.
+
+So the weights went. 206 shards, 126G, removed from a108 — **178G free → 304G free**, which
+clears the ~54G BF16 learner checkpoint with room for adapters, optimizer state and trace logs.
+The 58MB of non-weight files were preserved first at
+`~/models/flash-next-nvfp4-conversion-record/` — config, chat template, tokenizer, shard index,
+`conversion_environment.json`, the unchanged-audit report and the aime26/gsm8k metrics. All 549
+were counted at source and re-counted at the destination before a shard was touched, with a
+mismatch set to abort. That record is what makes the model re-creatable from a fresh weight
+download instead of from scratch. a424 still holds its own GPU and probably its own copy.
 
 Nothing in `ARC3-Inference` was touched.
 
