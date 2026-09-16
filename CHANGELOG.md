@@ -117,6 +117,65 @@ nor refute gets cut, not softened.
 
 ---
 
+## 2026-09-16 — the SFT extractor is verified against captured frames, and two alignment bugs are out (Claude Opus 5)
+
+`ARC3-Inference/distill/extract_sft.py` was conceptually right and factually wrong in two
+places. Both are fixed, and the fix is now checkable rather than argued.
+
+**The board each turn was trained on was the wrong board.** `_analysis_events` attached an
+analysis event's own `board` to that event's user message. That board is the state the event's
+actions *produced*. The observation a step was decided from is the *previous* event's board —
+`initial.board` for the first step. Verified against the run's own request logs: the step-1
+request carries exactly one image and it is the `initial` board, never `analysis[0].board`. In
+two of four spot-checked games the first action left the board unchanged, which is how this
+survived. The chain is now built from the whole ordered event list before level grouping, so a
+level's first step correctly takes its observation from the previous level. `traces.py` is
+untouched. Baseline regression holds at 12 records / 113 assistant turns / 11 games; unique
+rendered images move 73 → 69, which is the expected fingerprint.
+
+**Records collided across passes.** `build_records` globs every `*_viewer_data.json`, and
+`game_id` carries no pass suffix, so `ar25 p0 L1` and `ar25 p1 L1` emitted the same `id` and the
+contributing-games counter deduped two real trajectories into one. `pass_index` is now part of
+the `id` and a record field. This only bites multi-pass runs — i.e. the massdata corpus.
+
+**New: `distill/verify_frames.py`.** Runs with `save_request_logs: true` store the exact
+multimodal payload the model received, inline base64 and all. This decodes those frames and
+compares them to what the extractor regenerates. Compare **pixels, not bytes** — the serving path
+and Pillow pick different PNG encoder settings for the same raster, so identical images differ in
+file size and byte comparison reports 0/17 on frames that are pixel-identical.
+
+The run configs carry no multimodal block, so the `--upscale 4 --style plain` defaults were
+unverified. A sweep settles it: that combination reproduces 55/58 frames, every other combination
+of `upscale ∈ {1,2,3,4,6,8} × style ∈ {plain, outline}` reproduces 0. On the baseline run, all
+frames match 399/415 and **every frame that reaches the corpus matches, 102/102**; on the
+massdata run, 115/115 and 77/77. The residual baseline mismatches are in games and levels the
+rejection sampler discards, where the harness emitted fewer images than analysis events; cause
+not established, and it touches no training record. The module's `FIDELITY CAVEAT`
+(`save_request_logs: false`, "exact image bytes are not stored") was stale and is rewritten.
+
+**New: `distill/corpus_stats.py`.** Token and shape measurement over an emitted corpus. Text is
+tokenized; base64 image payloads are excluded and image tokens reported separately as a labelled
+estimate, because running a text tokenizer over a data URL produces a number with no
+relationship to what the vision encoder charges.
+
+**What the corpus actually is.** Baseline plus both massdata passes on disk: 41 records, **381
+trainable assistant turns**, 355 image parts, 1,270,599 measured text tokens. Nothing exceeds the
+~64K trainer budget — largest record 53,258 tokens, median 34,829, **0 of 41 over**. Yield by
+pass: baseline 23.9% (233/973 env actions at cleared levels, 11/25 games), massdata p0 34.8%
+(411/1,182, 12/25), massdata p1 in progress 30.5% (267/875, 12/25).
+
+Two notes for whoever reads a target number off this. The widely-quoted "233 usable turns" is an
+**env-action** count, `sum(actions_per_level[:levels_completed])`; it reproduces exactly, but the
+trainable figure from those same 11 games is 113 assistant turns, roughly 2:1. And four full
+massdata passes plus the baseline project to ~600–700 turns against a 2–5K first-LoRA target. No
+extractor change closes that: 11–12 of 25 games clearing exactly one level each is the ceiling.
+The lever is game count and difficulty spread, or accepting lower-credit data — not the pipeline.
+
+Findings write-up with the full tables: `docs/2026-09-16-arc3-sft-extraction.md` in the Bubba
+workspace.
+
+---
+
 ## 2026-09-16 — The recovery eval runner
 
 `tools/recovery_eval.py`, questions in `datasets/decision-steps/v0/recovery-eval/items.jsonl`, how
