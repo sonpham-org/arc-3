@@ -5,8 +5,10 @@ PURPOSE: Running changelog for the decision-step corpus work in this repo, newes
 Exists so a reviewer joining cold can see where the work stands without reading fifteen pull
 requests. Covers the corpus pipeline (datasets/decision-steps/, tools/replay_scrape.py,
 scripts/test_decision_step_validator.py) and its trace findings. It does NOT change
-ARC3-Inference or the harnesses, which predate it; where an entry documents a harness defect
-it is a written finding about code this work leaves untouched, never a record of a change to it.
+the harnesses, which are frozen artifacts; where an entry documents a harness defect it is a
+written finding about code this work leaves untouched, never a record of a change to it. The
+in-tree `ARC3-Inference/` harness is a different matter: the 16-Sep RESET-guard entry below is
+a real change to it, and further entries may be.
 SRP/DRY check: Pass — plans live in docs/plans/ and docs/trace-findings/, schema semantics in
 datasets/decision-steps/SCHEMA.md. This file only records what changed, when, and why.
 -->
@@ -109,6 +111,60 @@ rows. On the harness track, the RESET-guard arm is built and verified (`harnesse
 run as Kaggle jobs 11 and 12 with a same-cap arm-B control. E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
+
+---
+
+## 2026-09-16 — the RESET guard lands in the in-tree harness (Claude Opus 5)
+
+`docs/plans/2026-09-16-intree-reset-guard-port.md`. The in-tree agent harness could not press
+RESET: `_engine_action_names` dropped it from every menu the model sees. Arm I built and
+verified that guard against a frozen bundle (`harnesses/reset-guard/`, PR #23); this ports the
+behaviour onto `ARC3-Inference/inference/framework/solver.py` and
+`ARC3-Inference/inference/agent/prompts.py`, so the harness this repo actually runs has it too.
+
+**RESET was hidden, not blocked.** `taaf/game.py` injects RESET (id 0) into
+`available_actions` unconditionally, and `step_env`'s availability gate has always passed it,
+so a model that typed `RESET` in arms A–H executed one. The new
+`scripts/test_reset_guard_intree.py` demonstrates that against a pre-port checkout, not from
+argument. Filtering the menu alone would therefore have guarded nothing; the refusal lives in
+`step_env`.
+
+**The guard, unchanged from the reviewed arm.** `_RESET_MIN_ACTION_GAP = 20`. A model RESET is
+refused when the previous executed action was a RESET — which covers the game's opening and the
+harness's own auto-reset after a death — and when it would land within 20 actions of the last
+model-chosen RESET. Auto-resets never consume that window. A refusal spends no action and
+returns `stop_reason="reset_rate_limited"`; mid-batch it stops the batch, which is what
+`step_env` already did for an unavailable action. Accepted and refused RESETs print
+`RESET_GUARD` lines and each game prints a `RESET_GUARD_SUMMARY`, the shape
+`kaggle/experiments/sparse-deletion/count_resets.py` reads.
+
+**A call site the bundle patch never had to cover.** The frozen patch guards three menus; in
+tree there are **four** — the analyzer turn, the error payload, the executed-action payload,
+and the `solver turn start` log line, which is new since the patch was written. It is routed
+through the guard too, so the log cannot report a menu the model was not offered. `include_reset`
+defaults to `False`, so a missed site would compile and silently keep RESET hidden; the check
+that matters is zero remaining `_engine_action_names(self.game)`, and there are zero.
+
+**`prompts.py`** gains the arm's one 251-character bullet, verbatim, after the
+`action(actions)` contract lines.
+
+**Verified, not assumed.** `py_compile` on all three files; 0 unguarded and 4 guarded menu call
+sites by grep; and 22 assertions in `scripts/test_reset_guard_intree.py` passing against the
+live `ls20-9607627b` build through TAAF's offline `GameAPI` with `ONLY_RESET_LEVELS=true` —
+opening refused, one move then accepted, level reset rather than full reset, counts as an
+action, twice-in-a-row refused, both edges of the 20-action window, a batch stopping at a
+refused RESET and reporting `stopped_early`, and an auto-reset refusing the next RESET without
+spending the window.
+
+This file's `PURPOSE` header claimed it records no changes to `ARC3-Inference`. That is no
+longer true, so the header is amended to say so; no other prose in the file is altered. The
+section heading stays date-only, per this file's stated date-based versioning — `0.2` belongs
+to the corpus schema and is not bumped here.
+
+`harnesses/`, `kaggle/` and `vendor/` are untouched, including
+`taaf/game_api.py`'s process-wide `ONLY_RESET_LEVELS=true` — without that pin arcengine
+full-resets whenever its action counter is zero, which `set_level` zeroes at the top of every
+level, so a model RESET on a fresh level would zero the run.
 
 ---
 
