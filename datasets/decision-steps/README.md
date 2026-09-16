@@ -16,8 +16,10 @@ this is the operator guide. No field table is duplicated here.
 
 ## What this is
 
-The **training target** for ARC-3 fine-tuning. Not a whole transcript, and not a bare winning
-action sequence — one record per **decision point**:
+The **recovery eval** for ARC-3 fine-tuning, and at most a small weighted mix-in — no longer
+the SFT training target, since Son's 15-Sep no-teacher decision (see
+[`docs/plans/2026-09-16-dr-fable-calls-on-the-step5-review.md`](../../docs/plans/2026-09-16-dr-fable-calls-on-the-step5-review.md)).
+Not a whole transcript, and not a bare winning action sequence — one record per **decision point**:
 
 ```
 frame/image + optional ASCII + structured memory + last action/result
@@ -209,7 +211,8 @@ Per plan §5:
    (`data.frame`, last grid — [`SCHEMA.md`](SCHEMA.md#frame_reffield-is-a-dotted-path-and-the-frame-is-the-last-grid)),
    and **250 additional published human replay guids** were found and are listed in
    [`published-replays.json`](published-replays.json).
-4. **Then: segment and label.** Boundaries are meaningful state changes, not fixed strides.
+4. **Then: segment and label — the pilot only.** The 13 recordings on disk, passes D and E, no
+   further pulls (Dr. Fable's call, 16-Sep). Boundaries are meaningful state changes, not fixed strides.
    Every record must pass `validate.py`; every gold record's `action_role` must cite a real
    line in the game source under `docs/static/games/src/`; every negative record must pair an
    observed failure with a corrected next decision.

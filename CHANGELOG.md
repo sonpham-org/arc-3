@@ -19,9 +19,14 @@ that had reserved it no longer has a number reserved.
 
 ---
 
-## Where this stands — 15-Sep-2026
+## Where this stands — 16-Sep-2026
 
 Read this first if you are picking the work up cold.
+
+**The corpus's role changed on 15-Sep.** Son's no-teacher decision (`7074b67`) means the 27B
+bootstraps from its own rollouts, so these records are **the recovery eval, plus at most a
+small mix-in**, not SFT teacher data. The four review questions in PR #21 are answered in
+`docs/plans/2026-09-16-dr-fable-calls-on-the-step5-review.md`; read that before the plan.
 
 **The goal.** A corpus of *decision steps*, not winning move sequences. Each record pairs the
 board a player saw with the action they chose, a short **falsifiable** rationale, and an
@@ -98,10 +103,42 @@ primitive is RESET, is a candidate mechanical explanation for the agent's scores
 changed on the strength of it**; it is a written proposal for the Boss and Dr. Fable. That entry
 also withdraws an over-broad claim about the recording reconcile rule and corrects two figures.
 
-**Next.** Passes C (pull the selected recordings), D (annotate, one agent per game) and E (the
-adversarial falsification gate) of the step-4 plan. E is the one that decides whether any of it
+**Next.** Passes D (annotate, one agent per game) and E (the adversarial falsification gate) on
+the 13 recordings already on disk. Pass C (pull the rest) is **off** unless the eval needs more
+rows. On the harness track, the RESET-guard arm. E is the one that decides whether any of it
 is worth having: a record whose `expected_observation` the cited next frame can neither confirm
 nor refute gets cut, not softened.
+
+---
+
+## 2026-09-16 — Dr. Fable's calls on the step-5 review, and the corpus changes job
+
+`docs/plans/2026-09-16-dr-fable-calls-on-the-step5-review.md`. PR #21 asked four questions;
+these are the answers, posted as the PR review and then written down because a review is not
+a document the next session reads.
+
+**The corpus is the eval now, not the teacher.** Son's no-teacher decision removed the role
+the corpus was specified for. `README.md`'s first line, the step-5 plan's status block and the
+"Where this stands" section above now say so. The split's training-only constraint on bp35,
+cn04 and lp85 is left in place as harmless; drop it on any redraw.
+
+**RESET: measured, not argued.** The 27B baseline runs pinned with RESET hidden. One Kaggle arm
+on the bottom seven exposes RESET behind a guard (never twice in a row, at most one per 20
+actions) and reports reset rate next to level clears. The review's option (c) is dropped; the
+"chose RESET on a live board" records stay as eval rows. The ls20 fact that decides it: RESET
+on a live board refills three lives and the step meter, so on four 21-step levels it is how a
+human wins, and the harness cannot make that move on any game.
+
+**Ceiling: pilot only.** Passes D and E on the 13 recordings on disk; pass C is off.
+
+**Measurement: two gates.** Held-out games must score above zero on the base 27B or the split
+is redrawn on measured agent difficulty; the 18/7 result is labelled as transfer within the
+public 25, with as66 as the one out-of-lineup probe.
+
+**Convention: imposed.** Schema and validator changes go through a PR that names the migration
+and ships the script. `validate.py` already refuses a stale `schema_version`; that stays.
+
+**Also fixed:** `SCHEMA.md`'s field table still said `schema_version` was `"0.1"`; it is `"0.2"`.
 
 ---
 

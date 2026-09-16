@@ -15,6 +15,14 @@ This holds only what comes after a record exists, and does not restate either.
 **Status:** plan, 15-Sep-2026. The bridge landed in PR #20, so every piece from a human replay
 to a training example now exists. Nothing here is started.
 
+> **Amended 16-Sep-2026.** Son's no-teacher decision (`7074b67`, readiness doc §9) removed the
+> corpus's role as SFT teacher data: any bootstrap comes from the 27B's own rollouts. **The
+> corpus's job is now the recovery eval in §3, plus at most a small weighted mix-in.** Read §2
+> and §4 with that in mind: §4's volume push is gated on the eval needing more rows, not on the
+> eval showing an effect, and the answer is expected to be no. The two gates added to §3 and
+> the RESET call are in
+> [`2026-09-16-dr-fable-calls-on-the-step5-review.md`](2026-09-16-dr-fable-calls-on-the-step5-review.md).
+
 ---
 
 ## 0. The question this plan exists to answer
@@ -103,6 +111,10 @@ So build the metric that is actually sensitive to the thing:
 
 *Acceptance:* the recovery eval separates the fine-tuned model from the incumbent, or it does
 not — and either answer is reported at the same volume of words.
+
+Two hard gates, added 16-Sep: (1) the seven held-out games must score above zero on the base
+27B, or the split is redrawn on measured agent difficulty; (2) the result is labelled as
+transfer within the public 25, with `as66` run and reported as the one out-of-lineup probe.
 
 ---
 
