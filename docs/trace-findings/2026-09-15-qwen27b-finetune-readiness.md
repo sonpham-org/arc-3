@@ -80,8 +80,36 @@ re-creatable from a fresh weight download rather than from scratch.
 a108 went **178G free → 304G free (66%)**, which clears the ~54G BF16 learner checkpoint with
 room for adapters, optimizer state, checkpoints and trace logs.
 
-**a424 is not done.** Its worker container is still up and still holds its GPU, and it likely
-holds its own weight copy. That half needs access this account does not have.
+**a424 is done too.** Son confirmed at 21:30 EDT that the boxes are linked over ConnectX-7, and
+a424 turns out to be reachable *from a108* at `192.168.100.11` — a 200 Gb/s link, so the hop
+works without a direct credential from the Mac. Its worker container had already exited when
+the head went down, so its GPU was free before anything was touched. It held its own 126G
+copy; same procedure (513 non-weight files counted at source and destination, then the shards
+removed). **a424: 360G free → 486G free (45% used).**
+
+**Item 1 is complete.** Both Sparks: no Flash Next weights, no containers running, zero GPU
+compute processes, conversion record preserved on each box.
+
+| | before | after |
+|---|---|---|
+| a108 | 178G free (80%) | **304G free (66%)** |
+| a424 | 360G free | **486G free (45%)** |
+
+One correction to §1 worth carrying: the table there says a424 access was unavailable to this
+account. That was true for a *direct* connection from the Mac and is still true; the working
+route is the hop through a108 over the private link.
+
+### What the boxes do and do not have
+
+- **a424 has no copy of the 27B.** Only a108 holds `Qwen3.8-27B-NVFP4`. Two serving replicas
+  would need a 22G copy across the link — cheap at 200 Gb/s, but it is a step, not a given.
+- **No GPU training stack exists on either box.** a108's system python carries
+  `torch 2.12.0+cpu` — a CPU-only build, `cuda.is_available()` False — and `peft`, `trl`,
+  `bitsandbytes`, `unsloth`, `accelerate` and `vllm` are all absent. Every GPU stack here has
+  lived inside a container. That is why learner qualification is its own gated step and not a
+  prelude to the training run.
+- a108 harness snapshot at `/home/son/GitHub/arc-3` is **not a git repository** and differs
+  from the GitHub tree. It runs the harness; it is not a place to pull or commit.
 
 ## 3. Flash Next was idle, and Sherlock is not using it
 
