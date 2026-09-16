@@ -114,7 +114,7 @@ nor refute gets cut, not softened.
 
 ---
 
-## 0.2.1 — 2026-09-16 — the RESET guard lands in the in-tree harness (Claude Opus 5)
+## 2026-09-16 — the RESET guard lands in the in-tree harness (Claude Opus 5)
 
 `docs/plans/2026-09-16-intree-reset-guard-port.md`. The in-tree agent harness could not press
 RESET: `_engine_action_names` dropped it from every menu the model sees. Arm I built and
@@ -155,6 +155,11 @@ opening refused, one move then accepted, level reset rather than full reset, cou
 action, twice-in-a-row refused, both edges of the 20-action window, a batch stopping at a
 refused RESET and reporting `stopped_early`, and an auto-reset refusing the next RESET without
 spending the window.
+
+This file's `PURPOSE` header claimed it records no changes to `ARC3-Inference`. That is no
+longer true, so the header is amended to say so; no other prose in the file is altered. The
+section heading stays date-only, per this file's stated date-based versioning — `0.2` belongs
+to the corpus schema and is not bumped here.
 
 `harnesses/`, `kaggle/` and `vendor/` are untouched, including
 `taaf/game_api.py`'s process-wide `ONLY_RESET_LEVELS=true` — without that pin arcengine
