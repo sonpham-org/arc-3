@@ -21,6 +21,41 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — the LoRA run was training 64 of its 208 adapters, and why
+
+`tools/assert_lora_gradients.py` — a pre-flight that fails a training round before it starts if
+any LoRA `lora_B` parameter is not receiving a gradient — plus
+`docs/trace-findings/2026-09-17-lora-gradient-rootcause.md`, the root cause it was written for.
+
+A LoRA step measured on the `unsloth/Qwen3.8-27B-NVFP4` checkpoint on the DGX Spark a424 reached
+`loss.backward()` cleanly, reported a falling loss, and delivered a gradient to **64 of 208
+adapters**. The 144 dead ones were not slow — `lora_B` sat at its zero init with an exactly-zero
+gradient, and since `dL/dA ∝ B` their `lora_A` could never start moving either. Permanently inert.
+
+Cause: that checkpoint's `quantization_config` fake-quantizes **input activations** on precisely
+the seven projections the adapter targets (`self_attn.q|k|v|o_proj`,
+`linear_attn.in_proj_qkv|in_proj_z|out_proj`) plus `lm_head`. compressed-tensors implements
+activation quantization by replacing the module's `forward`, and the quantize call it inserts runs
+under `@torch.no_grad()` — so the input is detached and **no gradient can cross a targeted
+module**. peft conceals it: its added `lora_B(lora_A(x))` branch keeps `requires_grad` alive, and
+because `lora_B` is zero-initialised that branch carries exactly zero backwards. The 64 survivors
+are `o_proj` and `out_proj` in every layer — the only targets whose output lands on the residual
+stream, so gradient reaches them without traversing a quantized module. `dequantize=True` does not
+help; it decompresses the weights and leaves the patched forward in place.
+
+Established on CPU with a tiny randomly-initialised model of the same architecture: the failure
+does **not** reproduce under any combination of `eager`/`sdpa`, `use_cache` on/off, gradient
+checkpointing on/off, fp32/bf16 — and reproduces exactly, module for module, the moment the base
+layers' inputs are detached. Confirmed against the compressed-tensors and transformers source.
+
+Fix: train from the plain BF16 checkpoint, or call
+`disable_compressed_tensors_fake_quant(model)` after `from_pretrained` and before
+`get_peft_model`. **The fix has not been run against the 27B** — that needs a GPU, which was in
+use by another job — so the pre-flight is the gate: run it first on the next GPU session.
+`--self-test` proves the check on CPU in seconds, green on a healthy model and red on this defect.
+
+---
+
 ## Where this stands — 16-Sep-2026
 
 Read this first if you are picking the work up cold.
