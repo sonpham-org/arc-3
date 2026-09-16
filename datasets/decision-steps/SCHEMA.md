@@ -39,7 +39,7 @@ teach diagnosis instead of imitation.
 
 | field | type | required | notes |
 |---|---|---|---|
-| `schema_version` | `"0.1"` | yes | Constant. **Adding a value to a closed enum does not bump it** — every record already written stays valid, and `validate.py` rejects an unknown value either way, so a reader pinned to `0.1` cannot mis-read a `0.1` record. Adding, removing or retyping a **field** does bump it. See [Why `0.1` survives an enum widening](#why-01-survives-an-enum-widening). |
+| `schema_version` | `"0.2"` | yes | Constant (`0.2` since `7dcaa62`, `run_ended`). **Adding a value to a closed enum does not bump it** — every record already written stays valid, and `validate.py` rejects an unknown value either way, so a reader pinned to `0.1` cannot mis-read a `0.1` record. Adding, removing or retyping a **field** does bump it. See [Why `0.1` survives an enum widening](#why-01-survives-an-enum-widening). |
 | `tier` | `"gold"` \| `"silver"` \| `"negative"` | yes | See [Tiers](#tiers). |
 | `game_id` | non-empty string | yes | Opaque id, e.g. `bp35-0a0ad940`. Never a readable title. |
 | `source.kind` | non-empty string | yes | Provenance of the trajectory. Only `"human_replay"` is pinned by the plan. |
