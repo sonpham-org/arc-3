@@ -10,6 +10,9 @@ the step-5 plan section 3 holds why the eval exists. This is the how-to-run and 
 
 # Recovery eval, v0
 
+**Status, 16-Sep-2026: built and tested; no result yet.** No full run has been made against any
+model. The first will be the base Qwen3.8-27B on a108.
+
 The behavioural check in the step-5 plan §3. It asks whether a model, told that a choice it made
 from this exact board led to a failed attempt, makes a different choice.
 
@@ -82,8 +85,11 @@ model calls to add.
 
 ## Running it
 
-You need the recordings in `v0/recordings/` (gitignored) and the exact game builds. On a108 they
-are `~/flash-next-work/environment_files-11p44`; copy the game directories you need.
+You need the recordings in `v0/recordings/` (gitignored) and **the exact game builds**. On a108
+they are `~/flash-next-work/environment_files-11p44`; copy the game directories you need. Other
+copies of `environment_files` on this team's machines hold other builds of cn04, dc22, ka59 and
+m0r0. Pointed at one of those, the engine stops with `no build for <game_id>`: a build id that
+does not match the recording is an error, not a silent replay of a different game.
 
 ```bash
 export ARC3_ENVIRONMENTS_DIR=/path/to/environment_files
