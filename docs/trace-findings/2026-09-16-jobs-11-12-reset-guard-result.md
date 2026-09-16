@@ -85,7 +85,7 @@ From `harnesses/reset-guard/MANIFEST.md`, written before the run:
   far from the cap.
 - *The model barely uses it → uninformative.* Not met: 32 presses.
 
-**The rule says expose it.** The in-tree harness already does, as of `ce371447a`. What the rule
+**The rule says expose it.** The in-tree harness now does: PR #26 (`ce371447a`) ported the guard onto `ARC3-Inference/`. What the rule
 does not cover, and this run cannot settle, is whether RESET is why. n = 4 passes a game, and the
 per-game differences are one or two passes wide.
 
