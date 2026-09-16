@@ -153,4 +153,15 @@ and must not be quoted next to `baseline-v12`'s.
 
 ## Score
 
-Pending.
+Jobs 11 and 12 ran 16-Sep-2026. Write-up: `docs/trace-findings/2026-09-16-jobs-11-12-reset-guard-result.md`.
+
+| | arm I (job 11) | arm B at 1620s (job 12) |
+|---|---|---|
+| Kaggle score | **1.54** | 0.995 |
+| level clears, 4 passes | 16 | 16 |
+| model RESETs | 32 in 3,620 actions, 4 refused | 0 |
+
+The decision rule is met (ls20 1 → 3, wa30 3 → 4, rate far under the cap), so RESET goes into the
+harness. The run does not show RESET caused it: none of ls20's three clears followed a RESET, most
+of the score gap is two single passes, and bp35 fell from 4 clears to 0. One more pair at the same
+cap would settle it.
