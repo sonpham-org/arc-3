@@ -4,7 +4,7 @@ Date: 15-September-2026 (LevelAdvanceTests / LevelFallRefusalTests, same day)
 PURPOSE: Acceptance test for pass A (tools/segment.py). The binding criterion from
 docs/plans/2026-09-15-step4-segment-and-label-execution.md section 3 is that the segmenter
 reproduces the segment cuts, frame refs and outcome.observed numbers of the four hand-built
-records in bp35-0a0ad940__c935ca1b-...__l5-death-undo-reset-00.jsonl, including the five
+records in fixtures/segmenter/bp35-0a0ad940__c935ca1b-...__l5-death-undo-reset-00.jsonl, including the five
 empty-frame rows (215, 370, 390, 572, 807) never being used as frame targets. That reproduction
 is asserted here against the real 138 MB recording, and skipped - not faked - when the recording
 is absent, matching RealRecordingTests in test_decision_step_validator.py. Also covers the three
@@ -37,7 +37,10 @@ EPISODES = CORPUS / "v0" / "episodes"
 GAME_ID = "bp35-0a0ad940"
 GUID = "c935ca1b-dfee-4be1-9574-bf4cc80c5b89"
 RECORDING = RECORDINGS / GAME_ID / f"{GUID}.ndjson"
-HAND_BUILT = EPISODES / f"{GAME_ID}__{GUID}__l5-death-undo-reset-00.jsonl"
+# Frozen copy of the four hand-built records as they stood when pass A was accepted. The corpus
+# copy is not used: pass E (16-Sep-2026) cut the row-214 record for its memory_in, and the
+# segmenter's ground truth is the measured fields, which do not depend on a judgment surviving.
+HAND_BUILT = CORPUS / "fixtures" / "segmenter" / f"{GAME_ID}__{GUID}__l5-death-undo-reset-00.jsonl"
 
 # SCHEMA.md: the five rows of this recording that carry data.frame: [].
 EMPTY_FRAME_ROWS = [215, 370, 390, 572, 807]
