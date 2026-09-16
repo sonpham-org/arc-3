@@ -161,14 +161,22 @@ def _level_number(game: taaf.game.Game) -> int:
     return max(1, min(int(game.number_of_levels), completed + 1))
 
 
-def _engine_action_names(game: taaf.game.Game) -> list[str]:
+# RESET guard: a model-chosen RESET is refused when the previous executed action was a
+# RESET (including the harness auto-reset and the game's opening), or when it would land
+# within _RESET_MIN_ACTION_GAP actions of the last model-chosen RESET.
+_RESET_MIN_ACTION_GAP = 20
+
+
+def _engine_action_names(
+    game: taaf.game.Game, *, include_reset: bool = False
+) -> list[str]:
     names: list[str] = []
     for action_id in game.current_state.available_actions:
         try:
             name = arcengine.GameAction.from_id(int(action_id)).name
         except Exception:
             continue
-        if name == "RESET":
+        if name == "RESET" and not include_reset:
             continue
         if name not in names:
             names.append(name)
@@ -237,7 +245,40 @@ class _HarnessGameSession:
     analysis_step: int = 0
     last_engine_action: str | None = None
     token_baseline: int = 0
+    model_reset_positions: list[int] = field(default_factory=list)
+    reset_refusals: int = 0
     _viewer_events_flushed: int = field(default=0, init=False, repr=False)
+
+    def reset_refusal(self) -> str | None:
+        if self.last_engine_action in (None, "RESET"):
+            return (
+                "RESET refused: the previous action was already a RESET, so the level "
+                "is at its starting state."
+            )
+        if self.model_reset_positions:
+            gap = self.action_count + 1 - self.model_reset_positions[-1]
+            if gap < _RESET_MIN_ACTION_GAP:
+                return (
+                    f"RESET refused: at most one RESET per {_RESET_MIN_ACTION_GAP} actions, "
+                    f"and the last one was {gap - 1} actions ago."
+                )
+        return None
+
+    def model_action_names(self) -> list[str]:
+        return _engine_action_names(
+            self.game, include_reset=self.reset_refusal() is None
+        )
+
+    def log_reset_guard(self, outcome: str, detail: str = "") -> None:
+        # print, not log.info: kaggle/experiments/sparse-deletion/count_resets.py scans job
+        # logs for these lines, and stdout does not depend on logging configuration.
+        run = self.game.game_run
+        game_id = run.game_id if run is not None else self.game_index
+        print(
+            f"RESET_GUARD {outcome} game={game_id} pass={self.pass_index} "
+            f"action_num={self.action_count} {detail}".rstrip(),
+            flush=True,
+        )
 
     def current_frame(self) -> Frame:
         return Frame(
@@ -370,7 +411,7 @@ class _HarnessGameSession:
                     self.action_count,
                     _level_number(self.game),
                     float(getattr(run, "score", 0.0) or 0.0),
-                    ",".join(to_model_actions(_engine_action_names(self.game))) or "-",
+                    ",".join(to_model_actions(self.model_action_names())) or "-",
                     request_timeout if request_timeout is not None else "none",
                     timing["run_elapsed_seconds"],
                     (
@@ -384,7 +425,7 @@ class _HarnessGameSession:
                     result = self.analyzer.analyze(
                         self.state_path,
                         self.action_count,
-                        valid_actions=_engine_action_names(self.game),
+                        valid_actions=self.model_action_names(),
                         step_env=self.step_env,
                         transcript_path=self.transcript_path,
                         analysis_step=analysis_step,
@@ -464,6 +505,12 @@ class _HarnessGameSession:
             if run.solver_note is None:
                 run.solver_note = f"tokens={total_tokens}"
             self._finish_if_needed()
+            print(
+                f"RESET_GUARD_SUMMARY game={run.game_id} pass={self.pass_index} "
+                f"model_resets={len(self.model_reset_positions)} "
+                f"refused={self.reset_refusals} actions={self.action_count}",
+                flush=True,
+            )
             self.state_path.unlink(missing_ok=True)
             self._write_analysis_html()
             self.write_viewer_payload()
@@ -689,7 +736,7 @@ class _HarnessGameSession:
         return {
             "executed": False,
             "error": message,
-            "valid_actions": to_model_actions(_engine_action_names(self.game)),
+            "valid_actions": to_model_actions(self.model_action_names()),
             **self.timing_payload(),
         }
 
@@ -739,6 +786,7 @@ class _HarnessGameSession:
         executed_payloads: list[dict[str, Any]] = []
         total_reward = 0.0
         stop_reason: str | None = None
+        reset_refusal_detail: str | None = None
         batch_size = len(requested_actions)
         requested_displays = [
             _format_action_display(action.id.name, dict(action.data))
@@ -749,6 +797,17 @@ class _HarnessGameSession:
             if self.should_stop():
                 stop_reason = "stopped"
                 break
+            if action.id == arcengine.GameAction.RESET:
+                reset_refusal_detail = self.reset_refusal()
+                if reset_refusal_detail is not None:
+                    self.reset_refusals += 1
+                    self.log_reset_guard("refused", reset_refusal_detail)
+                    if executed_payloads:
+                        stop_reason = "reset_rate_limited"
+                        break
+                    refused_payload = self._error_payload(reset_refusal_detail)
+                    refused_payload["stop_reason"] = "reset_rate_limited"
+                    return refused_payload
             if action.id.value not in self.game.current_state.available_actions:
                 message = f"{_format_action_display(action.id.name, dict(action.data))} is not valid right now."
                 if executed_payloads:
@@ -770,6 +829,9 @@ class _HarnessGameSession:
                 return self._error_payload(f"{type(exc).__name__}: {exc}")
             executed_payloads.append(payload)
             total_reward += float(payload.get("reward", 0.0) or 0.0)
+            if action.id == arcengine.GameAction.RESET:
+                self.model_reset_positions.append(self.action_count)
+                self.log_reset_guard("accepted")
 
             if payload.get("run_complete"):
                 stop_reason = "run_complete"
@@ -819,6 +881,8 @@ class _HarnessGameSession:
         final_payload["stopped_early"] = len(executed_payloads) < batch_size
         if stop_reason is not None:
             final_payload["stop_reason"] = stop_reason
+        if stop_reason == "reset_rate_limited" and reset_refusal_detail:
+            final_payload["stop_detail"] = reset_refusal_detail
         self.write_viewer_payload()
         return final_payload
 
@@ -925,7 +989,7 @@ class _HarnessGameSession:
             "score": completed,
             "reward": reward,
             "state": raw_state.name,
-            "valid_actions": to_model_actions(_engine_action_names(self.game)),
+            "valid_actions": to_model_actions(self.model_action_names()),
             "board_changed": board_changed,
             "done": raw_state == arcengine.GameState.WIN,
             "level_completed": level_completed,
