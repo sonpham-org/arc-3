@@ -21,6 +21,41 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — the LoRA run was training 64 of its 208 adapters, and why
+
+`tools/assert_lora_gradients.py` — a pre-flight that fails a training round before it starts if
+any LoRA `lora_B` parameter is not receiving a gradient — plus
+`docs/trace-findings/2026-09-17-lora-gradient-rootcause.md`, the root cause it was written for.
+
+A LoRA step measured on the `unsloth/Qwen3.8-27B-NVFP4` checkpoint on the DGX Spark a424 reached
+`loss.backward()` cleanly, reported a falling loss, and delivered a gradient to **64 of 208
+adapters**. The 144 dead ones were not slow — `lora_B` sat at its zero init with an exactly-zero
+gradient, and since `dL/dA ∝ B` their `lora_A` could never start moving either. Permanently inert.
+
+Cause: that checkpoint's `quantization_config` fake-quantizes **input activations** on precisely
+the seven projections the adapter targets (`self_attn.q|k|v|o_proj`,
+`linear_attn.in_proj_qkv|in_proj_z|out_proj`) plus `lm_head`. compressed-tensors implements
+activation quantization by replacing the module's `forward`, and the quantize call it inserts runs
+under `@torch.no_grad()` — so the input is detached and **no gradient can cross a targeted
+module**. peft conceals it: its added `lora_B(lora_A(x))` branch keeps `requires_grad` alive, and
+because `lora_B` is zero-initialised that branch carries exactly zero backwards. The 64 survivors
+are `o_proj` and `out_proj` in every layer — the only targets whose output lands on the residual
+stream, so gradient reaches them without traversing a quantized module. `dequantize=True` does not
+help; it decompresses the weights and leaves the patched forward in place.
+
+Established on CPU with a tiny randomly-initialised model of the same architecture: the failure
+does **not** reproduce under any combination of `eager`/`sdpa`, `use_cache` on/off, gradient
+checkpointing on/off, fp32/bf16 — and reproduces exactly, module for module, the moment the base
+layers' inputs are detached. Confirmed against the compressed-tensors and transformers source.
+
+Fix: train from the plain BF16 checkpoint, or call
+`disable_compressed_tensors_fake_quant(model)` after `from_pretrained` and before
+`get_peft_model`. **The fix has not been run against the 27B** — that needs a GPU, which was in
+use by another job — so the pre-flight is the gate: run it first on the next GPU session.
+`--self-test` proves the check on CPU in seconds, green on a healthy model and red on this defect.
+
+---
+
 ## Where this stands — 16-Sep-2026
 
 Read this first if you are picking the work up cold.
@@ -119,7 +154,7 @@ nor refute gets cut, not softened.
 
 ## 2026-09-16 — the chat template was silently eating every chain of thought (Claude Opus 5)
 
-`distill/extract_sft.py` emits `reasoning` on assistant messages. Qwen3.5's
+`distill/extract_sft.py` emits `reasoning` on assistant messages. The 27B's
 `chat_template.jinja` reads `message.reasoning_content`, and its jinja macro renders `''` for a
 missing field instead of raising. So `processor.apply_chat_template()` over our corpus **drops
 every chain of thought, silently** — and since 56 of the 113 baseline assistant turns carry no
@@ -145,6 +180,70 @@ processor come in ~1% above the estimates (max 53,956 vs 53,258 estimated); the 
 Found while standing up the LoRA training path on a424. Full measurement record, including a
 separate and more serious finding — that gradient reaches only 64 of 208 LoRA adapters on that
 stack — is in `2026-09-16-a424-lora-step-measurement.md` (Bubba's workspace, not this repo).
+
+---
+
+## 2026-09-16 — the SFT extractor is verified against captured frames, and two alignment bugs are out (Claude Opus 5)
+
+`ARC3-Inference/distill/extract_sft.py` was conceptually right and factually wrong in two
+places. Both are fixed, and the fix is now checkable rather than argued.
+
+**The board each turn was trained on was the wrong board.** `_analysis_events` attached an
+analysis event's own `board` to that event's user message. That board is the state the event's
+actions *produced*. The observation a step was decided from is the *previous* event's board —
+`initial.board` for the first step. Verified against the run's own request logs: the step-1
+request carries exactly one image and it is the `initial` board, never `analysis[0].board`. In
+two of four spot-checked games the first action left the board unchanged, which is how this
+survived. The chain is now built from the whole ordered event list before level grouping, so a
+level's first step correctly takes its observation from the previous level. `traces.py` is
+untouched. Baseline regression holds at 12 records / 113 assistant turns / 11 games; unique
+rendered images move 73 → 69, which is the expected fingerprint.
+
+**Records collided across passes.** `build_records` globs every `*_viewer_data.json`, and
+`game_id` carries no pass suffix, so `ar25 p0 L1` and `ar25 p1 L1` emitted the same `id` and the
+contributing-games counter deduped two real trajectories into one. `pass_index` is now part of
+the `id` and a record field. This only bites multi-pass runs — i.e. the massdata corpus.
+
+**New: `distill/verify_frames.py`.** Runs with `save_request_logs: true` store the exact
+multimodal payload the model received, inline base64 and all. This decodes those frames and
+compares them to what the extractor regenerates. Compare **pixels, not bytes** — the serving path
+and Pillow pick different PNG encoder settings for the same raster, so identical images differ in
+file size and byte comparison reports 0/17 on frames that are pixel-identical.
+
+The run configs carry no multimodal block, so the `--upscale 4 --style plain` defaults were
+unverified. A sweep settles it: that combination reproduces 55/58 frames, every other combination
+of `upscale ∈ {1,2,3,4,6,8} × style ∈ {plain, outline}` reproduces 0. Coverage is complete — all
+25 baseline games and both passes of all 14 contributing massdata games, i.e. every image part in
+the corpus. Baseline: 399/415 frames overall, **102/102 of the frames that reach the corpus**.
+Massdata: 480/511 and 251/253. Across the combined corpus that is **353/355 (99.4%)**. The two
+exceptions are isolated single frames (`sp80-589a99af_p0` index 12, `tu93-0768757b_p0` index 1)
+with matching frames either side; cause not established. Nearly all other divergence is in games
+and levels the rejection sampler discards, where the harness emitted fewer images than analysis
+events. The module's `FIDELITY CAVEAT` (`save_request_logs: false`, "exact image bytes are not
+stored") was stale and is rewritten.
+
+**New: `distill/corpus_stats.py`.** Token and shape measurement over an emitted corpus. Text is
+tokenized; base64 image payloads are excluded and image tokens reported separately as a labelled
+estimate, because running a text tokenizer over a data URL produces a number with no
+relationship to what the vision encoder charges.
+
+**What the corpus actually is.** Baseline plus both massdata passes on disk: 41 records, **381
+trainable assistant turns**, 355 image parts, 1,270,599 measured text tokens. Nothing exceeds the
+~64K trainer budget — largest record 53,258 tokens, median 34,829, **0 of 41 over**, and that
+holds regardless of the vision-token estimate (that record carries 27 frames; at 4× the estimate
+it reaches ~58.4K). Yield by
+pass: baseline 23.9% (233/973 env actions at cleared levels, 11/25 games), massdata p0 34.8%
+(411/1,182, 12/25), massdata p1 in progress 30.5% (267/875, 12/25).
+
+Two notes for whoever reads a target number off this. The widely-quoted "233 usable turns" is an
+**env-action** count, `sum(actions_per_level[:levels_completed])`; it reproduces exactly, but the
+trainable figure from those same 11 games is 113 assistant turns, roughly 2:1. And four full
+massdata passes plus the baseline project to ~600–700 turns against a 2–5K first-LoRA target. No
+extractor change closes that: 11–12 of 25 games clearing exactly one level each is the ceiling.
+The lever is game count and difficulty spread, or accepting lower-credit data — not the pipeline.
+
+Findings write-up with the full tables: `docs/2026-09-16-arc3-sft-extraction.md` in the Bubba
+workspace.
 
 ---
 

@@ -51,13 +51,85 @@ def studs(frame, count: int, filled: int, on: int, off: int, side: str = "east",
             frame[top:top + 2, 0:length] = colour
     return frame
 
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
 
-VOID = 13
-TRACK = 2
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
+
+VOID = 5
+TRACK = 3
 JUNCTION = 2
 WANT_H = 9
 WANT_V = 11
-CORD = 7
+CORD = 10
 UNDER = VOID
 PLAYER = 14
 END = 14
@@ -72,30 +144,120 @@ LO, HI = 1, N - 2
 UP, DOWN, LEFT, RIGHT = (0, -1), (0, 1), (-1, 0), (1, 0)
 DIRS = (UP, DOWN, LEFT, RIGHT)
 
-LEVELS_SPEC = [
-    {"cols": [8], "rows": [8], "cuts": [], "start": (1, 1), "end": (14, 14),
-     "marks": {(8, 8): "v"}, "undos": 4},
-    {"cols": [8], "rows": [8], "cuts": [], "start": (1, 1), "end": (14, 14),
-     "marks": {(8, 8): "h"}, "undos": 4},
-    {"cols": [8], "rows": [4, 12], "cuts": [], "start": (1, 12), "end": (14, 4),
-     "marks": {(8, 4): "h", (8, 12): "v"}, "undos": 4},
-    {"cols": [4, 12], "rows": [8], "cuts": [], "start": (1, 1), "end": (1, 8),
-     "marks": {(4, 8): "h", (12, 8): "h"}, "undos": 4},
-    {"cols": [4, 12], "rows": [4, 12], "cuts": [], "start": (1, 1), "end": (1, 4),
-     "marks": {(4, 4): "h", (4, 12): "h", (12, 4): "h", (12, 12): "v"}, "undos": 3},
-    {"cols": [4, 12], "rows": [4, 12], "cuts": [], "start": (14, 14), "end": (12, 14),
-     "marks": {(4, 4): "h", (4, 12): "v", (12, 4): "v", (12, 12): "v"}, "undos": 3},
-    {"cols": [4, 8, 12], "rows": [4, 12], "cuts": [], "start": (14, 12), "end": (1, 4),
-     "marks": {(4, 4): "h", (8, 4): "h", (12, 4): "h",
-               (4, 12): "v", (8, 12): "v", (12, 12): "v"}, "undos": 3},
-    {"cols": [4, 8, 12], "rows": [4, 8, 12], "cuts": [], "start": (14, 12), "end": (14, 8),
-     "marks": {(4, 4): "h", (8, 4): "h", (12, 4): "h",
-               (4, 8): "h", (8, 8): "h", (12, 8): "h",
-               (4, 12): "v", (8, 12): "v", (12, 12): "v"}, "undos": 2},
-]
+LEVELS_SPEC = [{'cols': [],
+  'rows': [],
+  'cuts': [],
+  'start': (4, 5),
+  'end': (7, 8),
+  'marks': {},
+  'undos': 4,
+  'track': [(4, 5), (5, 5), (6, 5), (7, 5), (7, 6), (7, 7), (7, 8)]},
+ {'cols': [5],
+  'rows': [5],
+  'cuts': [],
+  'start': (2, 5),
+  'end': (5, 8),
+  'marks': {(5, 5): 'v'},
+  'undos': 4,
+  'track': [(2, 2),
+            (2, 3),
+            (2, 4),
+            (2, 5),
+            (2, 6),
+            (2, 7),
+            (2, 8),
+            (3, 2),
+            (3, 5),
+            (3, 8),
+            (4, 2),
+            (4, 5),
+            (4, 8),
+            (5, 2),
+            (5, 3),
+            (5, 4),
+            (5, 5),
+            (5, 6),
+            (5, 7),
+            (5, 8),
+            (6, 2),
+            (6, 5),
+            (6, 8),
+            (7, 2),
+            (7, 5),
+            (7, 8),
+            (8, 2),
+            (8, 3),
+            (8, 4),
+            (8, 5),
+            (8, 6),
+            (8, 7),
+            (8, 8)]},
+ {'cols': [8],
+  'rows': [8],
+  'cuts': [],
+  'start': (1, 1),
+  'end': (14, 14),
+  'marks': {(8, 8): 'v'},
+  'undos': 4},
+ {'cols': [8],
+  'rows': [8],
+  'cuts': [],
+  'start': (1, 1),
+  'end': (14, 14),
+  'marks': {(8, 8): 'h'},
+  'undos': 4},
+ {'cols': [8],
+  'rows': [4, 12],
+  'cuts': [],
+  'start': (1, 12),
+  'end': (14, 4),
+  'marks': {(8, 4): 'h', (8, 12): 'v'},
+  'undos': 4},
+ {'cols': [4, 12],
+  'rows': [8],
+  'cuts': [],
+  'start': (1, 1),
+  'end': (1, 8),
+  'marks': {(4, 8): 'h', (12, 8): 'h'},
+  'undos': 4},
+ {'cols': [4, 12],
+  'rows': [4, 12],
+  'cuts': [],
+  'start': (1, 1),
+  'end': (1, 4),
+  'marks': {(4, 4): 'h', (4, 12): 'h', (12, 4): 'h', (12, 12): 'v'},
+  'undos': 3},
+ {'cols': [4, 12],
+  'rows': [4, 12],
+  'cuts': [],
+  'start': (14, 14),
+  'end': (12, 14),
+  'marks': {(4, 4): 'h', (4, 12): 'v', (12, 4): 'v', (12, 12): 'v'},
+  'undos': 3},
+ {'cols': [4, 8, 12],
+  'rows': [4, 12],
+  'cuts': [],
+  'start': (14, 12),
+  'end': (1, 4),
+  'marks': {(4, 4): 'h', (8, 4): 'h', (12, 4): 'h', (4, 12): 'v', (8, 12): 'v', (12, 12): 'v'},
+  'undos': 3},
+ {'cols': [4, 8, 12],
+  'rows': [4, 8, 12],
+  'cuts': [],
+  'start': (14, 12),
+  'end': (14, 8),
+  'marks': {(4, 4): 'h',
+            (8, 4): 'h',
+            (12, 4): 'h',
+            (4, 8): 'h',
+            (8, 8): 'h',
+            (12, 8): 'h',
+            (4, 12): 'v',
+            (8, 12): 'v',
+            (12, 12): 'v'},
+  'undos': 2}]
 
-DECOR_CELLS = ((0, 0), (N - 1, 0), (0, N - 1), (N - 1, N - 1),
-               (3, 3), (N - 5, 3), (3, N - 5), (N - 5, N - 5))
+DECOR_CELLS = ()
 
 
 def build_board(spec: dict) -> tuple[dict, dict]:
@@ -109,6 +271,8 @@ def build_board(spec: dict) -> tuple[dict, dict]:
     for y in spec["rows"]:
         for x in range(LO, HI + 1):
             track[(x, y)] = True
+    if "track" in spec:
+        track = {tuple(c): True for c in spec["track"]}
     for cell in spec["cuts"]:
         track.pop(tuple(cell), None)
 
@@ -189,16 +353,21 @@ def state_key(state: dict) -> tuple:
             tuple(sorted(state["cross"].items())))
 
 
-def _paving() -> list[list[int]]:
-    return rounded(TRACK, CELL)
+def _paving(cell, track) -> list[list[int]]:
+    px = [[TRACK]*CELL for _ in range(CELL)]
+    x,y=cell
+    for j,i,dx,dy in ((0,0,-1,-1),(0,3,1,-1),(3,0,-1,1),(3,3,1,1)):
+        if (x+dx,y) not in track and (x,y+dy) not in track: px[j][i]=-1
+    return px
 
 
 def _crossing(mark: str | None) -> list[list[int]]:
-    colour = JUNCTION if mark is None else (WANT_H if mark == "h" else WANT_V)
-    px = [[-1] * CELL for _ in range(CELL)]
-    for i in range(CELL):
-        px[i][i] = colour
-        px[i][CELL - 1 - i] = colour
+    colour = JUNCTION if mark is None else WANT_H if mark == 'h' else WANT_V
+    px=[[-1]*CELL for _ in range(CELL)]
+    if mark == 'h':
+        px[0]=[colour]*CELL;px[3]=[colour]*CELL
+    else:
+        for row in px: row[0]=row[3]=colour
     return px
 
 
@@ -217,7 +386,7 @@ def build_levels() -> list[Level]:
             ).set_position(cell[0] * CELL, cell[1] * CELL))
 
         for cell in sorted(track):
-            place(_paving(), f"t_{cell[0]}_{cell[1]}", cell, -1)
+            place(_paving(cell, track), f"t_{cell[0]}_{cell[1]}", cell, -1)
         for cell in sorted(junctions):
             place(_crossing(junctions[cell]), f"x_{cell[0]}_{cell[1]}", cell, 0)
         place(ring(END, CELL), "anchor", end, 0)
@@ -248,7 +417,7 @@ def _stamp(frame: np.ndarray, cell: tuple[int, int], pixels) -> None:
                 frame[py + y, px + x] = value
 
 
-class G036A(RenderableUserDisplay):
+class CordDisplay(RenderableUserDisplay):
 
     def __init__(self, game: "G036") -> None:
         super().__init__()
@@ -271,14 +440,6 @@ class G036A(RenderableUserDisplay):
                 for direction in arms:
                     _paint_arm(frame, cell, direction, CORD)
 
-        px, py = state["pos"][0] * CELL, state["pos"][1] * CELL
-        face = frame[py:py + CELL, px:px + CELL]
-        cut_a, cut_b = int(face[0, 0]), int(face[CELL - 1, CELL - 1])
-        face[:, :] = PLAYER
-        face[1:CELL - 1, 1:CELL - 1] = CORD
-        face[0, 0] = cut_a
-        face[CELL - 1, CELL - 1] = cut_b
-
         if game.cinch and game.cinch % 2 == 0:
             bad = failed_marks(state, junctions)
             if bad:
@@ -289,11 +450,27 @@ class G036A(RenderableUserDisplay):
             else:
                 frame[frame == CORD] = END
 
+        for cell,mark in junctions.items():
+            if mark is not None:
+                _stamp(frame,cell,_crossing(mark))
+        if game.level_index == 1:
+            frame[12:14,45:55] = CORD
+            frame[20:30,49:51] = WANT_V
+            frame[18,49:51] = 0
+            frame[16,49] = 0
         for cell in DECOR_CELLS:
             if cell in game.track:
                 continue
             _stamp(frame, cell, fixture((WANT_H, WANT_V, TRACK),
                                         game.tick // 2, (cell[0] + cell[1]) % 3, CELL))
+
+        px, py = translation_position(game, (state["pos"][0] * CELL, state["pos"][1] * CELL))
+        face = frame[py:py + CELL, px:px + CELL]
+        cut_a, cut_b = int(face[0, 0]), int(face[CELL - 1, CELL - 1])
+        face[:, :] = PLAYER
+        face[1:CELL - 1, 1:CELL - 1] = CORD
+        face[0, 0] = cut_a
+        face[CELL - 1, CELL - 1] = cut_b
 
         studs(frame, game.level_undos, game.undos, PIP_ON, PIP_OFF,
               side="east", start=8, gap=6)
@@ -316,12 +493,13 @@ class G036(ARCBaseGame):
         camera = Camera(
             width=N * CELL, height=N * CELL,
             background=VOID, letter_box=VOID,
-            interfaces=[G036A(self)],
+            interfaces=[CordDisplay(self)],
         )
         super().__init__(game_id="g036", levels=build_levels(), camera=camera,
                          available_actions=[1, 2, 3, 4, 5, 7])
 
     def on_set_level(self, level: Level) -> None:
+        clear_translation(self)
         spec = LEVELS_SPEC[self.level_index]
         self.track, self.junctions = build_board(spec)
         self.state = initial_state(spec)
@@ -331,10 +509,12 @@ class G036(ARCBaseGame):
         self.cinch = 0
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.on_set_level(self.current_level)
 
@@ -366,11 +546,14 @@ class G036(ARCBaseGame):
             self.level_reset()
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, position=lambda: (self.state['pos'][0]*CELL, self.state['pos'][1]*CELL), limit=CELL)
         if self.cinch:
             self.cinch -= 1
             if self.cinch == 0:
                 self._settle()
-                self.complete_action()
+                finish_translation(self)
             return
 
         self.tick += 1
@@ -388,4 +571,4 @@ class G036(ARCBaseGame):
                 return
         elif action == GameAction.ACTION7:
             self.retract()
-        self.complete_action()
+        finish_translation(self)

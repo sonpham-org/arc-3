@@ -69,6 +69,78 @@ def fixture(colours: tuple, phase: int, seed: int = 0, cell: int = 4) -> list[li
     px[1][1] = px[cell - 2][cell - 2] = colours[(phase + seed) % len(colours)]
     return px
 
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
+
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
 
 N = 16
 CELL = 4
@@ -91,55 +163,268 @@ DROWNED = object()
 
 B = [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1]
 
-LEVELS_SPEC = [
-    {"bands": [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
-     "hills": [(8, 7, 5)], "walls": [],
-     "damp": [(4, 1), (11, 14)],
-     "flags": [(3, 3), (12, 12)], "summit": (8, 7), "start": (1, 7)},
-
-    {"bands": [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
-     "hills": [(8, 7, 5)], "walls": [],
-     "damp": [(5, 2), (10, 2), (5, 13), (10, 13)],
-     "flags": [(2, 1), (13, 14), (7, 4)], "summit": (8, 7), "start": (1, 7)},
-
-    {"bands": [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
-     "hills": [(8, 7, 5)], "walls": [(2, 3), (3, 3), (4, 3), (5, 3), (7, 3), (8, 3),
-                                     (9, 3), (10, 3), (11, 3), (12, 3),
-                                     (3, 11), (4, 11), (5, 11), (6, 11), (7, 11),
-                                     (9, 11), (10, 11), (11, 11), (12, 11), (13, 11)],
-     "damp": [(6, 3), (8, 11), (5, 1), (11, 14)],
-     "flags": [(2, 1), (13, 14)], "summit": (8, 7), "start": (1, 7)},
-
-    {"bands": B, "hills": [(11, 7, 5)],
-     "walls": [(x, 4) for x in range(1, 15) if x not in (7, 14)]
-              + [(x, 10) for x in range(1, 15) if x not in (8, 1)],
-     "damp": [(7, 4), (8, 10), (4, 1), (11, 14)],
-     "flags": [(2, 1), (13, 14), (4, 7)], "summit": (11, 7), "start": (7, 7)},
-
-    {"bands": B, "hills": [(14, 7, 5)],
-     "walls": [(x, 4) for x in range(1, 15) if x not in (6, 13)]
-              + [(x, 10) for x in range(1, 15) if x not in (9, 13)],
-     "damp": [(6, 4), (9, 10), (2, 2), (13, 13), (2, 13)],
-     "flags": [(2, 1), (2, 14), (11, 7)], "summit": (14, 7), "start": (7, 7)},
-
-    {"bands": [0, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 0], "hills": [(8, 7, 5)],
-     "walls": [(x, 4) for x in range(1, 15) if x not in (6, 14)]
-              + [(x, 10) for x in range(1, 15) if x not in (9, 2)],
-     "damp": [(6, 4), (9, 10), (4, 2), (12, 12), (1, 7)],
-     "flags": [(3, 1), (12, 11), (13, 7)], "summit": (8, 7), "start": (7, 7)},
-
-    {"bands": [1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1], "hills": [(8, 7, 4)],
-     "walls": [(x, 4) for x in range(1, 15) if x not in (4, 14)]
-              + [(x, 10) for x in range(1, 15) if x not in (10, 2)],
-     "damp": [(4, 4), (10, 10), (2, 2), (13, 13), (12, 1)],
-     "flags": [(1, 1), (14, 14), (7, 3)], "summit": (8, 7), "start": (8, 6)},
-
-    {"bands": B, "hills": [(8, 7, 5)],
-     "walls": [(x, 4) for x in range(1, 15) if x not in (6,)]
-              + [(x, 10) for x in range(1, 15) if x not in (9, 1)],
-     "damp": [(6, 4), (9, 10), (3, 1), (12, 14), (1, 7), (14, 7)],
-     "flags": [(2, 1), (12, 11), (13, 7)], "summit": (8, 7), "start": (8, 12)},
-]
+LEVELS_SPEC = [{'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(8, 7, 5)],
+  'walls': [],
+  'damp': [(4, 1), (11, 14)],
+  'flags': [(3, 3), (12, 12)],
+  'summit': (8, 7),
+  'start': (1, 7)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(8, 7, 5)],
+  'walls': [],
+  'damp': [(5, 2), (10, 2), (5, 13), (10, 13)],
+  'flags': [(2, 1), (13, 14), (7, 4)],
+  'summit': (8, 7),
+  'start': (1, 7)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(8, 7, 5)],
+  'walls': [(2, 3),
+            (3, 3),
+            (4, 3),
+            (5, 3),
+            (7, 3),
+            (8, 3),
+            (9, 3),
+            (10, 3),
+            (11, 3),
+            (12, 3),
+            (3, 11),
+            (4, 11),
+            (5, 11),
+            (6, 11),
+            (7, 11),
+            (9, 11),
+            (10, 11),
+            (11, 11),
+            (12, 11),
+            (13, 11)],
+  'damp': [(6, 3), (8, 11), (5, 1), (11, 14)],
+  'flags': [(2, 1), (13, 14)],
+  'summit': (8, 7),
+  'start': (1, 7)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(11, 7, 5)],
+  'walls': [(1, 4),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (5, 4),
+            (6, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (13, 4),
+            (2, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (9, 10),
+            (10, 10),
+            (11, 10),
+            (12, 10),
+            (13, 10),
+            (14, 10)],
+  'damp': [(7, 4), (8, 10), (4, 1), (11, 14)],
+  'flags': [(2, 1), (13, 14), (4, 7)],
+  'summit': (11, 7),
+  'start': (7, 7)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(14, 7, 5)],
+  'walls': [(1, 4),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (5, 4),
+            (7, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (14, 4),
+            (1, 10),
+            (2, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (8, 10),
+            (10, 10),
+            (11, 10),
+            (12, 10),
+            (14, 10)],
+  'damp': [(6, 4), (9, 10), (2, 2), (13, 13), (2, 13)],
+  'flags': [(2, 1), (2, 14), (11, 7)],
+  'summit': (14, 7),
+  'start': (7, 7)},
+ {'bands': [0, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 0],
+  'hills': [(8, 7, 5)],
+  'walls': [(1, 4),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (5, 4),
+            (7, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (13, 4),
+            (1, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (8, 10),
+            (10, 10),
+            (11, 10),
+            (12, 10),
+            (13, 10),
+            (14, 10)],
+  'damp': [(6, 4), (9, 10), (4, 2), (12, 12), (1, 7)],
+  'flags': [(3, 1), (12, 11), (13, 7)],
+  'summit': (8, 7),
+  'start': (7, 7)},
+ {'bands': [1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1],
+  'hills': [(8, 7, 4)],
+  'walls': [(1, 4),
+            (2, 4),
+            (3, 4),
+            (5, 4),
+            (6, 4),
+            (7, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (13, 4),
+            (1, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (8, 10),
+            (9, 10),
+            (11, 10),
+            (12, 10),
+            (13, 10),
+            (14, 10)],
+  'damp': [(4, 4), (10, 10), (2, 2), (13, 13), (12, 1)],
+  'flags': [(1, 1), (14, 14), (7, 3)],
+  'summit': (8, 7),
+  'start': (8, 6)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(8, 7, 5)],
+  'walls': [(1, 4),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (5, 4),
+            (7, 4),
+            (8, 4),
+            (9, 4),
+            (10, 4),
+            (11, 4),
+            (12, 4),
+            (13, 4),
+            (14, 4),
+            (2, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (8, 10),
+            (10, 10),
+            (11, 10),
+            (12, 10),
+            (13, 10),
+            (14, 10)],
+  'damp': [(6, 4), (9, 10), (3, 1), (12, 14), (1, 7), (14, 7)],
+  'flags': [(2, 1), (12, 11), (13, 7)],
+  'summit': (8, 7),
+  'start': (8, 12)},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(13, 6, 5)],
+  'walls': [(7, 1),
+            (7, 2),
+            (7, 3),
+            (7, 4),
+            (7, 5),
+            (7, 7),
+            (7, 8),
+            (7, 9),
+            (7, 10),
+            (7, 11),
+            (7, 12),
+            (7, 13),
+            (7, 14)],
+  'damp': [],
+  'flags': [],
+  'summit': (13, 6),
+  'start': (2, 5),
+  'embroidery': {'patches': [{'rack': (2, 9),
+                              'target': (4, 3),
+                              'cells': [(0, 0, 1), (0, 1, 3), (1, 1, 2), (0, 2, 4)],
+                              'turn': 0}],
+                 'gates': [(7, 6)]}},
+ {'bands': [1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 2, 2, 1, 1],
+  'hills': [(13, 13, 5)],
+  'walls': [(6, 1),
+            (6, 2),
+            (6, 3),
+            (6, 4),
+            (6, 5),
+            (6, 7),
+            (6, 8),
+            (6, 9),
+            (6, 10),
+            (6, 11),
+            (6, 12),
+            (6, 13),
+            (6, 14),
+            (11, 1),
+            (11, 2),
+            (11, 3),
+            (11, 4),
+            (11, 5),
+            (11, 7),
+            (11, 8),
+            (11, 9),
+            (11, 10),
+            (11, 11),
+            (11, 12),
+            (11, 13),
+            (11, 14),
+            (12, 8),
+            (14, 8)],
+  'damp': [],
+  'flags': [],
+  'summit': (13, 13),
+  'start': (2, 6),
+  'embroidery': {'patches': [{'rack': (2, 10),
+                              'target': (2, 3),
+                              'cells': [(0, 0, 1), (0, 1, 3), (1, 1, 2), (0, 2, 4)],
+                              'turn': 2},
+                             {'rack': (7, 10),
+                              'target': (7, 3),
+                              'cells': [(0, 0, 4), (0, 1, 1), (1, 1, 3), (0, 2, 2)],
+                              'turn': 1},
+                             {'rack': (12, 1),
+                              'target': (12, 4),
+                              'cells': [(0, 0, 3), (0, 1, 4), (1, 1, 2), (0, 2, 1)],
+                              'turn': 3}],
+                 'gates': [(6, 6), (11, 6), (13, 8)]}}]
 
 
 def build_model(spec: dict) -> dict:
@@ -167,7 +452,7 @@ def build_model(spec: dict) -> dict:
         "flag_index": {p: i for i, p in enumerate(flags)},
         "all_flags": (1 << len(flags)) - 1,
         "summit": spec["summit"],
-        "start": spec["start"],
+        "start": spec["start"], "embroidery": spec.get("embroidery"),
     }
 
 
@@ -176,7 +461,7 @@ MODELS = [build_model(s) for s in LEVELS_SPEC]
 
 def start_state(model: dict) -> tuple:
     sx, sy = model["start"]
-    return (sx, sy, 0, 0, 0)
+    return (sx, sy, -1, 0, 0) if model.get("embroidery") else (sx, sy, 0, 0, 0)
 
 
 def tally_of(state: tuple) -> int:
@@ -189,6 +474,8 @@ def is_flooded(model: dict, x: int, y: int, water: int) -> bool:
 
 
 def apply_move(model: dict, state: tuple, dx: int, dy: int):
+    if model.get("embroidery"):
+        return stitch_move(model,state,dx,dy)
     x, y, wet, taken, water = state
     nx, ny = x + dx, y + dy
     if not (0 <= nx < N and 0 <= ny < N):
@@ -208,8 +495,48 @@ def apply_move(model: dict, state: tuple, dx: int, dy: int):
 
 
 def is_win(model: dict, state: tuple) -> bool:
+    if model.get("embroidery"):
+        return state[:2] == model["summit"] and state[4] == (1 << len(model["embroidery"]["patches"]))-1
     return (state[0], state[1]) == model["summit"] and state[3] == model["all_flags"]
 
+
+def rotated_patch(cells,turn):
+    points=list(cells)
+    for _ in range(turn%4):points=[(-y,x,ink) for x,y,ink in points]
+    left=min(x for x,y,k in points);top=min(y for x,y,k in points)
+    return tuple(sorted((x-left,y-top,k) for x,y,k in points))
+
+def stitch_move(model,state,dx,dy):
+    x,y,held,turn,opened=state;nx,ny=x+dx,y+dy
+    if not (0<=nx<N and 0<=ny<N) or model['heights'][ny][nx]<0:return state
+    for i,cell in enumerate(model['embroidery']['gates']):
+        if (nx,ny)==tuple(cell) and not opened & (1<<i):return state
+    return nx,ny,held,turn,opened
+
+def stitch_use(model,state,cell):
+    x,y,held,turn,opened=state;emb=model['embroidery']
+    for i,p in enumerate(emb['patches']):
+        rack=tuple(p['rack']);target=tuple(p['target'])
+        if opened & (1<<i):continue
+        if tuple(cell)==rack and abs(x-rack[0])+abs(y-rack[1])<=1:
+            if held<0:return x,y,i,0,opened
+            if held==i:return x,y,-1,0,opened
+        if tuple(cell)==target and held>=0 and abs(x-target[0])+abs(y-target[1])<=1:
+            carried=emb['patches'][held]
+            if rotated_patch(carried['cells'],turn)==rotated_patch(p['cells'],p['turn']):
+                return x,y,-1,0,opened | (1<<i)
+    return state
+
+def stitch_rotate(state):
+    x,y,held,turn,opened=state
+    return (x,y,held,(turn+1)%4,opened) if held>=0 else state
+
+def stitch_choices(model,state):
+    for act,(dx,dy) in enumerate(((0,-1),(0,1),(-1,0),(1,0)),1):
+        yield act,None,stitch_move(model,state,dx,dy)
+    yield 5,None,stitch_rotate(state)
+    for p in model['embroidery']['patches']:
+        for cell in (p['rack'],p['target']):yield 6,cell,stitch_use(model,state,cell)
 
 BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
 RELIEF_STEPS = (0, 3, 6, 9, 12, 15)
@@ -279,16 +606,18 @@ class G018(ARCBaseGame):
         self.shown_at = None
         self._rise = 0
         self._drown = 0
+        self._stitch_flash = 0
         super().__init__(game_id="g018", levels=build_levels(),
                          camera=Camera(width=N * CELL, height=N * CELL,
                                        background=ROCK, letter_box=ROCK),
-                         available_actions=[1, 2, 3, 4])
+                         available_actions=[1, 2, 3, 4, 5, 6])
 
     @property
     def model(self) -> dict:
         return MODELS[self.level_index]
 
     def on_set_level(self, level: Level) -> None:
+        clear_translation(self)
         self.state = start_state(MODELS[self.level_index])
         self.cashed = 0
         self.tick = 0
@@ -296,18 +625,24 @@ class G018(ARCBaseGame):
         self.shown_at = None
         self._rise = 0
         self._drown = 0
+        self._stitch_flash = 0
         self._repaint(level)
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.on_set_level(self.current_level)
 
     def _repaint(self, level: Level) -> None:
         model = MODELS[self.level_index]
+        if model.get("embroidery"):
+            self._paint_embroidery(level)
+            return
         found = level.get_sprites_by_name("board")
         if not found:
             return
@@ -353,10 +688,16 @@ class G018(ARCBaseGame):
     def _settle(self) -> None:
         if is_win(self.model, self.state):
             self.next_level()
-        self.complete_action()
+        finish_translation(self)
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, ('player',), limit=CELL)
         self.tick += 1
+        if self.model.get("embroidery"):
+            self._stitch_action()
+            return
 
         if self._drown:
             self._drown -= 1
@@ -365,7 +706,7 @@ class G018(ARCBaseGame):
             self._repaint(self.current_level)
             if self._drown == 0:
                 self.level_reset()
-                self.complete_action()
+                finish_translation(self)
             return
 
         if self._rise:
@@ -390,7 +731,7 @@ class G018(ARCBaseGame):
         elif self.action.id == GameAction.ACTION4:
             dx = 1
         else:
-            self.complete_action()
+            finish_translation(self)
             return
 
         result = apply_move(self.model, self.state, dx, dy)
@@ -410,4 +751,57 @@ class G018(ARCBaseGame):
             return
 
         self._repaint(self.current_level)
+        self._settle()
+
+    def _paint_embroidery(self,level):
+        model=self.model;emb=model['embroidery'];x,y,held,turn,opened=self.state
+        pix=np.full((64,64),ROCK,dtype=np.int8)
+        for cy in range(1,15):
+            for cx in range(1,15):
+                h=model['heights'][cy][cx]
+                pix[cy*4:cy*4+4,cx*4:cx*4+4]=np.array(GROUND[h] if h>=0 else [[ROCK]*4]*4)
+        def cloth(anchor,cells,rim):
+            ax,ay=anchor
+            for dx,dy,ink in cells:
+                px,py=(ax+dx)*4,(ay+dy)*4
+                if px<0 or py<0 or px+4>64 or py+4>64:continue
+                block=np.array(GROUND[ink],dtype=np.int8)
+                block[0,:]=rim;block[:,0]=rim
+                pix[py:py+4,px:px+4]=block
+        for i,p in enumerate(emb['patches']):
+            installed=bool(opened & (1<<i))
+            cloth(p['target'],rotated_patch(p['cells'],p['turn']),14 if installed else 10)
+            tx,ty=p['target'];pix[ty*4,tx*4]=0
+            if not installed and held!=i:cloth(p['rack'],rotated_patch(p['cells'],0),12)
+            gx,gy=emb['gates'][i]
+            pix[gy*4:gy*4+4,gx*4:gx*4+4]=14 if installed else 10
+            if not installed:pix[gy*4+1:gy*4+3,gx*4+1:gx*4+3]=5
+        ex,ey=model['summit'];pix[ey*4:ey*4+4,ex*4:ex*4+4]=np.array(ring(GOAL,CELL))
+        if held>=0:
+            pix[0:16,48:64]=5
+            cloth((12,0),rotated_patch(emb['patches'][held]['cells'],turn),0)
+        if self._stitch_flash:
+            for i,(gx,gy) in enumerate(emb['gates']):
+                if opened & (1<<i):pix[gy*4:gy*4+4,gx*4:gx*4+4]=0 if self._stitch_flash%2 else 14
+        level.get_sprites_by_name('board')[0].pixels=pix
+        level.get_sprites_by_name('player')[0].set_position(x*4,y*4)
+
+    def _stitch_action(self):
+        if self._stitch_flash:
+            self._stitch_flash-=1;self._paint_embroidery(self.current_level)
+            if not self._stitch_flash:self._settle()
+            return
+        old=self.state;act=self.action.id
+        d={GameAction.ACTION1:(0,-1),GameAction.ACTION2:(0,1),GameAction.ACTION3:(-1,0),GameAction.ACTION4:(1,0)}.get(act)
+        if d is not None:self.state=stitch_move(self.model,self.state,*d)
+        elif act==GameAction.ACTION5:self.state=stitch_rotate(self.state)
+        elif act==GameAction.ACTION6:
+            cell=(self.action.data.get('x',-4)//4,self.action.data.get('y',-4)//4)
+            for p in self.model['embroidery']['patches']:
+                for key,angle in (('rack',0),('target',p['turn'])):
+                    ax,ay=p[key]
+                    if cell==(ax,ay) or any(cell==(ax+dx,ay+dy) for dx,dy,k in rotated_patch(p['cells'],angle)):
+                        self.state=stitch_use(self.model,self.state,p[key])
+        self._paint_embroidery(self.current_level)
+        if self.state[4]!=old[4]:self._stitch_flash=6;return
         self._settle()
