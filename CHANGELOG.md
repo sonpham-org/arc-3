@@ -21,6 +21,32 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — the ARC-AGI-3 paper, read in full, and two stranded scripts landed
+
+`docs/arc-agi-3-paper-reading.md` — all 23 pages of arXiv:2603.24621v2, checked against the
+repo. Until now the paper was cited only second-hand, through the 31-Aug audit's read of §3.6
+and §5. Three disagreements it surfaces, none fixed here:
+
+- **Score cap.** The paper's text, `traces.py`, the vendored Tufa framework and `arc_agi`
+  0.9.8+ cap a level at 115%. The agent prompt (`prompts.py:17`, and the frozen baseline-v12
+  copy) tells the model 100%. Changing that is an experiment arm, not a fix.
+- **Random-play gate.** ARC runs 50K and 1M random steps and wants each level won by chance
+  less than 1 time in 10,000. `probe_one.py` runs 1,200 actions.
+- **`baseline_actions`** is the scoring yardstick. The 5× budget is ARC's cost cap on its
+  own leaderboard. `how-this-feeds-kaggle.md` treats the two as one number.
+
+The PDF is not committed: arXiv's non-exclusive license doesn't cover a public repo. The doc
+links both public copies.
+
+Also landed, both unchanged except one header note:
+
+- `scripts/ascii_symbol_token_bench.py`, which `docs/trace-findings/2026-09-11-bp35-astra-grid2-b476.md`
+  cites. It lived only on the closed PR #7 branch, so that citation pointed at nothing on main.
+- `scripts/compute_rhae.py` (14-Sep), which was never committed and sat untracked in a `/tmp`
+  worktree. Its header now says its `rhae_level` is a cap-1.0 variant, not the paper's RHAE.
+
+---
+
 ## 17-Sep-2026 — the LoRA run was training 64 of its 208 adapters, and why
 
 `tools/assert_lora_gradients.py` — a pre-flight that fails a training round before it starts if
