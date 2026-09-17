@@ -21,6 +21,27 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — as66 is in the repo as a test-only game
+
+**What.** `datasets/test-only-games/as66/v1/` (`as66.py`, `metadata.json`): a playable build of
+as66, the 26th game that dropped out of the live 25. It was rebuilt in `82deutschmark/ARCEngine`
+from the Boss's 27-Dec-2025 nine-level winning recording; every frame of that recording replays
+exactly. This folder holds a copy; the canonical source stays in ARCEngine.
+
+**The rule.** Boss, 17-Sep: hold it back for testing in our harness, never train on it. Written
+where people will trip over it: the folder's `README.md` (rule, how to run it, baselines),
+`AGENTS.md` section 0 and the repo map, `harnesses/README.md` (report it on its own line, never
+in the ex-`ft09` average), the `--exclude-games` help text on `distill/extract_sft.py` (full
+fence list with `as66`), and an update at the top of
+`docs/trace-findings/2026-09-15-as66-the-withdrawn-26th-game.md` closing off the corpus use its
+blocker 4(a) had been waiting on. No code behaviour changed; the fence is still a list the operator
+passes.
+
+**Checked.** With `python3.13`, `arc_agi.Arcade(OFFLINE, environments_dir="datasets/test-only-games")`
+lists `as66-v1`, and the fewest-move route for each level plays all nine levels to `WIN`.
+
+---
+
 ## 17-Sep-2026 — round-1 LoRA trainer, and a test-set fence the extractor could not enforce
 
 `distill/train_lora.py` (new), `distill/corpus_adapter.py` (new), and `--exclude-games` on
