@@ -152,6 +152,37 @@ nor refute gets cut, not softened.
 
 ---
 
+## 2026-09-16 — the chat template was silently eating every chain of thought (Claude Opus 5)
+
+`distill/extract_sft.py` emits `reasoning` on assistant messages. The 27B's
+`chat_template.jinja` reads `message.reasoning_content`, and its jinja macro renders `''` for a
+missing field instead of raising. So `processor.apply_chat_template()` over our corpus **drops
+every chain of thought, silently** — and since 56 of the 113 baseline assistant turns carry no
+`content` at all (reasoning plus a tool call, no prose), those 56 turns render as an *empty
+assistant message*. Trained on as-is, the model is taught to say nothing on half its turns.
+
+Nothing in the corpus is wrong; the loss is entirely at the record → template seam, which until
+now lived nowhere and was being re-derived by each consumer. New `distill/chat_adapter.py` owns
+it: maps `reasoning` → `reasoning_content`, coerces `tool_call.arguments` from a JSON string to
+the mapping the template demands (it raises otherwise), normalises absent `content` to `''` so
+it cannot render as the string `"None"`, and decodes the inline base64 PNG parts to PIL images
+in template order. It deep-copies, so caller records are not mutated. `extract_sft.py` is
+untouched.
+
+Verified against the real `Qwen3VLProcessor` for Qwen3.8-27B on gx10-a424, not asserted:
+a 6-assistant-turn record renders 6 `<think>` blocks with the reasoning text present in the
+output, and its 5 image parts expand to 320 image tokens — **64 tokens/frame, confirming exactly
+the estimate the extraction write-up flagged as unverified** ((256/16)²/4 for 256×256 frames at
+`patch_size` 16 with spatial merge 2). Re-measured whole-corpus token lengths under the real
+processor come in ~1% above the estimates (max 53,956 vs 53,258 estimated); the conclusion that
+**0 of 41 records exceed a 64K budget** holds.
+
+Found while standing up the LoRA training path on a424. Full measurement record, including a
+separate and more serious finding — that gradient reaches only 64 of 208 LoRA adapters on that
+stack — is in `2026-09-16-a424-lora-step-measurement.md` (Bubba's workspace, not this repo).
+
+---
+
 ## 2026-09-16 — the SFT extractor is verified against captured frames, and two alignment bugs are out (Claude Opus 5)
 
 `ARC3-Inference/distill/extract_sft.py` was conceptually right and factually wrong in two
