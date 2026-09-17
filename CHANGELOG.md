@@ -21,6 +21,56 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — the replay + scorecard tooling moves in from the workspace, and the two pullers become one
+
+**What.** Six tools, three trace findings and ~9.8 GB of recordings that had been living loose
+in `bubba-workspace` — a personal scratch repo, and in an *untracked* directory inside it — now
+live here, where the corpus they belong to already lived.
+
+- `tools/replay_scrape.py` gains a `bulk` subcommand: guid lists from a file and/or a
+  `pull_boss_scorecards.py` runs JSON, cached `/api/sessions` documents written beside each
+  recording, smallest-first ordering, and a disk guard (`--cap-gb`, `--min-free-gb`) that stops
+  the pull before the volume fills.
+- `tools/pull_boss_scorecards.py` (new): the authenticated `/api/user/scorecards` surface, plus
+  a per-game coverage report. Cookie path comes from `$ARC3_COOKIE_FILE`; the cookie itself
+  stays outside this repo on purpose.
+- `tools/replay_reasoning_report.py` (new): reasoning coverage, token usage, frame-change rate
+  and actions-vs-human-baseline over the recordings tree.
+- `tools/harvest_replays.py`, `distill_reasoning.py`, `analyze_coherence.py`,
+  `coherence_on_corpus.py` (new): the vendor-agent coherence pipeline, with its corpus at
+  `datasets/vendor-coherence/` and a README stating the boundary against the decision-step
+  corpus.
+- `datasets/decision-steps/v0/recordings/` goes from 26 recordings to 347. Gitignored, as
+  before.
+
+**Why.** A sub-agent built `pull_replays.py` in the workspace on 16-Sep without checking this
+repo, which already had `replay_scrape.py` doing the same job better. That is the DRY failure
+`AGENTS.md` names explicitly ("I'll write a tool to render/measure the games" — look first),
+and it produced a second corpus in a second location under a second naming scheme. The
+duplicate is deleted, not kept alongside.
+
+**How the merge was decided, not assumed.** `ft09-0d8bbf25/99084b22-…` existed in both trees.
+The two files are **byte-identical** (`cmp`, 1,932,098 bytes), which is what established that
+the workspace corpus was the same artifact under a different filename rather than a different
+record shape. 320 recordings moved, 17 dropped as verified-identical duplicates. Everything
+`replay_scrape.py` already did well — atomic `.part` write, `count_rows` truncation guard,
+rate-limit backoff — is reused; the deleted tool had no truncation guard at all.
+
+**Verified, not asserted.** `bulk` was run end-to-end against the live API and pulled the one
+recording the corpus was missing (`vc33-5430563c/1cd953c6-…`, 16.6 MB, 576 rows — 575 actions
+plus the RESET). `pull_boss_scorecards.py` reproduces the September coverage in
+`docs/trace-findings/2026-09-17-boss-scorecard-inventory.md` exactly: 17 games won, 7 played
+and lost, `tr87` never cleared a level. `replay_reasoning_report.py` reproduces the numbers in
+`docs/trace-findings/2026-09-17-replay-trace-corpus.md` off the new tree.
+
+**The vendor corpus is NOT folded into the decision-step corpus.** Same endpoint, opposite
+halves: `replay_scrape.py` keeps every byte the API served, `harvest_replays.py` drops the
+frames and keeps the reasoning at ~50x smaller. `validate.py` and `SCHEMA.md` own the raw
+contract and would correctly reject the compact records. Two tools, two trees, one README
+(`datasets/vendor-coherence/README.md`) saying why.
+
+---
+
 ## 17-Sep-2026 — as66 is in the repo as a test-only game
 
 **What.** `datasets/test-only-games/as66/v1/` (`as66.py`, `metadata.json`): a playable build of

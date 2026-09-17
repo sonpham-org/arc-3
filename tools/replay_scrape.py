@@ -10,10 +10,17 @@ guid to its game_id via /api/sessions/<guid>, which is the only way to build a r
 for a guid harvested off the public replay pages. Stdlib only (urllib), Python 3.13.
 Consumed by nothing yet: step 4 reads the NDJSON it writes, via
 datasets/decision-steps/validate.py's frame_ref resolver.
-SRP/DRY check: Pass — nothing in this repo fetched a replay before (plan §4(c): "No scrape
-tooling exists in-repo"; the endpoint path forms existed only as prose in two trace-finding
-docs). This file does not parse, reshape or validate record content — SCHEMA.md owns the
-record contract and validate.py enforces it.
+Bulk mode (added 17-Sep-2026) absorbs a duplicate puller that had been built outside this
+repo (`bubba-workspace/tools/arc3/pull_replays.py`, now deleted). It adds three things the
+single-guid path never had: guid lists from a file or from a `pull_boss_scorecards.py` runs
+JSON, cached `/api/sessions` documents written next to the recording, and a disk guard that
+stops the pull before the volume fills. Everything else — the atomic `.part` write, the
+`count_rows` truncation check, the rate-limit backoff — is reused, not reimplemented; the
+deleted tool had no truncation guard at all.
+SRP/DRY check: Pass — this is now the ONLY replay fetcher in the project. It does not parse,
+reshape or validate record content — SCHEMA.md owns the record contract and validate.py
+enforces it. `tools/harvest_replays.py` is a different job: it streams the same endpoint but
+discards frames to build the compact vendor-coherence corpus.
 
 Rows are written VERBATIM
 -------------------------
@@ -40,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 import urllib.error
@@ -272,6 +280,148 @@ def cmd_session(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def free_gb(path: Path) -> float:
+    """Free space on the volume holding `path`, in GB. Used by the bulk disk guard."""
+    probe = path
+    while not probe.exists():
+        probe = probe.parent
+    return shutil.disk_usage(probe).free / 1e9
+
+
+def corpus_gb(recordings_dir: Path) -> float:
+    """Size of the recordings tree in GB. Recomputed per download — it is a stat() walk."""
+    total = 0
+    for path in recordings_dir.rglob("*.ndjson"):
+        try:
+            total += path.stat().st_size
+        except OSError:
+            pass
+    return total / 1e9
+
+
+def cached_session(recordings_dir: Path, guid: str) -> dict | None:
+    """Return the cached /api/sessions document for a guid, if one is already on disk.
+
+    Session docs are cached as <game_id>/<guid>.meta.json next to the recording they
+    describe, so the cache is found by glob rather than by a separate index.
+    """
+    for path in recordings_dir.glob(f"*/{guid}.meta.json"):
+        try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def load_guids(guid_file: Path | None, runs_file: Path | None, min_actions: int) -> list[str]:
+    """Union of guids from a newline-delimited file and/or a pull_boss_scorecards runs JSON.
+
+    Order is preserved and duplicates are dropped; `#` comments and blank lines are ignored.
+    `min_actions` filters the runs JSON only — a zero-action scorecard open has no recording
+    behind it and pulling it just burns rate limit.
+    """
+    guids: list[str] = []
+    if guid_file:
+        for line in guid_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                guids.append(line)
+    if runs_file:
+        for run in json.loads(runs_file.read_text()):
+            if run.get("guid") and (run.get("actions") or 0) >= min_actions:
+                guids.append(run["guid"])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for guid in guids:
+        if guid not in seen:
+            seen.add(guid)
+            ordered.append(guid)
+    return ordered
+
+
+def cmd_bulk(args: argparse.Namespace) -> int:
+    """Two stages: resolve every guid to its game_id(s), then pull what is not on disk.
+
+    Stage one is cheap and cached, so a re-run after an interruption costs almost nothing.
+    Stage two orders smallest-first, which maximises the number of complete sessions on disk
+    before any cap bites — a corpus of 300 small recordings is more useful than 4 big ones.
+    """
+    recordings_dir: Path = args.recordings_dir
+    guids = load_guids(args.guid_file, args.runs_file, args.min_actions)
+    if not guids:
+        print("no guids: pass --guid-file and/or --runs-file", file=sys.stderr)
+        return 2
+    print(f"{len(guids)} guids to resolve", file=sys.stderr)
+
+    report: dict = {"session_failures": [], "recording_failures": [], "pulled": [],
+                    "stopped_early": None}
+    jobs: list[dict] = []
+    already = 0
+    seen: set[tuple[str, str]] = set()
+
+    for index, guid in enumerate(guids, 1):
+        session = cached_session(recordings_dir, guid)
+        if session is None:
+            try:
+                session = fetch_session(guid, timeout=args.timeout)
+            except ScrapeError as exc:
+                report["session_failures"].append({"guid": guid, "error": str(exc)})
+                print(f"  [session {index}/{len(guids)}] FAILED {guid}: {exc}", file=sys.stderr)
+                continue
+        for game_id in game_ids_for_guid(session, guid):
+            if (game_id, guid) in seen:
+                continue
+            seen.add((game_id, guid))
+            meta = recordings_dir / game_id / f"{guid}.meta.json"
+            if not meta.exists():
+                meta.parent.mkdir(parents=True, exist_ok=True)
+                meta.write_text(json.dumps(session))
+            if (recordings_dir / game_id / f"{guid}.ndjson").exists() and not args.force:
+                already += 1
+                continue
+            jobs.append({"game_id": game_id, "guid": guid,
+                         "actions": session.get("total_actions") or 0})
+        if index % 25 == 0:
+            print(f"  [session {index}/{len(guids)}]", file=sys.stderr)
+
+    on_disk = corpus_gb(recordings_dir)
+    print(json.dumps({"jobs": len(jobs), "already_on_disk": already,
+                      "corpus_gb": round(on_disk, 2),
+                      "free_gb": round(free_gb(recordings_dir), 1)}, indent=1), file=sys.stderr)
+
+    jobs.sort(key=lambda job: job["actions"])
+    for index, job in enumerate(jobs, 1):
+        free = free_gb(recordings_dir)
+        if on_disk >= args.cap_gb or free <= args.min_free_gb:
+            report["stopped_early"] = {
+                "reason": "cap-gb reached" if on_disk >= args.cap_gb else "free-space floor",
+                "corpus_gb": round(on_disk, 2), "free_gb": round(free, 1),
+                "remaining_jobs": len(jobs) - index + 1}
+            print(f"STOP: {report['stopped_early']}", file=sys.stderr)
+            break
+        try:
+            _, rows, _ = scrape_recording(job["game_id"], job["guid"], recordings_dir,
+                                          force=args.force, timeout=args.timeout)
+        except ScrapeError as exc:
+            report["recording_failures"].append({**job, "error": str(exc)})
+            print(f"  [rec {index}/{len(jobs)}] FAILED {job['guid']}: {exc}", file=sys.stderr)
+            continue
+        report["pulled"].append({**job, "rows": rows})
+        on_disk = corpus_gb(recordings_dir)
+
+    report["corpus_gb"] = round(on_disk, 2)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, indent=1))
+    print(json.dumps({"pulled": len(report["pulled"]),
+                      "already_on_disk": already,
+                      "session_failures": len(report["session_failures"]),
+                      "recording_failures": len(report["recording_failures"]),
+                      "corpus_gb": report["corpus_gb"],
+                      "stopped_early": report["stopped_early"]}, indent=1))
+    return 1 if (report["session_failures"] or report["recording_failures"]) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Pull ARC-3 published replay recordings into the decision-step corpus.",
@@ -295,6 +445,20 @@ def main(argv: list[str] | None = None) -> int:
     session = sub.add_parser("session", help="print /api/sessions/<guid>; downloads nothing")
     session.add_argument("guids", nargs="+")
     session.set_defaults(func=cmd_session)
+
+    bulk = sub.add_parser(
+        "bulk", help="resolve and pull many guids from a file and/or a scorecard runs JSON")
+    bulk.add_argument("--guid-file", type=Path, help="newline-delimited guids; # comments ok")
+    bulk.add_argument("--runs-file", type=Path,
+                      help="boss-runs-*.json from tools/pull_boss_scorecards.py")
+    bulk.add_argument("--min-actions", type=int, default=1,
+                      help="skip runs-file entries below this action count (default: 1)")
+    bulk.add_argument("--cap-gb", type=float, default=14.0,
+                      help="stop once the recordings tree reaches this size (default: %(default)s)")
+    bulk.add_argument("--min-free-gb", type=float, default=100.0,
+                      help="stop before free space drops below this (default: %(default)s)")
+    bulk.add_argument("--report", type=Path, help="write a JSON failure/pull report here")
+    bulk.set_defaults(func=cmd_bulk)
 
     args = parser.parse_args(argv)
     return args.func(args)
