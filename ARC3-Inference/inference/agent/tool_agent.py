@@ -27,7 +27,11 @@ from inference.agent.prompts import (
     MULTIMODAL_OUTLINE_ADDENDUM,
     TOOL_CALL_FORMAT_GUIDANCE,
     VISUAL_GAME_ADDENDUM,
+    COMPACT_REASONING_ADDENDUM,
+    COMPACT_REASONING_TURN_REMINDER,
 )
+
+from inference.agent.reasoning_style import compact_reasoning_enabled
 
 from inference.agent.frame_mode import full_frame_enabled
 from inference.agent.vision_context import (
@@ -432,6 +436,8 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt += VISUAL_GAME_ADDENDUM
     prompt += PYTHON_ADDENDUM
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
+    if compact_reasoning_enabled():
+        prompt += COMPACT_REASONING_ADDENDUM
     return prompt
 
 
@@ -1427,6 +1433,8 @@ class ToolAgent:
         )
         if "MOUSE" in _normalize_valid_actions(valid_actions):
             lines.append("If you use MOUSE, include integer row and col arguments.")
+        if compact_reasoning_enabled():
+            lines.append(COMPACT_REASONING_TURN_REMINDER)
         return "\n".join(lines)
 
     def _tools(self, state_path: Path) -> list[dict[str, Any]]:
