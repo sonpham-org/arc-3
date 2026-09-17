@@ -1,6 +1,6 @@
 <!--
-Author: Claude Opus 5 (Bubba)
-Date: 15-September-2026
+Author: Claude Opus 5 (Bubba); 17-Sep test-only update by Claude Opus 5
+Date: 15-September-2026 (updated 17-September-2026)
 PURPOSE: What is retrievable for as66-821a4dcad9c2, an ARC-3 environment that is absent from
 the live 25-game lineup but whose recordings still serve. Records the 15 recoverable runs, the
 older recording schema they use, the two blockers on using them for the decision-step corpus,
@@ -17,6 +17,20 @@ datasets/decision-steps/README.md and is cited, not restated.
 blog's 250 published replays, but `three.arcprize.org` still serves its recordings, and **15
 runs on it are reachable from the Boss's own scorecards** — 2 human and 13 agent, all from
 7–15 January 2026.
+
+## Update, 17-Sep-2026: there is a build now, and it is test-only
+
+- **as66 has been rebuilt** from the Boss's 27-Dec-2025 nine-level winning recording (a human run that is not in the
+  table below).
+  Every frame of that recording replays exactly, and the level layouts match the Boss's
+  screenshots. The build is in [`datasets/test-only-games/`](../../datasets/test-only-games/README.md)
+  as `as66-v1`, and a harness can play it offline from there.
+- **Boss's decision: test only, never trained on.** So blocker 4(a) below now has a source to
+  cite, but the corpus use it would have unlocked is off. No as66 record, human or agent, from
+  January or from future harness runs, goes into the decision-step corpus, SFT, RL or any mix-in.
+  Add `as66` to `--exclude-games` when extracting from any run that played it.
+- Section 5 is why it is worth keeping for testing: it is still the only game with human play and
+  a dozen agent attempts on record.
 
 ## 1. What was checked, and what it returned
 
