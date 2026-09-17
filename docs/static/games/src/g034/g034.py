@@ -176,7 +176,7 @@ HELD_PLATE = (49, 18, 63, 32)
 BIN_PLATE = (0, 50, 6 * BIN_SLOT, 61)
 
 
-class G034A(RenderableUserDisplay):
+class StudioDisplay(RenderableUserDisplay):
 
     def __init__(self, game: "G034") -> None:
         super().__init__()
@@ -237,6 +237,7 @@ class G034(ARCBaseGame):
         self.canvas = np.full((CANVAS, CANVAS), BLANK, dtype=np.int16)
         self.target = target_of(LEVELS_SPEC[0])
         self.sel = 0
+        self.comparing = False
         self.history: list[tuple[int, np.ndarray]] = []
         self._fx = 0
         self._fx_kind = ""
@@ -246,10 +247,10 @@ class G034(ARCBaseGame):
         camera = Camera(
             width=64, height=64,
             background=BLANK, letter_box=BLANK,
-            interfaces=[G034A(self)],
+            interfaces=[StudioDisplay(self)],
         )
         super().__init__(game_id="g034", levels=build_levels(), camera=camera,
-                         available_actions=[5, 6, 7])
+                         available_actions=[4, 5, 6, 7])
 
     def on_set_level(self, level: Level) -> None:
         spec = LEVELS_SPEC[self.level_index]
@@ -258,6 +259,7 @@ class G034(ARCBaseGame):
         self.canvas = np.full((CANVAS, CANVAS), BLANK, dtype=np.int16)
         self.target = target_of(spec)
         self.sel = 0
+        self.comparing = False
         self.history = []
         self._clear_fx()
         self._paint()
@@ -288,6 +290,10 @@ class G034(ARCBaseGame):
             return
         pixels = sprites[0].pixels
         pixels[:, :] = BLANK
+        shown = self.target if self.comparing else self.canvas
+        for cy in range(CANVAS):
+            for cx in range(CANVAS):
+                pixels[cy * CELL, cx * CELL] = 3
 
         wet = set(self._fx_cells)
         old = self._fx_prev
@@ -309,7 +315,7 @@ class G034(ARCBaseGame):
 
         for cy in range(CANVAS):
             for cx in range(CANVAS):
-                fresh = block_for(self.canvas, "now", cx, cy)
+                fresh = block_for(shown, "now", cx, cy)
                 under = None
                 if (cx, cy) in wet and old is not None:
                     under = block_for(old, "was", cx, cy)
@@ -323,6 +329,9 @@ class G034(ARCBaseGame):
                                 px = under
                         if px is not None and px[py][qx] >= 0:
                             pixels[cy * CELL + py, cx * CELL + qx] = px[py][qx]
+                if not self.comparing and all(self.spent) and self.canvas[cy, cx] != self.target[cy, cx]:
+                    pixels[cy * CELL, cx * CELL] = 8
+                    pixels[cy * CELL + CELL - 1, cx * CELL + CELL - 1] = 8
 
     def selected_index(self) -> int | None:
         if all(self.spent):
@@ -378,7 +387,7 @@ class G034(ARCBaseGame):
             if self._fx_kind == "coat":
                 self._clear_fx()
                 self._paint()
-                if all(self.spent) and np.array_equal(self.canvas, self.target):
+                if np.array_equal(self.canvas, self.target):
                     self._fx_kind = "cure"
                     self._fx = self.CURE_FRAMES
                     return
@@ -390,12 +399,25 @@ class G034(ARCBaseGame):
             return
 
         action = self.action.id
-        if action == GameAction.ACTION5:
+        if action == GameAction.ACTION4:
+            self.comparing = not self.comparing
+            self._paint()
+        elif action == GameAction.ACTION5:
             self._cycle()
         elif action == GameAction.ACTION6:
             data = self.action.data or {}
-            if self._place(int(data.get("x", -1)) // CELL,
-                           int(data.get("y", -1)) // CELL):
+            x, y = int(data.get("x", -1)), int(data.get("y", -1))
+            if TARGET_PLATE[0] <= x < TARGET_PLATE[2] and TARGET_PLATE[1] <= y < TARGET_PLATE[3]:
+                self.comparing = not self.comparing
+                self._paint()
+            elif BIN_PLATE[1] <= y < BIN_PLATE[3] and 0 <= x // BIN_SLOT < len(self.stamps):
+                idx = x // BIN_SLOT
+                if not self.spent[idx]:
+                    self.sel = idx
+            elif self.comparing:
+                self.comparing = False
+                self._paint()
+            elif self._place(x // CELL, y // CELL):
                 self._fx_kind = "coat"
                 self._fx = self.COAT_FRAMES
                 self._paint()

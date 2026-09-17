@@ -13,224 +13,327 @@ from arcengine import (
     Sprite,
 )
 
-FLOOR = 5
-WALL = 2
-PLAYER = 11
-EXIT = 6
-MARK = 0
-EMPTY_PIP = 3
 
-HAZARD_COLOUR = {"F": 8, "C": 10, "W": 9, "S": 15}
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
 
-N = 16
-CELL = 4
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
+
+FLOOR = 2
+WALL = 5
+PLAYER = 14
+EXIT = 0
+
+HAZARD_AMBER = 12
+HAZARD_CYAN = 10
+HAZARD_GOLD = 11
+HAZARD_COLOUR = {"A": HAZARD_AMBER, "C": HAZARD_CYAN, "G": HAZARD_GOLD}
+
+W = 19
+H = 19
+CELL = 3
 SLOTS = 4
 
 
-LEVELS_SPEC = [
-    {
-        "garments": {"a": (0, "F"), "b": (0, "C")},
-        "rows": [
-            "################",
-            "#..............#",
-            "#..P...........#",
-            "#..............#",
-            "#....a....b....#",
-            "#..............#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#..............#",
-            "#..............#",
-            "#......X.......#",
-            "#..............#",
-            "#..............#",
-            "#..............#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "F"), "c": (2, "F"), "d": (1, "W")},
-        "rows": [
-            "################",
-            "#..............#",
-            "#..P...........#",
-            "#....a....c....#",
-            "#..............#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#......d.......#",
-            "#..............#",
-            "#WWWWWWWWWWWWWW#",
-            "#WWWWWWWWWWWWWW#",
-            "#..............#",
-            "#......X.......#",
-            "#..............#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "F"), "b": (1, "F"), "c": (1, "C"),
-                     "d": (3, "C"), "e": (2, "F"), "f": (2, "W")},
-        "rows": [
-            "################",
-            "#..P...........#",
-            "#....a....b....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#....c....d....#",
-            "#CCCCCCCCCCCCCC#",
-            "#CCCCCCCCCCCCCC#",
-            "#..............#",
-            "#....e....f....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "F"), "b": (2, "F"), "c": (1, "W"),
-                     "d": (3, "W"), "e": (2, "S")},
-        "rows": [
-            "################",
-            "#..P...........#",
-            "#...a....b.....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#...c....d.....#",
-            "#WWWWWWWWWWWWWW#",
-            "#WWWWWWWWWWWWWW#",
-            "#..............#",
-            "#.....e........#",
-            "#SSSSSSSSSSSSSS#",
-            "#SSSSSSSSSSSSSS#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "C"), "b": (1, "C"), "c": (1, "F"),
-                     "d": (3, "F"), "e": (2, "C"), "f": (3, "S")},
-        "rows": [
-            "################",
-            "#..P...........#",
-            "#...a....b.....#",
-            "#CCCCCCCCCCCCCC#",
-            "#CCCCCCCCCCCCCC#",
-            "#..............#",
-            "#...c....d.....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#...e....f.....#",
-            "#CCCCCCCCCCCCCC#",
-            "#CCCCCCCCCCCCCC#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "S"), "b": (2, "S"), "c": (1, "F"),
-                     "d": (1, "S"), "e": (2, "S"), "f": (3, "W")},
-        "rows": [
-            "################",
-            "#..P...........#",
-            "#...a....b.....#",
-            "#SSSSSSSSSSSSSS#",
-            "#SSSSSSSSSSSSSS#",
-            "#..............#",
-            "#...c....d.....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#...e....f.....#",
-            "#SSSSSSSSSSSSSS#",
-            "#SSSSSSSSSSSSSS#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "F"), "b": (1, "F"), "c": (1, "C"),
-                     "d": (2, "C"), "e": (2, "W"), "h": (3, "S")},
-        "rows": [
-            "################",
-            "#..P.a....b....#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#....c....d....#",
-            "#CCCCCCCCCCCCCC#",
-            "#CCCCCCCCCCCCCC#",
-            "#....e.........#",
-            "#WWWWWWWWWWWWWW#",
-            "#WWWWWWWWWWWWWW#",
-            "#....h.........#",
-            "#SSSSSSSSSSSSSS#",
-            "#SSSSSSSSSSSSSS#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-    {
-        "garments": {"a": (0, "W"), "b": (1, "W"), "c": (1, "S"),
-                     "d": (2, "S"), "e": (2, "C"), "f": (3, "C"), "g": (3, "F")},
-        "rows": [
-            "################",
-            "#..P.a...b.....#",
-            "#WWWWWWWWWWWWWW#",
-            "#WWWWWWWWWWWWWW#",
-            "#....c....d....#",
-            "#SSSSSSSSSSSSSS#",
-            "#SSSSSSSSSSSSSS#",
-            "#....e....f....#",
-            "#CCCCCCCCCCCCCC#",
-            "#CCCCCCCCCCCCCC#",
-            "#....g.........#",
-            "#FFFFFFFFFFFFFF#",
-            "#FFFFFFFFFFFFFF#",
-            "#..............#",
-            "#......X.......#",
-            "################",
-        ]},
-]
+LEVELS_SPEC = [{'gear': {'a': (0, 'A')},
+  'rows': ['###################',
+           '#.....#.....#.....#',
+           '#.P...#.....#.....#',
+           '#...a.A..X..A.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###A#####A#####A###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....A.....A.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###A#####A#####A###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....A.....A.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'), 'b': (2, 'A'), 'c': (1, 'C')},
+  'rows': ['###################',
+           '#....b#.....#.....#',
+           '#.P...#.....#.....#',
+           '#.....A.....C..X..#',
+           '#.a...#..c..#.....#',
+           '#.....#.....#.....#',
+           '###A#####A#########',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'), 'c': (1, 'C'), 'd': (0, 'C'), 'g': (0, 'G')},
+  'rows': ['###################',
+           '#P....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....A....cA.....#',
+           '#...a.#.....#.....#',
+           '#.g...#.....#.....#',
+           '###G#####C#########',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#..d..C..X..#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'), 'b': (0, 'C'), 'c': (1, 'C'), 'e': (3, 'C')},
+  'rows': ['###################',
+           '#.....#.....#.....#',
+           '#.P..b#.....#.....#',
+           '#.....A..e..A.....#',
+           '#.a...#.....#.....#',
+           '#.....#.....#....c#',
+           '###A#####A#####C###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#..X..#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'), 'c': (1, 'C'), 'd': (3, 'A'), 'e': (2, 'A'), 'f': (3, 'A'), 'g': (3, 'G')},
+  'rows': ['###################',
+           '#.....#.....#.....#',
+           '#.P...#.....#.....#',
+           '#.....A..c..A.....#',
+           '#.a...#.....#.....#',
+           '#.....#....d#.....#',
+           '#########C#########',
+           '#.....#.....#.....#',
+           '#.....#....f#.....#',
+           '#.....#..e..#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#########A#########',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#..g..G..X..#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'),
+           'b': (2, 'A'),
+           'c': (1, 'C'),
+           'd': (3, 'C'),
+           'e': (2, 'A'),
+           'f': (3, 'C'),
+           'h': (3, 'A')},
+  'rows': ['###################',
+           '#P...b#.....#e....#',
+           '#.....#.....#.....#',
+           '#.....A..c..C.....#',
+           '#.....#.....#.....#',
+           '#a....#....d#....h#',
+           '###############A###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#..f..#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###############C###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#..X..#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'),
+           'b': (0, 'C'),
+           'c': (1, 'C'),
+           'd': (2, 'C'),
+           'e': (2, 'G'),
+           'f': (3, 'G'),
+           'g': (3, 'A'),
+           'h': (3, 'C')},
+  'rows': ['###################',
+           '#P...b#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....A.....#.....#',
+           '#.....#.....#.....#',
+           '#....a#.....#.....#',
+           '###A###############',
+           '#....d#....e#.....#',
+           '#.....#.....#.....#',
+           '#.....C.....#.....#',
+           '#.....#.....#.....#',
+           '#c....#f....#.....#',
+           '#########G#########',
+           '#.....#....h#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....A..X..#',
+           '#.....#.....#.....#',
+           '#.....#g....#.....#',
+           '###################']},
+ {'gear': {'a': (0, 'A'), 'b': (1, 'C'), 'c': (2, 'G')},
+  'rows': ['###################',
+           '#.c...#.....#.....#',
+           '#.....#.....#.....#',
+           '#.P.a.C.!...M...X.#',
+           '#.....#.....#.....#',
+           '#..b..#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################'],
+  'patterns': {'M': [(0, 'A')]}},
+ {'gear': {'a': (0, 'A'), 'b': (1, 'C'), 'c': (2, 'G'), 'd': (3, 'A'), 'e': (2, 'C')},
+  'rows': ['###################',
+           '#..b..#.....#.e...#',
+           '#.....#.c...#.....#',
+           '#.P...C.....G...!.#',
+           '#.....#.....#.....#',
+           '#...a.#.d...#.....#',
+           '###############M###',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.X...N..!..#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '#.....#.....#.....#',
+           '###################'],
+  'patterns': {'M': [(0, 'A'), (1, 'C')], 'N': [(0, 'A')]}}]
 
 
-def hazard_at(rows, x: int, y: int):
+def door_at(rows, x: int, y: int):
     ch = rows[y][x]
-    return ch if ch in HAZARD_COLOUR else None
+    return ch if ch in HAZARD_COLOUR or ch in "MN" else None
 
 
-def is_wall(rows, x: int, y: int) -> bool:
-    return not (0 <= x < N and 0 <= y < N) or rows[y][x] == "#"
+def is_plaster(rows, x: int, y: int) -> bool:
+    return not (0 <= x < W and 0 <= y < H) or rows[y][x] == "#"
 
 
-def garment_at(spec, x: int, y: int):
+def gear_at(spec, x: int, y: int):
     ch = spec["rows"][y][x]
-    return ch if ch in spec["garments"] else None
+    return ch if ch in spec["gear"] else None
 
 
-def worn_list(spec, donned) -> list:
-    return sorted((spec["garments"][k] for k in donned), key=lambda g: g[0])
+def worn_stack(spec, worn) -> list:
+    return sorted((spec["gear"][k] for k in worn), key=lambda g: g[0])
 
 
-def don_legal(spec, donned, key: str) -> bool:
-    if key in donned:
+def can_pull_on(spec, worn, key: str) -> bool:
+    if key in worn:
         return False
-    slot = spec["garments"][key][0]
-    filled = {s for s, _ in worn_list(spec, donned)}
+    slot = spec["gear"][key][0]
+    filled = {s for s, _ in worn_stack(spec, worn)}
     return all(s not in filled for s in range(slot, SLOTS))
 
 
-def active_hazards(worn) -> frozenset:
+def shielded(stack) -> frozenset:
     return frozenset(
-        h for i, (_, h) in enumerate(worn)
-        if all(outer_h == h for _, outer_h in worn[i + 1:])
+        c for i, (_, c) in enumerate(stack)
+        if all(outer == c for _, outer in stack[i + 1:])
     )
 
 
-def start_cell(rows):
+def entry_cell(rows):
     for y, row in enumerate(rows):
         for x, ch in enumerate(row):
             if ch == "P":
@@ -238,119 +341,128 @@ def start_cell(rows):
     raise AssertionError("level has no start")
 
 
-def exit_cell(rows):
+def way_out_cell(rows):
     for y, row in enumerate(rows):
         for x, ch in enumerate(row):
             if ch == "X":
                 return x, y
-    raise AssertionError("level has no exit")
+    raise AssertionError("level has no way out")
 
 
-def survives(spec, donned, x: int, y: int) -> bool:
-    hz = hazard_at(spec["rows"], x, y)
-    return hz is None or hz in active_hazards(worn_list(spec, donned))
+def passable(spec, worn, x: int, y: int) -> bool:
+    ch=spec['rows'][y][x]
+    if ch in spec.get('patterns',{}):
+        return layer_pattern(worn_stack(spec,worn)) == layer_pattern(spec['patterns'][ch])
+    return ch not in HAZARD_COLOUR or ch in shielded(worn_stack(spec,worn))
 
 
-def _cell_block(colour: int) -> list[list[int]]:
+def layer_pattern(stack):
+    pixels=[[-1]*3 for _ in range(3)]
+    for slot,colour in sorted(stack):
+        for y,x in GEAR_COVER[slot]: pixels[y][x]=HAZARD_COLOUR[colour]
+    return tuple(tuple(row) for row in pixels)
+
+def dress_action(spec,worn,x,y):
+    if spec['rows'][y][x]=='!' and worn:
+        outer=max(worn,key=lambda k:spec['gear'][k][0])
+        return tuple(k for k in worn if k!=outer)
+    key=gear_at(spec,x,y)
+    if key is not None and can_pull_on(spec,worn,key):return tuple(sorted(worn+(key,)))
+    return worn
+
+def pattern_pixels(pattern):
+    px=[[WALL]*5 for _ in range(5)]
+    for y,row in enumerate(pattern):
+        for x,c in enumerate(row):px[y+1][x+1]=FLOOR if c<0 else c
+    px[0][0]=px[0][4]=px[4][0]=px[4][4]=0
+    return px
+
+GEAR_COVER = (
+    ((0, 0), (0, 2), (2, 0), (2, 2)),
+    ((0, 0), (0, 2), (2, 0), (2, 2), (1, 1)),
+    ((0, 0), (0, 2), (2, 0), (2, 2), (1, 1), (1, 0), (1, 2)),
+    ((0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)),
+)
+
+FIGURE_CORE = ((0, 1), (1, 0), (1, 1), (1, 2), (2, 1))
+FIGURE_SHOULDERS = ((0, 0), (0, 2), (2, 0), (2, 2))
+
+
+def _solid(colour: int) -> list[list[int]]:
     return [[colour] * CELL for _ in range(CELL)]
 
 
-def _rounded(colour: int) -> list[list[int]]:
-    block = _cell_block(colour)
-    for (y, x) in ((0, 0), (0, CELL - 1), (CELL - 1, 0), (CELL - 1, CELL - 1)):
-        block[y][x] = -1
+def _blank() -> list[list[int]]:
+    return [[-1] * CELL for _ in range(CELL)]
+
+
+def _doorway(colour: int, across: bool) -> list[list[int]]:
+    block = _solid(WALL)
+    for i in range(CELL):
+        if across:
+            block[CELL // 2][i] = colour
+        else:
+            block[i][CELL // 2] = colour
     return block
 
 
-def _weave(colour: int) -> list[list[int]]:
-    return [[colour if (x + y) % 2 == 0 else -1 for x in range(CELL)]
-            for y in range(CELL)]
+def _gear_pixels(slot: int, door: str) -> list[list[int]]:
+    return pattern_pixels(layer_pattern([(slot,door)]))
 
 
 def _figure(body: int, coat: int | None) -> list[list[int]]:
-    block = _rounded(body)
+    px=[[-1,body,body,body,-1],[body,body,0,body,body],[body,body,body,body,body],[-1,body,body,body,-1],[-1,body,-1,body,-1]]
     if coat is not None:
-        for i in range(CELL):
-            block[0][i] = block[CELL - 1][i] = coat
-            block[i][0] = block[i][CELL - 1] = coat
-        for (y, x) in ((0, 0), (0, CELL - 1), (CELL - 1, 0), (CELL - 1, CELL - 1)):
-            block[y][x] = -1
-    return block
+        for y,x in ((1,0),(1,4),(2,0),(2,4)):px[y][x]=coat
+    return px
 
 
-_MARK_SPOTS = ((0, 0), (1, 0), (0, 1), (1, 1))
-
-
-def _garment_pixels(slot: int, hazard: str) -> list[list[int]]:
-    block = _rounded(HAZARD_COLOUR[hazard])
-    for i in range(slot + 1):
-        mx, my = _MARK_SPOTS[i]
-        block[my][mx] = MARK
-    return block
-
-
-def _exit_pixels() -> list[list[int]]:
-    block = _cell_block(EXIT)
-    block[1][1] = block[1][2] = block[2][1] = block[2][2] = -1
-    return block
+def _walks_across(rows, x: int, y: int) -> bool:
+    return is_plaster(rows, x, y - 1) and is_plaster(rows, x, y + 1)
 
 
 def build_levels() -> list[Level]:
-    levels: list[Level] = []
+    levels=[]
     for spec in LEVELS_SPEC:
-        sprites: list[Sprite] = []
-        for y, row in enumerate(spec["rows"]):
-            for x, ch in enumerate(row):
-                px, py = x * CELL, y * CELL
-                if ch == "#":
-                    sprites.append(Sprite(
-                        pixels=_cell_block(WALL), name=f"wall_{x}_{y}",
-                        blocking=BlockingMode.BOUNDING_BOX,
-                        interaction=InteractionMode.TANGIBLE, layer=-1,
-                    ).set_position(px, py))
-                elif ch in HAZARD_COLOUR:
-                    sprites.append(Sprite(
-                        pixels=_weave(HAZARD_COLOUR[ch]), name=f"band_{x}_{y}",
-                        blocking=BlockingMode.NOT_BLOCKED,
-                        interaction=InteractionMode.INTANGIBLE, layer=-1,
-                    ).set_position(px, py))
-                elif ch == "X":
-                    sprites.append(Sprite(
-                        pixels=_exit_pixels(), name="exit",
-                        blocking=BlockingMode.NOT_BLOCKED,
-                        interaction=InteractionMode.INTANGIBLE, layer=0,
-                    ).set_position(px, py))
-                elif ch in spec["garments"]:
-                    slot, hazard = spec["garments"][ch]
-                    sprites.append(Sprite(
-                        pixels=_garment_pixels(slot, hazard), name=f"garment_{ch}",
-                        blocking=BlockingMode.NOT_BLOCKED,
-                        interaction=InteractionMode.INTANGIBLE, layer=0,
-                    ).set_position(px, py))
-                elif ch == "P":
-                    sprites.append(Sprite(
-                        pixels=_figure(PLAYER, None), name="player",
-                        blocking=BlockingMode.NOT_BLOCKED,
-                        interaction=InteractionMode.TANGIBLE, layer=1,
-                    ).set_position(px, py))
-        levels.append(Level(sprites=sprites, grid_size=(N * CELL, N * CELL)))
+        sprites=[]
+        for y,row in enumerate(spec['rows']):
+            for x,ch in enumerate(row):
+                pixels=None;layer=0;offset=0;name=f't_{x}_{y}'
+                if ch=='#':pixels=_solid(WALL);layer=-1
+                elif ch in HAZARD_COLOUR:pixels=_doorway(HAZARD_COLOUR[ch],_walks_across(spec['rows'],x,y));layer=-1
+                elif ch in spec.get('patterns',{}):pixels=pattern_pixels(layer_pattern(spec['patterns'][ch]));offset=-1;layer=1
+                elif ch=='!':pixels=[[0,-1,-1,-1,0],[-1,0,-1,0,-1],[-1,-1,0,-1,-1],[-1,0,-1,0,-1],[0,-1,-1,-1,0]];offset=-1
+                elif ch=='X':pixels=[[EXIT,EXIT,EXIT],[EXIT,PLAYER,EXIT],[EXIT,EXIT,EXIT]];name='way_out'
+                elif ch in spec['gear']:
+                    pixels=_gear_pixels(*spec['gear'][ch]);name=f'gear_{ch}';offset=-1
+                elif ch=='P':pixels=_figure(PLAYER,None);name='figure';offset=-1;layer=2
+                if pixels is not None:
+                    sprites.append(Sprite(pixels=pixels,name=name,blocking=BlockingMode.NOT_BLOCKED,interaction=InteractionMode.INTANGIBLE,layer=layer).set_position(x*CELL+offset,y*CELL+offset))
+        levels.append(Level(sprites=sprites,grid_size=(W*CELL,H*CELL)))
     return levels
 
 
-class G035A(RenderableUserDisplay):
+class SlotStrip(RenderableUserDisplay):
 
-    ROW = (10, 22, 34, 46)
+    LEFT = 21
+    TOP = 61
+    THICK = 3
 
     def __init__(self, game: "G035") -> None:
         super().__init__()
         self._game = game
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
-        filled = dict(worn_list(LEVELS_SPEC[self._game.level_index], self._game.donned))
+        filled = dict(worn_stack(LEVELS_SPEC[self._game.level_index], self._game.worn))
+        x = self.LEFT
         for slot in range(SLOTS):
-            colour = HAZARD_COLOUR[filled[slot]] if slot in filled else EMPTY_PIP
-            top = self.ROW[slot]
-            frame[top:top + 2, 63 - slot:64] = colour
+            width = slot + 3
+            colour = HAZARD_COLOUR[filled[slot]] if slot in filled else WALL
+            frame[self.TOP:self.TOP + self.THICK, x:x + width] = colour
+            x += width + 1
+        if LEVELS_SPEC[self._game.level_index].get('patterns'):
+            px=pattern_pixels(layer_pattern(worn_stack(LEVELS_SPEC[self._game.level_index],self._game.worn)))
+            frame[58:63,4:9]=np.array(px,dtype=np.int8)
         return frame
 
 
@@ -360,25 +472,28 @@ class G035(ARCBaseGame):
 
     def __init__(self) -> None:
         self._flash = 0
-        self.donned: tuple = ()
-        self.px, self.py = start_cell(LEVELS_SPEC[0]["rows"])
+        self.worn: tuple = ()
+        self.px, self.py = entry_cell(LEVELS_SPEC[0]["rows"])
         camera = Camera(
-            width=N * CELL, height=N * CELL,
-            background=FLOOR, letter_box=5,
-            interfaces=[G035A(self)],
+            width=W * CELL, height=H * CELL,
+            background=FLOOR, letter_box=FLOOR,
+            interfaces=[SlotStrip(self)],
         )
-        super().__init__(game_id="g035", levels=build_levels(), camera=camera)
+        super().__init__(game_id="g035", levels=build_levels(), camera=camera, available_actions=[1,2,3,4,5])
 
     def on_set_level(self, level: Level) -> None:
+        clear_translation(self)
         self._flash = 0
-        self.donned = ()
-        self.px, self.py = start_cell(LEVELS_SPEC[self.level_index]["rows"])
+        self.worn = ()
+        self.px, self.py = entry_cell(LEVELS_SPEC[self.level_index]["rows"])
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.on_set_level(self.current_level)
 
@@ -386,36 +501,42 @@ class G035(ARCBaseGame):
         return LEVELS_SPEC[self.level_index]
 
     def _outermost(self) -> int | None:
-        worn = worn_list(self._spec(), self.donned)
-        return HAZARD_COLOUR[worn[-1][1]] if worn else None
+        stack = worn_stack(self._spec(), self.worn)
+        return HAZARD_COLOUR[stack[-1][1]] if stack else None
 
-    def _place_player(self) -> None:
-        found = self.current_level.get_sprites_by_name("player")
+    def _place_figure(self) -> None:
+        found = self.current_level.get_sprites_by_name("figure")
         if found:
             found[0].pixels = np.array(_figure(PLAYER, self._outermost()))
-            found[0].set_position(self.px * CELL, self.py * CELL)
+            found[0].set_position(self.px * CELL-1, self.py * CELL-1)
 
-    def _don_here(self) -> None:
-        spec = self._spec()
-        key = garment_at(spec, self.px, self.py)
-        if key is None or not don_legal(spec, self.donned, key):
-            return
-        self.donned = tuple(sorted(self.donned + (key,)))
-        for sprite in self.current_level.get_sprites_by_name(f"garment_{key}"):
-            self.current_level.remove_sprite(sprite)
-        self._place_player()
+    def _pull_on_here(self) -> None:
+        spec=self._spec();before=self.worn
+        self.worn=dress_action(spec,self.worn,self.px,self.py)
+        if before==self.worn:return
+        for key in set(before)-set(self.worn):
+            for y,row in enumerate(spec['rows']):
+                if key in row:
+                    x=row.index(key)
+                    self.current_level.add_sprite(Sprite(pixels=_gear_pixels(*spec['gear'][key]),name=f'gear_{key}',blocking=BlockingMode.NOT_BLOCKED,interaction=InteractionMode.INTANGIBLE,layer=0).set_position(x*CELL-1,y*CELL-1))
+        for key in set(self.worn)-set(before):
+            for sprite in self.current_level.get_sprites_by_name(f'gear_{key}'):self.current_level.remove_sprite(sprite)
+        self._place_figure()
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, ('figure',), limit=CELL)
         if self._flash:
             self._flash -= 1
-            found = self.current_level.get_sprites_by_name("player")
+            found = self.current_level.get_sprites_by_name("figure")
             if found:
                 lit = self._flash % 2 == 0
                 found[0].pixels = np.array(
                     _figure(PLAYER if lit else WALL, self._outermost() if lit else None))
             if self._flash == 0:
                 self.level_reset()
-                self.complete_action()
+                finish_translation(self)
             return
 
         dx = dy = 0
@@ -428,22 +549,22 @@ class G035(ARCBaseGame):
         elif self.action.id == GameAction.ACTION4:
             dx = 1
         elif self.action.id == GameAction.ACTION5:
-            self._don_here()
-            self.complete_action()
+            self._pull_on_here()
+            finish_translation(self)
             return
 
         if dx or dy:
             spec = self._spec()
             nx, ny = self.px + dx, self.py + dy
-            if not is_wall(spec["rows"], nx, ny):
+            if not is_plaster(spec["rows"], nx, ny):
                 self.px, self.py = nx, ny
-                self._place_player()
-                if (nx, ny) == exit_cell(spec["rows"]):
+                self._place_figure()
+                if (nx, ny) == way_out_cell(spec["rows"]):
                     self.next_level()
-                    self.complete_action()
+                    finish_translation(self)
                     return
-                if not survives(spec, self.donned, nx, ny):
+                if not passable(spec, self.worn, nx, ny):
                     self._flash = self.FLASH_FRAMES
                     return
 
-        self.complete_action()
+        finish_translation(self)
