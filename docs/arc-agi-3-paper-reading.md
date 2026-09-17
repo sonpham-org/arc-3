@@ -55,17 +55,18 @@ baseline, squares that ratio, and caps it. What the cap is depends on where you 
 
 | where | what it caps | best possible level score |
 |---|---|---:|
-| paper, text (p.11 and p.13) | the squared score | **115%** |
+| paper, text (p.11 and p.14; p.13's wording is loose) | the squared score | **115%** |
 | paper, Equation 1 as printed (p.12) | the ratio, *then* squares it | 132% |
 | `ARC3-Inference/inference/tools/traces.py:42` | the squared score | **115%** |
 | `tufa-arc-agi-framework/src/taaf/game.py:408`, `diagnostics.py:179` | the squared score | **115%** |
 | ARC toolkit `arc_agi` 0.9.8 and 0.9.9 (`scorecard.py`) | the squared score | **115%** |
-| ARC toolkit `arc_agi` 0.9.1 and 0.9.6 | the squared score | 100% |
+| ARC toolkit `arc_agi` 0.9.6 | the squared score | 100% |
+| ARC toolkit `arc_agi` 0.9.1 | the plain ratio, **not squared** | 100% |
 | **the agent's prompt**, `ARC3-Inference/inference/agent/prompts.py:17` and the frozen `harnesses/baseline-v12` copy | the ratio | **100%** |
 | `docs/trace-findings/2026-09-11-priors-vs-the-25.md:54`, `2026-09-11-bp35-astra-grid2-b476.md:105` | the ratio | 100% |
 
 Read this as: **our scoring code, the paper's text and the current ARC toolkit all agree on
-115%.** The 100% figure is what older toolkit versions did. The prompt still tells the model
+115%.** The 100% figure is what older toolkit versions did (0.9.1 didn't even square). The prompt still tells the model
 that. Equation 1 as printed goes against the paper's own text, and no code anywhere does it.
 
 What the gap costs, by arithmetic only (not measured): the 15% extra exists only when the agent
