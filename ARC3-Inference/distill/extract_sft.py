@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+# Author: Claude Opus 5 (Bubba)
+# Date: 16-September-2026
+# PURPOSE: Phase-1 distillation data pipeline -- extract and filter SFT training records
+#   from ARC-3 rollout artifacts (`runs/<run>/artifacts/*_events.jsonl` +
+#   `*_viewer_data.json`). Drives the harness's own transcript reconstructor
+#   (`inference.tools.traces._messages_from_sections`) to avoid train/serve skew, applies
+#   rejection sampling at LEVEL granularity, and re-renders the board observation each
+#   decision step was actually taken from via `inference.agent.vision_context`.
+#   Downstream consumers: `distill/verify_frames.py` (fidelity oracle against captured
+#   request logs) and `distill/corpus_stats.py` (token/length distribution).
+# SRP/DRY check: Pass -- image rendering stays in vision_context, message reconstruction
+#   stays in traces.py, frame filters stay in frame_filters.py. This module only selects,
+#   aligns, and emits.
 """Phase-1 distillation data pipeline: extract + filter SFT examples from run logs.
 
 This is the *rejection-sampling* (STaR / RFT) data builder for distilling the
@@ -16,17 +29,27 @@ Design (why it looks this thin):
        ffa7g) must contribute level 1 and NOT level 2. `levels_completed` from
        the viewer_data payload is the authoritative solved-level count; we keep
        analysis turns whose `level <= levels_completed`.
-    2. IMAGE   -- the model is multimodal (one current-grid PNG per user turn).
-       We regenerate the pixel-identical image from the `board` grid with the
-       harness's own renderer (`vision_context.frame_to_png_bytes`).
+    2. IMAGE   -- the model is multimodal (one board PNG per decision turn). We
+       regenerate that image from the *preceding* board snapshot with the harness's
+       own renderer (`vision_context.frame_to_png_bytes`). The board stored ON an
+       analysis event is the board that event's actions produced, i.e. the OUTCOME,
+       not the observation the step was decided from. The observation sequence is
+       therefore `[initial.board, analysis[0].board, analysis[1].board, ...]`, and
+       decision step k sees element k. See `distill/verify_frames.py` for the check.
     3. EMIT    -- one JSONL record per training unit, with metadata (game, level,
        action count for later advantage-weighting) alongside the `messages`.
 
-FIDELITY CAVEAT: these runs did not snapshot the multimodal env
-(`save_request_logs: false`), so exact image bytes are not stored. We default to
-`--upscale 4 --style plain` (the committed a108.qwen36 config values). For the
-real training corpus, do one capture pass with the multimodal env pinned so the
-regenerated images are byte-identical to what the model actually saw.
+FIDELITY: runs that set `save_request_logs: true` write per-game
+`<game>_p<N>_requests.jsonl` alongside the artifacts, with the exact multimodal
+payload the model received (inline `data:image/png;base64,...` parts). That makes
+regeneration checkable rather than assumed. `distill/verify_frames.py` decodes those
+captured PNGs and compares them to what this module renders.
+
+Measured on the 20260915_230835_qwen38-27b-baseline-25g run at the defaults below
+(`--upscale 4 --style plain`): the regenerated frames are PIXEL-identical to the
+captured ones -- not byte-identical, because the serving path and Pillow choose
+different PNG encoder settings for the same raster. Compare decoded pixels, never
+file bytes.
 
 Usage:
     python distill/extract_sft.py \
@@ -83,13 +106,42 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _analysis_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Shape raw analysis events for `_messages_from_sections`, tagging level."""
+    """Shape raw analysis events for `_messages_from_sections`, tagging level.
+
+    The `grid` we hand each event is the board it was DECIDED FROM, which is the
+    board of the *preceding* analysis event -- or the `initial` event's board for
+    the first step. The board stored on an analysis event is the state that event's
+    actions produced, so attaching an event's own board would show the model the
+    outcome of a move as the observation it is about to choose that move from.
+
+    Verified against captured request logs (`distill/verify_frames.py`): on the
+    20260915_230835 baseline the step-1 request carries exactly one image and it is
+    the `initial` board in all four games checked, and the full predecessor sequence
+    reproduces the captured frames pixel-for-pixel (ar25 17/17, r11l 11/11,
+    vc33 19/19). Note the chain is built from `initial` + analysis events only;
+    `action` events also carry boards but are not what the model was shown.
+
+    This walks the whole ordered event list, not just the analysis subset, so the
+    chain stays intact across `action` events and across level boundaries. Callers
+    that group by level must call this BEFORE grouping.
+    """
     out: list[dict[str, Any]] = []
+    prev_board: list | None = None
     for e in events:
-        if str(e.get("type") or "").strip() != "analysis":
+        etype = str(e.get("type") or "").strip()
+        board = e.get("board")
+        if etype == "initial":
+            if isinstance(board, list):
+                prev_board = board
+            continue
+        if etype != "analysis":
             continue
         transcript = str(e.get("transcript") or "").strip()
         if not transcript:
+            # Still advance the chain: a transcript-less step is dropped from the
+            # corpus but its board is what the NEXT step was decided from.
+            if isinstance(board, list):
+                prev_board = board
             continue
         rec: dict[str, Any] = {
             "analysis_step": _normalize_int(e.get("analysis_step")),
@@ -97,9 +149,10 @@ def _analysis_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "transcript": transcript,
             "level": _normalize_int(e.get("level")),
         }
-        board = e.get("board")
+        if isinstance(prev_board, list):
+            rec["grid"] = prev_board
         if isinstance(board, list):
-            rec["grid"] = board
+            prev_board = board
         out.append(rec)
     return out
 
@@ -221,6 +274,10 @@ def build_records(
         viewer_data = json.loads(vd_path.read_text(encoding="utf-8"))
         events = _load_jsonl(events_path)
         game_id = str(viewer_data.get("game_id") or vd_path.stem)
+        # Multi-pass runs emit one viewer_data per (game, pass) and `game_id` carries
+        # no pass suffix, so the pass index has to be part of the record identity or
+        # every pass of a game collides on `id`.
+        pass_index = _normalize_int(viewer_data.get("pass_index"))
         solved_n = _solved_level_count(viewer_data, events)
         if only_solved and solved_n <= 0:
             games_done += 1
@@ -255,8 +312,13 @@ def build_records(
                 else None
             )
             yield {
-                "id": f"{run_dir.name}/{game_id}" + (f"/L{level}" if level is not None else ""),
+                "id": (
+                    f"{run_dir.name}/{game_id}"
+                    + (f"/p{pass_index}" if pass_index is not None else "")
+                    + (f"/L{level}" if level is not None else "")
+                ),
                 "game_id": game_id,
+                "pass_index": pass_index,
                 "run": run_dir.name,
                 "level": level,
                 "solved": True if (level is not None and level <= solved_n) else (solved_n > 0),
@@ -325,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[skip] no artifacts/ in {run_dir}", file=sys.stderr)
                 continue
             totals["runs"] += 1
-            seen_games: set[str] = set()
+            seen_games: set[tuple[str, int | None]] = set()
             for rec in build_records(
                 run_dir,
                 store=store,
@@ -336,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
                 totals["records"] += 1
                 totals["assistant_turns"] += rec["num_assistant_turns"]
                 totals["images"] += rec["num_images"]
-                seen_games.add(rec["game_id"])
+                seen_games.add((rec["game_id"], rec.get("pass_index")))
                 if rec.get("level") is not None:
                     per_level_hist[rec["level"]] = per_level_hist.get(rec["level"], 0) + 1
                 if fh is not None:
@@ -348,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("=" * 60)
     print(f"runs processed        : {totals['runs']}")
-    print(f"games with solved data : {totals['solved_games']}")
+    print(f"(game,pass) contributing: {totals['solved_games']}")
     print(f"training records       : {totals['records']}  (granularity={args.granularity})")
     print(f"assistant (trainable)  : {totals['assistant_turns']} turns")
     print(f"unique images rendered : {store.count}  (user turns w/ image: {totals['images']})")
