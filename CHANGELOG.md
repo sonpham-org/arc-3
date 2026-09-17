@@ -40,6 +40,18 @@ that stripping explicit and testable rather than an inline `split` at the call s
 On the two 16-Sep rollout runs the fence drops 35 (game,pass) pairs — every one of the seven
 codes is present, five passes each — leaving 40 records from 12 games.
 
+**The memory floor was inconsistent with the allocator cap.** `set_per_process_memory_fraction(0.86)`
+caps torch at 104.6 GiB of 121.63, so `MemAvailable` can never exceed ~17 GiB while torch is near
+its cap — and ~13 GiB once resident system processes are counted. A 16.0 GiB floor was therefore
+unreachable for long records, and it aborted round 1 at optimiser step 3 of 8, on a micro-step
+that had just *completed* at 12.3 GiB. The floor is now 8.0 and, more importantly, **non-fatal**:
+a trip skips one record and discards its accumulation window instead of killing the run. The cap,
+not the floor, is what bounds the process.
+
+Cached allocator blocks are now released before every micro-step. That helper deliberately does
+not touch gradients — a `zero_grad` there would wipe the accumulation window and turn every
+`grad_accum` window into a single-record step, with a loss curve that still looked normal.
+
 **The trainer.** Single-GB10 LoRA SFT against the BF16 checkpoint, reusing the forward/backward
 recipe the 17-Sep gradient census proved rather than a fresh one: `AutoModelForImageTextToText`
 (the CausalLM class silently drops the vision tower), frozen vision tower, chunked
@@ -61,6 +73,14 @@ rather than run as a separate pre-flight, so a silent gradient failure cannot ap
 pre-flight and the run it was supposed to clear. Step 0 asserts 208/208 `lora_B` nonzero and
 aborts otherwise; `lora_A` is expected to be 0/208 at step 0 because `lora_B` initialises to
 zero, and only becomes nonzero once `lora_B` moves off it.
+
+**Round 1 ran to completion**: 8/8 optimiser steps over 29 records / 882,826 tokens in 1.20 h at
+204.4 tok/s, peak 98.74 GiB, zero OOMs. The saved adapter reads back as 416 tensors — 208/208
+`lora_A` and 208/208 `lora_B` all nonzero, 39,583,744 params. The loss curve is **flat**
+(0.5764 → 0.6033, oscillating 0.52–0.60): eight steps is not enough to move a 27B model, and
+within-window record spread exceeds any step-to-step difference. The round demonstrates the
+pipeline, not a capability gain. Full write-up, including what was *not* verified:
+`docs/2026-09-17-arc3-lora-round1.md` in the operator's notes.
 
 ---
 
