@@ -368,9 +368,12 @@ async function runAction(fn, label) {
   }
 }
 
+// Feedback-revised games supply intact native movement frames.
+const nativeTranslationGames = new Set(["g009", "g010", "g011", "g012", "g013", "g014", "g015", "g016", "g017", "g018", "g019", "g020", "g021", "g022", "g024", "g026", "g027", "g028", "g034", "g035", "g036", "g043", "g044", "g045", "g046", "g047", "g050", "g136", "g155", "g162", "g171", "g178"]);
+
 async function applyState(next) {
   if (next.frames && next.frames.length > 1) {
-    const delay = Math.max(16, Math.round(1000 / 30));
+    const delay = nativeTranslationGames.has(currentGame?.id) ? 40 : Math.max(16, Math.round(1000 / 30));
     for (let i = 0; i < next.frames.length - 1; i++) {
       render(next.frames[i]);
       await new Promise((r) => setTimeout(r, delay));

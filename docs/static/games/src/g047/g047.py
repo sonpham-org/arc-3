@@ -46,14 +46,86 @@ def outline(frame, box: tuple, colour: int):
             frame[y, x1 - 1] = colour
     return frame
 
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
 
-FIELD = 1
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
+
+FIELD = 0
 GRIT = 3
-M_FLOOR = 1
+M_FLOOR = 0
 M_WALL = 3
 M_PLAYER = 8
 M_EXIT = 14
-M_EMPTY = 15
+M_EMPTY = 1
 CHROME = 3
 BAR_ARMED = 11
 FITTINGS = (3, 14, 8, 1, 3)
@@ -70,17 +142,8 @@ DIRS = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
 CORNERS = ((0, 0), (0, 64 - ORIGIN), (64 - ORIGIN, 0), (64 - ORIGIN, 64 - ORIGIN))
 
-def _grit_mask():
-    mask = np.zeros((SPAN, SPAN), dtype=bool)
-    seed = 0x5EED47
-    for y in range(SPAN):
-        for x in range(SPAN):
-            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-            mask[y, x] = (seed >> 16) % 29 == 0
-    return mask
 
-
-GRIT_MASK = _grit_mask()
+MIRROR_COLOURS = (9, 12, 15, 10)
 
 
 def strip_cells(rows, anchor, orient):
@@ -238,61 +301,57 @@ def build_levels() -> list[Level]:
     return levels
 
 
-class G047A(RenderableUserDisplay):
+class MirrorRing(RenderableUserDisplay):
 
     def __init__(self, game: "G047") -> None:
         super().__init__()
         self._game = game
 
-    @staticmethod
-    def _put(frame, k, a0, a1, d0, d1, colour) -> None:
-        if k == 0:
-            frame[d0:d1, ORIGIN + a0:ORIGIN + a1] = colour
-        elif k == 1:
-            frame[ORIGIN + a0:ORIGIN + a1, 64 - d1:64 - d0] = colour
-        elif k == 2:
-            frame[64 - d1:64 - d0, ORIGIN + a0:ORIGIN + a1] = colour
-        else:
-            frame[ORIGIN + a0:ORIGIN + a1, d0:d1] = colour
 
-    def _slot_colour(self, cell) -> int:
-        g = self._game
-        if cell == (g.px, g.py):
-            if g.flash and cell == g.exit:
-                return M_EXIT if g.flash % 2 else M_PLAYER
-            return M_PLAYER
-        if cell == g.exit:
-            return M_EXIT
-        return M_WALL if g.rows[cell[1]][cell[0]] == "#" else M_FLOOR
+    def _paint_field(self, frame):
+        g=self._game
+        field=frame[ORIGIN:ORIGIN+SPAN, ORIGIN:ORIGIN+SPAN]
+        field[:]=FIELD
+        beams=g.visible()
+        for y in range(N):
+            for x in range(N):
+                px,py=x*CELL,y*CELL
+                patch=field[py:py+CELL,px:px+CELL]
+                if (x,y) not in g.explored:
+                    patch[1,1]=1
+                    continue
+                if g.rows[y][x]=='#':
+                    patch[:]=3;patch[0,:]=2;patch[:,0]=2
+                else:
+                    patch[0,:]=1;patch[:,0]=1
+                if (x,y)==g.exit:
+                    patch[:]=M_EXIT if (x,y) in beams else 2
+                    patch[1:3,1:3]=0
+                    if (x,y) not in beams:patch[1:3,2]=3
+        for k in range(4):
+            for x,y in strip_cells(g.rows,ANCHORS[k],g.orients[k]):
+                px,py=x*CELL,y*CELL
+                if g.rows[y][x]!='#' and (x,y)!=g.exit:
+                    if g.orients[k]%2:field[py+2,px+1:px+CELL]=MIRROR_COLOURS[k]
+                    else:field[py+1:py+CELL,px+2]=MIRROR_COLOURS[k]
+        for k,(x,y) in enumerate(ANCHORS):
+            px,py=x*CELL,y*CELL;patch=field[py:py+CELL,px:px+CELL]
+            patch[:]=MIRROR_COLOURS[k]
+            patch[1:3,1:3]=11 if g.held==k else 0
+            dx,dy=DIRS[g.orients[k]];patch[2+dy,2+dx]=5
+        px,py=translation_position(g, (g.px*CELL,g.py*CELL))
+        field[py:py+CELL,px:px+CELL]=[[0,8,8,0],[8,0,0,8],[8,8,8,8],[0,8,8,0]]
 
-    def _paint_field(self, frame) -> None:
-        field = frame[ORIGIN:ORIGIN + SPAN, ORIGIN:ORIGIN + SPAN]
-        field[:] = FIELD
-        field[GRIT_MASK] = GRIT
 
-    def _paint_panel(self, frame, k) -> None:
-        g = self._game
-        cells = strip_cells(g.rows, ANCHORS[k], g.orients[k])
-        lit = BAR_ARMED if g.held == k else CHROME
-        self._put(frame, k, 0, SPAN, SLOT_DEEP, BAND_DEEP, M_EMPTY)
-        for i in range(N):
-            a = i * CELL
-            self._put(frame, k, a, a + CELL, 0, SLOT_DEEP,
-                      self._slot_colour(cells[i]) if i < len(cells) else M_EMPTY)
-            self._put(frame, k, a, a + CELL - 1, SLOT_DEEP, BAND_DEEP, lit)
-            if i % 4 == 3 and i != N - 1:
-                self._put(frame, k, a + CELL - 1, a + CELL, BAND_DEEP - 1, BAND_DEEP, lit)
-
-    def _paint_corners(self, frame) -> None:
-        tick = self._game.tick
-        for seed, (top, left) in enumerate(CORNERS):
-            frame[top:top + ORIGIN, left:left + ORIGIN] = M_EMPTY
-            phase = (tick + seed) % len(FITTINGS)
-            art = ring(FITTINGS[phase]) if phase % 2 == 0 else core(FITTINGS[phase])
-            for y in range(CELL):
-                for x in range(CELL):
-                    if art[y][x] >= 0:
-                        frame[top + 2 + y, left + 2 + x] = art[y][x]
+    def _paint_corners(self, frame):
+        g=self._game
+        for k,(top,left) in enumerate(CORNERS):
+            frame[top:top+ORIGIN,left:left+ORIGIN]=FIELD
+            colour=MIRROR_COLOURS[k]
+            frame[top+1:top+7,left+1:left+7]=colour
+            frame[top+2:top+6,left+2:left+6]=11 if g.held==k else 0
+            dx,dy=DIRS[g.orients[k]]
+            for distance in (0,1,2): frame[top+4+dy*distance,left+4+dx*distance]=5
 
     def _paint_flash(self, frame) -> None:
         step = G047.FLASH_FRAMES - self._game.flash
@@ -303,8 +362,6 @@ class G047A(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         self._paint_field(frame)
-        for k in range(4):
-            self._paint_panel(frame, k)
         self._paint_corners(frame)
         if self._game.flash:
             self._paint_flash(frame)
@@ -319,6 +376,7 @@ class G047(ARCBaseGame):
         spec = LEVELS_SPEC[0]
         self.rows = spec["rows"]
         self.orients = list(spec["orients"])
+        self.explored = set()
         self.held: int | None = None
         self.flash = 0
         self.tick = 0
@@ -326,9 +384,9 @@ class G047(ARCBaseGame):
         self.exit = self._find(spec["rows"], "X")
         camera = Camera(
             width=64, height=64, background=FIELD, letter_box=FIELD,
-            interfaces=[G047A(self)],
+            interfaces=[MirrorRing(self)],
         )
-        super().__init__(game_id="g047", levels=build_levels(), camera=camera)
+        super().__init__(game_id="g047", levels=build_levels(), camera=camera, available_actions=[1,2,3,4,5])
 
     @staticmethod
     def _find(rows, char) -> tuple[int, int]:
@@ -339,6 +397,7 @@ class G047(ARCBaseGame):
         raise AssertionError(f"board has no {char}")
 
     def on_set_level(self, level: Level) -> None:
+        clear_translation(self)
         spec = LEVELS_SPEC[self.level_index]
         self.rows = spec["rows"]
         self.orients = list(spec["orients"])
@@ -348,12 +407,16 @@ class G047(ARCBaseGame):
         self.exit = self._find(spec["rows"], "X")
         self._sync_sprite()
         self._arm()
+        self.explored = set()
+        self._reveal()
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.tick = 0
         self.on_set_level(self.current_level)
@@ -369,17 +432,27 @@ class G047(ARCBaseGame):
                 self.held = k
                 return
 
+    def _reveal(self):
+        self.explored.update(self.visible())
+        self.explored.update(ANCHORS)
+        for y in range(max(0,self.py-1),min(N,self.py+2)):
+            for x in range(max(0,self.px-1),min(N,self.px+2)):
+                self.explored.add((x,y))
+
     def visible(self) -> set:
         return visible_cells(self.rows, self.orients)
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, position=lambda: (self.px*CELL, self.py*CELL), limit=CELL)
         self.tick += 1
 
         if self.flash:
             self.flash -= 1
             if self.flash == 0:
                 self.next_level()
-                self.complete_action()
+                finish_translation(self)
             return
 
         aid = self.action.id
@@ -400,8 +473,10 @@ class G047(ARCBaseGame):
             if self.held is not None:
                 self.orients[self.held] = (self.orients[self.held] + 1) % 4
 
+        self._reveal()
+
         if (self.px, self.py) == self.exit and self.exit in self.visible():
             self.flash = self.FLASH_FRAMES
             return
 
-        self.complete_action()
+        finish_translation(self)

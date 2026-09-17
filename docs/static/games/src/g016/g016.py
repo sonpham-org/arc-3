@@ -86,6 +86,78 @@ def speckle(colour: int, seed: int, cell: int = 4) -> list[list[int]]:
                 px[y][x] = colour
     return px
 
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
+
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
 
 FLOOR = 4
 WALL = 6
@@ -169,22 +241,75 @@ LEVELS_SPEC = [
 ]
 
 
-class G016A:
+def route_via(*points):
+    route = [points[0]]
+    for bx, by in points[1:]:
+        x, y = route[-1]
+        while (x, y) != (bx, by):
+            if x != bx:
+                x += (bx > x) - (bx < x)
+            else:
+                y += (by > y) - (by < y)
+            route.append((x, y))
+    return tuple(route)
 
-    __slots__ = ("row", "dx", "label", "rem")
 
-    def __init__(self, row: int, dx: int, label: int) -> None:
-        self.row = row
-        self.dx = dx
-        self.label = label
-        self.rem = RECV_X - (dx + 1)
+LEVELS_SPEC[3]["speeds"] = (1, 2, 1)
+LEVELS_SPEC[3]["budget"] = 49
+LEVELS_SPEC.extend([
+    dict(lanes=[(4, 2, 2), (6, 8, 1), (8, 5, 3)],
+         bridges=[(4, 4), (10, 6), (10, 8), (20, 10)], start=(2, 3), exit=(23, 11), budget=60,
+         speeds=(2, 1, 1), routes={
+             0: route_via((3, 4), (12, 4), (12, 8), (17, 8), (17, 4), (23, 4)),
+             2: route_via((6, 8), (10, 8), (10, 6), (19, 6), (19, 8), (23, 8))}),
+    dict(lanes=[(4, 4, 3), (6, 4, 1), (8, 4, 2)],
+         bridges=[(6, 4), (6, 6), (6, 8), (20, 10)], start=(4, 5), exit=(23, 11), budget=53,
+         speeds=(2, 1, 2), routes={
+             0: route_via((5, 4), (10, 4), (10, 8), (18, 8), (18, 4), (23, 4)),
+             1: route_via((5, 6), (23, 6)),
+             2: route_via((5, 8), (14, 8), (14, 4), (21, 4), (21, 8), (23, 8))}),
+])
 
-    def __repr__(self) -> str:
-        return f"G016A(row={self.row}, dx={self.dx}, label={self.label}, rem={self.rem})"
+
+class Lane:
+    def __init__(self, row, dx, label, speed=1, route=None):
+        self.row, self.dx, self.label = row, dx, label
+        self.speed = speed
+        self.route = route or tuple((x, row) for x in range(dx + 1, RECV_X + 1))
+        self.rem = len(self.route) - 1
 
 
-def lanes_of(spec: dict) -> list[G016A]:
-    return [G016A(r, dx, lb) for r, dx, lb in spec["lanes"]]
+def lanes_of(spec):
+    return [Lane(r, dx, lb, spec.get("speeds", (1,) * len(spec["lanes"]))[i],
+                 spec.get("routes", {}).get(i)) for i, (r, dx, lb) in enumerate(spec["lanes"])]
+
+
+def advance_packets(packets, lanes, delivered):
+    out = list(packets)
+    collisions = set()
+    for substep in range(max(lane.speed for lane in lanes)):
+        before = {i: lanes[i].route[lanes[i].rem - rem] for i, rem in enumerate(out) if rem > 0}
+        after = dict(before)
+        for i in before:
+            if substep < lanes[i].speed:
+                out[i] -= 1
+                after[i] = lanes[i].route[lanes[i].rem - out[i]]
+        crashed = set()
+        for i in before:
+            for j in before:
+                if i < j and (after[i] == after[j] or (after[i] == before[j] and after[j] == before[i])):
+                    crashed.update((i, j))
+                    collisions.update((after[i], after[j]))
+        for i in crashed:
+            out[i] = DEAD
+        arrivals = [i for i in before if out[i] == 0]
+        if len(arrivals) == 1 and lanes[arrivals[0]].label == delivered + 1:
+            out[arrivals[0]] = DELIVERED
+            delivered += 1
+        else:
+            for i in arrivals:
+                out[i] = DEAD
+    return tuple(out), delivered, collisions
 
 
 def build_grid(spec: dict) -> list[str]:
@@ -193,8 +318,9 @@ def build_grid(spec: dict) -> list[str]:
         for x in range(1, W - 1):
             grid[y][x] = "."
     for lane in lanes_of(spec):
-        for x in range(lane.dx + 1, RECV_X):
-            grid[lane.row][x] = "-"
+        for x, y in lane.route[:-1]:
+            if grid[y][x] == "#":
+                grid[y][x] = "-"
         grid[lane.row][lane.dx] = "D"
         grid[lane.row][RECV_X] = str(lane.label)
     for x, y in spec["bridges"]:
@@ -256,7 +382,7 @@ def _packet_pixels() -> list[list[int]]:
 
 
 def _player_pixels(exit_open: bool) -> list[list[int]]:
-    return figure(PLAYER, PLAYER_CHEST_OPEN if exit_open else PLAYER_CHEST)
+    return figure(PLAYER, PLAYER_CHEST)
 
 
 def _exit_pixels(open_now: bool) -> list[list[int]]:
@@ -290,6 +416,15 @@ def build_levels() -> list[Level]:
                     sprites.append(_static_sprite(_bridge_pixels(), x, y,
                                                   f"bridge_{x}_{y}", -1, False))
         for i, lane in enumerate(lanes):
+            for a, b in zip(lane.route, lane.route[1:]):
+                px = np.full((CELL, CELL), -1, dtype=np.int8)
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                px[1:3, 1:3] = BELT
+                if dx: px[1:3, 2:4 if dx > 0 else 2] = BELT
+                if dx < 0: px[1:3, :2] = BELT
+                if dy > 0: px[2:4, 1:3] = BELT
+                if dy < 0: px[:2, 1:3] = BELT
+                sprites.append(_static_sprite(px, a[0], a[1], f"track_{i}_{a[0]}_{a[1]}", -1, False))
             sprites.append(Sprite(
                 pixels=_disp_pixels(True), name=f"disp_{i}",
                 blocking=BlockingMode.BOUNDING_BOX,
@@ -321,7 +456,7 @@ def build_levels() -> list[Level]:
     return levels
 
 
-class G016B(RenderableUserDisplay):
+class ShiftDisplay(RenderableUserDisplay):
 
     def __init__(self, game: "G016") -> None:
         super().__init__()
@@ -329,6 +464,11 @@ class G016B(RenderableUserDisplay):
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
         game = self._game
+        for x, y in getattr(game, "collisions", ()):
+            sx, sy = x * CELL - game.camera.x, y * CELL
+            if 0 <= sx <= 60:
+                for k in range(CELL):
+                    frame[sy+k, sx+k] = frame[sy+k, sx+CELL-1-k] = RECV_DEAD
         width = frame.shape[1]
         lanes = len(game.lanes)
         span = lanes * 5 - 2
@@ -369,7 +509,7 @@ class G016(ARCBaseGame):
         self._snap = False
         self._landed: list[int] = []
         self._sent: int | None = None
-        self.lanes: list[G016A] = lanes_of(LEVELS_SPEC[0])
+        self.lanes: list[Lane] = lanes_of(LEVELS_SPEC[0])
         self.state: list[int] = [NOT_SENT] * len(self.lanes)
         self.delivered = 0
         self.turns_left = LEVELS_SPEC[0]["budget"]
@@ -378,9 +518,9 @@ class G016(ARCBaseGame):
         camera = Camera(
             width=VIEW, height=VIEW,
             background=FLOOR, letter_box=FLOOR,
-            interfaces=[G016B(self)],
+            interfaces=[ShiftDisplay(self)],
         )
-        super().__init__(game_id="g016", levels=build_levels(), camera=camera)
+        super().__init__(game_id="g016", levels=build_levels(), camera=camera, available_actions=[1, 2, 3, 4, 5])
 
     @property
     def shift_over(self) -> bool:
@@ -391,6 +531,7 @@ class G016(ARCBaseGame):
         return self._flash % 2 == 1
 
     def on_set_level(self, level: Level) -> None:
+        clear_translation(self)
         spec = LEVELS_SPEC[self.level_index]
         self.lanes = lanes_of(spec)
         self.state = [NOT_SENT] * len(self.lanes)
@@ -403,13 +544,16 @@ class G016(ARCBaseGame):
         self._snap = False
         self._landed = []
         self._sent = None
+        self.collisions = set()
         self._refresh()
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.on_set_level(self.current_level)
 
@@ -427,7 +571,12 @@ class G016(ARCBaseGame):
             s = self.state[i]
             disp = self._sprite(f"disp_{i}")
             if disp is not None:
-                disp.pixels = np.array(_disp_pixels(s == NOT_SENT), dtype=np.int8)
+                face = _disp_pixels(s == NOT_SENT)
+                for k in range(lane.label):
+                    face[0][k] = RECV_MARK
+                if lane.speed > 1:
+                    face[3][1] = face[3][2] = PACKET
+                disp.pixels = np.array(face, dtype=np.int8)
             recv = self._sprite(f"recv_{i}")
             if recv is not None:
                 recv.pixels = np.array(_recv_pixels(lane.label, s), dtype=np.int8)
@@ -435,7 +584,8 @@ class G016(ARCBaseGame):
             if pkt is not None:
                 if s > 0:
                     pkt.set_interaction(InteractionMode.INTANGIBLE)
-                    pkt.set_position((RECV_X - s) * CELL, lane.row * CELL)
+                    x, y = lane.route[lane.rem - s]
+                    pkt.set_position(x * CELL, y * CELL)
                 else:
                     pkt.set_interaction(InteractionMode.REMOVED)
         ext = self._sprite("exit")
@@ -466,24 +616,18 @@ class G016(ARCBaseGame):
                     block(DISP_FLASH) if lit else _disp_pixels(False), dtype=np.int8)
 
     def _tick(self, send: int | None) -> None:
-        self._landed = []
-        for i, s in enumerate(self.state):
-            if s <= 0:
-                continue
-            s -= 1
-            if s > 0:
-                self.state[i] = s
-                continue
-            if self.lanes[i].label == self.delivered + 1:
-                self.delivered += 1
-                self.state[i] = DELIVERED
-            else:
-                self.state[i] = DEAD
-            self._landed.append(i)
+        old = self.state
+        moved, self.delivered, hit = advance_packets(old, self.lanes, self.delivered)
+        self.state = list(moved)
+        self.collisions.update(hit)
+        self._landed = [i for i, (a, b) in enumerate(zip(old, moved)) if a > 0 and b < 0]
         if send is not None:
             self.state[send] = self.lanes[send].rem
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, ('player', 'packet_*'), limit=CELL)
         if self._flash:
             self._flash -= 1
             self._paint_flash()
@@ -493,11 +637,11 @@ class G016(ARCBaseGame):
                     self.level_reset()
                 else:
                     self._refresh()
-                self.complete_action()
+                finish_translation(self)
             return
         if self.action.id == GameAction.RESET:
             self._refresh()
-            self.complete_action()
+            finish_translation(self)
             return
         deltas = {
             GameAction.ACTION1: (0, -1),
@@ -506,6 +650,9 @@ class G016(ARCBaseGame):
             GameAction.ACTION4: (1, 0),
         }
         delta = deltas.get(self.action.id)
+        if delta is None and self.action.id != GameAction.ACTION5:
+            finish_translation(self)
+            return
         send = None
         if delta is not None:
             nx, ny = self._px + delta[0], self._py + delta[1]
@@ -517,7 +664,7 @@ class G016(ARCBaseGame):
             elif ch == "X":
                 if self.delivered == len(self.lanes):
                     self.next_level()
-                    self.complete_action()
+                    finish_translation(self)
                     return
             elif ch in WALKABLE:
                 self._px, self._py = nx, ny
@@ -535,4 +682,4 @@ class G016(ARCBaseGame):
         if send is not None:
             self._flash = self.LAUNCH_FRAMES
             return
-        self.complete_action()
+        finish_translation(self)

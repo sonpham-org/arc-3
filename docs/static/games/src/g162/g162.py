@@ -81,134 +81,183 @@ def speckle(colour: int, seed: int, cell: int = 4) -> list[list[int]]:
                 px[y][x] = colour
     return px
 
+def begin_translation(game, names=(), position=None, repaint=None, limit=8):
+    game._translation_path = None
+    sprites = {s.name: (s.x, s.y) for s in game.current_level.get_sprites()
+               if any(s.name == n or (n.endswith('*') and s.name.startswith(n[:-1]))
+                      for n in names)}
+    game._translation_capture = (game.current_level, sprites,
+        (game.camera.x, game.camera.y), position, position() if position else None,
+        repaint, limit)
 
-WALL = 10
-QUIET = 13
-LOUD = 6
-PLAYER = 0
-MARK = 11
-PLAYER_CORE = QUIET
-ASLEEP = 14
-AWAKE = 11
-HUNTER_EYES = QUIET
-EXIT = 14
+def translation_position(game, position):
+    return getattr(game, '_translation_point', None) or position
+
+def advance_translation(game):
+    motion = getattr(game, '_translation_motion', None)
+    if motion is None:
+        return False
+    motion['frame'] += 1
+    t = motion['frame'] / motion['count']
+    def lerp(a, b):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+    for sprite, start, end in motion['sprites']:
+        sprite.set_position(*(motion['path'][motion['frame']-1] if motion['path'] else lerp(start, end)))
+    game.camera.x, game.camera.y = lerp(motion['camera'][0], motion['camera'][1])
+    if motion['point'] is not None:
+        game._translation_point = lerp(*motion['point'])
+    if motion['repaint'] is not None:
+        motion['repaint']()
+    if motion['frame'] == motion['count']:
+        game._translation_motion = None
+        game._translation_point = None
+        if motion['complete']:
+            game.complete_action()
+    return True
+
+def finish_translation(game, complete=True):
+    capture = getattr(game, '_translation_capture', None)
+    game._translation_capture = None
+    if capture is None or capture[0] is not game.current_level or game._next_level:
+        if complete:
+            game.complete_action()
+        return
+    level, previous, camera, position, point, repaint, limit = capture
+    sprites = []
+    distances = []
+    path = getattr(game, "_translation_path", None)
+    for sprite in level.get_sprites():
+        if sprite.name not in previous:
+            continue
+        start, end = previous[sprite.name], (sprite.x, sprite.y)
+        distance = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+        if distance or path:
+            sprites.append((sprite, start, end))
+            distances.append(distance)
+    points = (point, position()) if position else None
+    if points:
+        distances.append(max(abs(a-b) for a,b in zip(*points)))
+    count = len(path) if path else max(distances, default=0)
+    if count < 2 or (not path and count > limit):
+        if complete:
+            game.complete_action()
+        return
+    game._translation_motion = dict(frame=0, count=count, sprites=sprites,
+        camera=(camera, (game.camera.x, game.camera.y)), point=points, repaint=repaint,
+        complete=complete, path=path)
+    advance_translation(game)
+
+def clear_translation(game):
+    game._translation_path = None
+    game._translation_capture = None
+    game._translation_motion = None
+    game._translation_point = None
+
+
+STONE_WALL = 2
+STILL_TILE = 9
+LOOSE_TILE = 10
+WADER_AVATAR = 11
+ECHO_MARK = 12
+DOOR_EXIT = 3
+WADER_CORE = STILL_TILE
+ASLEEP = DOOR_EXIT
+AWAKE = ECHO_MARK
+SOUNDER_EYES = STILL_TILE
 
 DIRS = ((0, -1), (0, 1), (-1, 0), (1, 0))
 QUIET_LIMIT = 4
 
 LEVELS_SPEC = [
     {"rows": [
-        "################",
-        "#..............#",
-        "#..P...........#",
-        "#..............#",
-        "#####~##########",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#.............H#",
-        "#..............#",
-        "#..............#",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#.....#....#",
+        "#.....#....#",
+        "#.....#....#",
+        "#...P.#....#",
+        "#.....~....#",
+        "#.....#....#",
+        "#.....#....#",
+        "#.....#....#",
+        "#.....#...H#",
+        "#.....#.X..#",
+        "############",
     ]},
     {"rows": [
-        "################",
-        "#..............#",
-        "#..P...........#",
-        "#.~............#",
-        "#####~##########",
-        "#..............#",
-        "#....H.........#",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#P....#....#",
+        "#.#.#.#....#",
+        "#.#~#.#....#",
+        "#.###.#....#",
+        "#.....~....#",
+        "#.....#H...#",
+        "#.....#....#",
+        "#.....#....#",
+        "#.....#....#",
+        "#.....#.X..#",
+        "############",
     ]},
     {"rows": [
-        "################",
-        "#.~............#",
-        "#..P...........#",
-        "#..............#",
-        "#.........H....#",
-        "#..............#",
-        "#....H.........#",
-        "#####~##########",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#P.#...#..X#",
+        "#..#...#...#",
+        "#..#...#...#",
+        "#..#...#...#",
+        "#..~...~...#",
+        "#..#.H.#...#",
+        "#..#...#...#",
+        "#~.#...#...#",
+        "#..#...#...#",
+        "#..#...#...#",
+        "############",
     ]},
     {"rows": [
-        "################",
-        "#~.............#",
-        "#~.............#",
-        "#..P...........#",
-        "#..............#",
-        "#.........H....#",
-        "#..............#",
-        "#....H.........#",
-        "#####~##########",
-        "#..............#",
-        "#..............#",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#P........~#",
+        "#..........#",
+        "#..........#",
+        "#..........#",
+        "#####~######",
+        "#..........#",
+        "#...H......#",
+        "#..........#",
+        "#..........#",
+        "#X.........#",
+        "############",
     ]},
     {"rows": [
-        "################",
-        "#~.............#",
-        "#..............#",
-        "#..P...........#",
-        "#..............#",
-        "#..............#",
-        "#####~##########",
-        "#....H.........#",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#P........~#",
+        "#..........#",
+        "#..........#",
+        "#..........#",
+        "#####~######",
+        "#..........#",
+        "#...H...H..#",
+        "#..........#",
+        "#..........#",
+        "#.........X#",
+        "############",
     ]},
     {"rows": [
-        "################",
-        "#..........~...#",
-        "#..P...........#",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#..............#",
-        "#....H.........#",
-        "#####~##########",
-        "#####~##########",
-        "#####~##########",
-        "#####.##########",
-        "#....X.........#",
-        "#..............#",
-        "#..............#",
-        "################",
+        "############",
+        "#P.#...#..~#",
+        "#..#...#...#",
+        "#..#...#H..#",
+        "#..#...#...#",
+        "#..~...~...#",
+        "#..#...#...#",
+        "#..#.H.#...#",
+        "#..#...#...#",
+        "#..#...#...#",
+        "#.~#...#..X#",
+        "############",
     ]},
 ]
 
 N = len(LEVELS_SPEC[0]["rows"])
-CELL = 4
+CELL = 5
+PAD = (64 - N * CELL) // 2
 
 
 def find_char(rows, ch):
@@ -232,11 +281,11 @@ def is_loud(rows, x, y):
     return rows[y][x] == "~"
 
 
-def hunter_step(rows, pos, mark):
-    if mark is None or pos == mark:
+def sounder_step(rows, pos, echo):
+    if echo is None or pos == echo:
         return pos
-    dist = {mark: 0}
-    q = deque([mark])
+    dist = {echo: 0}
+    q = deque([echo])
     while q:
         cx, cy = q.popleft()
         for dx, dy in DIRS:
@@ -253,43 +302,57 @@ def hunter_step(rows, pos, mark):
 
 
 def advance(rows, state, direction):
-    (px, py), hunters, mark, quiet = state
+    (px, py), sounders, echo, quiet = state
     dx, dy = direction
     nx, ny = px + dx, py + dy
     if not passable(rows, nx, ny):
         return state, False
-    awake = mark is not None
-    if awake and (nx, ny) in hunters:
+    awake = echo is not None
+    if awake and (nx, ny) in sounders:
         return state, True
 
     if is_loud(rows, nx, ny):
-        mark, quiet = (nx, ny), 0
-    elif mark is not None:
+        echo, quiet = (nx, ny), 0
+    elif echo is not None:
         quiet += 1
         if quiet >= QUIET_LIMIT:
-            mark, quiet = None, 0
+            echo, quiet = None, 0
 
-    if mark is not None:
-        moved = tuple(hunter_step(rows, h, mark) for h in hunters)
+    if echo is not None:
+        moved = tuple(sounder_step(rows, h, echo) for h in sounders)
         if any(h == (nx, ny) for h in moved):
-            return ((nx, ny), moved, mark, quiet), True
-        hunters = moved
-        if all(h == mark for h in hunters):
-            mark, quiet = None, 0
-    return ((nx, ny), hunters, mark, quiet), False
+            return ((nx, ny), moved, echo, quiet), True
+        sounders = moved
+        if all(h == echo for h in sounders):
+            echo, quiet = None, 0
+    return ((nx, ny), sounders, echo, quiet), False
 
 
 def start_state(rows):
     return (find_char(rows, "P"), find_all(rows, "H"), None, 0)
 
 
-def _wall():
-    return block(WALL, CELL)
+def _wall(x, y):
+    px = block(STONE_WALL, CELL)
+    for gy in range(CELL):
+        if gy % 2 == 0:
+            px[gy][(x * 2 + gy) % CELL] = DOOR_EXIT
+        else:
+            px[gy][(x * 2 + gy + 3) % CELL] = DOOR_EXIT
+    px[0] = [DOOR_EXIT if (gx + y) % 3 == 0 else STONE_WALL for gx in range(CELL)]
+    return px
 
 
-def _loud(x, y):
-    px = block(LOUD, CELL)
-    for gy, row in enumerate(speckle(LOUD, x * 5 + y * 3, CELL)):
+def _still(x, y):
+    px = [[-1] * CELL for _ in range(CELL)]
+    px[(x + y) % CELL][(x * 3 + y) % CELL] = WADER_CORE
+    px[(x * 2 + y) % CELL][(x + y * 3) % CELL] = WADER_CORE
+    return px
+
+
+def _loose(x, y):
+    px = block(LOOSE_TILE, CELL)
+    for gy, row in enumerate(speckle(LOOSE_TILE, x * 5 + y * 3, CELL)):
         for gx, v in enumerate(row):
             if v >= 0:
                 px[gy][gx] = -1
@@ -297,21 +360,22 @@ def _loud(x, y):
 
 
 def _exit():
-    return door(EXIT, None, CELL)
+    return door(DOOR_EXIT, None, CELL)
 
 
 def _sleeper():
     px = rounded(ASLEEP, CELL)
     px[0] = [-1] * CELL
+    px[1] = [-1 if gx in (0, CELL - 1) else ASLEEP for gx in range(CELL)]
     return px
 
 
-def _hunter(heading):
-    return facing(AWAKE, HUNTER_EYES, heading, CELL)
+def _sounder(heading):
+    return facing(AWAKE, SOUNDER_EYES, heading, CELL)
 
 
-def _player(lit: bool = False):
-    return figure(AWAKE if lit else PLAYER, PLAYER_CORE, CELL)
+def _wader(lit: bool = False):
+    return figure(AWAKE if lit else WADER_AVATAR, WADER_CORE, CELL)
 
 
 def build_levels() -> list[Level]:
@@ -323,13 +387,13 @@ def build_levels() -> list[Level]:
             for x in range(N):
                 c = rows[y][x]
                 if c == "#":
-                    art = _wall()
+                    art = _wall(x, y)
                 elif c == "~":
-                    art = _loud(x, y)
+                    art = _loose(x, y)
                 elif c == "X":
                     art = _exit()
                 else:
-                    continue
+                    art = _still(x, y)
                 sprites.append(Sprite(
                     pixels=art, name=f"cell_{x}_{y}",
                     blocking=BlockingMode.NOT_BLOCKED,
@@ -337,13 +401,13 @@ def build_levels() -> list[Level]:
                 ).set_position(x * CELL, y * CELL))
         for i, (hx, hy) in enumerate(find_all(rows, "H")):
             sprites.append(Sprite(
-                pixels=_sleeper(), name=f"hunter_{i}",
+                pixels=_sleeper(), name=f"sounder_{i}",
                 blocking=BlockingMode.NOT_BLOCKED,
                 interaction=InteractionMode.INTANGIBLE, layer=1, collidable=False,
             ).set_position(hx * CELL, hy * CELL))
         px, py = find_char(rows, "P")
         sprites.append(Sprite(
-            pixels=_player(), name="player",
+            pixels=_wader(), name="wader",
             blocking=BlockingMode.NOT_BLOCKED,
             interaction=InteractionMode.INTANGIBLE, layer=2, collidable=False,
         ).set_position(px * CELL, py * CELL))
@@ -351,25 +415,51 @@ def build_levels() -> list[Level]:
     return levels
 
 
-class G162A(RenderableUserDisplay):
+def sound_distances(rows, origin):
+    dist = {origin: 0}
+    queue = deque([origin])
+    while queue:
+        x,y=queue.popleft()
+        for dx,dy in DIRS:
+            n=(x+dx,y+dy)
+            if n not in dist and passable(rows,*n):
+                dist[n]=dist[(x,y)]+1
+                queue.append(n)
+    return dist
 
-    GROUND = (QUIET, LOUD)
+class EchoDisplay(RenderableUserDisplay):
+
+    GROUND = (STILL_TILE, LOOSE_TILE, WADER_CORE)
+    MID = CELL // 2
 
     def __init__(self, game: "G162") -> None:
         super().__init__()
         self._game = game
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
-        m = self._game.mark
+        g=self._game
+        if g._wave is not None:
+            dist, radius = g._wave
+            for (x,y),distance in dist.items():
+                if radius-1 <= distance <= radius:
+                    ox,oy=PAD+x*CELL,PAD+y*CELL
+                    for dx,dy in ((0,2),(2,0),(4,2),(2,4)):
+                        if int(frame[oy+dy,ox+dx]) in self.GROUND:
+                            frame[oy+dy,ox+dx] = ECHO_MARK if distance==radius else LOOSE_TILE
+        if g._wake and g._wake%2:
+            for x,y in g.sounders:
+                ox,oy=PAD+x*CELL,PAD+y*CELL
+                frame[oy,ox+1:ox+4]=WADER_AVATAR
+                frame[oy+1,ox+1]=frame[oy+1,ox+3]=0
+        m = self._game.echo
         if m is None:
             return frame
-        ox, oy = m[0] * CELL, m[1] * CELL
-        for dy in range(CELL):
-            for dx in range(CELL):
-                if (dy in (0, CELL - 1)) != (dx in (0, CELL - 1)):
-                    continue
-                if int(frame[oy + dy, ox + dx]) in self.GROUND:
-                    frame[oy + dy, ox + dx] = MARK
+        left = max(QUIET_LIMIT - self._game.quiet, 1)
+        ox, oy = PAD + m[0] * CELL, PAD + m[1] * CELL
+        corners = [(0, 0), (CELL - 1, 0), (0, CELL - 1), (CELL - 1, CELL - 1)][:left]
+        for dx, dy in corners + [(self.MID, self.MID)]:
+            if int(frame[oy + dy, ox + dx]) in self.GROUND:
+                frame[oy + dy, ox + dx] = ECHO_MARK
         return frame
 
 
@@ -378,16 +468,19 @@ class G162(ARCBaseGame):
     CAUGHT_FRAMES = 6
 
     def __init__(self) -> None:
+        self._wave = None
+        self._wake = 0
+        self._pending = None
         self._caught = 0
         rows = LEVELS_SPEC[0]["rows"]
-        self.player = find_char(rows, "P")
-        self.hunters = find_all(rows, "H")
-        self.mark = None
+        self.wader = find_char(rows, "P")
+        self.sounders = find_all(rows, "H")
+        self.echo = None
         self.quiet = 0
         camera = Camera(
             width=N * CELL, height=N * CELL,
-            background=QUIET, letter_box=5,
-            interfaces=[G162A(self)],
+            background=STILL_TILE, letter_box=STONE_WALL,
+            interfaces=[EchoDisplay(self)],
         )
         super().__init__(game_id="g162", levels=build_levels(), camera=camera,
                          available_actions=[1, 2, 3, 4])
@@ -398,53 +491,90 @@ class G162(ARCBaseGame):
         return LEVELS_SPEC[self.level_index]["rows"]
 
     def on_set_level(self, level: Level) -> None:
-        self.player, self.hunters, self.mark, self.quiet = start_state(self.rows)
+        clear_translation(self)
+        self.wader, self.sounders, self.echo, self.quiet = start_state(self.rows)
+        self._wave = None
+        self._wake = 0
+        self._pending = None
         self._caught = 0
         self._repaint()
 
     def level_reset(self) -> None:
+        clear_translation(self)
         super().level_reset()
         self.on_set_level(self.current_level)
 
     def full_reset(self) -> None:
+        clear_translation(self)
         super().full_reset()
         self.on_set_level(self.current_level)
 
     def _repaint(self) -> None:
-        for i, (hx, hy) in enumerate(self.hunters):
-            if self.mark is None:
+        for i, (hx, hy) in enumerate(self.sounders):
+            if self.echo is None:
                 art = _sleeper()
             else:
-                nx, ny = hunter_step(self.rows, (hx, hy), self.mark)
-                art = _hunter((nx - hx, ny - hy))
-            for s in self.current_level.get_sprites_by_name(f"hunter_{i}"):
+                nx, ny = sounder_step(self.rows, (hx, hy), self.echo)
+                art = _sounder((nx - hx, ny - hy))
+            for s in self.current_level.get_sprites_by_name(f"sounder_{i}"):
                 s.pixels = np.array(art)
                 s.set_position(hx * CELL, hy * CELL)
-        for s in self.current_level.get_sprites_by_name("player"):
-            s.pixels = np.array(_player())
-            s.set_position(self.player[0] * CELL, self.player[1] * CELL)
+        for s in self.current_level.get_sprites_by_name("wader"):
+            s.pixels = np.array(_wader())
+            s.set_position(self.wader[0] * CELL, self.wader[1] * CELL)
 
     def step(self) -> None:
+        if advance_translation(self):
+            return
+        begin_translation(self, ('wader',), limit=CELL)
         if self._caught:
             self._caught -= 1
-            for s in self.current_level.get_sprites_by_name("player"):
-                s.pixels = np.array(_player(self._caught % 2 == 0))
+            for s in self.current_level.get_sprites_by_name("wader"):
+                s.pixels = np.array(_wader(self._caught % 2 == 0))
             if self._caught == 0:
                 self.level_reset()
-                self.complete_action()
+                finish_translation(self)
             return
 
-        direction = {GameAction.ACTION1: (0, -1), GameAction.ACTION2: (0, 1),
-                     GameAction.ACTION3: (-1, 0), GameAction.ACTION4: (1, 0)}.get(
-                         self.action.id)
-        if direction is not None:
-            state = (self.player, self.hunters, self.mark, self.quiet)
-            (self.player, self.hunters, self.mark, self.quiet), dead = advance(
-                self.rows, state, direction)
-            self._repaint()
-            if dead:
-                self._caught = self.CAUGHT_FRAMES
+        if self._wave is not None:
+            dist,radius=self._wave
+            reach=max((dist.get(h,0) for h in self.sounders),default=0)
+            if radius < reach:
+                self._wave=(dist,radius+1)
                 return
-            if self.player == find_char(self.rows, "X"):
-                self.next_level()
-        self.complete_action()
+            self._wave=None
+            self._wake=6
+            return
+        if self._wake:
+            self._wake-=1
+            if self._wake:
+                return
+            state,dead=self._pending
+            self._pending=None
+            self._finish_move(state,dead)
+            return
+        direction = {GameAction.ACTION1:(0,-1),GameAction.ACTION2:(0,1),
+                     GameAction.ACTION3:(-1,0),GameAction.ACTION4:(1,0)}.get(self.action.id)
+        if direction is None:
+            finish_translation(self)
+            return
+        state=(self.wader,self.sounders,self.echo,self.quiet)
+        nxt,dead=advance(self.rows,state,direction)
+        nx,ny=self.wader[0]+direction[0],self.wader[1]+direction[1]
+        if passable(self.rows,nx,ny) and is_loud(self.rows,nx,ny):
+            self._pending=(nxt,dead)
+            self.wader=(nx,ny)
+            self._wave=(sound_distances(self.rows,(nx,ny)),0)
+            self._repaint()
+            return
+        self._finish_move(nxt,dead)
+
+    def _finish_move(self,state,dead):
+        self.wader,self.sounders,self.echo,self.quiet=state
+        self._repaint()
+        if dead:
+            self._caught=self.CAUGHT_FRAMES
+            return
+        if self.wader==find_char(self.rows,'X'):
+            self.next_level()
+        finish_translation(self)
