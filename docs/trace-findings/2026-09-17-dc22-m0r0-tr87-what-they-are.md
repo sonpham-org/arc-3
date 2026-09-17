@@ -139,9 +139,12 @@ Counted from `artifacts/*_events.jsonl` in
 
 Start with the fact that reframes the rest: **`game_over` is zero and `run_status` is
 `playing` in all twelve passes.** None of the three ever reached its own loss condition. tr87
-pass 1 spent 126 of a 128 budget and stopped two short; dc22 pass 0 spent 86 of 128; m0r0
-peaked at 41 of 150. The wall clock ended these runs, not the game. **Every pass of all three
-was still on level 1 when it stopped.**
+pass 1 spent 126 actions against a 128 budget (`:945`) and stopped two short; m0r0 peaked at
+41 against 150 (`:710`). dc22's remaining budget cannot be read off its action count — a fall
+costs 20 steps (`:9890`) where an ordinary action costs 1 (`:9885`), and the events' `state`
+field carries only `NOT_FINISHED` rather than the counter `_get_hidden_state` (`:10872`)
+exposes, so how much of dc22's 128 was left is unknown. The wall clock ended these runs, not
+the game. **Every pass of all three was still on level 1 when it stopped.**
 
 | game | p0 | p1 | p2 | p3 | dominant action |
 |---|---|---|---|---|---|
@@ -154,15 +157,18 @@ What this suggests, per game — none of it is established:
 - **tr87.** `board_changed` is `True` on **100%** of actions in all four passes. Every glyph
   cycle changes the picture, and `bsqsshqpox` is a bare boolean consulted only inside the
   `ACTION1`/`ACTION2` branch (`:993`), so nothing between "wrong" and "solved" is ever
-  reported. Dense visible change, zero gradient. 69 `ACTION1` presses against a period-7 cycle
-  means the same glyph states were revisited many times over.
+  reported. Dense visible change, zero gradient. And across all four passes **every board
+  state was distinct** — 267 actions, 267 distinct `board_ascii` frames, zero repeats. The
+  model was not stuck in a loop; it was generating novel wrong strings indefinitely, with
+  nothing in the feedback to say which of them were closer.
 - **dc22.** `ACTION6` is roughly half of every pass, and it is exactly the action whose effect
   is not where the click is: it rewrites tiles anywhere sharing a letter, can relocate the
   player (`:10669-10672`) and can charge 20 steps by opening air underfoot (`:9890`). Half the
-  budget spent on the one verb whose consequence is invisible at the point of use.
+  actions spent on the one verb whose consequence is invisible at the point of use.
 - **m0r0.** `board_changed` is `True` on about 88% of actions — the tokens are moving. Moving
-  is not converging when one key drives four mirrored frames, and any contact with `spswjz`
-  returns the board to its opening position (`:703`).
+  is not converging when one key drives four mirrored frames. The exact opening frame recurs
+  1–3 times per pass, which is what a `spswjz` hazard reset (`:703`) would look like — but see
+  not-verified 11.
 
 The shared shape, which is the same one `2026-09-12-bottom-seven-what-each-one-is.md` found in
 its own seven:
@@ -203,10 +209,16 @@ a restatement of the mechanics above, not an explanation of the model gap.
    the separator's own position.
 8. **m0r0's `ACTION5`** is listed in `available_actions` (`:671`) and appears 1–2 times per
    pass, but no branch of `step` handles it: it leaves both deltas at zero, so it moves
-   nothing while still running the pairing block (`:811-845`) and still consuming one of the
-   150 actions. Whether that is intended was not checked against any other game.
+   nothing while still consuming one of the 150 actions. It runs the pairing block (`:811-845`)
+   only in collective mode; with a `mosdlc` selected the individual-mode branch at `:768`
+   returns first and the pairing block never executes. Whether that is intended was not checked against any other game.
 9. **The Boss's human wins on dc22 and m0r0** (`2026-09-17-boss-scorecard-inventory.md`) were
    not pulled and replayed. They would show the intended solution path directly and would be
    the cheapest check on everything above.
+11. **m0r0 hazard contact was not confirmed.** The count above is a proxy: frames whose
+    `board_ascii` equals the opening frame's. That is consistent with a `spswjz` reset, but a
+    token wandering back to its start would look identical, and the frame stream includes
+    non-action frames (41–60 frames against 24–41 actions). No hazard event was identified
+    directly.
 10. **No claim is made that these three mechanics are harder than the other 22.** The three
     were written up because they had no page, not because a difficulty ranking put them here.
