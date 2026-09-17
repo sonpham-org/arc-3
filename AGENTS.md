@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **Author:** Mark Barney / Claude Opus 5
-**Date:** 05-September-2026
+**Date:** 05-September-2026 (as66 test-only note added 17-September-2026, Claude Opus 5)
 **Purpose:** What an AI agent must know before touching this project, and the specific
 false assumptions that agents keep making. Every item below is something that has actually
 gone wrong, not a hypothetical.
@@ -17,6 +17,11 @@ gone wrong, not a hypothetical.
 - The **source of truth for game code is `autoresearch-arena/arc3games/`**, not this repo.
 - **A cron rewrites those games every few hours.** `git pull` before you form any opinion.
 - Use **`python3.13`**. The system `python3` is 3.9 and will hand you a false green.
+- **`as66` is a test-only game. Never train on it.** It is the 26th game (a withdrawn preview
+  game, rebuilt from Boss's recording) and lives in
+  [`datasets/test-only-games/`](datasets/test-only-games/README.md), not in the training catalog.
+  Keep it out of `docs/static/games/`, and add `as66` to `--exclude-games` whenever you extract
+  from a run that played it.
 
 Full context: [`docs/how-this-feeds-kaggle.md`](docs/how-this-feeds-kaggle.md).
 
@@ -155,7 +160,7 @@ volume that get in the way, not the concepts.
 
 | repo | what it is |
 |---|---|
-| `arc-3` | harness variants (`harnesses/`), the duck (`ARC3-Inference/`), Kaggle notebooks (`kaggle/`), the published game catalog (`docs/static/games/`) |
+| `arc-3` | harness variants (`harnesses/`), the duck (`ARC3-Inference/`), Kaggle notebooks (`kaggle/`), the published game catalog (`docs/static/games/`), test-only games (`datasets/test-only-games/`, never trained on) |
 | `autoresearch-arena` | **game authoring source of truth** (`arc3games/`), the polish/differentiation loop, and its documentation |
 | `arc-explainer` | the public site, written analyses of official games, ARCEngine submodule |
 | `arc-interactive` | ARC Prize's own game repo and toolkit |
@@ -165,6 +170,9 @@ volume that get in the way, not the concepts.
 Author games in `autoresearch-arena` → package → publish to `arc-3` → the duck plays them
 → `ARC3-Inference/distill/extract_sft.py` keeps **only solved levels** → fine-tune the
 model on its own wins → Kaggle notebook plays games nobody has seen.
+
+Test-only games (`datasets/test-only-games/`, today just `as66`) sit outside that line on
+purpose: the duck may be *tested* on them, but their runs never reach `extract_sft.py` unfenced.
 
 **The consequence that governs game design:** a game contributes training data only for
 levels the model actually beats. Too hard yields nothing; too easy teaches nothing.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Author: Claude Opus 5 (Bubba)
+# Author: Claude Opus 5 (Bubba); --exclude-games help note by Claude Opus 5, 17-September-2026
 # Date: 16-September-2026
 # PURPOSE: Phase-1 distillation data pipeline -- extract and filter SFT training records
 #   from ARC-3 rollout artifacts (`runs/<run>/artifacts/*_events.jsonl` +
@@ -387,7 +387,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Comma-separated bare game codes (e.g. 'vc33,ar25') to drop entirely -- the "
         "held-out test-set fence. Matched against the code before the content hash, and "
-        "applied before image rendering so excluded frames are never written.",
+        "applied before image rendering so excluded frames are never written. The test-only "
+        "game as66 (datasets/test-only-games/) must always be in this list when the run "
+        "played it: vc33,ar25,sb26,re86,su15,tr87,tu93,as66.",
     )
     return p.parse_args(argv)
 

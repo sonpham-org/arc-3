@@ -28,6 +28,9 @@ artifact; experiments copy from it and never edit it in place.**
 ## Shared across every harness (so N harnesses stay comparable)
 - The metric (ex-`ft09`), the runs scoreboard (`docs/`), and the launch/monitor infra
   (`gcp/` — isolated bundle + smoke-gate + watchers).
+- The test-only game `as66` ([`datasets/test-only-games/`](../datasets/test-only-games/README.md)):
+  run it with `environments_dir=datasets/test-only-games`, report it on its own line (never in
+  the ex-`ft09` or all-25 average), and never train on its runs.
 
 ## Contents
 - `baseline-v12/` — FROZEN reference. Validated ex-`ft09` ≈ **1.21** (2 runs: 1.224, 1.188).
