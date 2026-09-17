@@ -254,6 +254,16 @@ def _count_assistant_turns(messages: list[dict[str, Any]]) -> int:
     return sum(1 for m in messages if m.get("role") == "assistant")
 
 
+def game_code(game_id: str) -> str:
+    """Bare 4-char game code from a full game id.
+
+    Artifacts name games `ar25-0c556536`; held-out-set membership is decided by the
+    `ar25` prefix alone, so any comparison against a test-set list has to strip the
+    content hash first. Comparing full ids to bare codes silently matches nothing.
+    """
+    return str(game_id).split("-", 1)[0].strip().lower()
+
+
 def build_records(
     run_dir: Path,
     *,
@@ -261,6 +271,8 @@ def build_records(
     granularity: str,
     only_solved: bool,
     max_games: int | None,
+    exclude_games: frozenset[str] = frozenset(),
+    excluded_counter: dict[str, int] | None = None,
 ) -> Iterator[dict[str, Any]]:
     artifacts = run_dir / "artifacts"
     vd_paths = sorted(artifacts.glob("*_viewer_data.json"))
@@ -278,6 +290,17 @@ def build_records(
         # no pass suffix, so the pass index has to be part of the record identity or
         # every pass of a game collides on `id`.
         pass_index = _normalize_int(viewer_data.get("pass_index"))
+
+        # Held-out test-set fence. Applied at GAME granularity and before any record is
+        # built, so excluded games never reach the renderer -- a dropped JSONL row still
+        # leaves its regenerated PNG on disk, where a later job can pick it back up.
+        if exclude_games and game_code(game_id) in exclude_games:
+            if excluded_counter is not None:
+                key = game_code(game_id)
+                excluded_counter[key] = excluded_counter.get(key, 0) + 1
+            games_done += 1
+            continue
+
         solved_n = _solved_level_count(viewer_data, events)
         if only_solved and solved_n <= 0:
             games_done += 1
@@ -359,6 +382,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='JSON object of filter params, e.g. \'{"rate": 0.1}\'. Unset params use the filter\'s default.',
     )
     p.add_argument("--filter-seed", type=int, default=0, help="Base seed mixed with each grid's content hash.")
+    p.add_argument(
+        "--exclude-games",
+        default=None,
+        help="Comma-separated bare game codes (e.g. 'vc33,ar25') to drop entirely -- the "
+        "held-out test-set fence. Matched against the code before the content hash, and "
+        "applied before image rendering so excluded frames are never written.",
+    )
     return p.parse_args(argv)
 
 
@@ -377,6 +407,11 @@ def main(argv: list[str] | None = None) -> int:
         filter_seed=args.filter_seed,
     )
 
+    exclude_games = frozenset(
+        c.strip().lower() for c in (args.exclude_games or "").split(",") if c.strip()
+    )
+    excluded_counter: dict[str, int] = {}
+
     totals = {"records": 0, "assistant_turns": 0, "images": 0, "solved_games": 0, "runs": 0}
     per_level_hist: dict[int, int] = {}
     fh = None if args.stats_only else out_path.open("w", encoding="utf-8")
@@ -394,6 +429,8 @@ def main(argv: list[str] | None = None) -> int:
                 granularity=args.granularity,
                 only_solved=not args.keep_unsolved,
                 max_games=args.max_games,
+                exclude_games=exclude_games,
+                excluded_counter=excluded_counter,
             ):
                 totals["records"] += 1
                 totals["assistant_turns"] += rec["num_assistant_turns"]
@@ -414,6 +451,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"training records       : {totals['records']}  (granularity={args.granularity})")
     print(f"assistant (trainable)  : {totals['assistant_turns']} turns")
     print(f"unique images rendered : {store.count}  (user turns w/ image: {totals['images']})")
+    if exclude_games:
+        dropped = sum(excluded_counter.values())
+        detail = ", ".join(f"{k}:{v}" for k, v in sorted(excluded_counter.items())) or "none"
+        print(f"test-set fence         : {sorted(exclude_games)}")
+        print(f"  (game,pass) dropped  : {dropped}  [{detail}]")
+        missing = sorted(exclude_games - set(excluded_counter))
+        if missing:
+            print(f"  [warn] fenced codes never seen in these runs: {missing}", file=sys.stderr)
     if per_level_hist:
         hist = ", ".join(f"L{k}:{v}" for k, v in sorted(per_level_hist.items()))
         print(f"records per level      : {hist}")

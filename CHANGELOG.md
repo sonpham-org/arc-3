@@ -21,6 +21,49 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 17-Sep-2026 — round-1 LoRA trainer, and a test-set fence the extractor could not enforce
+
+`distill/train_lora.py` (new), `distill/corpus_adapter.py` (new), and `--exclude-games` on
+`distill/extract_sft.py`.
+
+**The fence.** Seven games — `vc33, ar25, sb26, re86, su15, tr87, tu93` — are the held-out test
+set, and there was no way to keep them out of a training corpus short of filtering the JSONL
+afterwards. Filtering afterwards is not good enough: an excluded record's regenerated board PNG
+has already been written to the images directory by then, where a later job can pick it back up.
+`--exclude-games` therefore drops at *game* granularity, before the renderer is ever reached.
+
+It matches on the bare game code, not the full id. Artifacts name games `ar25-0c556536`; a
+comparison of a 4-char fence list against full ids matches nothing and passes silently, which is
+the failure mode most likely to void a round while looking clean. `game_code()` exists to make
+that stripping explicit and testable rather than an inline `split` at the call site.
+
+On the two 16-Sep rollout runs the fence drops 35 (game,pass) pairs — every one of the seven
+codes is present, five passes each — leaving 40 records from 12 games.
+
+**The trainer.** Single-GB10 LoRA SFT against the BF16 checkpoint, reusing the forward/backward
+recipe the 17-Sep gradient census proved rather than a fresh one: `AutoModelForImageTextToText`
+(the CausalLM class silently drops the vision tower), frozen vision tower, chunked
+cross-entropy, and gradient checkpointing. The latter two are required and not tunable — naive
+CE OOMs at ~20K tokens and checkpointing-off OOMs at 10K.
+
+Two things in it are consequences of GB10 memory being *unified*, where an over-allocation
+invokes the kernel OOM killer instead of raising a catchable torch error and takes unrelated
+processes down with it: a `MemAvailable` floor checked before every allocation, and a hard
+49,152-token sequence cap (65,536 killed the box on 16-Sep). Records over the cap are skipped
+and counted, never truncated.
+
+Corpus length is measured through the real processor, not a text tokenizer. One board PNG per
+decision turn expands into a large vision-token block; a text-only count undercounts by enough
+to admit a record that then blows the cap.
+
+The gradient census from `assert_lora_gradients.py` is folded into the trainer's own step 0
+rather than run as a separate pre-flight, so a silent gradient failure cannot appear between the
+pre-flight and the run it was supposed to clear. Step 0 asserts 208/208 `lora_B` nonzero and
+aborts otherwise; `lora_A` is expected to be 0/208 at step 0 because `lora_B` initialises to
+zero, and only becomes nonzero once `lora_B` moves off it.
+
+---
+
 ## 17-Sep-2026 — the LoRA run was training 64 of its 208 adapters, and why
 
 `tools/assert_lora_gradients.py` — a pre-flight that fails a training round before it starts if
