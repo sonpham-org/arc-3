@@ -11,8 +11,10 @@ engine, proving four things before a single GPU second is spent
   2. With it unset, no user turn carries the marker -- arm B is untouched.
   3. The block is re-sent on later turns, not only the first, which is what makes it survive
      _trim_messages_for_context dropping the oldest history block.
-  4. scripts/check_oracle_marker.sh returns the expected counts on the prompt logs both arms
-     produce, using the real writer (tool_agent._write_prompt_log_snapshot).
+  4. scripts/check_oracle_marker.sh returns the expected counts on the artifacts both arms
+     really produce -- the prompt logs from the real writer (tool_agent._write_prompt_log_snapshot),
+     transcript echo and all, AND the `*_requests.jsonl` wire message lists -- and still REFUSES
+     a request that carries the block twice.
   5. The block is stripped from turns filed into history, so exactly ONE copy is in context
      at a time and arm O is not silently trading real history for repeated rulebook text.
   6. What that stripping costs the server's prefix cache, as a measured number rather than an
@@ -33,6 +35,7 @@ prompt builder and prompt-log writer rather than restating either.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -131,8 +134,19 @@ def _build_arm(run_root: Path, games: list[str], rules_dir: Path | None) -> dict
             ],
             tools=None,
         )
+        wire = [
+            {"role": "system", "content": "(system prompt omitted in the dry build)"},
+            *history,
+            {"role": "user", "content": rendered[1]},
+        ]
         # The real writer, so the guard reads the real rendering. Mode "w": the log holds
         # the latest snapshot, which is what the guard greps on a live run.
+        #
+        # `transcript` is NOT a placeholder here, and that matters: on a live run it is the
+        # turn transcript, which re-prints this same turn's `[USER PROMPT]` once per analysis
+        # step. A "(dry build)" string there is what let the 18-Sep guard ship asserting on a
+        # per-file occurrence count that a real arm-O log can never satisfy -- the log holds
+        # `1 + analysis_steps` copies, a floor of 2. Feed the writer the shape it really gets.
         _write_prompt_log_snapshot(
             run_root / "prompts" / f"{stem}.log",
             model_id="dry-run",
@@ -140,16 +154,53 @@ def _build_arm(run_root: Path, games: list[str], rules_dir: Path | None) -> dict
             display_action_num=5,
             analysis_step=5,
             request_index=0,
-            messages=[
-                {"role": "system", "content": "(system prompt omitted in the dry build)"},
-                *history,
-                {"role": "user", "content": rendered[1]},
-            ],
+            messages=wire,
             tools=[],
             tool_choice=None,
-            transcript="(dry build)",
+            transcript=_turn_transcript(rendered[1]),
         )
+        # The wire message lists, one JSON line per request, which is where the guard now
+        # measures retention. Two requests so the retained-history path is represented.
+        _write_requests_jsonl(run_root / f"{stem}_requests.jsonl", [wire[:2], wire])
     return turns
+
+
+def _turn_transcript(user_prompt: str, analysis_steps: int = 2) -> str:
+    """The `[TURN TRANSCRIPT SO FAR]` payload a live run hands the prompt-log writer.
+
+    One `[SYSTEM PROMPT]` / `[USER PROMPT]` pair per analysis step of the CURRENT turn, the
+    user prompt verbatim. This is the transcript echo that makes a per-file occurrence count
+    meaningless; reproducing it is how this test now proves the guard does not assert on it.
+    """
+    blocks = []
+    for step in range(1, analysis_steps + 1):
+        blocks.append(
+            f"--- analysis_step={step} | action=5 | 00:00:0{step} | tool-agent ---\n"
+            "[SYSTEM PROMPT]\n(system prompt omitted in the dry build)\n\n"
+            f"[USER PROMPT]\n{user_prompt}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _write_requests_jsonl(path: Path, requests: list[list[dict]]) -> None:
+    """The `*_requests.jsonl` shape tool_agent writes: one record per request, `messages` at top."""
+    with open(path, "w", encoding="utf-8") as handle:
+        for index, messages in enumerate(requests):
+            handle.write(
+                json.dumps(
+                    {
+                        "messages": messages,
+                        "tools": [],
+                        "event": "request",
+                        "tool_choice": "auto",
+                        "analysis_step": index + 1,
+                        "action": 5,
+                        "request_index_within_turn": 1,
+                    },
+                    ensure_ascii=True,
+                )
+                + "\n"
+            )
 
 
 def prefix_reuse(block: str, turns: int = 40) -> tuple[float, int]:
@@ -278,6 +329,37 @@ def main() -> int:
             sys.stderr.write(result.stderr)
             if result.returncode != 0:
                 failures.append(f"guard failed on arm {label}")
+
+        # The assertion the guard exists for, exercised rather than asserted in a comment: a
+        # request whose message list carries the block TWICE is the retention confound, and the
+        # guard must refuse the pass. Built by putting the block back into the retained history
+        # of one game's wire request -- exactly what a graft overriding the history filer, or a
+        # `strip_block` whose `startswith` stopped matching, would produce.
+        poisoned = root / "20260919_000000_dry-oracle-poisoned-p0"
+        (poisoned / "prompts").mkdir(parents=True, exist_ok=True)
+        code = games[0]
+        stem = f"{_FAKE_BUILD.get(code, code)}_p0"
+        live = o_turns[code][1]
+        bad = [
+            {"role": "system", "content": "(system prompt omitted in the dry build)"},
+            {"role": "user", "content": live},          # a retained turn that kept its block
+            {"role": "assistant", "content": "(assistant turn omitted)"},
+            {"role": "user", "content": live},          # the live turn
+        ]
+        _write_prompt_log_snapshot(
+            poisoned / "prompts" / f"{stem}.log",
+            model_id="dry-run", base_url="dry-run", display_action_num=5, analysis_step=5,
+            request_index=0, messages=bad, tools=[], tool_choice=None,
+            transcript=_turn_transcript(live),
+        )
+        _write_requests_jsonl(poisoned / f"{stem}_requests.jsonl", [bad])
+        print("--- guard, deliberate double-injection (must FAIL) ---")
+        result = subprocess.run([str(GUARD), str(poisoned), "1"], capture_output=True, text=True)
+        sys.stdout.write(result.stdout)
+        if result.returncode == 0:
+            failures.append("guard PASSED a request carrying two rulebook copies")
+        else:
+            print(f"guard refused it, rc={result.returncode} (correct)")
 
     if failures:
         print("\nFAILURES:", file=sys.stderr)
