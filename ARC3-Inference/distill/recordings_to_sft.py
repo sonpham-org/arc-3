@@ -15,7 +15,9 @@
 # SRP/DRY check: Pass -- no message format, no prompt text and no PNG encoder is
 #   re-implemented here; all four are imported from the serving path. This module only
 #   segments recordings into runs, cuts them into levels, prunes failed attempts, aligns
-#   the observation chain, and emits. `extract_sft.py` is not modified.
+#   the observation chain, windows each level to the serve-time history depth, and emits.
+#   `extract_sft.py` is not modified. The window size is not a guess: it is read off
+#   `tool_agent._PERSISTENT_HISTORY_ASSISTANT_TURNS`, the serving path's own bound.
 """Human replay recordings -> `extract_sft.py` SFT records.
 
 WHAT A RECORDING IS
@@ -72,6 +74,22 @@ THE FOUR THINGS THAT WOULD SILENTLY POISON THE CORPUS, AND WHAT IS DONE ABOUT TH
      recordings, and `resets` matches the non-full RESET count exactly for all 18. The
      converter asserts both and fails loudly on a mismatch.
 
+  5. RECORD LENGTH vs SERVE-TIME HISTORY. A whole cleared level can run to hundreds of
+     moves; at serve time the agent never sees that. `ToolAgent._persistent_history_messages`
+     carries at most `_PERSISTENT_HISTORY_ASSISTANT_TURNS` (= 30) assistant turns into the
+     next request, and everything older is folded into the knowledge ledger and evicted. So
+     by default each level record is cut to the LAST `--window-turns` decision steps, the
+     last of which is the move that cleared the level. `--whole-level` restores the
+     un-windowed PR #48 behaviour without a code edit.
+
+     A second, looser bound also exists at serve time and is NOT what sets the default: the
+     request is first trimmed to `_context_budget_tokens` (LOCAL_ANALYZER_CONTEXT_WINDOW
+     32768 - reply reserve 512 - safety 512 = 31,744), dropping to a 0.6 low-water mark of
+     19,046 once it overflows. That bound is token-based and environment-driven; the 30-turn
+     bound is a hard module constant and is applied after it. `--window-turns` honours the
+     turn bound; section 8 of the write-up reports how the windowed corpus sits against the
+     token bound.
+
 Usage:
     MULTIMODAL_CONTEXT=current_grid python distill/recordings_to_sft.py \
         --recordings-dir ../datasets/decision-steps/v0/recordings \
@@ -104,6 +122,9 @@ from inference.agent.tool_agent import (  # noqa: E402
     ToolAgent,
     _build_system_prompt,
     MULTIMODAL_CONTEXT_ADDENDUM,
+    # The serve-time history depth. Imported, not copied, so a change to the serving
+    # path moves the corpus with it instead of silently drifting from it.
+    _PERSISTENT_HISTORY_ASSISTANT_TURNS as SERVE_HISTORY_ASSISTANT_TURNS,
 )
 from inference.tools.traces import _messages_from_sections  # noqa: E402
 
@@ -154,6 +175,18 @@ def _is_death(row: dict[str, Any]) -> bool:
 
 def _is_level_reset(row: dict[str, Any]) -> bool:
     return str(row.get("action_input", {}).get("id") or "") == "RESET" and not row.get("full_reset")
+
+
+def _is_clearing_move(row: dict[str, Any], level: int) -> bool:
+    """The move that advanced `levels_completed` past `level` -- the last move of the level.
+
+    `cut_levels` closes a level on exactly this condition, so it always holds for the last
+    row of `LevelCut.rows`. It is re-checked on `LevelCut.kept[-1]` before windowing,
+    because a window is defined as "the N turns ENDING AT the clearing move": if pruning
+    or filtering ever removed that move, every windowed record would end one move early and
+    nothing in the counts would show it.
+    """
+    return _settled_board(row) is not None and int(row.get("levels_completed") or 0) >= level
 
 
 def _billable(rows: list[dict[str, Any]]) -> int:
@@ -230,7 +263,7 @@ def cut_levels(segment: list[dict[str, Any]], *, prune: bool = True) -> list[Lev
         board = _settled_board(row)
         if board is not None:
             prev_board = board
-            if int(row.get("levels_completed") or 0) >= level:
+            if _is_clearing_move(row, level):
                 cuts.append(_prune(level, rows, obs, prune=prune))
                 level += 1
                 rows, obs = [], []
@@ -363,7 +396,7 @@ def build_events(
             previous_step_summary=prev_summary,
         )
         board = _settled_board(row)
-        cleared = board is not None and int(row.get("levels_completed") or 0) >= cut.level
+        cleared = _is_clearing_move(row, cut.level)
         transcript = "\n".join(
             [
                 "[SYSTEM PROMPT]",
@@ -394,6 +427,29 @@ def build_events(
     return events, prev_summary
 
 
+def window_events(
+    events: list[dict[str, Any]],
+    *,
+    window_turns: int,
+) -> list[dict[str, Any]]:
+    """The last `window_turns` decision steps, ending at the level's clearing move.
+
+    Sliced AFTER `build_events` has run over the whole level, never during it. Each event's
+    user prompt is built from the previous step's summary, so the first turn of a window
+    still reports the action that actually preceded it -- exactly as a serve-time request
+    does after the older turns have been evicted. Slicing inside the build loop would
+    instead make the first windowed turn claim "no previous action sequence was captured",
+    which is true of a level start and false of a mid-level window.
+
+    `window_turns <= 0` means no window. The count is inclusive of the clearing move, which
+    is how `ToolAgent._keep_recent_history_turns` counts: it keeps N assistant messages in
+    total, the newest one included.
+    """
+    if window_turns <= 0 or len(events) <= window_turns:
+        return events
+    return events[-window_turns:]
+
+
 # --------------------------------------------------------------------------- #
 # Record building
 # --------------------------------------------------------------------------- #
@@ -410,6 +466,7 @@ def build_records(
     system_prompt: str,
     exclude_games: frozenset[str] = frozenset(),
     prune_failed_attempts: bool = True,
+    window_turns: int = SERVE_HISTORY_ASSISTANT_TURNS,
     stats: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     missing: list[str] = []
@@ -455,13 +512,24 @@ def build_records(
             action_offset += len(cut.rows)
             if not events:
                 continue
-            messages, _links = _messages_from_sections(events)
+            if not _is_clearing_move(cut.kept[-1], cut.level):
+                raise ValueError(
+                    f"{game_id} L{cut.level}: last kept row is not the clearing move, so a "
+                    f"window ending at it would end early"
+                )
+            windowed = window_events(events, window_turns=window_turns)
+            messages, _links = _messages_from_sections(windowed)
             if not messages or _count_assistant_turns(messages) == 0:
                 continue
             n_images = _attach_images(messages, store)
             if stats is not None:
                 stats.setdefault("dropped_rows", 0)
+                stats.setdefault("windowed_rows", 0)
                 stats["dropped_rows"] += len(cut.rows) - len(cut.kept)
+                # Counted apart from the prune: the prune drops moves that did not lead to
+                # the clear, the window drops moves that did but that serve time would have
+                # evicted. Folding them together would hide which decision costs what.
+                stats["windowed_rows"] += len(events) - len(windowed)
             yield {
                 # The guid, not runIndex, is what makes this unique: sb26-7fbdac44 has TWO
                 # winning runs that both carry runIndex 0 (different cards, different guids).
@@ -508,8 +576,29 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Keep the moves made before a level RESET or death. Off by default: those moves "
         "did not lead to the clear, so they are not demonstrations of solving the level.",
     )
+    p.add_argument(
+        "--window-turns",
+        type=int,
+        default=SERVE_HISTORY_ASSISTANT_TURNS,
+        help="Keep only the last N decision steps of each level, ending at the clearing "
+        f"move. Default {SERVE_HISTORY_ASSISTANT_TURNS} = tool_agent."
+        "_PERSISTENT_HISTORY_ASSISTANT_TURNS, the number of assistant turns the serving "
+        "path carries into the next request.",
+    )
+    p.add_argument(
+        "--whole-level",
+        action="store_true",
+        help="Emit the whole cleared level in one record, as before windowing. Off by "
+        "default: a record longer than the serve-time history trains on a context the "
+        "model never sees.",
+    )
     p.add_argument("--stats-only", action="store_true")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.whole_level:
+        args.window_turns = 0
+    elif args.window_turns <= 0:
+        p.error("--window-turns must be positive; use --whole-level to disable windowing")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -542,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
             system_prompt=system_prompt,
             exclude_games=exclude,
             prune_failed_attempts=not args.keep_failed_attempts,
+            window_turns=args.window_turns,
             stats=stats,
         ):
             totals["records"] += 1
@@ -562,6 +652,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"assistant turns          : {totals['turns']}")
     print(f"user turns with an image : {totals['images']}  (unique PNGs {store.count})")
     print(f"rows dropped as failed attempts : {stats.get('dropped_rows', 0)}")
+    if args.window_turns > 0:
+        print(
+            f"rows dropped outside the {args.window_turns}-turn window : "
+            f"{stats.get('windowed_rows', 0)}"
+        )
+    else:
+        print("window                          : none (--whole-level)")
     if stats.get("missing_recordings"):
         print(f"runs with no recording on disk  : {', '.join(stats['missing_recordings'])}")
     print("-" * 72)
