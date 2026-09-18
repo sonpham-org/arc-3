@@ -195,6 +195,9 @@ Nothing about the wire format is re-implemented:
   That method reads exactly one attribute of `self` (`_summarized_knowledge_lines`), which the shim
   answers with "empty ledger". `previous_step_summary` is reconstructed from the previous row, so
   the "Executed actions: LEFT." / "You have progressed to a new level!" lines are real.
+- **Level boundaries:** the previous level's last step summary is carried into the next level's
+  first turn, so that turn reads "You have progressed to a new level!" as it does at serve time,
+  rather than the cold-start "No previous action sequence was captured." (112 of 130 records).
 - **Messages:** a per-step transcript in the harness's labeled-section format
   (`[SYSTEM PROMPT] / [USER PROMPT] / [TOOL CALL: python] / [TOOL RESULT: python]`) handed to
   `inference.tools.traces._messages_from_sections` -- the same reconstructor `extract_sft.py` drives.
@@ -234,7 +237,15 @@ here. His per-level notes are out of scope for this converter and come through a
    inside the converter and the multimodal block's presence is asserted before any record is
    written -- a bare shell leaves it unset, which strips "User turns include an attached image"
    out of the system prompt while every user turn still carries one.
-4. **`--inline-images` is required for training.** `distill/corpus_adapter.adapt` decodes only
+4. **`RESET` never appears in the valid-actions line.** `available_actions` in a recording is a
+   list of ints, mapped through `ACTION{i}`, so `RESET` cannot be produced -- on all 5,559 turns.
+   Checked against the serving path: `solver.model_action_names()` calls
+   `_engine_action_names(..., include_reset=self.reset_refusal() is None)`, so at serve time
+   `RESET` IS listed whenever the reset guard allows it. This is a systematic lexical omission
+   with wider reach than the `world_model` gap -- it touches every turn, not just the tool call.
+   It is at least internally consistent: the corpus contains no RESET demonstrations by design
+   (section 3), so it never shows an action it did not list.
+5. **`--inline-images` is required for training.** `distill/corpus_adapter.adapt` decodes only
    `{"type": "image_url"}` inline base64; the file-path part `extract_sft.py` emits by default
    passes through with no PIL image attached. This is a pre-existing property of the adapter, not
    of this converter, but it bites here too.
@@ -253,17 +264,17 @@ probe script were staged under `/tmp`.
 130 / 130 records encoded without error
 images attached == assistant turns on every record (5,559 / 5,559)
 
-tokens per record : min 4,506 | p25 9,157 | median 13,216 | p75 20,974 | max 89,613
+tokens per record : min 4,506 | p25 9,177 | median 13,236 | p75 20,994 | max 89,633
 supervised tokens : 230,618 total
-total tokens      : 2,223,562
+total tokens      : 2,225,802
 mean              : ~400 tokens per assistant turn
->16K tokens: 52 records | >32K: 12 | >64K: 1
+>16K tokens: 53 records | >32K: 12 | >64K: 1
 ```
 
 **The length distribution is the finding to act on.** The largest record
-(`dc22-fdcac232/d13d39eb/L6`, 266 turns) is 89,613 tokens. `sft_batch.py`'s own header notes that
+(`dc22-fdcac232/d13d39eb/L6`, 266 turns) is 89,633 tokens. `sft_batch.py`'s own header notes that
 naive CE over the 27B vocab OOMs at ~20K tokens on a 121 GiB GB10 and that chunked CE is required,
-not an optimisation -- 52 of these 130 records are past 16K and 12 are past 32K. Whether they fit
+not an optimisation -- 53 of these 130 records are past 16K and 12 are past 32K. Whether they fit
 end to end at train time is a memory question this conversion did not answer.
 
 ---
@@ -297,7 +308,9 @@ end to end at train time is a memory question this conversion did not answer.
 - **The three test-only / held-out games.** `--exclude-games` exists and mirrors
   `extract_sft.py`'s fence, but no fence was applied to the numbers above. **`as66`, `vc33`,
   `ar25`, `sb26`, `re86`, `su15`, `tr87`, `tu93` must be excluded before this corpus is used for
-  training** -- six of those eight are in the table in section 1.
+  training** -- five of those eight (`ar25`, `sb26`, `su15`, `tu93`, `vc33`) appear in the table in
+  section 1, and fencing drops exactly their 41 records, 130 -> 89. `re86` has no winning run,
+  `tr87`'s recording is missing, `as66` never appears.
 
 ## 9. Reproduce
 

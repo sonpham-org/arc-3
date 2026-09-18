@@ -325,7 +325,9 @@ def _tool_result(row: dict[str, Any], label: str, board_changed: bool, cleared: 
             "valid_actions": _valid_actions(row),
             "board_changed": board_changed,
             "done": state == "WIN",
-            "level_completed": cleared,
+            # solver.py: `just_won_level and raw_state != WIN` -- the action that ends
+            # the RUN reports run_complete/done, not level_completed.
+            "level_completed": cleared and state != "WIN",
             "game_over": state == "GAME_OVER",
             "run_complete": state == "WIN",
         },
@@ -338,10 +340,16 @@ def build_events(
     *,
     system_prompt: str,
     action_offset: int,
-) -> list[dict[str, Any]]:
-    """One `_messages_from_sections` event per kept decision step."""
+    incoming_summary: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """One `_messages_from_sections` event per kept decision step.
+
+    `incoming_summary` is the previous level's last step summary. Without it the first turn
+    of every level after the first renders "No previous action sequence was captured.",
+    where the harness would have said "You have progressed to a new level!".
+    """
     events: list[dict[str, Any]] = []
-    prev_summary: dict[str, Any] | None = None
+    prev_summary: dict[str, Any] | None = incoming_summary
     for i, (row, observation) in enumerate(zip(cut.kept, cut.observations)):
         label, code = _action_call_code(row)
         action_num = action_offset + i
@@ -383,7 +391,7 @@ def build_events(
         )
         row["_level_transition"] = cleared
         prev_summary = _step_summary(row, label, cut.level)
-    return events
+    return events, prev_summary
 
 
 # --------------------------------------------------------------------------- #
@@ -436,8 +444,14 @@ def build_records(
             )
 
         action_offset = 0
+        carried: dict[str, Any] | None = None
         for cut in cuts:
-            events = build_events(cut, system_prompt=system_prompt, action_offset=action_offset)
+            events, carried = build_events(
+                cut,
+                system_prompt=system_prompt,
+                action_offset=action_offset,
+                incoming_summary=carried,
+            )
             action_offset += len(cut.rows)
             if not events:
                 continue
