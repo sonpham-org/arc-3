@@ -160,3 +160,20 @@ COMPACT_TOOL_SESSION_ADDENDUM = (
     "- Tool responses are capped to about {tool_output_tokens} tokens. If a response is cut off, the tool result will tell you that.\n"
     "- Keep code snippets short and purpose-built rather than dumping large frameworks into one call.\n"
 )
+
+
+COMPACT_REASONING_ADDENDUM = (
+    "\n\nReasoning style (MANDATORY):\n"
+    "- Keep every reasoning block under 400 characters. Read the state, decide, act.\n"
+    "- Write reasoning as compact notation, not prose: current state, target state, the rule you believe, the action you chose. Do not write sentences about your own thinking.\n"
+    "- Do not narrate deliberation. Never write `wait`, `hmm`, `actually`, `let me reconsider`, or `on second thought`. Do not re-argue a plan you already discarded.\n"
+    "- State each conclusion once. Do not re-derive or double-check it inside the same block.\n"
+    "- This is the required shape:\n"
+    "  Cursor 1. Current: [g,a,a,f,c,a,b]. Target: [a,b,d,d,f,b,c]. Known forward cycle: e -> g -> ?. New glyph g: 11100/00100/01110/00100/00111. Continue forward toward a. ACTION1\n"
+    "- Do the analysis in the `python` tool call, not in reasoning. Reasoning carries the decision; code does the work.\n"
+)
+
+COMPACT_REASONING_TURN_REMINDER = (
+    "Reasoning style: keep your reasoning block under 400 characters -- compact state readout then the chosen action."
+    " No self-narration, no `wait`/`hmm`/`actually`, no re-arguing discarded plans. Put the analysis in the `python` call."
+)
