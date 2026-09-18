@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Author: Claude Opus 5 (Bubba); --exclude-games help note 17-September-2026;
-#   --only-games (the inverse fence, for the round-2 held-out eval corpus) 18-September-2026
+#   --only-games (the inverse fence, for the round-2 held-out eval corpus) 18-September-2026;
+#   oracle run-dir contamination guard 18-September-2026
 # Date: 16-September-2026 (last modified 18-September-2026)
 # PURPOSE: Phase-1 distillation data pipeline -- extract and filter SFT training records
 #   from ARC-3 rollout artifacts (`runs/<run>/artifacts/*_events.jsonl` +
@@ -65,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import hashlib
 import json
 import sys
@@ -412,8 +414,68 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+# --------------------------------------------------------------------------- #
+# Contamination fence: oracle run dirs must never become training data
+# --------------------------------------------------------------------------- #
+# The oracle test (docs/plans/2026-09-18-oracle-test-plan.md) injects each game's full
+# rulebook into the agent's context. Its transcripts therefore contain the answer key,
+# and a model trained on them would be learning the answers rather than how to find
+# them -- the one contamination this repo cannot detect after the fact, because the
+# leaked text sits inside ordinary-looking user turns. Plan section 5 requires the fence to
+# exist BEFORE the first oracle run, so it is a hard refusal here rather than a flag a
+# caller has to remember. There is deliberately no override: a legitimate need to read an
+# oracle run belongs in an analysis script, not in the SFT builder.
+_ORACLE_RUN_DIR_GLOB = "*-oracle-*"
+
+
+def _oracle_run_dir_reason(run_dir: Path) -> str | None:
+    """Return why `run_dir` looks like an oracle run, or None if it is clean.
+
+    Checks the run directory's own name and its immediate parent's name (runs are
+    sometimes grouped under a per-experiment batch directory), case-insensitively. The
+    path is not resolved to absolute first: an unrelated ancestor such as a user account
+    named `db-oracle-1` would then fence off every run on the box.
+    """
+    candidate = Path(run_dir)
+    names = [candidate.name]
+    parent_name = candidate.parent.name
+    if parent_name and parent_name not in (".", "..", ""):
+        names.append(parent_name)
+    for name in names:
+        if fnmatch.fnmatch(name.lower(), _ORACLE_RUN_DIR_GLOB):
+            where = "run directory" if name == candidate.name else "parent directory"
+            return f"{where} {name!r} matches {_ORACLE_RUN_DIR_GLOB!r}"
+    return None
+
+
+def _refuse_oracle_run_dirs(run_dirs: Iterable[str]) -> list[str]:
+    """One message per refused run dir; empty list means every dir is clean."""
+    refusals: list[str] = []
+    for run in run_dirs:
+        reason = _oracle_run_dir_reason(Path(run))
+        if reason:
+            refusals.append(f"  {run}  ({reason})")
+    return refusals
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+
+    # Before anything is opened or written: oracle transcripts carry the answer key.
+    refused = _refuse_oracle_run_dirs(args.run_dir)
+    if refused:
+        print(
+            "refusing to extract SFT data from oracle run directories:\n"
+            + "\n".join(refused)
+            + "\n\nOracle runs inject the game's full rulebook into the agent's context "
+            "(docs/plans/2026-09-18-oracle-test-plan.md section 5), so their transcripts contain "
+            "the answer key and must never enter a training corpus. There is no override "
+            "flag. If this run is not an oracle run, rename it so it does not match "
+            f"{_ORACLE_RUN_DIR_GLOB!r}.",
+            file=sys.stderr,
+        )
+        return 2
+
     out_path = Path(args.out)
     images_dir = Path(args.images_dir) if args.images_dir else out_path.with_name(out_path.stem + "_images")
     filter_params = json.loads(args.filter_params) if args.filter_params else {}
