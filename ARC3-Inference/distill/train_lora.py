@@ -37,13 +37,11 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import torch
-import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
 from peft import LoraConfig, get_peft_model
 from peft.tuners.lora import LoraLayer
 
-from corpus_adapter import adapt
+from sft_batch import build_encoder, loss_chunked
 
 # The LoRA target set is fixed by measurement, not taste: 16 self-attention layers plus 48
 # gated-delta layers = 208 modules, 39,583,744 trainable params (0.1445%). A different count
@@ -51,7 +49,6 @@ from corpus_adapter import adapt
 TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "out_proj"]
 EXPECTED_MODULES = 208
 EXPECTED_TRAINABLE = 39_583_744
-CE_CHUNK = 2048
 # The floor exists to stop a unified-memory overrun reaching the kernel OOM killer. It must be
 # consistent with the allocator cap or it is not a safety boundary, just a latent abort:
 # set_per_process_memory_fraction(0.86) caps torch at 104.6 GiB of 121.63, so MemAvailable can
@@ -139,38 +136,12 @@ def main(argv=None) -> int:
     # that blows the sequence cap.
     banner("CORPUS MEASUREMENT (CPU, through the real processor)")
     proc = AutoProcessor.from_pretrained(args.model)
-    tok = proc.tokenizer
     cfg = AutoConfig.from_pretrained(args.model)
     assert getattr(cfg, "quantization_config", None) is None, (
         "checkpoint carries a quantization_config; NVFP4 fake-quantises input activations "
         "under no_grad and severs LoRA gradient on all 7 target projections")
 
-    IM_START = tok.convert_tokens_to_ids("<|im_start|>")
-    IM_END = tok.convert_tokens_to_ids("<|im_end|>")
-    ASSIST = tok.encode("assistant", add_special_tokens=False)[0]
-    IMG_TOK = cfg.image_token_id
-
-    def encode(rec):
-        msgs, imgs = adapt(rec["messages"])
-        text = proc.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-        enc = proc(text=[text], images=imgs if imgs else None, return_tensors="pt")
-        i_ids = enc["input_ids"][0]
-        labels = torch.full_like(i_ids, -100)
-        n_sup, i = 0, 0
-        while i < len(i_ids) - 1:
-            if i_ids[i] == IM_START and i_ids[i + 1] == ASSIST:
-                j = i + 2
-                while j < len(i_ids) and i_ids[j] != IM_END:
-                    j += 1
-                e = min(j + 1, len(i_ids))
-                labels[i + 2:e] = i_ids[i + 2:e]
-                n_sup += e - (i + 2)
-                i = j + 1
-            else:
-                i += 1
-        labels[i_ids == IMG_TOK] = -100
-        enc["labels"] = labels.unsqueeze(0)
-        return enc, int(i_ids.shape[0]), n_sup, len(imgs)
+    encode = build_encoder(proc, cfg)
 
     # When probing, hold on to everything up to --probe-start; the real cap is decided on the
     # GPU a few minutes from now and records dropped here could not be recovered.
@@ -285,21 +256,8 @@ def main(argv=None) -> int:
         kw = {k: v for k, v in b.items() if k != "labels"}
         return mm(**kw, use_cache=False).last_hidden_state[0]
 
-    def ce_chunk(h, lab):
-        return F.cross_entropy(F.linear(h, HEAD_W, HEAD_B).float(), lab, reduction="sum")
-
-    def loss_chunked(h, labels):
-        hs, labs = h[:-1], labels[0][1:]
-        n = int((labs != -100).sum())
-        if n == 0:
-            raise ValueError("zero supervised tokens")
-        loss = hs.new_zeros((), dtype=torch.float32)
-        for i in range(0, hs.shape[0], CE_CHUNK):
-            hc, lc = hs[i:i + CE_CHUNK], labs[i:i + CE_CHUNK]
-            k = lc != -100
-            if bool(k.any()):
-                loss = loss + checkpoint(ce_chunk, hc[k], lc[k], use_reentrant=False)
-        return loss / n, n
+    def loss_for(h, labels):
+        return loss_chunked(h, labels, HEAD_W, HEAD_B, use_checkpoint=True)
 
     def census():
         """Per-adapter-type gradient census. A silent gradient failure -- the exact bug the
@@ -337,7 +295,7 @@ def main(argv=None) -> int:
     def fwd_bwd(batch):
         """One full forward + chunked CE + backward. Returns (loss value, supervised count)."""
         h = hidden_states(batch)
-        loss, n = loss_chunked(h, batch["labels"])
+        loss, n = loss_for(h, batch["labels"])
         (loss / args.grad_accum).backward()
         torch.cuda.synchronize()
         lv = float(loss.detach())
@@ -521,7 +479,7 @@ def main(argv=None) -> int:
             try:
                 batch, seq, nsup, nimg = batch_for(rec)
                 h = hidden_states(batch)
-                loss, n = loss_chunked(h, batch["labels"])
+                loss, n = loss_for(h, batch["labels"])
                 if micro == 0:
                     assert loss.requires_grad, "loss has no grad_fn -- nothing will train"
                 (loss / args.grad_accum).backward()

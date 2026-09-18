@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Author: Claude Opus 5 (Bubba); --exclude-games help note by Claude Opus 5, 17-September-2026
-# Date: 16-September-2026
+# Author: Claude Opus 5 (Bubba); --exclude-games help note 17-September-2026;
+#   --only-games (the inverse fence, for the round-2 held-out eval corpus) 18-September-2026
+# Date: 16-September-2026 (last modified 18-September-2026)
 # PURPOSE: Phase-1 distillation data pipeline -- extract and filter SFT training records
 #   from ARC-3 rollout artifacts (`runs/<run>/artifacts/*_events.jsonl` +
 #   `*_viewer_data.json`). Drives the harness's own transcript reconstructor
@@ -272,6 +273,7 @@ def build_records(
     only_solved: bool,
     max_games: int | None,
     exclude_games: frozenset[str] = frozenset(),
+    only_games: frozenset[str] = frozenset(),
     excluded_counter: dict[str, int] | None = None,
 ) -> Iterator[dict[str, Any]]:
     artifacts = run_dir / "artifacts"
@@ -294,7 +296,14 @@ def build_records(
         # Held-out test-set fence. Applied at GAME granularity and before any record is
         # built, so excluded games never reach the renderer -- a dropped JSONL row still
         # leaves its regenerated PNG on disk, where a later job can pick it back up.
-        if exclude_games and game_code(game_id) in exclude_games:
+        # `--only-games` is the same fence read the other way round: it keeps exactly the
+        # games `--exclude-games` would drop, which is how the held-out EVAL corpus is built.
+        # Sharing the matcher (and the before-the-renderer placement) is the point -- an eval
+        # set assembled by a second, independently written filter could silently disagree with
+        # the training fence and leak a trained-on game into the held-out numbers.
+        dropped = (exclude_games and game_code(game_id) in exclude_games) or (
+            only_games and game_code(game_id) not in only_games)
+        if dropped:
             if excluded_counter is not None:
                 key = game_code(game_id)
                 excluded_counter[key] = excluded_counter.get(key, 0) + 1
@@ -383,6 +392,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--filter-seed", type=int, default=0, help="Base seed mixed with each grid's content hash.")
     p.add_argument(
+        "--only-games",
+        default=None,
+        help="Comma-separated bare game codes to keep, dropping everything else -- the "
+        "inverse of --exclude-games, used to build the HELD-OUT EVAL corpus from exactly "
+        "the games training was fenced away from. Mutually exclusive with --exclude-games. "
+        "Rejection sampling still applies, so the eval set is the held-out games' SOLVED "
+        "levels only, matching the training distribution.",
+    )
+    p.add_argument(
         "--exclude-games",
         default=None,
         help="Comma-separated bare game codes (e.g. 'vc33,ar25') to drop entirely -- the "
@@ -412,9 +430,16 @@ def main(argv: list[str] | None = None) -> int:
     exclude_games = frozenset(
         c.strip().lower() for c in (args.exclude_games or "").split(",") if c.strip()
     )
+    only_games = frozenset(
+        c.strip().lower() for c in (args.only_games or "").split(",") if c.strip()
+    )
+    if exclude_games and only_games:
+        print("--exclude-games and --only-games are mutually exclusive", file=sys.stderr)
+        return 2
     excluded_counter: dict[str, int] = {}
 
     totals = {"records": 0, "assistant_turns": 0, "images": 0, "solved_games": 0, "runs": 0}
+    totals_games_seen: list[str] = []
     per_level_hist: dict[int, int] = {}
     fh = None if args.stats_only else out_path.open("w", encoding="utf-8")
     try:
@@ -432,12 +457,14 @@ def main(argv: list[str] | None = None) -> int:
                 only_solved=not args.keep_unsolved,
                 max_games=args.max_games,
                 exclude_games=exclude_games,
+                only_games=only_games,
                 excluded_counter=excluded_counter,
             ):
                 totals["records"] += 1
                 totals["assistant_turns"] += rec["num_assistant_turns"]
                 totals["images"] += rec["num_images"]
                 seen_games.add((rec["game_id"], rec.get("pass_index")))
+                totals_games_seen.append(game_code(rec["game_id"]))
                 if rec.get("level") is not None:
                     per_level_hist[rec["level"]] = per_level_hist.get(rec["level"], 0) + 1
                 if fh is not None:
@@ -461,6 +488,14 @@ def main(argv: list[str] | None = None) -> int:
         missing = sorted(exclude_games - set(excluded_counter))
         if missing:
             print(f"  [warn] fenced codes never seen in these runs: {missing}", file=sys.stderr)
+    if only_games:
+        dropped = sum(excluded_counter.values())
+        print(f"held-out eval selector : {sorted(only_games)} (everything else dropped)")
+        print(f"  (game,pass) dropped  : {dropped}")
+        seen = sorted(set(totals_games_seen))
+        missing = sorted(only_games - set(seen))
+        if missing:
+            print(f"  [warn] selected codes never seen in these runs: {missing}", file=sys.stderr)
     if per_level_hist:
         hist = ", ".join(f"L{k}:{v}" for k, v in sorted(per_level_hist.items()))
         print(f"records per level      : {hist}")
