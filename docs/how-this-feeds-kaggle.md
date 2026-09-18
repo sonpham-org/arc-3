@@ -219,3 +219,5 @@ lot of noise.** Replicate anything promising 2–3× before believing it. This i
 - [ARC Prize 2025 5th-place writeup](https://www.kaggle.com/competitions/arc-prize-2025/writeups/arc-prize-2025-competition-writeup-5th-place)
 - ARC-AGI-3 Technical Report §3.6, §5 — via
   `autoresearch-arena/arc3games/AUDIT_2026-08-31.md`
+- The same report read in full, and checked against this repo:
+  [`arc-agi-3-paper-reading.md`](arc-agi-3-paper-reading.md) (arXiv:2603.24621v2)
