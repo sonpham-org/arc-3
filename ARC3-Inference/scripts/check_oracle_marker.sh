@@ -39,4 +39,12 @@ if [ "$MARK" != "$EXPECT" ]; then
     echo "oracle_marker: FAIL -- $MARK of $LOGS prompt logs carry the rulebook, expected $EXPECT" >&2
     exit 1
 fi
+# More than one copy in a log means the block is being retained in history instead of stripped
+# on the way in (_persistent_history_messages), which would cost arm O ~1,900 tokens per
+# retained turn and leave it holding less real history than arm B -- a second difference
+# between the arms. This is the only signal that catches it on pass 1, so it fails, not warns.
+if [ "${MAXOCC:-0}" -gt 1 ]; then
+    echo "oracle_marker: FAIL -- a prompt log carries the rulebook ${MAXOCC} times; expected at most 1" >&2
+    exit 1
+fi
 echo "oracle_marker: PASS"

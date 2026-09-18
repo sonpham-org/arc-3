@@ -149,9 +149,17 @@ export ARC3_ORACLE_RULES_DIR=$REPO/datasets/explainer-games/rulebooks   # arm O;
 ## Metric deviation — stated on purpose
 
 `harnesses/README.md` rule 5 says score on ex-`ft09` all-25. This arm does not: it is scored
-per game, paired B against O, level clears first and score second, per
-`docs/trace-findings/2026-09-17-seed-variance-and-the-sb26-jackpot.md`. No arm totals, and no
-ex-`ft09` number. `ft09` is not in the seven-game lane set at all.
+per game, paired B against O, level clears first and score second. `ft09` is not in the
+seven-game lane set at all, so there is no ex-`ft09` number to report.
+
+That follows `docs/trace-findings/2026-09-17-seed-variance-and-the-sb26-jackpot.md` §6, read
+rather than cited from memory. Its four rules, and how they land here: (1) **no arm totals** —
+at four passes a single-pass total delta is not a result, and the sd of a difference between
+two single passes is ~20.7 points; (2) **paired per-game deltas, with the count
+improved/same/worse and a sign test** — that is the reporting shape step 5 must produce; (3)
+report `sb26` separately — not applicable, `sb26` is not in the seven; (4) **prefer
+low-variance proxies where the hypothesis allows** — level clears are the primary metric here
+for exactly that reason, with final score second.
 
 ## Contamination fence
 

@@ -200,6 +200,32 @@ Note that `scripts/test_prefix_stability.py`'s 97% figure does **not** cover thi
 drives `_trim_messages_for_context` directly and never calls `_persistent_history_messages`. It
 still passes unchanged, which is the arm-B check, not the arm-O one.
 
+### 3.3.1 Does the strip survive the duck/graft path a108 actually runs?
+
+The dry build drives `ToolAgent` directly, and a108 does not: `taaf_grafts/composite.py:284`
+sets `solver_obj.analyzer_factory = make_analyzer_chain(...)` and `solver._make_analyzer`
+returns early on that branch. Checked, because a graft that overrode the history filer would
+reintroduce the exact confound §3.3 removes:
+
+- **Nothing in `vendor-taaf-grafts/` overrides `_persistent_history_messages` or
+  `_trim_messages_for_context`.** The only `ToolAgent` override anywhere in the grafts is
+  `EfficiencyToolAgent._build_user_prompt` (`agent_ext.py:505`), which calls `super()` and
+  **appends** its note after the base prompt — so the block still leads the turn, and
+  `strip_block`'s `startswith` still matches.
+- **The chain layers are wrappers, not subclasses.** `_CHAIN_LAYERS` is `recovery` and
+  `retry_guard`, constructed as `layer(inner)`; their `analyze()` delegates inward to the real
+  `ToolAgent`, so `_ensure_oracle_rules` and `_persistent_history_messages` both run. Neither
+  overrides `analyze` on a `ToolAgent` subclass.
+- **A fresh analyzer is built per game.** `make_stock_toolagent_factory`'s `factory(game,
+  index)` constructs a new `ToolAgent(...)` per call, so `_history_messages` and
+  `_oracle_rules_block` start empty for every game. That also disposes of a related hazard:
+  `_ensure_session` keys on `state_path.parent`, which is one shared `artifacts/` directory for
+  all games in a run, so it would never clear history mid-run if an analyzer *were* reused.
+  On this path it is not.
+
+The guard now **fails**, rather than reporting, if any prompt log carries the block more than
+once — it is the only signal that would catch a regression here on pass 1.
+
 ### 3.4 The regression this found
 
 `distill/recordings_to_sft.py` calls `ToolAgent._build_user_prompt` **unbound**, with a
@@ -317,6 +343,10 @@ audit's six and is genuinely borderline.
   `gx10-a108.tail57a229.ts.net` does not resolve from the Mac Mini in this session. The guard
   was written from the in-repo original, `ARC3-Inference/scripts/run_style_multipass.sh:53`,
   which is the same line the brief quoted.
+- **The graft path was verified by reading, not by running.** §3.3.1's conclusions come from
+  grep and source reading over `vendor-taaf-grafts/`; no analyzer chain was constructed and no
+  game was played. The `max_occurrences_in_one_log <= 1` assertion in the guard is what would
+  catch it being wrong, on the first pass.
 - **No rendered page was looked at.** §2's comparison is against the live JS bundle's data, not
   against the page as a human sees it. Layout and reading order are unchecked.
 - **The other 22 rulebooks were eyeballed only programmatically** — verbatim-presence, citation
