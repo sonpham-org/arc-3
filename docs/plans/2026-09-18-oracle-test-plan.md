@@ -17,6 +17,11 @@ This holds only the experiment.
 
 **Status:** plan, 18-Sep-2026. Approved by Boss. Not started.
 
+> **Amended 18-Sep, later the same day, on Boss's call: run the slippery seven, not all 25.**
+> The all-25 version is kept below as the follow-up if the seven-game result is worth widening.
+> The per-game failure audit in `trace-findings/2026-09-18-never-cleared-scope-and-failure-audit.md`
+> landed after this plan was written and gives each of the seven a predicted outcome (§3a).
+
 ## 0. The question
 
 On the games we never clear (the slippery seven for the 27B: dc22, g50t, m0r0, sc25, sk48,
@@ -75,19 +80,37 @@ is the maximal "told the idea" condition and the cleanest split.
 
 ## 3. Games, model, box
 
-- **Games:** all 25 public games. The slippery seven are the ones that answer the question;
-  the other 18 show whether rules hurt games the agent already clears (a rulebook that lowers
-  a score on a cleared game is a finding too). as66 excluded, always.
+- **Games (amended):** the slippery seven only: dc22, g50t, m0r0, sc25, sk48, tn36, tr87.
+  Boss's call, to keep the run cheap. The other 18 (does a rulebook hurt a game the agent
+  already clears?) are the follow-up run, only if the seven move. as66 excluded, always.
 - **Model:** Qwen3.8-27B-NVFP4, the model being trained. The answer has to be about the model
   we are investing in, not Flash-Next.
 - **Box:** a108, after the compact-reasoning multipass finishes (late 18-Sep). Not Kaggle:
   the weekly GPU quota is better spent on arms that could ship, and this is a diagnostic.
 - **Passes:** four per arm, alternating B/O/B/O so time of day cannot bias it. Per-game cap
-  as the multipass used (5,400 s). Roughly two days of box time for both arms.
+  as the multipass used (5,400 s). Seven games run in parallel lanes, so a pass is about
+  the cap: eight passes, about half a day of box time.
+
+### 3a. Predicted outcome per game, from the failure audit
+
+The audit put each never-cleared game in a bucket from its own transcript. That gives the
+oracle test a prediction per game, written before the run:
+
+| game | audit bucket | if rules are handed over |
+|---|---|---|
+| dc22, g50t, sk48 | guessed a rule and never checked it | should clear: the guess is replaced by the fact |
+| sc25, tn36 | never worked out the controls | should clear, most of all: the controls are the first rule |
+| tr87 | knew the rule, fumbled the execution | should NOT improve; if it does, the audit's call was wrong |
+| m0r0 | cleared once under compact reasoning, otherwise zero | borderline; a clear here is weak evidence either way |
+
+tr87 is the control inside the experiment. If every game improves including tr87, the rulebook
+is doing something other than supplying the idea (steering, or just more text), and the
+per-level variant is needed before anything is concluded.
 
 ## 4. The decision rule, written before the run
 
-Measured paired by game, four passes, level clears first and score second, exactly as
+Measured paired by game, four passes, level clears first and score second, checked against
+the predictions in §3a, exactly as
 `2026-09-17-seed-variance-and-the-sb26-jackpot.md` requires. No arm totals.
 
 | result on the slippery seven | reading | next dollar goes to |
