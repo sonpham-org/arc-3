@@ -207,15 +207,166 @@ census lora_B: 208 / 208 nonzero
 PRE-FLIGHT PASS
 ```
 
-### Results
+### Results — the run completed
 
-**PLACEHOLDER — filled in when the run completes.**
+| | round 1 | **round 2** |
+|---|---|---|
+| optimiser steps | 8 / 8 | **58 / 58** |
+| micro-steps (records) | 29 / 29 | **116 / 116** |
+| wall clock | 4,319.4 s (1.20 h) | **17,166.9 s (4.77 h)** |
+| measured throughput | 204.4 tok/s | **205.7 tok/s** |
+| tokens processed | 882,826 | **3,531,304** |
+| per-micro-step | median 165.3 s | median **164.8 s**, min 45.0, max 224.3 |
+| peak GPU memory | 98.74 GiB | **98.89 GiB** (cap 104.60) |
+| **records skipped by OOM / guard** | 0 | **0** |
+| checkpoints saved | 4 | **7** (steps 8,16,24,32,40,48,56) + final |
+
+**Estimated before the run, from round 1's measured 204.4 tok/s: 4.80 h. Actual: 4.77 h.**
+(The trainer's built-in prior of 241.9 tok/s printed 4.06 h; that prior was measured at
+10,592 tokens and throughput falls with sequence length, so it is optimistic. The measurement
+wins, and it was the measurement that was right.)
+
+Gradient census at steps 1, 5, 9, …, 57 — **208/208 `lora_B` nonzero at every census, and
+208/208 `lora_A` from step 5 onward** (0/208 at step 1 is correct: `lora_B` starts at zero, so
+`lora_A` has no signal path until it moves). The full adapter trained for the whole run.
+
+### The step curve is still unreadable, and that is now a known property rather than a finding
+
+| step | 1 | 9 | 17 | 25 | 33 | 41 | 49 | 57 | 58 |
+|---|---|---|---|---|---|---|---|---|---|
+| loss | 0.5685 | 0.5270 | 0.5589 | 0.4681 | 0.5239 | 0.5139 | 0.5763 | 0.4859 | 0.5344 |
+
+First → last is 0.5685 → 0.5344, and with 58 points a downward drift is visible where round 1's
+8 points showed none. But it still oscillates by more than it trends, for the reason round 1
+identified: **each step's loss is dominated by which two records landed in its window.** Every
+window here has `window: 2`, so there is no divisor artifact this round — round 1's phantom
+0.1508 at step 8 has no counterpart.
+
+**Do not read learning off this curve.** Read it off the next table.
+
+### The same 29 records, four times — this is the training-side learning signal
+
+The trainer's record order is fixed across epochs, so every record is re-visited once per epoch.
+Grouped by record id that is a **paired** series: the same record at four points in training,
+with the accumulation-window confound removed entirely. Computed by
+`distill/analyze_micro_log.py` from the trainer's own `micro_log`.
+
+| epoch | record-mean loss | token-weighted loss |
+|---|---|---|
+| 0 | 0.563282 | 0.553005 |
+| 1 | 0.543141 | 0.537844 |
+| 2 | 0.529996 | 0.528573 |
+| 3 | **0.523572** | **0.524223** |
+
+**Monotone down, on both weightings, on all four epochs.** Paired epoch 0 → 3:
+**29 / 29 records improved, 0 worsened**, mean −0.039710, sd 0.032283, **t = −6.62**. All 29
+records were present in every epoch — zero OOM skips — so the epoch means compare the identical
+record set and cannot have moved by changing the sample.
+
+This is training loss, so it shows the model fitting its training data and says nothing on its
+own about generalisation. That is what the held-out eval is for.
+
+### Round 2's held-out evaluation — queued, not yet measured
+
+**Status: pending, and the reason is specific rather than an excuse.** Round 2's held-out
+eval was launched at 21:31 UTC and was **killed by the kernel OOM killer during model load**
+(`Out of memory: Killed process 1023047 (python)`, no Python traceback — a silent death that
+reads like a crash and is not one).
+
+Cause: a **LoRA round 3** training job for a different experiment (the windowed human-demo
+corpus, PR #52) had a queue watching round 2's training PID. Round 2 exited at 21:31:32, round
+3 launched at 21:33:32 after its 120 s settle — and this eval had started allocating inside
+that window. Two concurrent 27B BF16 loads are ~108 GiB of weights alone on a 121.63 GiB
+unified-memory box. Exactly the failure round 1's §7 warns about, arriving from the one
+direction neither job could see: each had correctly checked that *training* was clear.
+
+Round 3 peaks at 65.87 GiB and has ~4.9 h to run. A second 27B load does not fit beside it, and
+killing a 178-step run of someone else's experiment to reclaim the GPU was not a trade worth
+making. The eval is therefore **queued** behind round 3's PID, by the same pattern round 3 used
+to queue behind round 2:
+
+- script: `/home/son/arc3-round2/eval/run_eval2_queued.sh` (waits on PID 1023305, 180 s settle,
+  plus a `pgrep train_lora` refusal — belt and braces after this exact collision)
+- ledger: `/home/son/arc3-round2/eval/queue.log`
+- output: `/home/son/arc3-round2/eval/eval2.json`, log `eval2.log`
+
+Arms when it runs: `base`, `round1`, `round2` on the full 40 records; `round2-step8/16/32/48`
+on a fixed 12-record length-spread subset, giving a dose-response ladder rather than two points.
+
+**What this means for the round's verdict:** the headline evaluation — a measured
+adapter-vs-base comparison on held-out material — **exists and is complete** (§ *The headline*,
+40/40 records, t = −14.81). What is outstanding is specifically the *round-2* adapter's
+held-out number, i.e. whether 58 steps generalises better than 8. Until that file exists, **no
+claim is made here about round 2 beating round 1 on held-out data.** The training-side evidence
+above is consistent with it and is not a substitute for it.
+
 
 ---
 
 ## 6. What was NOT verified
 
-**PLACEHOLDER**
+Stated explicitly because a wrong green light costs more than a red one. Round 1 had ten; this
+round closes five of them and adds its own.
+
+**Closed by this round:**
+
+- Round 1 #1 (*adapter never evaluated*) — **closed for round 1's adapter.** 40 held-out
+  records, 40/40 improved, t = −14.81.
+- Round 1 #2 (*adapter never loaded for inference*) — **closed.** It loads into a live model
+  and changes generated text (§3).
+- Round 1 #7 (*no held-out loss, overfitting unobservable*) — **closed.** There is now a
+  held-out corpus, fenced and leakage-checked.
+- Round 1 #8 (*multi-epoch behaviour unknown*) — **closed.** Four epochs, monotone per-epoch
+  training loss on identical records, 29/29 improved.
+- Round 1 #6 (*`tools/assert_lora_gradients.py` never run against the 27B*) — **still open as
+  written**, but the trainer's in-run census passed at every one of 15 censuses across 58 steps.
+
+**Open, and new:**
+
+1. **Round 2's adapter has no held-out number yet.** The eval is queued behind round 3 (see
+   above). Everything said here about round 2 is training-side. **If the queued eval shows round
+   2 no better than round 1 on held-out loss, that is the result and it must be reported as
+   such** — 58 steps of training-loss improvement on 29 records is exactly what overfitting also
+   looks like.
+2. **No ARC-3 score was measured, for any adapter.** Held-out cross-entropy is not a score. The
+   adapter has never played a game. A CE improvement that does not convert into solved levels is
+   entirely possible and is the outcome the next round has to test.
+3. **Self-distillation bounds the whole result** (§4). The corpus is rejection-sampled from the
+   same 27B being trained. Held-out CE measures policy sharpening toward its own successful
+   trajectories, not capability gain.
+4. **n = 40 held-out records over 6 games**, and 9 games / 29 records in training. Both are far
+   too small to generalise from; `ft09` alone is 28% of the training corpus. The paired t is
+   large because the effect is *consistent*, not because the corpus is big.
+5. **The effect size is small and could be a style artifact.** −0.0117 nats is ~1.0% of
+   perplexity. Some of it may be the adapter matching the corpus's *formatting* conventions
+   rather than its reasoning — the generation round-trip's visible difference was a punctuation
+   restructure. Nothing here separates those two.
+6. **Correlation between record length and benefit is +0.562** — longer held-out records improve
+   *less*. Unexplained. It may be dilution (a fixed-size behavioural change spread over more
+   tokens) or it may be that the adapter helps early-game reasoning and not late. Not tested.
+7. **The 11 over-cap records are still excluded** (round 1 #5, unchanged): 40 extracted → 29
+   trained. The longest trajectories, plausibly the most valuable, remain unrepresented in
+   training. Note the *eval* does not share this bias — it scores all 40 including a
+   53,956-token record — so the training distribution is shorter than the eval distribution.
+8. **Only the final and 7 laddered adapters were disk-verified for round 2** (416 tensors,
+   208/208 nonzero both sides, 39,583,744 params, final md5 `a96009af37209122bbf62f669590d4dc`).
+   The ladder checkpoints' *contents* were not each independently re-checked.
+9. **The learning rate is still untuned** (round 1 #9). 1e-4 was held fixed on purpose so step
+   count was the only variable. No sweep has been run, at any step count.
+10. **`causal_conv1d` is still not installed** (round 1 #10), so all 48 gated-delta layers run a
+    reference PyTorch fallback. Every throughput figure in this document is pessimistic by an
+    unmeasured margin.
+11. **PR #30's correctness is still verified by presence, not behaviour** (round 1 #3).
+    `distill/verify_frames.py` was not run this round either.
+12. **The `sft_batch.py` refactor is verified by one number**, not a test suite: round 2's
+    micro-step 1 loss of 0.5440 reproduces round 1's exactly. That is a strong signal on the
+    path it exercises and says nothing about paths it does not.
+13. **The kg-lab-worker CPU lab was not disabled and was observed running before and after**
+    (17 processes at launch). It is request-driven, so an idle count of 0 during the run is not
+    evidence of breakage — and equally, **it was not positively verified to have completed work
+    while training held memory.** The brief permitted fallback to the Mac Mini; whether it fell
+    back was not measured.
+
 
 ---
 
@@ -259,3 +410,11 @@ Every number above is traceable to a committed file, not to a log on a box that 
 - `ARC3-Inference/distill/results/2026-09-18-eval1-base-vs-round1.json` — the full eval-1
   report: per-record base and adapter loss, paired deltas, the sanity gate, the generation
   round-trip, corpus stats, timings and peak memory.
+- `ARC3-Inference/distill/results/2026-09-18-round2-train-report.json` — the round-2 training
+  report: config, probe, corpus measurement, the 58-step log with its gradient censuses, and
+  the 116-entry `micro_log` the per-epoch table is computed from.
+- `ARC3-Inference/distill/results/2026-09-18-round2-epoch-summary.json` — the output of
+  `distill/analyze_micro_log.py --json` on that report.
+- `ARC3-Inference/distill/results/2026-09-18-eval2-*.json` — **not present yet.** Produced by
+  the queued eval described above; land it here when `/home/son/arc3-round2/eval/eval2.json`
+  exists.

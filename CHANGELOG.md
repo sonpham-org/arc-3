@@ -48,8 +48,28 @@ did move a 27B; the training curve had no power to see it.
   game-pass pairs against 40 / 440 / 36), with zero overlap on game code or record id.
 - `distill/train_lora.py`: per-micro-step logging into the JSON report, so the same record
   seen once per epoch is a paired comparison rather than a moving average.
+- `distill/analyze_micro_log.py` (new): reads a `train_report.json` and produces the two
+  readouts the raw step curve cannot give -- per-record-across-epochs and per-epoch means over
+  an identical record set.
 - `docs/trace-findings/2026-09-18-arc3-lora-round2-heldout-eval.md` (new): the round-2
   write-up, with its own NOT-VERIFIED list.
+
+**Round 2's training run.** 58 optimiser steps against round 1's 8 (4 epochs, grad_accum 2, lr
+held at 1e-4 so step count is the only variable), 4.77 h, 3,531,304 tokens, zero OOMs, zero
+skipped records, 208/208 gradient census at all 15 censuses. Estimated 4.80 h from round 1's
+measured throughput; actual 4.77 h.
+
+The step curve still oscillates more than it trends -- each step's loss is dominated by which
+two records landed in its window -- so the learning signal is read from the same 29 records
+seen once per epoch instead: **record-mean 0.563282 -> 0.543141 -> 0.529996 -> 0.523572,
+monotone, 29/29 records improved, t = -6.62.** That is training loss and says nothing on its own
+about generalisation.
+
+**Round 2's own held-out eval is queued, not yet measured,** and the write-up says so rather
+than claiming round 2 beats round 1. It was kernel-OOM-killed during model load when a round-3
+training job (a different experiment) launched into the same unified memory; two 27B BF16 loads
+are ~108 GiB of weights on a 121.63 GiB box. Round 3 was left alone and the eval queued behind
+its PID.
 
 **Caveat, stated in the write-up and worth repeating here.** The corpus is rejection-sampled
 from the same 27B being fine-tuned. This is self-distillation, so held-out CE measures whether
