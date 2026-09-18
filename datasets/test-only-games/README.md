@@ -38,6 +38,9 @@ on its own line, never inside an all-25 or ex-`ft09` average.
   `as66` catches `as66-v1`.
 - The 15 January runs on the original build (`datasets/decision-steps/v0/recordings/as66-821a4dcad9c2/`)
   follow the same rule.
+- This is one of three fences on the distillation pipeline; the register of all three,
+  including the `*-oracle-*` run-dir fence that `extract_sft.py` enforces itself, is
+  [`ARC3-Inference/distill/README.md`](../../ARC3-Inference/distill/README.md).
 
 ## How to test on it
 
