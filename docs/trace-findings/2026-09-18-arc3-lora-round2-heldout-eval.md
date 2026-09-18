@@ -285,13 +285,44 @@ killing a 178-step run of someone else's experiment to reclaim the GPU was not a
 making. The eval is therefore **queued** behind round 3's PID, by the same pattern round 3 used
 to queue behind round 2:
 
-- script: `/home/son/arc3-round2/eval/run_eval2_queued.sh` (waits on PID 1023305, 180 s settle,
-  plus a `pgrep train_lora` refusal — belt and braces after this exact collision)
+- script: `ARC3-Inference/distill/run_eval2_queued.sh`, deployed to
+  `/home/son/arc3-round2/eval/run_eval2_queued.sh` — waits on PID 1023305, 180 s settle, then a
+  guard against **any** other `train_lora.py` *or* `eval_lora.py` process. The guard re-arms
+  rather than exiting: a collision costs a delay, not the evaluation.
 - ledger: `/home/son/arc3-round2/eval/queue.log`
 - output: `/home/son/arc3-round2/eval/eval2.json`, log `eval2.log`
 
 Arms when it runs: `base`, `round1`, `round2` on the full 40 records; `round2-step8/16/32/48`
 on a fixed 12-record length-spread subset, giving a dose-response ladder rather than two points.
+
+#### How the result will be read — written down before the number exists
+
+The discriminating statistic is **not** whether round 2 beats base. It will; round 1 already
+does, on 40 of 40. It is the **paired `round2 − round1` delta on the same 40 records.** All
+three outcomes are publishable, and committing to the reading now is the cheapest available
+protection against fitting the interpretation to whatever lands:
+
+| if | reading |
+|---|---|
+| **round2 clearly better than round1** | 7× the optimiser steps bought generalisation, not just training-set fit. The step-8/16/32/48 ladder should then show a monotone trend; if it does not, the endpoint is suspect. |
+| **round2 ≈ round1** | 8 steps already captured the available headroom. That is the self-distillation ceiling of §4 being real and being hit — an informative negative, not a failure. |
+| **round2 worse than round1** | Overfitting at 4 epochs on 29 records, exactly what 29/29 training-loss improvement also looks like. The ladder then localises where it turned, which is the most useful of the three outcomes. |
+
+Note that the third row is fully consistent with everything measured so far. The training-side
+result is *not* evidence against it.
+
+#### The transferable finding: this box needs a GPU lock, not a longer settle
+
+Two independent agents each checked the right thing — "is a training job running?" — each got the
+right answer, and the box still died. Neither could see a *non-training* 27B load, because no
+convention existed for announcing one. Lengthening settle windows does not fix that; it only
+narrows the window in which it happens.
+
+**Recommended next action, worth more than another decimal place of loss:** a single advisory
+lock on a424 (e.g. `flock` on `/home/son/.gpu-a424.lock`) that *every* job taking the GPU
+acquires, training and evaluation alike, with the holder's PID and command in the file. The
+queue scripts already exist and already cooperate; they are just cooperating on the wrong
+signal.
 
 **What this means for the round's verdict:** the headline evaluation — a measured
 adapter-vs-base comparison on held-out material — **exists and is complete** (§ *The headline*,
