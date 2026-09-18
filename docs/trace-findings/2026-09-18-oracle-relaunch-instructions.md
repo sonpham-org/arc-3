@@ -52,9 +52,17 @@ launch a second pass.
 
 | situation | `PASS_PLAN` |
 |---|---|
-| P3 finished, resume the O arm (needs the go in §4) | `P4:O:qwen38-27b-oracle-o-p1` |
+| P3 finished, resume the O arm (needs the go in §4) | `P2:O:qwen38-27b-oracle-o-p1` |
 | P3 died or was killed before banking, re-run arm B p2 | `P3:B:qwen38-27b-oracle-b-p2` |
-| Boss authorises the full remaining B/O/B/O tail | `P4:O:qwen38-27b-oracle-o-p1 P5:B:qwen38-27b-oracle-b-p3 P6:O:qwen38-27b-oracle-o-p2` |
+| Boss authorises the full remaining B/O/B/O tail | `P2:O:qwen38-27b-oracle-o-p1 P4:O:qwen38-27b-oracle-o-p2` (P3:B is already banked) |
+
+**Use the `P2` label, not `P4`, for the o-p1 relaunch.** The label is the driver's `banked/`
+key, and the name is the run dir. Banking the o-p1 run under `P4` would leave the P2 slot
+permanently empty, so every later default-plan run would try `P2:O:...-o-p1` again and create a
+*second* dir matching `*_qwen38-27b-oracle-o-p1` — at which point `run_dir_for()`'s
+`ls -1d ... | tail -1` silently picks one of two for the marker and parity checks. Banking it as
+`P2` leaves `banked = {P1,P2,P3}` and the driver's own default plan then resolves cleanly to
+`P4:O:...-o-p2` with no pinning needed.
 
 The run name must stay `*-oracle-*` on **both** arms — `distill/extract_sft.py` refuses that glob,
 and arm-B transcripts in this tree sit beside the answer key.
@@ -80,9 +88,18 @@ the guard itself is wrong, say so in writing before changing it.
 
 ## 4. The O arm is NOT pre-authorised
 
-The Boss's 18:40 ET gate stands: no O pass relaunches past a failing marker guard. The 17:48
-failure is now understood as a guard artifact and the guard is fixed, but **the fix was a guard
-change, and a guard change made to unblock a run is the exact move the gate exists to stop.**
+The Boss's 18:40 ET gate stands: no O pass relaunches past a failing marker guard.
+
+**The fact that decides it: the old assertion was unsatisfiable, not merely too strict.** An
+arm-O prompt log holds `1 + analysis_steps` copies of the rulebook by construction — one in
+`[MODEL INPUT]` (the message list actually sent) and one per analysis step in the
+`[TURN TRANSCRIPT SO FAR]` echo, which re-prints the same turn's `[USER PROMPT]` verbatim. All
+seven logs of the aborted pass read exactly 2, and scoped to `[MODEL INPUT]` alone all seven read
+exactly **1**. No correct arm-O pass could ever have satisfied `MAXOCC <= 1` against the whole
+file. So the rewrite is not a loosened guard; it is a guard that was never runnable.
+
+That said, **the fix was still a guard change, and a guard change made to unblock a run is the
+exact move the gate exists to stop.**
 Get the Boss's explicit go before launching P4:O. Arm B needs no such go — it is the control and
 its guard has passed on both passes.
 
