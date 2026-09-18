@@ -162,7 +162,7 @@ volume that get in the way, not the concepts.
 |---|---|
 | `arc-3` | harness variants (`harnesses/`), the duck (`ARC3-Inference/`), Kaggle notebooks (`kaggle/`), the published game catalog (`docs/static/games/`), test-only games (`datasets/test-only-games/`, never trained on) |
 | `autoresearch-arena` | **game authoring source of truth** (`arc3games/`), the polish/differentiation loop, and its documentation |
-| `arc-explainer` | the public site, written analyses of official games, ARCEngine submodule |
+| `arc-explainer` | the public site, written analyses of official games, ARCEngine submodule. **The only place the 25 public games' write-ups are edited** (per-level rules, pictures, Boss's play notes and runs); pull them with `tools/fetch_explainer_games.py`, never copy them in |
 | `arc-interactive` | ARC Prize's own game repo and toolkit |
 
 ### The pipeline in one line
