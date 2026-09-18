@@ -161,3 +161,55 @@ timestamp.
   this was not pinned down further.
 - **Nothing about the experiment's result.** No arm was compared, no level counted. This is one
   abort and its fix.
+
+---
+
+## 9. The relaunch, and a schedule deviation I chose not to correct
+
+**The box state I found at 18:40 ET was not the state the brief described.** A sibling session
+(`arc3-oracle-bp2-relaunch`) launched arm-B **pass 2** at 18:45:55 on Boss's 18:40 instruction,
+pinned to `PASS_PLAN="P3:B:qwen38-27b-oracle-b-p2"`, five minutes after this session started
+diagnosing. By the time the fix was ready it was four minutes in, in-flight marker guard PASSed,
+and producing turns.
+
+So the realised schedule is **B, B, then O, O** — not the plan's B/O/B/O.
+
+**That is a real cost, not a footnote.** The driver alternates arms "so neither monopolises a time
+of day"; with both B passes in the evening, any overnight O pass is confounded with time of day
+against *both* of them rather than one.
+
+**I did not preempt it, and the reasoning should be checkable.** Killing P3 would have bought
+B(16:18), O(~18:55), B(~20:30), O(~22:05) — still both O passes later than both B passes, because
+the aborted O already burned the 17:48 slot. An irreversible action against a sibling's live work,
+for a reordering that does not actually equalise time of day. Plan §4 already contains the test
+that surfaces a time-of-day effect if one exists — "any game whose four O passes disagree with each
+other more than they disagree with B" — so **the write-up must apply that test explicitly**, and
+must not treat B,B,O,O as equivalent to the design. Logged in the a108 ledger as `DEVIATION
+ACKNOWLEDGED`, agreeing with the sibling's own 18:50 note.
+
+`ARC3-Inference/scripts/sequence_oracle_remaining_passes.sh` sequences the two remaining arm-O
+passes **behind** P3 rather than beside it, because plan §3 forbids concurrent passes — two 7-lane
+runs on one vLLM correlates lane contention with the treatment. It polls driver pid 963617 to exit,
+then invokes the driver with `PASS_PLAN="P2:O:qwen38-27b-oracle-o-p1 P4:O:qwen38-27b-oracle-o-p2"`.
+
+Its guard gate, all of which must be clear or nothing launches: no `ABORTED` file; no live driver
+(`pgrep -x -f`, exact whole-cmdline — a loose `-f` matches the sibling's launcher shell, which was
+still alive, and any ssh command line mentioning the driver, and would have blocked forever); P2
+and P4 still unbanked; vLLM `/health` 200. It takes `.seq.lock` via `mkdir` so a second sequencer
+cannot start, and announced its ownership of P2 and P4 in the ledger, which is the only
+coordination channel the sessions share.
+
+It then asserts **liveness rather than a pid**: four minutes after firing it requires the `-o-p1`
+run dir to exist with seven prompt logs, and the total `*_requests.jsonl` line count to be *higher*
+two minutes later than it was. `SEQ LIVENESS PASS`/`FAIL` goes in the ledger. A launched-and-dead
+driver reported as running is the failure mode this exists to close.
+
+**What this session did not and could not verify:** that the arm-O pass is producing turns. It
+fires at roughly 20:16 ET, after this session ends. The liveness check above is the substitute, and
+`SEQ LIVENESS` in `~/arc3-oracle-20260918/guards/ledger.txt` is the line to read — not a pid, and
+not this document.
+
+Also on the record: `check_oracle_marker.sh` was replaced on a108 at 18:48 ET while P3 was
+mid-pass, so P3's final check runs the new guard. That is safe and was checked rather than assumed
+— the new guard returns PASS on the live P3 dir, and on B p1's completed 90-minute dir (30 MB of
+`*_requests.jsonl`, 247 requests) in 0.13 s.
