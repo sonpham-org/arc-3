@@ -411,6 +411,14 @@ def main(argv=None) -> int:
     banner("TRAIN")
     log: list[dict] = []
     R["log"] = log
+    # Per-micro-step record. The order is FIXED across epochs, so every record is re-visited
+    # once per epoch and `micro_log` is the one training-side signal free of the accumulation-
+    # window confound that made round 1's step curve unreadable: round 1's step-to-step
+    # differences were dominated by WHICH records landed in each window (within-window spread
+    # 0.4866-0.6599, larger than any step delta). Grouped by record id, this is the same
+    # record at four points in training -- a paired comparison, not a moving average.
+    micro_log: list[dict] = []
+    R["micro_log"] = micro_log
     step = 0
     micro = 0
     in_window = 0
@@ -502,6 +510,10 @@ def main(argv=None) -> int:
                 continue
             dt = time.time() - t_mb
             micro_seconds.append(dt)
+            micro_log.append({"epoch": epoch, "micro": micro + 1, "id": row["id"],
+                              "game": row["game_id"].split("-")[0], "level": row["level"],
+                              "tokens": seq, "supervised": nsup, "loss": round(lv, 6),
+                              "seconds": round(dt, 1)})
             accum_loss += lv
             tokens_done += seq
             micro += 1

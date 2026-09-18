@@ -21,6 +21,43 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 18-Sep-2026 — the LoRA adapter is evaluated, and round 1's own verdict was wrong
+
+**What.** Round 1 trained an adapter, saw a flat loss curve, and wrote down the honest
+conclusion available to it: *"'does nothing' is the hypothesis to beat."* Round 2 built the
+measurement round 1 skipped, and the hypothesis is beaten. On 40 held-out records from six
+games the adapter never saw, the round-1 adapter improves loss on **40 of 40** — token-weighted
+0.558503 -> 0.548397, paired mean delta -0.011662, t = -14.81. Not one record got worse.
+
+The flat training curve was a measurement artifact. Round 1 read learning off 8 step-losses
+whose accumulation windows held different records each time, and its own note that the
+within-window spread exceeded any step-to-step difference was the tell. Eight optimiser steps
+did move a 27B; the training curve had no power to see it.
+
+- `distill/eval_lora.py` (new): scores N adapter arms plus base against the held-out corpus.
+  One model load with adapters toggled, so base is this model with the delta switched off
+  rather than a second model; records outer / arms inner for bit-identical batches and
+  incremental paired output; a gate that aborts rather than publish a null if an arm scores
+  bit-identically to base; a generation round-trip; and a token-weighted aggregate reported
+  separately from the record mean.
+- `distill/sft_batch.py` (new): the label mask and chunked CE, shared by the trainer and the
+  evaluator so both score with identical code. Verified behaviour-preserving -- round 2's
+  micro-step 1 loss is 0.5440, byte-identical to round 1's.
+- `distill/extract_sft.py`: `--only-games`, the inverse of `--exclude-games`, sharing the same
+  matcher. Returns exactly the complement of round 1's fence (40 records / 298 turns / 28
+  game-pass pairs against 40 / 440 / 36), with zero overlap on game code or record id.
+- `distill/train_lora.py`: per-micro-step logging into the JSON report, so the same record
+  seen once per epoch is a paired comparison rather than a moving average.
+- `docs/trace-findings/2026-09-18-arc3-lora-round2-heldout-eval.md` (new): the round-2
+  write-up, with its own NOT-VERIFIED list.
+
+**Caveat, stated in the write-up and worth repeating here.** The corpus is rejection-sampled
+from the same 27B being fine-tuned. This is self-distillation, so held-out CE measures whether
+the adapter sharpened the policy toward its own successful trajectories on unseen games -- not
+whether the model got better at ARC-3. Held-out CE is not an ARC-3 score.
+
+---
+
 ## 17-Sep-2026 — the replay + scorecard tooling moves in from the workspace, and the two pullers become one
 
 **What.** Six tools, three trace findings and ~9.8 GB of recordings that had been living loose
