@@ -21,6 +21,54 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 18-Sep-2026 (later) — the oracle test is launched on a108, and LoRA round 3 is queued on a424
+
+**What.** Step 4 of `docs/plans/2026-09-18-oracle-test-plan.md` §6, plus the round-3 training
+launch. The driver is running and pass 1 is playing; there are no results in this entry.
+
+- **Driver** (`ARC3-Inference/scripts/run_oracle_multipass.sh`). Sequential B/O passes over the
+  slippery seven at the multipass operating point — 7 lanes, 90 min/game, `n_passes 1`,
+  `qwen38-27b-nvfp4` against the already-serving vLLM. Passes never overlap, because lane
+  contention correlates with the treatment if they do. Resumable: finished passes bank and a
+  re-run with an extended `PASS_PLAN` skips them.
+  **Not a flag on `run_style_multipass.sh`**: that driver selects games with
+  `--kaggle-duck-public-harness`, which `_resolve_game_ids` refuses to combine with `--game`, so
+  a seven-game run cannot reuse it.
+- **Four passes, not eight.** Boss's instruction, taken literally: two per arm. Consequence
+  recorded rather than argued — plan §4's "any game whose four O passes disagree with each other"
+  disqualifier is not computable on two O passes.
+- **Guards, per pass, ledger'd.** vLLM pid/`/health` before and after; `run_config.json` parity
+  against pass 1 with `games` compared as a sorted set; and the treatment marker checked **twice**
+  — once in flight as soon as all seven prompt logs exist (20 s on pass 1), once at the end. The
+  in-flight check kills the harness tree and aborts the driver on a mismatch, because the failure
+  this experiment dies of is a missing `export` on one of four launches and finding that out 90
+  minutes later wastes the pass.
+- **Every run name contains `oracle`, arm B included** — the arms share this run tree, so
+  `extract_sft.py`'s `*-oracle-*` refusal must cover both. Verified by running the tool against
+  all four dated dir names (exit 2 each) plus a non-oracle negative control (exit 0).
+- **a108's tree is not a git checkout.** It has no `.git`, lacks two modules the repo has, and its
+  `tool_agent.py` was 98,140 bytes / 38 methods against main's 113,101 / 43, so `git apply` could
+  not be used and syncing the repo's files over would have changed **arm B's prompt**. New
+  `ARC3-Inference/scripts/apply_oracle_patch_to_deployment.py` lands the six edits by exact-anchor
+  match, refusing rather than guessing; the resulting diff is six insertions, zero deletions, one
+  file. `test_oracle_injection.py` then passes **on a108 against a108's patched file**, which is
+  what carries the build write-up's compaction and one-copy claims to the code that actually runs.
+- **Read side** (`ARC3-Inference/scripts/collect_oracle_passes.sh`). Ledger plus per-game
+  `levels_completed` / `final_score` / `state` per banked pass. No totals, by design.
+- **LoRA round 3** (`ARC3-Inference/scripts/run_lora_round3.sh`) on the windowed human-demo corpus
+  from PR #52 — 89 records / 2,281 turns, matching the published figures exactly, and re-verified
+  with a424's own tokenizer (`over_max_seq 0`, `tokens_max 13,495`). Round 2 was **not** killed:
+  its corpus is 40 **model-trace** records, not a superseded cut of the human demos, it was at
+  step 44/58, and the round-2 write-up §7 forbids concurrent GPU jobs while its own Results
+  section is still `PLACEHOLDER`. So round 3 waits on that pid and then starts. Hyperparameters are
+  round 2's unchanged; only the checkpoint cadence is rescaled to 178 steps.
+
+**Write-up.** `docs/trace-findings/2026-09-18-oracle-test-launch.md`, including the not-verified
+list and one mistake made on a108 (a bare `uv run` resynced the shared venv; nothing broke, and
+it was checked rather than assumed).
+
+---
+
 ## 18-Sep-2026 — the oracle arm is built: rulebook renderer, injection, and the fence that comes first
 
 **What.** Steps 1–3 of `docs/plans/2026-09-18-oracle-test-plan.md` §6. Nothing has been run.
