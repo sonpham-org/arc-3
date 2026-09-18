@@ -58,6 +58,25 @@ whether the model got better at ARC-3. Held-out CE is not an ARC-3 score.
 
 ---
 
+## 18-Sep-2026 — the 25 public games' write-ups, fetched from arc-explainer, never copied
+
+**What.** `tools/fetch_explainer_games.py` pulls arc-explainer's curated write-ups of the 25
+public games into `datasets/explainer-games/games.json` (gitignored). One document per game,
+level by level: the rules that start on each level with the game-code lines they were checked
+against, the level pictures, Boss's notes from play (saw / did / expected / happened), ARC's
+baseline actions, and Boss's runs with their replay guids (the join key into
+`datasets/decision-steps/v0/recordings/`). as66 is never in it.
+
+**Why.** Those write-ups were being edited only in arc-explainer and read by nothing here.
+Boss wants them in the training work with arc-explainer as the only place they are edited, so
+this repo fetches rather than keeping a copy that drifts. The endpoint is private until the
+dataset is curated: it takes `X-ARC3-Admin-Token` from `$ARC3_COMMUNITY_ADMIN_TOKEN` or, on the
+Mac Mini, the login keychain. The gx10 boxes need the env var, or fetch on the Mac Mini.
+
+**Files.** `tools/fetch_explainer_games.py`, `.gitignore`, `AGENTS.md` (repo map row).
+
+---
+
 ## 17-Sep-2026 — the replay + scorecard tooling moves in from the workspace, and the two pullers become one
 
 **What.** Six tools, three trace findings and ~9.8 GB of recordings that had been living loose
