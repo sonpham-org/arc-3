@@ -21,6 +21,42 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 18-Sep-2026 — the oracle arm is built: rulebook renderer, injection, and the fence that comes first
+
+**What.** Steps 1–3 of `docs/plans/2026-09-18-oracle-test-plan.md` §6. Nothing has been run.
+
+- **Rulebook renderer** (`tools/render_rulebooks.py`). Turns `datasets/explainer-games/games.json`
+  into one plain-text rulebook per public game: the `newRules` of every level, in level order,
+  grouped by the level each rule starts on. Rules and nothing else — no images, Boss play notes,
+  run data, code citations, categories or editorial prose — because the plan allows exactly one
+  difference between the arms. 25 games, 527 rules, 93,822 characters. `as66` is refused, not
+  silently fenced.
+- **Arm O** (`harnesses/oracle-rules/`, env toggle `ARC3_ORACLE_RULES_DIR`). The rulebook leads
+  every user turn, headed `Rules of this game, from a verified source.`. Not the system prompt,
+  which is built once with no game id; and re-sent rather than injected once, because
+  `_trim_messages_for_context` evicts the first user turn. It is stripped from turns filed into
+  history, so exactly one copy is in context at any time — thirty retained turns of a 5,700-character
+  rulebook would otherwise exceed the whole 32,768-token window and arm O would be trading real
+  history for repeated text, a second difference between the arms. Measured cost of the strip:
+  95.7% of the previous request still reused. `prompts.py` is untouched.
+- **Contamination fence** (`ARC3-Inference/distill/README.md`, `distill/extract_sft.py`). Oracle
+  transcripts carry the answer key. `extract_sft.py` now refuses any `--run-dir` whose own or
+  parent name matches `*-oracle-*`, exit code 2, nothing written, no override flag. Plan §5 puts
+  this before the first run rather than after, so it is where the work started.
+
+**Guards.** `scripts/check_oracle_marker.sh` counts prompt logs carrying the marker, the shape
+`run_style_multipass.sh` uses for the compact-reasoning arms; `scripts/test_oracle_injection.py`
+proves it fires with no model, server or engine, at 7/0 for the slippery seven and 25/0 for all 25.
+
+**One regression fixed on the way.** `distill/recordings_to_sft.py` calls `_build_user_prompt`
+unbound with a duck-typed `self`; its `_LedgerShim` now declares `_oracle_rules_block = ""`, which
+both keeps the human-demo SFT builder working and guarantees human demonstrations can never carry
+the answer key into a corpus.
+
+Write-up: `docs/trace-findings/2026-09-18-oracle-test-build.md`.
+
+---
+
 ## 18-Sep-2026 — the LoRA adapter is evaluated, and round 1's own verdict was wrong
 
 **What.** Round 1 trained an adapter, saw a flat loss curve, and wrote down the honest

@@ -269,8 +269,16 @@ _TOOL_CALL_MARKUP = (
 
 
 class _LedgerShim:
-    """`_build_user_prompt` reads exactly one attribute of `self`. A human demo carries no
-    knowledge ledger, and inventing one would be the fabricated prose the brief forbids."""
+    """The two attributes `_build_user_prompt` reads off `self`, both deliberately empty.
+
+    A human demo carries no knowledge ledger, and inventing one would be the fabricated
+    prose the brief forbids. `_oracle_rules_block` is the oracle arm's injected rulebook
+    (`inference.agent.oracle_rules`); human demonstrations must never carry it, because
+    this builder's output IS training data and the rulebook is the answer key. Declared
+    here rather than read defensively so that a future field added to the user prompt
+    fails loudly instead of silently dropping out of the corpus."""
+
+    _oracle_rules_block = ""
 
     def _summarized_knowledge_lines(self) -> list[str]:
         return []

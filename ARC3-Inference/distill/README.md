@@ -54,6 +54,7 @@ Combined with as66 that is the standard fence:
 `--only-games` is the inverse selector, used to build the held-out **eval** corpus. It is
 mutually exclusive with `--exclude-games`.
 
-Note that the oracle test runs all 25 public games, held-out seven included. That does not
-breach the split: those games are being *measured* there, not trained on — and section 1
-above is what keeps the distinction true.
+Note that the oracle test runs the slippery seven (`dc22 g50t m0r0 sc25 sk48 tn36 tr87`), of
+which exactly one — `tr87` — is also in the held-out split above. That does not breach the
+split: `tr87` is being *measured* there, not trained on, and section 1 is what keeps the
+distinction true. The other 18 public games are a follow-up run only if the seven move.

@@ -44,3 +44,7 @@ artifact; experiments copy from it and never edit it in place.**
   base every Kaggle arm since stacks on. Builder: `kaggle/experiments/sparse-deletion/`.
 - `reset-guard/` — arm I on arm B: RESET offered to the model behind a rate guard (never twice
   in a row, one per 20 actions). Jobs 11-12, paired with an arm-B control at the same cap. Pending.
+- `oracle-rules/` — arm O on arm B (env-toggle `ARC3_ORACLE_RULES_DIR`): the game's own
+  rulebook injected into every user turn, to split "never had the idea" from "could not play
+  it" on the games the 27B never clears. Local a108 arm, scored per game against a paired arm-B
+  control, not ex-`ft09`. Not run.
