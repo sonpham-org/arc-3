@@ -38,6 +38,38 @@ Rule from here: every write-up that lands under `docs/` updates this page the sa
 
 ## 18-Sep-2026 — the oracle marker guard was counting the log, not the prompt
 
+## 18-Sep-2026 — the Games page shows every game as an evolution tree, and collects reviews
+
+**What.** The Games tab is now one row per game tree instead of a grid of cards. Each row has
+a big frozen thumbnail of the current version on the left and, to its right, the tree from seed
+to latest version, scrolling sideways. Each node shows who made it (GPT, Claude, a person,
+imported), when, its feedback and, for the signed-in team, the reason for the change. A new
+**Feedback games** button runs a play-then-review loop, stored in a new database table.
+
+- **Versions are uploaded, not deployed.** `PUT /api/v1/games/publication` (with
+  `ARC3_PUBLISH_TOKEN`, like traces) stores one immutable, content-addressed version:
+  `<game_id>@<sha12>`, the stamp arc-explainer already records as `source_version`. Rows go to
+  Postgres (`railway/games_schema.sql`) and files to `/srv/data/_games/`.
+  `scripts/publish_game_versions.py` handles `publish` (one evolution), `sync` (the whole
+  catalog with its git history) and `feedback` (reviews for the next pass).
+- **Seed, revision, branch.** A revision continues its parent's line even under a new id; a
+  branch is a new game and starts its own line. A line's latest version is its current one.
+- **Reviews.** Anyone can review. Signed-in reviews are `team` and always rank ahead of
+  `public` ones; public ones are rate limited and hideable. Flag names reuse arc-explainer's
+  six, so the two sites' data joins.
+- **Access.** oauth2-proxy gains exactly four skip-auth routes: `^/api/v1/public/` (anonymous;
+  never reads identity headers, never returns notes or review text), the two token routes, and
+  `^/data/_games/` (game files). Everything else under `/api/v1/games/` needs sign-in.
+- **Unchanged for mirrors.** `static/games/manifest.json` and `static/games/src/` are untouched;
+  `/api/v1/public/games/manifest.json` serves the same shape for uploads that never touch Git.
+- **Space is ACTION5.** Left unmapped, it scrolled the page away from the board.
+
+**Why it matters.** Each change to a game now carries its reason, its author model and the
+reviews of that exact build, which is the record an evolution loop needs. It still does not
+measure whether a change moves the Kaggle score (AGENTS.md §5).
+
+
+
 **What.** The oracle driver aborted itself 20 s into arm-O pass 1 on a108 (`max_occurrences_in_one_log=2`).
 The second copy was `_write_prompt_log_snapshot`'s own `[TURN TRANSCRIPT SO FAR]` section
 re-printing the same turn's `[USER PROMPT]`, so an arm-O log holds `1 + analysis_steps` copies — a

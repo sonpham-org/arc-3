@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **Author:** Mark Barney / Claude Opus 5
-**Date:** 05-September-2026 (as66 test-only note added 17-September-2026, Claude Opus 5)
+**Date:** 05-September-2026 (as66 test-only note added 17-September-2026, Claude Opus 5; game-version rule added 18-September-2026, Claude Opus 5)
 **Purpose:** What an AI agent must know before touching this project, and the specific
 false assumptions that agents keep making. Every item below is something that has actually
 gone wrong, not a hypothetical.
@@ -135,6 +135,23 @@ than restating it, or it will happily search a square graph over hex level data.
 
 No titles, tutorial hints, labels, or text of any kind on the play surface. Draw the rule;
 never write it. A picture is fine. A word is a spoiler.
+
+### Every evolution is a published version, with its reason
+
+The Games page draws each game as a tree of versions. When you change a game, publish the
+new source as a version, with the one main reason for the change and the model that made it:
+
+```bash
+python scripts/publish_game_versions.py publish --game <id> --source <file.py> \
+    --author claude --model "Claude Opus 5" --reason "<the one thing this version changes>"
+```
+
+A new game grown out of an old one gets a **new id** and `--parent <old version id>`. That is
+a branch. The same game under a new id (`q041-v1` → `q041-v2`) adds `--kind revision`. Before
+the next pass, read what players said: `publish_game_versions.py feedback --game <id>`. Team
+reviews come first; weigh them over public ones. Committed changes to `docs/static/games/src/`
+reach the trees with `publish_game_versions.py sync`, which takes the commit subject as the
+reason, so write that subject as the reason.
 
 ---
 
