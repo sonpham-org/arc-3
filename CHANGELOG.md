@@ -21,6 +21,14 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 19-Sep-2026 — HARNESS-NOTES.md, the one page to read first
+
+**What.** A single always-current page at the repo root: seven harness recommendations in
+priority order, each citing the dated write-up that owns its evidence; what is known; what is
+running or blocked; the open questions; where things are. Written because Son asked for one
+place his local agents can read our feedback from, and seventy dated files is not that place.
+Rule from here: every write-up that lands under `docs/` updates this page the same day.
+
 ## 18-Sep-2026 — the oracle marker guard was counting the log, not the prompt
 
 **What.** The oracle driver aborted itself 20 s into arm-O pass 1 on a108 (`max_occurrences_in_one_log=2`).
