@@ -7,21 +7,29 @@ game source, stored immutably as "<game_id>@<first 12 hex of its sha256>".
 
   sync      Upload every game in docs/static/games/manifest.json with its history, rebuilt
             from this repo's git log: each commit that changed a game's source becomes a
-            version, its subject becomes the reason, and a Co-Authored-By trailer or the
-            file's "Author:" header says whether GPT or Claude made it. Idempotent: versions
-            the API already holds are skipped, so re-run it after any change to
-            docs/static/games/src/.
+            version and its subject becomes the reason. Who drove it comes from FAMILY_DRIVERS
+            (the reviewed arena set: Claude; glow-ups: GPT; in-house, research, official:
+            human). Idempotent: versions the API already holds are skipped, so re-run it after
+            any change to docs/static/games/src/; --update-notes re-credits existing ones.
 
   publish   Upload ONE new version. This is the call to make every time GPT, Claude or a
-            person evolves a game, with the main reason for the change:
+            person evolves a game, with the main reason for the change and who drove it:
 
               python scripts/publish_game_versions.py publish --game g009 \\
-                  --source path/to/g009.py --author claude --model "Claude Opus 5" \\
+                  --source path/to/g009.py --driver claude --model "Claude Opus 5" \\
                   --reason "Walls now show which side is sticky"
 
-            A known game id becomes a revision of its latest version. A new id with --parent
-            becomes a branch (a new game grown from that version), or --kind revision for the
-            same game under a new id (q041-v1 -> q041-v2). A new id with no parent is a seed.
+            --driver is who primarily drove the version: gpt, claude, or human (a person
+            actively tuned it). A known game id becomes a revision of its latest version. A
+            new id with --parent becomes a branch (a new game grown from that version), or
+            --kind revision for the same game under a new id (q041-v1 -> q041-v2). Repeat
+            --parent for a crossover of several games (the first places it in its tree), and
+            --idea to mark which board idea it explores. A new id with no parent is a seed.
+
+  import-explainer  Bring arc.markbarney.net's own games into the trees: the 44 glow-ups, each
+            under the generated game it came from, and the 25-game research collection.
+
+  ideas     Load this repo's idea ledgers (GPT, Anthropic, Flash lineages) onto the ideas board.
 
   feedback  Download reviews as JSON lines (team reviews first within each version), for the
             next evolution pass: python scripts/publish_game_versions.py feedback --game g009
@@ -35,6 +43,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import csv
 import hashlib
 import http.client
 import io
@@ -61,12 +70,13 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_API_URL = "https://arc3.sonpham.net"
 SRC_ROOT = "docs/static/games/src"
 GAME_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
-BLIND_FAMILIES = {"arena", "contributed-glowup"}
+BLIND_FAMILIES = {"arena", "contributed-glowup", "research"}
 # Categories kept in manifest.json (arc-explainer mirrors them) but not published to the Games
-# page's trees. "ai-generated" is the 571 unreviewed generator games ("Fresh off the pipeline"
-# on arc.markbarney.net), taken off the page on 19-Sep-2026. docs/static/js/games-api.js
+# page's trees, both taken off the page on 19-Sep-2026: "ai-generated", the 571 unreviewed
+# generator games ("Fresh off the pipeline" on arc.markbarney.net), and "redbluepill",
+# theredbluepill's 252-game arc-interactive catalog ("not worth it"). docs/static/js/games-api.js
 # drops the same list from its static fallback.
-RETIRED_FAMILIES = {"ai-generated"}
+RETIRED_FAMILIES = {"ai-generated", "redbluepill"}
 
 
 def family_of(row: dict[str, Any]) -> str:
@@ -288,6 +298,7 @@ class Version:
     author_name: str
     message: str
     path: str
+    repo_name: str = "sonpham-org/arc-3"
     sha256: str = ""
     version_id: str = ""
     reason: str = ""
@@ -295,9 +306,9 @@ class Version:
     author: dict[str, Any] = field(default_factory=dict)
 
 
-def git(*args: str, input_bytes: bytes | None = None) -> bytes:
+def git(*args: str, input_bytes: bytes | None = None, repo: Path = REPO) -> bytes:
     return subprocess.run(
-        ["git", "-C", str(REPO), *args],
+        ["git", "-C", str(repo), *args],
         input=input_bytes,
         check=True,
         stdout=subprocess.PIPE,
@@ -305,12 +316,12 @@ def git(*args: str, input_bytes: bytes | None = None) -> bytes:
     ).stdout
 
 
-def read_blobs(blobs: list[str]) -> dict[str, bytes]:
+def read_blobs(blobs: list[str], repo: Path = REPO) -> dict[str, bytes]:
     """Blob contents exactly as committed (LF endings, never a CRLF checkout), in one call."""
 
     if not blobs:
         return {}
-    output = git("cat-file", "--batch", input_bytes=("\n".join(blobs) + "\n").encode())
+    output = git("cat-file", "--batch", input_bytes=("\n".join(blobs) + "\n").encode(), repo=repo)
     contents: dict[str, bytes] = {}
     offset = 0
     for blob in blobs:
@@ -322,13 +333,12 @@ def read_blobs(blobs: list[str]) -> dict[str, bytes]:
     return contents
 
 
-def history(manifest: list[dict[str, Any]]) -> dict[str, list[Version]]:
-    """Every distinct committed source of every manifest game, oldest first."""
+def repo_history(repo: Path, roots: list[str], wanted: dict[str, str], repo_name: str) -> dict[str, list[Version]]:
+    """Every distinct committed source of the `wanted` paths (path -> game id), oldest first."""
 
-    wanted = {f"{SRC_ROOT}/{entry['id']}/{entry['src_file']}": entry["id"] for entry in manifest}
     log = git(
         "log", "--reverse", "--no-renames", "--raw", "--no-abbrev",
-        "--format=%x1e%H%x1f%cI%x1f%an%x1f%B%x1d", "--", SRC_ROOT,
+        "--format=%x1e%H%x1f%cI%x1f%an%x1f%B%x1d", "--", *roots, repo=repo,
     ).decode("utf-8", errors="replace")
     found: dict[str, list[Version]] = {}
     for chunk in log.split("\x1e")[1:]:
@@ -349,15 +359,23 @@ def history(manifest: list[dict[str, Any]]) -> dict[str, list[Version]]:
                     author_name=author_name,
                     message=message,
                     path=match.group(3),
+                    repo_name=repo_name,
                 )
             )
-    contents = read_blobs(sorted({version.blob for versions in found.values() for version in versions}))
+    contents = read_blobs(sorted({v.blob for versions in found.values() for v in versions}), repo=repo)
     for versions in found.values():
         for version in versions:
             version.source = contents[version.blob]
             version.sha256 = hashlib.sha256(version.source).hexdigest()
             version.version_id = f"{version.game_id}@{version.sha256[:12]}"
     return found
+
+
+def history(manifest: list[dict[str, Any]]) -> dict[str, list[Version]]:
+    """Every distinct committed source of every manifest game in this repo, oldest first."""
+
+    wanted = {f"{SRC_ROOT}/{entry['id']}/{entry['src_file']}": entry["id"] for entry in manifest}
+    return repo_history(REPO, [SRC_ROOT], wanted, "sonpham-org/arc-3")
 
 
 def research_authorship(game_id: str) -> dict[str, Any] | None:
@@ -404,8 +422,8 @@ def request(args: argparse.Namespace, method: str, path: str, token: str, body: 
     raise AssertionError("unreachable")
 
 
-def game_entry(manifest_row: dict[str, Any]) -> dict[str, Any]:
-    family = family_of(manifest_row)
+def game_entry(manifest_row: dict[str, Any], family: str | None = None) -> dict[str, Any]:
+    family = family or family_of(manifest_row)
     entry = {"game_id": manifest_row["id"], "family": family, "default_fps": manifest_row.get("default_fps")}
     if family not in BLIND_FAMILIES:
         entry.update(
@@ -418,102 +436,142 @@ def game_entry(manifest_row: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
-# ── Commands ─────────────────────────────────────────────────────────────────
+# ── Planning uploads ─────────────────────────────────────────────────────────
+
+# Who primarily drove each family's games, Son Pham's call on 19-Sep-2026: the 50 reviewed
+# (arena) were Claude-driven, the 44 glow-ups GPT-driven, and the rest (in-house, the
+# research collection, the official set) human-tuned. The generator's output is GPT's. This
+# credits backfilled history, whatever a commit trailer says about who typed the change; a
+# new version names its own driver when it is published. A specific model name survives only
+# where the evidence names the same driver.
+FAMILY_DRIVERS = {
+    "arena": "claude",
+    "contributed-glowup": "gpt",
+    "custom": "human",
+    "research": "human",
+    "official": "human",
+    "ai-generated": "gpt",
+}
 
 
-def cmd_sync(args: argparse.Namespace) -> int:
-    manifest = json.loads((REPO / "docs" / "static" / "games" / "manifest.json").read_text(encoding="utf-8"))
-    manifest = select_games(manifest, args.games, args.families)
-    by_id = {row["id"]: row for row in manifest}
-    found = history(manifest)
-    missing = sorted(set(by_id) - set(found))
-    if missing:
-        print(f"no committed source for {len(missing)} game(s): {', '.join(missing[:10])}", file=sys.stderr)
+def credit(family: str, inferred: dict[str, Any]) -> dict[str, Any]:
+    driver = FAMILY_DRIVERS.get(family)
+    if driver is None:
+        return inferred
+    return {"kind": driver, "model": inferred.get("model") if inferred.get("kind") == driver else None}
 
-    token = "" if args.dry_run else resolve_publish_token(args)
-    known: dict[str, set[str]] = {}
-    if not args.dry_run and not args.update_notes:
-        listing = request(args, "GET", "/api/v1/games/publication", token)
-        known = {gid: set(shas) for gid, shas in (listing.get("games") or {}).items()} if isinstance(listing, dict) else {}
 
-    games_per_commit: dict[str, int] = {}
-    for versions in found.values():
-        for version in versions:
-            games_per_commit[version.commit] = games_per_commit.get(version.commit, 0) + 1
+Planned = tuple[dict[str, Any], dict[str, Any], Version]
 
-    plan: list[tuple[dict[str, Any], dict[str, Any], Version]] = []
-    for game_id in sorted(found, key=lambda gid: found[gid][0].date):
-        versions = found[game_id]
-        entry = game_entry(by_id[game_id])
-        imported = IMPORTED_FAMILIES.get(entry["family"])
-        previous_id = None
-        previous_date = None
-        seen: set[str] = set()
-        for version in versions:
-            if version.sha256 in seen:
-                # A revert back to an earlier source: that version already exists, so later
-                # versions simply descend from it, which is what happened.
-                previous_id = version.version_id
-                continue
-            seen.add(version.sha256)
-            seed = previous_id is None
-            head_text = version.source[:4000].decode("utf-8", errors="replace")
-            version.reason, version.details = split_commit_message(version.message)
-            author_name = version.author_name
-            if seed and imported:
-                version.author, author_name, version.reason = imported
-            else:
-                version.author = infer_author(
+
+def plan_chain(
+    versions: list[Version],
+    entry: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    games_per_commit: dict[str, int],
+    known: dict[str, set[str]],
+    origin: str,
+    first_parent: tuple[str, datetime] | None = None,
+    first_kind: str | None = None,
+    first_reason: str | None = None,
+) -> tuple[list[Planned], tuple[str, datetime] | None]:
+    """One game's committed versions as uploads, each the child of the one before.
+
+    `first_parent` hangs the first version under a version of another game (a glow-up under
+    the generated game it came from); `first_kind` says whether that makes it a revision (the
+    same game, renamed) or a branch. Returns the plan and the (version id, time) of the last
+    version, so a later chain can hang off it."""
+
+    family = entry["family"]
+    imported = IMPORTED_FAMILIES.get(family)
+    previous = first_parent
+    plan: list[Planned] = []
+    seen: set[str] = set()
+    started = False
+    for version in versions:
+        if version.sha256 in seen:
+            # A revert to an earlier source: that version already exists, so later versions
+            # simply descend from it, which is what happened.
+            previous = (version.version_id, previous[1] if previous else version.date)
+            continue
+        seen.add(version.sha256)
+        first = not started
+        started = True
+        seed = previous is None
+        head_text = version.source[:4000].decode("utf-8", errors="replace")
+        version.reason, version.details = split_commit_message(version.message)
+        author_name = version.author_name
+        if seed and imported:
+            version.author, author_name, version.reason = imported
+        else:
+            version.author = credit(
+                family,
+                infer_author(
                     version.message,
                     head_text,
                     seed=seed,
-                    focused=games_per_commit[version.commit] <= 3,
-                    metadata=research_authorship(game_id) if seed else None,
-                )
-            created = version.date.astimezone(timezone.utc)
-            if previous_date and created <= previous_date:
-                created = previous_date + timedelta(seconds=1)  # rebased history: keep order
-            previous_date = created
-            payload = {
-                "sha256": version.sha256,
-                "src_file": by_id[game_id]["src_file"],
-                "class_name": find_game_class(version.source.decode("utf-8", errors="replace"))
-                or by_id[game_id]["class_name"],
-                "parent_version_id": previous_id,
-                "kind": "seed" if seed else "revision",
-                "created_at": created.isoformat().replace("+00:00", "Z"),
-                "author": {**version.author, "name": author_name},
-                "reason": version.reason,
-                "details": version.details,
-                "origin": "git-sync",
-                "provenance": {"repo": "sonpham-org/arc-3", "commit": version.commit, "path": version.path},
-            }
-            previous_id = version.version_id
-            if version.sha256 in known.get(game_id, set()):
-                continue
+                    focused=games_per_commit.get(version.commit, 1) <= 3,
+                    metadata=research_authorship(version.game_id) if seed else None,
+                ),
+            )
+        if first and first_reason:
+            version.details = "\n".join(part for part in (version.reason, version.details) if part) or None
+            version.reason = first_reason
+        created = version.date.astimezone(timezone.utc)
+        if previous and created <= previous[1]:
+            created = previous[1] + timedelta(seconds=1)  # rebased or cross-repo history: keep order
+        payload = {
+            "sha256": version.sha256,
+            "src_file": row["src_file"],
+            "class_name": find_game_class(version.source.decode("utf-8", errors="replace")) or row["class_name"],
+            "parent_version_id": previous[0] if previous else None,
+            "kind": "seed" if seed else (first_kind if first and first_kind else "revision"),
+            "created_at": created.isoformat().replace("+00:00", "Z"),
+            "author": {**version.author, "name": author_name},
+            "reason": version.reason,
+            "details": version.details,
+            "origin": origin,
+            "provenance": {"repo": version.repo_name, "commit": version.commit, "path": version.path},
+        }
+        previous = (version.version_id, created)
+        if version.sha256 not in known.get(version.game_id, set()):
             plan.append((entry, payload, version))
+    return plan, previous
 
-    print(
-        json.dumps(
-            {
-                "games": len(found),
-                "versions": sum(len(v) for v in found.values()),
-                "toUpload": len(plan),
-                "withHistory": sum(1 for v in found.values() if len({x.sha256 for x in v}) > 1),
-                "dryRun": args.dry_run,
-            }
-        )
-    )
+
+def commit_fanout(found: dict[str, list[Version]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for versions in found.values():
+        for version in versions:
+            counts[version.commit] = counts.get(version.commit, 0) + 1
+    return counts
+
+
+def prepare(args: argparse.Namespace) -> tuple[str, dict[str, set[str]]]:
+    """The token, and the versions the API already holds (skipped unless --update-notes)."""
+
+    if args.dry_run:
+        return "", {}
+    token = resolve_publish_token(args)
+    if args.update_notes:
+        return token, {}
+    listing = request(args, "GET", "/api/v1/games/publication", token)
+    games = listing.get("games") if isinstance(listing, dict) else {}
+    return token, {gid: set(shas) for gid, shas in (games or {}).items()}
+
+
+def upload_plan(args: argparse.Namespace, token: str, plan: list[Planned]) -> int:
     if args.limit:
         plan = plan[: args.limit]
     if args.dry_run:
         for entry, payload, _version in plan[: args.show]:
+            parent = payload["parent_version_id"] or "-"
             print(
                 f"  {payload['created_at'][:10]}  {entry['game_id']:<14} {payload['kind']:<8} "
-                f"{payload['author']['kind']:<7} {payload['reason'][:70]}"
+                f"{payload['author']['kind']:<7} {parent:<22} {payload['reason'][:60]}"
             )
         return 0
-
     renderer = Renderer(not args.no_thumbnails, workers=args.workers)
     published = unchanged = failed = 0
     for start in range(0, len(plan), args.batch):
@@ -546,6 +604,203 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def load_manifest() -> list[dict[str, Any]]:
+    return json.loads((REPO / "docs" / "static" / "games" / "manifest.json").read_text(encoding="utf-8"))
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    manifest = select_games(load_manifest(), args.games, args.families)
+    by_id = {row["id"]: row for row in manifest}
+    found = history(manifest)
+    missing = sorted(set(by_id) - set(found))
+    if missing:
+        print(f"no committed source for {len(missing)} game(s): {', '.join(missing[:10])}", file=sys.stderr)
+    token, known = prepare(args)
+    fanout = commit_fanout(found)
+    plan: list[Planned] = []
+    for game_id in sorted(found, key=lambda gid: found[gid][0].date):
+        items, _last = plan_chain(
+            found[game_id], game_entry(by_id[game_id]), by_id[game_id],
+            games_per_commit=fanout, known=known, origin="git-sync",
+        )
+        plan += items
+    print(json.dumps({
+        "games": len(found),
+        "versions": sum(len(v) for v in found.values()),
+        "toUpload": len(plan),
+        "withHistory": sum(1 for v in found.values() if len({x.sha256 for x in v}) > 1),
+        "dryRun": args.dry_run,
+    }))
+    return upload_plan(args, token, plan)
+
+
+EXPLAINER = "82deutschmark/arc-explainer"
+EXPLAINER_GAMES = "server/data/arc3-games"
+EXPLAINER_RESEARCH = "server/data/arc3-research-games"
+EXPLAINER_LEDGER = "server/data/arc3-uploads/sonpham-org-ids.json"
+
+
+def glowup_parents(explainer: Path) -> dict[str, tuple[str, int]]:
+    """g5xx -> (the generated game it glows up, which version of it the upload was), from
+    arc-explainer's never-reassigned id ledger: "g512": "q041_v2_q041.py" is q041-v1's v2."""
+
+    published = json.loads((explainer / EXPLAINER_LEDGER).read_text(encoding="utf-8"))["published"]
+    parents = {}
+    for gid, filename in published.items():
+        match = re.match(r"^(q\d+)_v(\d+)_", filename)
+        if match:
+            parents[gid] = (f"{match.group(1)}-v1", int(match.group(2)))
+    return parents
+
+
+def cmd_import_explainer(args: argparse.Namespace) -> int:
+    """Bring arc.markbarney.net's own games into the trees: the 44 contributed glow-ups, each
+    hung under the generated game it came from, and the 25-game research collection. History
+    comes from arc-explainer's git log, exactly as `sync` reads this repo's."""
+
+    explainer = Path(args.repo).resolve()
+    parents = glowup_parents(explainer)
+    catalog = json.loads((explainer / EXPLAINER_GAMES / "manifest.json").read_text(encoding="utf-8"))
+    research = json.loads((explainer / EXPLAINER_RESEARCH / "manifest.json").read_text(encoding="utf-8"))
+    glowups = {row["id"]: row for row in catalog if row.get("category") == "contributed-glowup" and row["id"] in parents}
+
+    # 1. The generated games the glow-ups came from, with their history here. They are retired
+    #    from the page as a set; these few come back only as the roots of their glow-ups.
+    ours = {row["id"]: row for row in load_manifest()}
+    roots = sorted({qid for qid, _n in parents.values() if qid in ours})
+    q_found = history([ours[qid] for qid in roots])
+    token, known = prepare(args)
+    plan: list[Planned] = []
+    heads: dict[str, tuple[str, datetime]] = {}
+    fanout = commit_fanout(q_found)
+    for qid in roots:
+        if qid not in q_found:
+            continue
+        items, last = plan_chain(
+            q_found[qid], game_entry(ours[qid]), ours[qid],
+            games_per_commit=fanout, known=known, origin="git-sync",
+        )
+        plan += items
+        if last:
+            heads[qid] = last
+
+    # 2. The glow-ups: the next version of that generated game, under a new id.
+    wanted = {f"{EXPLAINER_GAMES}/{row['src_file']}": gid for gid, row in glowups.items()}
+    g_found = repo_history(explainer, [EXPLAINER_GAMES], wanted, EXPLAINER)
+    fanout = commit_fanout(g_found)
+    for gid in sorted(g_found):
+        qid, n = parents[gid]
+        items, _last = plan_chain(
+            g_found[gid], game_entry(glowups[gid], "contributed-glowup"), glowups[gid],
+            games_per_commit=fanout, known=known, origin="explainer-import",
+            first_parent=heads.get(qid), first_kind="revision" if qid in heads else None,
+            first_reason=f"Glow-up of {qid}, published as its v{n}",
+        )
+        plan += items
+
+    # 3. The research collection: seeds of their own.
+    rows = {row["id"]: row for row in research}
+    wanted = {f"{EXPLAINER_RESEARCH}/{row['src_file']}": rid for rid, row in rows.items()}
+    r_found = repo_history(explainer, [EXPLAINER_RESEARCH], wanted, EXPLAINER)
+    fanout = commit_fanout(r_found)
+    for rid in sorted(r_found):
+        items, _last = plan_chain(
+            r_found[rid], game_entry(rows[rid], "research"), rows[rid],
+            games_per_commit=fanout, known=known, origin="explainer-import",
+        )
+        plan += items
+
+    print(json.dumps({
+        "glowupParents": len(heads),
+        "glowups": len(g_found),
+        "research": len(r_found),
+        "toUpload": len(plan),
+        "dryRun": args.dry_run,
+    }))
+    return upload_plan(args, token, plan)
+
+
+def _tsv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def _pretty(slug: str) -> str:
+    return slug.replace("-", " ").strip().capitalize()
+
+
+def idea_records(explainer: Path | None) -> list[dict[str, Any]]:
+    """Every idea in this repo's ledgers, as the board stores them. An idea a game was built
+    from carries that game, which is what makes it explored."""
+
+    research = REPO / "research"
+    built = {path.stem for path in (research / "games").glob("q*-v1.json")}
+    glowups: dict[str, list[str]] = {}
+    if explainer:
+        for gid, (qid, _n) in glowup_parents(explainer).items():
+            glowups.setdefault(qid, []).append(gid)
+    clip = lambda text, n: (text or "").strip()[:n]  # noqa: E731
+    records: list[dict[str, Any]] = []
+    for row in _tsv(research / "gpt-ideas-v2.tsv"):
+        gid = f"{row['id']}-v1"
+        records.append({
+            "idea_id": f"gpt:{row['id']}", "source": "gpt-ideas-v2",
+            "title": clip(row["internal_title"], 200), "axis": clip(row["primary_axis"], 120),
+            "pitch": clip(row["concept"], 4000),
+            "game_ids": ([gid] if gid in built else []) + sorted(glowups.get(gid, [])),
+        })
+    for row in _tsv(research / "anthropic-build-ideas-v1.tsv"):
+        records.append({
+            "idea_id": f"anthropic:{row['id']}", "source": "anthropic-ideas-v1",
+            "title": clip(row["internal_title"], 200), "axis": clip(row["primary_axis"], 120),
+            "pitch": clip(row["concept"], 4000),
+            "details": {k: row[k] for k in ("secondary_axis", "interaction_model", "differentiator",
+                                             "anticipated_ai_failure", "lineage") if row.get(k)},
+        })
+    for row in _tsv(research / "flash-mechanic-lineages-v1.tsv"):
+        records.append({
+            "idea_id": f"flash:{row['id']}", "source": "flash-lineages-v1",
+            "title": clip(f"{_pretty(row['family'])} (from {row['source_games']})", 200),
+            "axis": clip(row["family"], 120), "pitch": clip(row["portable_mechanic"], 4000),
+            "details": {k: row[k] for k in ("source_games", "arc3_research_use", "guardrail", "evidence_url") if row.get(k)},
+        })
+    for row in _tsv(research / "flash-long-tail-reviewed-lineages-v1.tsv"):
+        records.append({
+            "idea_id": f"flash-lt:{row['id']}", "source": "flash-long-tail-v1",
+            "title": clip(f"{_pretty(row['family'])} (from {row['source_games']})", 200),
+            "axis": clip(row["family"], 120), "pitch": clip(row["portable_mechanic"], 4000),
+            # "covered" is the review's own verdict that an existing game already does this.
+            "status": "explored" if row["status"] == "covered" else "unexplored",
+            "details": {"review": row["status"], **{k: row[k] for k in (
+                "source_games", "nearest_existing", "structural_difference", "arc3_research_question",
+                "transferability", "evidence_url") if row.get(k)}},
+        })
+    return records
+
+
+def cmd_ideas(args: argparse.Namespace) -> int:
+    records = idea_records(Path(args.explainer).resolve() if args.explainer else None)
+    by_source: dict[str, list[int]] = {}
+    for record in records:
+        tally = by_source.setdefault(record["source"], [0, 0])
+        tally[0] += 1
+        tally[1] += bool(record.get("game_ids")) or record.get("status") == "explored"
+    print(json.dumps({"ideas": len(records), "bySource": {k: {"ideas": v[0], "explored": v[1]} for k, v in by_source.items()}}))
+    if args.dry_run:
+        return 0
+    token = resolve_publish_token(args)
+    totals = {"inserted": 0, "updated": 0, "linked": 0}
+    for start in range(0, len(records), 500):
+        result = request(args, "PUT", "/api/v1/games/ideas/publication", token, {"ideas": records[start : start + 500]})
+        for key in totals:
+            totals[key] += int(result.get(key, 0)) if isinstance(result, dict) else 0
+    print(json.dumps(totals))
+    return 0
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     if not GAME_ID_RE.fullmatch(args.game):
         raise SystemExit("--game must be letters, digits, dot, underscore or dash")
@@ -572,14 +827,16 @@ def cmd_publish(args: argparse.Namespace) -> int:
         "sha256": hashlib.sha256(source).hexdigest(),
         "src_file": src_file,
         "class_name": class_name,
-        "author": {"kind": args.author, "model": args.model, "name": args.name},
+        "author": {"kind": args.driver, "model": args.model, "name": args.name},
         "reason": args.reason,
         "details": args.details,
         "origin": "publish-cli",
         "provenance": {"source": Path(args.source).name, **({"commit": args.commit} if args.commit else {})},
     }
     if args.parent:
-        version["parent_version_id"] = args.parent
+        version["parent_version_ids"] = args.parent
+    if args.idea:
+        version["idea_ids"] = args.idea
     if args.kind:
         version["kind"] = args.kind
     if args.created_at:
@@ -629,6 +886,17 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
+def _upload_options(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--limit", type=int, default=0, help="upload at most this many versions")
+    command.add_argument("--batch", type=int, default=40)
+    command.add_argument("--workers", type=int, default=4, help="thumbnail render processes")
+    command.add_argument("--no-thumbnails", action="store_true")
+    command.add_argument("--update-notes", action="store_true", help="re-send reasons/authors of existing versions")
+    command.add_argument("--dry-run", action="store_true")
+    command.add_argument("--show", type=int, default=60, help="plan rows to print with --dry-run")
+    command.add_argument("--verbose", action="store_true")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--api-url", default=os.environ.get("ARC3_API_URL", DEFAULT_API_URL))
@@ -644,28 +912,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sync.add_argument("--games", help="comma-separated game ids (default: the whole manifest)")
     sync.add_argument(
         "--families",
-        help="comma-separated categories, e.g. arena,custom (default: all but the retired ai-generated set)",
+        help="comma-separated categories, e.g. arena,custom (default: all but the retired sets)",
     )
-    sync.add_argument("--limit", type=int, default=0, help="upload at most this many versions")
-    sync.add_argument("--batch", type=int, default=40)
-    sync.add_argument("--workers", type=int, default=4, help="thumbnail render processes")
-    sync.add_argument("--no-thumbnails", action="store_true")
-    sync.add_argument("--update-notes", action="store_true", help="re-send reasons/authors of existing versions")
-    sync.add_argument("--dry-run", action="store_true")
-    sync.add_argument("--show", type=int, default=60, help="plan rows to print with --dry-run")
-    sync.add_argument("--verbose", action="store_true")
+    _upload_options(sync)
+
+    explainer = commands.add_parser(
+        "import-explainer", help="upload arc-explainer's glow-ups (under their parents) and research games"
+    )
+    explainer.add_argument("--repo", required=True, help="a checkout of 82deutschmark/arc-explainer")
+    _upload_options(explainer)
+
+    ideas = commands.add_parser("ideas", help="load this repo's idea ledgers onto the ideas board")
+    ideas.add_argument("--explainer", help="an arc-explainer checkout, to link glow-ups to their ideas")
+    ideas.add_argument("--dry-run", action="store_true")
 
     publish = commands.add_parser("publish", help="upload one new version of a game")
     publish.add_argument("--game", required=True)
     publish.add_argument("--source", required=True, help="the game's single-file .py source")
     publish.add_argument("--reason", required=True, help="the main reason for this change, one line")
-    publish.add_argument("--author", required=True, choices=("gpt", "claude", "human", "other"))
+    publish.add_argument(
+        "--driver", "--author", dest="driver", required=True, choices=("gpt", "claude", "human", "other"),
+        help="who primarily drove this version: gpt, claude, or human (a person actively tuned it)",
+    )
     publish.add_argument("--model", help='e.g. "Claude Opus 5", "GPT-6 (Codex)"')
     publish.add_argument("--name", help="who ran it (person or bot)")
     publish.add_argument("--details", help="longer notes")
-    publish.add_argument("--parent", help="version id to descend from: <game_id>@<12 hex>")
+    publish.add_argument(
+        "--parent", action="append",
+        help="version id to descend from, <game_id>@<12 hex>; repeat for a crossover (the first places it in its tree)",
+    )
+    publish.add_argument("--idea", action="append", help="idea id this version explores (e.g. gpt:q041); repeatable")
     publish.add_argument("--kind", choices=("revision", "branch"))
-    publish.add_argument("--family", help="category for a brand-new game (arena, custom, ai-generated, ...)")
+    publish.add_argument("--family", help="category for a brand-new game (arena, custom, research, ...)")
     publish.add_argument("--title")
     publish.add_argument("--description")
     publish.add_argument("--tags", help="comma-separated")
@@ -691,7 +969,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    return {"sync": cmd_sync, "publish": cmd_publish, "feedback": cmd_feedback}[args.command](args)
+    commands = {
+        "sync": cmd_sync,
+        "import-explainer": cmd_import_explainer,
+        "ideas": cmd_ideas,
+        "publish": cmd_publish,
+        "feedback": cmd_feedback,
+    }
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":

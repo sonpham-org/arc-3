@@ -13,6 +13,8 @@ The route prefix decides who is calling, and every handler below trusts nothing 
                                    version (source + thumbnail + reason). No site deploy.
   /api/v1/games/feedback-export    machines holding ARC3_PUBLISH_TOKEN: feedback as JSON
                                    lines, for whatever GPT/Claude loop writes the next version.
+  /api/v1/games/ideas/publication  machines holding ARC3_PUBLISH_TOKEN: add or refresh game
+                                   ideas for the ideas board, in bulk.
 
 A version is immutable and content-addressed: version_id = "<game_id>@<sha12>", where sha12
 is the first 12 hex of sha256(source bytes). That is the same stamp arc-explainer records as
@@ -51,11 +53,21 @@ VISITOR_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 EMAIL_RE = re.compile(r"^[^\s@]{1,200}@[^\s@]{1,200}$")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# Who primarily drove a version (19-Sep-2026 definitions): "gpt" = GPT was the primary
+# driver, "claude" = Claude was, "human" = a person actively tuned it. "other" is for imports
+# made elsewhere (the community catalog), "unknown" when nobody recorded it.
 AUTHOR_KINDS = ("gpt", "claude", "human", "other", "unknown")
 VERSION_KINDS = ("seed", "revision", "branch")
 # Families whose games are played blind: the UI shows the id and nothing that names the
 # mechanic (the same rule scripts/build_arena_catalog.py applies to the static manifest).
-BLIND_FAMILIES = frozenset({"arena", "contributed-glowup"})
+BLIND_FAMILIES = frozenset({"arena", "contributed-glowup", "research"})
+MAX_EXTRA_PARENTS = 8
+
+IDEA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+IDEA_SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,59}$")
+IDEA_STATUSES = ("unexplored", "exploring", "explored", "dropped")
+MAX_IDEAS_PER_UPLOAD = 2000
+MAX_IDEAS_BODY = 8 * 1024 * 1024
 # "synthetic" = everything we generate or build; the official 25 and the imported community
 # catalog are not ours to evolve, so the feedback queue skips them unless asked.
 NOT_SYNTHETIC = ("official", "redbluepill")
@@ -255,9 +267,30 @@ def clean_publication(payload: Any) -> dict[str, Any]:
     if author_kind not in AUTHOR_KINDS:
         raise GamesProblem(400, "invalid_author_kind", f"author.kind must be one of {AUTHOR_KINDS}")
 
+    # Parents: `parent_version_ids` (a list, first = the primary parent that places the version
+    # in its tree; the rest are secondary, e.g. the other half of a crossover), or the older
+    # single `parent_version_id`. Both may be sent if they agree on the primary.
     parent = version.get("parent_version_id")
     if parent is not None:
         parent = _version_id(parent, "parent_version_id")
+    parents = version.get("parent_version_ids")
+    extra_parents: list[str] = []
+    if parents is not None:
+        if not isinstance(parents, list) or not parents or len(parents) > 1 + MAX_EXTRA_PARENTS:
+            raise GamesProblem(
+                400, "invalid_parent_version_ids", f"parent_version_ids must list 1..{1 + MAX_EXTRA_PARENTS} versions"
+            )
+        parents = [_version_id(p, "parent_version_ids") for p in parents]
+        if len(set(parents)) != len(parents):
+            raise GamesProblem(400, "invalid_parent_version_ids", "parent_version_ids repeats a version")
+        if parent is not None and parent != parents[0]:
+            raise GamesProblem(400, "invalid_parent_version_ids", "parent_version_id disagrees with parent_version_ids[0]")
+        parent, extra_parents = parents[0], parents[1:]
+    idea_ids = version.get("idea_ids") or []
+    if not isinstance(idea_ids, list) or len(idea_ids) > 16 or not all(
+        isinstance(i, str) and IDEA_ID_RE.fullmatch(i) for i in idea_ids
+    ):
+        raise GamesProblem(400, "invalid_idea_ids", "idea_ids must be up to 16 idea ids")
     kind = version.get("kind")
     if kind is not None and kind not in VERSION_KINDS:
         raise GamesProblem(400, "invalid_kind", f"kind must be one of {VERSION_KINDS}")
@@ -284,6 +317,8 @@ def clean_publication(payload: Any) -> dict[str, Any]:
         "class_name": class_name,
         "tile_scale": tile_scale,
         "parent_version_id": parent,
+        "extra_parent_version_ids": extra_parents,
+        "idea_ids": list(dict.fromkeys(idea_ids)),
         "kind": kind,
         "created_at": _timestamp(version.get("created_at"), "created_at"),
         "author_kind": author_kind,
@@ -405,6 +440,50 @@ def _write_atomic(path: Path, payload: bytes) -> None:
     os.replace(temp, path)
 
 
+def _link_extras(cursor: Any, version_id: str, game_id: str, item: dict[str, Any]) -> None:
+    """Secondary parents and the ideas a version was built from. Additive and idempotent, so
+    a re-upload with update_notes can add links but never silently drops one."""
+
+    extras = item["extra_parent_version_ids"]
+    if version_id in extras or item["parent_version_id"] in extras:
+        raise GamesProblem(400, "invalid_parent_version_ids", "a secondary parent repeats the version or its primary parent")
+    if extras:
+        cursor.execute("SELECT version_id FROM arc3_game_versions WHERE version_id = ANY(%s)", (extras,))
+        missing = sorted(set(extras) - {row[0] for row in cursor.fetchall()})
+        if missing:
+            raise GamesProblem(404, "parent_not_found", f"not published: {', '.join(missing)}")
+        cursor.execute("SELECT coalesce(max(position), 0) FROM arc3_game_version_parents WHERE version_id = %s", (version_id,))
+        position = cursor.fetchone()[0]
+        for parent in extras:
+            position += 1
+            cursor.execute(
+                """
+                INSERT INTO arc3_game_version_parents (version_id, parent_version_id, position)
+                VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+                """,
+                (version_id, parent, position),
+            )
+    if item["idea_ids"]:
+        cursor.execute("SELECT idea_id FROM arc3_game_ideas WHERE idea_id = ANY(%s)", (item["idea_ids"],))
+        missing = sorted(set(item["idea_ids"]) - {row[0] for row in cursor.fetchall()})
+        if missing:
+            raise GamesProblem(404, "idea_not_found", f"no such idea: {', '.join(missing)}")
+        for idea_id in item["idea_ids"]:
+            cursor.execute(
+                "INSERT INTO arc3_game_idea_games (idea_id, game_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (idea_id, game_id),
+            )
+        # A game built from an idea is what "explored" means; a status the team chose by hand
+        # (dropped, or already explored) stands.
+        cursor.execute(
+            """
+            UPDATE arc3_game_ideas SET status = 'explored', updated_at = now()
+            WHERE idea_id = ANY(%s) AND status IN ('unexplored', 'exploring')
+            """,
+            (item["idea_ids"],),
+        )
+
+
 def publish_version(connect: Callable[[], Any], data_root: Path, payload: Any) -> dict[str, Any]:
     """Store one uploaded version: files on the volume, rows in Postgres, in one transaction.
 
@@ -436,6 +515,7 @@ def publish_version(connect: Callable[[], Any], data_root: Path, payload: Any) -
                 if existing:
                     if not item["update_notes"]:
                         return {"status": "unchanged", "versionId": version_id}
+                    _link_extras(cursor, version_id, game_id, item)
                     cursor.execute(
                         """
                         UPDATE arc3_game_versions
@@ -604,6 +684,7 @@ def publish_version(connect: Callable[[], Any], data_root: Path, payload: Any) -
                         json.dumps(item["provenance"]),
                     ),
                 )
+                _link_extras(cursor, version_id, game_id, item)
                 cursor.execute(
                     "UPDATE arc3_game_trees SET updated_at = now() WHERE tree_id = %s", (tree_id,)
                 )
@@ -941,6 +1022,19 @@ def tree_detail(cursor: Any, tree_id: str) -> dict[str, Any]:
         (tree_id,),
     )
     rows = [row for row in _rows(cursor) if row["game_id"] in visible]
+    cursor.execute(
+        """
+        SELECT p.version_id, p.parent_version_id
+        FROM arc3_game_version_parents AS p
+        JOIN arc3_game_versions AS v ON v.version_id = p.version_id
+        WHERE v.tree_id = %s
+        ORDER BY p.version_id, p.position
+        """,
+        (tree_id,),
+    )
+    extra_parents: dict[str, list[str]] = {}
+    for child, extra in cursor.fetchall():
+        extra_parents.setdefault(child, []).append(extra)
     lines = assign_lines(rows)
     line_heads: dict[str, str] = {}
     for row in rows:  # oldest first, so the last one seen per line is its head
@@ -958,6 +1052,7 @@ def tree_detail(cursor: Any, tree_id: str) -> dict[str, Any]:
                 "isLineHead": line_heads[line_id] == row["version_id"],
                 "isTreeHead": tree_head == row["version_id"],
                 "feedback": stats.get(row["version_id"], {"team": None, "public": None}),
+                "extraParentVersionIds": extra_parents.get(row["version_id"], []),
             }
         )
         versions.append(version)
@@ -1019,7 +1114,29 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
         (tree_id,),
     )
     feedback = [feedback_record(row) for row in _rows(cursor)]
-    return {"apiVersion": 1, "treeId": tree_id, "notes": notes, "games": game_notes, "feedback": feedback}
+    cursor.execute(
+        """
+        SELECT ig.game_id, i.idea_id, i.title, i.axis, i.status, i.source
+        FROM arc3_game_idea_games AS ig
+        JOIN arc3_game_ideas AS i ON i.idea_id = ig.idea_id
+        WHERE ig.game_id IN (SELECT game_id FROM arc3_games WHERE tree_id = %s)
+        ORDER BY ig.game_id, i.idea_id
+        """,
+        (tree_id,),
+    )
+    ideas: dict[str, list[dict[str, Any]]] = {}
+    for row in _rows(cursor):
+        ideas.setdefault(row["game_id"], []).append(
+            {"ideaId": row["idea_id"], "title": row["title"], "axis": row["axis"], "status": row["status"], "source": row["source"]}
+        )
+    return {
+        "apiVersion": 1,
+        "treeId": tree_id,
+        "notes": notes,
+        "games": game_notes,
+        "feedback": feedback,
+        "ideas": ideas,
+    }
 
 
 def feedback_record(row: dict[str, Any], *, include_ip: bool = False) -> dict[str, Any]:
@@ -1263,6 +1380,183 @@ def export_feedback(cursor: Any, query: dict[str, list[str]], *, include_ip: boo
         yield record
 
 
+# ── Ideas board ──────────────────────────────────────────────────────────────
+
+
+def clean_idea(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise GamesProblem(400, "invalid_idea", "each idea must be an object")
+    idea_id = raw.get("idea_id")
+    if not isinstance(idea_id, str) or not IDEA_ID_RE.fullmatch(idea_id):
+        raise GamesProblem(400, "invalid_idea_id", f"idea_id must match {IDEA_ID_RE.pattern}")
+    source = raw.get("source")
+    if not isinstance(source, str) or not IDEA_SOURCE_RE.fullmatch(source):
+        raise GamesProblem(400, "invalid_idea_source", f"source must match {IDEA_SOURCE_RE.pattern}")
+    status = raw.get("status") or "unexplored"
+    if status not in IDEA_STATUSES:
+        raise GamesProblem(400, "invalid_idea_status", f"status must be one of {IDEA_STATUSES}")
+    details = raw.get("details") or {}
+    if not isinstance(details, dict) or len(json.dumps(details)) > 16 * 1024:
+        raise GamesProblem(400, "invalid_idea_details", "details must be a small JSON object")
+    games = raw.get("game_ids") or []
+    if not isinstance(games, list) or len(games) > 32:
+        raise GamesProblem(400, "invalid_idea_games", "game_ids must list up to 32 games")
+    return {
+        "idea_id": idea_id,
+        "source": source,
+        "title": _text(raw.get("title"), "title", 200, required=True),
+        "axis": _text(raw.get("axis"), "axis", 120),
+        "pitch": _text(raw.get("pitch"), "pitch", 4000, required=True),
+        "details": details,
+        "status": status,
+        "game_ids": [_game_id(g, "game_ids") for g in games],
+    }
+
+
+def upsert_ideas(cursor: Any, payload: Any) -> dict[str, Any]:
+    """Add or refresh ideas in bulk (machines only). Text and details are replaced. Status only
+    moves forward from `unexplored`: re-seeding a ledger never undoes a card the team moved.
+    Game links are added, never removed, and a linked game makes its idea explored."""
+
+    ideas = payload.get("ideas") if isinstance(payload, dict) else None
+    if not isinstance(ideas, list) or not 1 <= len(ideas) <= MAX_IDEAS_PER_UPLOAD:
+        raise GamesProblem(400, "invalid_body", f"send {{\"ideas\": [...]}} with 1..{MAX_IDEAS_PER_UPLOAD} ideas")
+    items = [clean_idea(raw) for raw in ideas]
+    inserted = updated = linked = 0
+    for item in items:
+        status = "explored" if item["game_ids"] and item["status"] == "unexplored" else item["status"]
+        cursor.execute(
+            """
+            INSERT INTO arc3_game_ideas (idea_id, source, title, axis, pitch, details, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (idea_id) DO UPDATE SET
+                source = EXCLUDED.source,
+                title = EXCLUDED.title,
+                axis = EXCLUDED.axis,
+                pitch = EXCLUDED.pitch,
+                details = EXCLUDED.details,
+                status = CASE WHEN arc3_game_ideas.status = 'unexplored' THEN EXCLUDED.status
+                              ELSE arc3_game_ideas.status END,
+                updated_at = now()
+            RETURNING (xmax = 0)
+            """,
+            (item["idea_id"], item["source"], item["title"], item["axis"], item["pitch"],
+             json.dumps(item["details"]), status),
+        )
+        if cursor.fetchone()[0]:
+            inserted += 1
+        else:
+            updated += 1
+        for game_id in item["game_ids"]:
+            cursor.execute(
+                "INSERT INTO arc3_game_idea_games (idea_id, game_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (item["idea_id"], game_id),
+            )
+            linked += cursor.rowcount
+    return {"apiVersion": 1, "inserted": inserted, "updated": updated, "linked": linked}
+
+
+def list_ideas(cursor: Any, query: dict[str, list[str]]) -> dict[str, Any]:
+    """One page of one board column, plus the counts every column and source filter needs."""
+
+    status = (query.get("status") or [""])[0]
+    if status and status not in IDEA_STATUSES:
+        raise GamesProblem(400, "invalid_status", f"status must be one of {IDEA_STATUSES}")
+    source = (query.get("source") or [""])[0]
+    if source and not IDEA_SOURCE_RE.fullmatch(source):
+        raise GamesProblem(400, "invalid_source", "unknown source")
+    search = (query.get("q") or [""])[0].strip()
+    if len(search) > 80:
+        raise GamesProblem(400, "invalid_q", "search is limited to 80 characters")
+    try:
+        limit = max(1, min(200, int((query.get("limit") or ["40"])[0])))
+        offset = max(0, int((query.get("offset") or ["0"])[0]))
+    except ValueError as exc:
+        raise GamesProblem(400, "invalid_page", "limit and offset must be integers") from exc
+
+    where, params = ["TRUE"], []
+    if source:
+        where.append("i.source = %s")
+        params.append(source)
+    if search:
+        like = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append(
+            "(i.idea_id ILIKE %s OR i.title ILIKE %s OR i.axis ILIKE %s OR i.pitch ILIKE %s "
+            "OR EXISTS (SELECT 1 FROM arc3_game_idea_games AS sg WHERE sg.idea_id = i.idea_id AND sg.game_id ILIKE %s))"
+        )
+        params.extend([like] * 5)
+    filters = " AND ".join(where)
+    cursor.execute(f"SELECT i.status, count(*) FROM arc3_game_ideas AS i WHERE {filters} GROUP BY i.status", params)
+    counts = {name: 0 for name in IDEA_STATUSES}
+    counts.update({name: n for name, n in cursor.fetchall()})
+    cursor.execute("SELECT source, count(*) FROM arc3_game_ideas GROUP BY source ORDER BY source")
+    sources = {name: n for name, n in cursor.fetchall()}
+
+    page_where = filters + (" AND i.status = %s" if status else "")
+    page_params = [*params, *([status] if status else [])]
+    cursor.execute(
+        f"""
+        SELECT i.idea_id, i.source, i.title, i.axis, i.pitch, i.status, i.note, i.updated_at, i.updated_by,
+               COALESCE(array_agg(g.game_id ORDER BY g.game_id) FILTER (WHERE g.game_id IS NOT NULL), '{{}}') AS games
+        FROM arc3_game_ideas AS i
+        LEFT JOIN arc3_game_idea_games AS g ON g.idea_id = i.idea_id
+        WHERE {page_where}
+        GROUP BY i.idea_id
+        ORDER BY i.updated_at DESC, i.source, i.idea_id
+        LIMIT %s OFFSET %s
+        """,
+        (*page_params, limit, offset),
+    )
+    ideas = [
+        {
+            "ideaId": row["idea_id"],
+            "source": row["source"],
+            "title": row["title"],
+            "axis": row["axis"],
+            "pitch": row["pitch"],
+            "status": row["status"],
+            "note": row["note"],
+            "games": list(row["games"] or []),
+            "updatedAt": iso(row["updated_at"]),
+            "updatedBy": row["updated_by"],
+        }
+        for row in _rows(cursor)
+    ]
+    return {"apiVersion": 1, "counts": counts, "sources": sources, "offset": offset, "limit": limit, "ideas": ideas}
+
+
+def update_idea(cursor: Any, idea_id: str, payload: Any, *, email: str) -> dict[str, Any]:
+    """Move a card, or annotate it (team only)."""
+
+    if not IDEA_ID_RE.fullmatch(idea_id):
+        raise GamesProblem(400, "invalid_idea_id", "invalid idea id")
+    if not isinstance(payload, dict):
+        raise GamesProblem(400, "invalid_body", "expected a JSON object")
+    status = payload.get("status")
+    if status is not None and status not in IDEA_STATUSES:
+        raise GamesProblem(400, "invalid_status", f"status must be one of {IDEA_STATUSES}")
+    note_given = "note" in payload
+    note = _text(payload.get("note"), "note", 2000)
+    if status is None and not note_given:
+        raise GamesProblem(400, "empty_update", "send a status, a note, or both")
+    cursor.execute(
+        """
+        UPDATE arc3_game_ideas
+        SET status = COALESCE(%s, status),
+            note = CASE WHEN %s THEN %s ELSE note END,
+            updated_at = now(),
+            updated_by = %s
+        WHERE idea_id = %s
+        RETURNING idea_id, status, note, updated_at
+        """,
+        (status, note_given, note, email, idea_id),
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise GamesProblem(404, "idea_not_found", "no such idea")
+    return {"apiVersion": 1, "ideaId": row[0], "status": row[1], "note": row[2], "updatedAt": iso(row[3])}
+
+
 # ── HTTP dispatch ────────────────────────────────────────────────────────────
 
 
@@ -1364,6 +1658,13 @@ class GamesApi:
                 with self._cursor() as cursor:
                     return _json(200, known_versions(cursor, (query.get("game_id") or [None])[0]))
             raise GamesProblem(405, "method_not_allowed", "use GET or PUT")
+        if path == f"{team}/ideas/publication":
+            self.require_token(headers)
+            if method != "PUT":
+                raise GamesProblem(405, "method_not_allowed", "use PUT")
+            payload = self._read(read_body, headers, MAX_IDEAS_BODY)
+            with self._cursor(commit=True) as cursor:
+                return _json(200, upsert_ideas(cursor, payload))
         if path == f"{team}/feedback-export":
             self.require_token(headers)
             if method != "GET":
@@ -1408,6 +1709,9 @@ class GamesApi:
         if method == "GET":
             if path == f"{team}/me":
                 return _json(200, {"apiVersion": 1, "email": email, "reviewerClass": "team"})
+            if path == f"{team}/ideas":
+                with self._cursor() as cursor:
+                    return _json(200, list_ideas(cursor, query))
             match = re.fullmatch(rf"{re.escape(team)}/trees/([^/]+)/notes", path)
             if match:
                 with self._cursor() as cursor:
@@ -1418,6 +1722,11 @@ class GamesApi:
             if path == f"{team}/feedback":
                 return self._jsonl(query, include_ip=True)
         if method == "POST":
+            match = re.fullmatch(rf"{re.escape(team)}/ideas/([^/]+)", path)
+            if match:
+                body = self._read(read_body, headers, 8 * 1024)
+                with self._cursor(commit=True) as cursor:
+                    return _json(200, update_idea(cursor, unquote(match.group(1)), body, email=email))
             if path == f"{team}/feedback":
                 item = clean_feedback(self._read(read_body, headers, MAX_FEEDBACK_BODY))
                 with self._cursor(commit=True) as cursor:

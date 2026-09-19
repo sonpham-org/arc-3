@@ -107,3 +107,41 @@ ON arc3_game_feedback (game_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS arc3_game_feedback_reviewer_idx
 ON arc3_game_feedback (reviewer, version_id)
 WHERE reviewer_class = 'team';
+
+-- A version made from more than one parent (a crossover of two games). The first parent stays
+-- in arc3_game_versions.parent_version_id and places the version in its tree; the others are
+-- recorded here, in upload order, and drawn as secondary links.
+CREATE TABLE IF NOT EXISTS arc3_game_version_parents (
+    version_id text NOT NULL REFERENCES arc3_game_versions(version_id) ON DELETE CASCADE,
+    parent_version_id text NOT NULL REFERENCES arc3_game_versions(version_id),
+    position integer NOT NULL CHECK (position >= 1),
+    PRIMARY KEY (version_id, parent_version_id)
+);
+
+-- The ideas board: every game idea we have, and whether it has been explored yet. An idea is
+-- explored once a game has been built from it (linked below); the team moves the rest by hand.
+-- Ideas name their mechanic, so they are team-only, like change notes.
+CREATE TABLE IF NOT EXISTS arc3_game_ideas (
+    idea_id text PRIMARY KEY CHECK (idea_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$'),
+    source text NOT NULL CHECK (source ~ '^[a-z0-9][a-z0-9._-]{0,59}$'),
+    title text NOT NULL,
+    axis text,
+    pitch text NOT NULL,
+    details jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status text NOT NULL DEFAULT 'unexplored'
+        CHECK (status IN ('unexplored', 'exploring', 'explored', 'dropped')),
+    note text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    updated_by text
+);
+
+CREATE INDEX IF NOT EXISTS arc3_game_ideas_status_idx ON arc3_game_ideas (status, source, idea_id);
+
+CREATE TABLE IF NOT EXISTS arc3_game_idea_games (
+    idea_id text NOT NULL REFERENCES arc3_game_ideas(idea_id) ON DELETE CASCADE,
+    game_id text NOT NULL,
+    PRIMARY KEY (idea_id, game_id)
+);
+
+CREATE INDEX IF NOT EXISTS arc3_game_idea_games_game_idx ON arc3_game_idea_games (game_id);

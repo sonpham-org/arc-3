@@ -143,11 +143,14 @@ new source as a version, with the one main reason for the change and the model t
 
 ```bash
 python scripts/publish_game_versions.py publish --game <id> --source <file.py> \
-    --author claude --model "Claude Opus 5" --reason "<the one thing this version changes>"
+    --driver claude --model "Claude Opus 5" --reason "<the one thing this version changes>"
 ```
 
-A new game grown out of an old one gets a **new id** and `--parent <old version id>`. That is
-a branch. The same game under a new id (`q041-v1` → `q041-v2`) adds `--kind revision`. Before
+`--driver` is who **primarily drove** the version: `gpt`, `claude`, or `human` (a person
+actively tuned it). A new game grown out of an old one gets a **new id** and
+`--parent <old version id>`. That is a branch. The same game under a new id
+(`q041-v1` → `q041-v2`) adds `--kind revision`. A crossover repeats `--parent`, primary first.
+If the version explores an idea from the ideas board, add `--idea <idea id>`. Before
 the next pass, read what players said: `publish_game_versions.py feedback --game <id>`. Team
 reviews come first; weigh them over public ones. Committed changes to `docs/static/games/src/`
 reach the trees with `publish_game_versions.py sync`, which takes the commit subject as the

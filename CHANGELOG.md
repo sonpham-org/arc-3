@@ -63,6 +63,18 @@ imported), when, its feedback and, for the signed-in team, the reason for the ch
 - **Unchanged for mirrors.** `static/games/manifest.json` and `static/games/src/` are untouched;
   `/api/v1/public/games/manifest.json` serves the same shape for uploads that never touch Git.
 - **Space is ACTION5.** Left unmapped, it scrolled the page away from the board.
+- **Also 19-Sep, by request.** (1) theredbluepill's 252 games are off the page too, retired like
+  the generator set. (2) Every version is credited to its **primary driver**: GPT-driven,
+  Claude-driven, or Human-tuned. History is credited by family (`FAMILY_DRIVERS`): arena
+  Claude-driven, glow-ups GPT-driven, in-house, research and official human-tuned. (3) The
+  upload API takes **several parents** (`parent_version_ids`; the first places the version in
+  its tree, the rest are dotted "also made from" links) and **idea links** (`idea_ids`). (4) An
+  **ideas board** (team-only) on top of the Games page: 1,128 ideas from the GPT, Anthropic and
+  Flash ledgers in `arc3_game_ideas`, as not explored yet / exploring / explored / dropped, with
+  links to the games built from them. Machines load it with `PUT
+  /api/v1/games/ideas/publication`, and the team moves cards. (5) `import-explainer` brings in
+  arc.markbarney.net's 44 glow-ups, each under the generated game it came from, and its
+  25-game research collection, with their git history from arc-explainer.
 - **The 571 unreviewed `ai-generated` games are off the page** (19-Sep, by request: not worth
   playing). `sync` skips them and the static fallback drops them, which leaves 361 games: arena,
   in-house, official and community. They stay in `manifest.json`, so arc-explainer's "Fresh off

@@ -12,9 +12,10 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260919-trees";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260919-trees";
+import * as api from "./games-api.js?v=20260919-ideas";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260919-ideas";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
+import { createIdeasBoard } from "./games-ideas.js?v=20260919-ideas";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -116,6 +117,7 @@ async function init() {
   feedback = createFeedback({ player, api, getMe: () => me, onExit: () => { listRendered = false; showBrowse(); } });
   me = await api.whoAmI();
   paintWhoAmI();
+  if (me) createIdeasBoard({ api, onOpenGame: playGameId }).show();
   window.addEventListener("hashchange", route);
   await route();
 }

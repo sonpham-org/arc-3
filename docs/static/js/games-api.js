@@ -22,14 +22,23 @@ export const CATEGORY_LABELS = {
 };
 export const categoryOf = (family) => (family === "official" || family === "redbluepill" ? family : ADDITIONAL);
 export const familyLabel = (family) => CATEGORY_LABELS[categoryOf(family)];
-export const AUTHOR_LABELS = { gpt: "GPT", claude: "Claude", human: "Human", other: "Imported", unknown: "Unknown" };
+// Who primarily drove a version (19-Sep-2026): GPT or Claude as the main driver, or a person
+// actively tuning it. "other" is an import made elsewhere.
+export const AUTHOR_LABELS = {
+  gpt: "GPT-driven",
+  claude: "Claude-driven",
+  human: "Human-tuned",
+  other: "Imported",
+  unknown: "Unknown",
+};
 export const AUTHOR_GLYPHS = { gpt: "G", claude: "C", human: "H", other: "·", unknown: "?" };
 // Families played blind: never show anything but the id (AGENTS.md: "Games must not speak").
-export const BLIND_FAMILIES = new Set(["arena", "contributed-glowup"]);
+export const BLIND_FAMILIES = new Set(["arena", "contributed-glowup", "research"]);
 // Kept in manifest.json for arc-explainer's mirror, but off this page: the unreviewed generator
-// set. Same list as RETIRED_FAMILIES in scripts/publish_game_versions.py, which never
-// publishes them to the trees; this drops them from the static fallback too.
-const RETIRED_FAMILIES = new Set(["ai-generated"]);
+// set and theredbluepill's catalog. Same list as RETIRED_FAMILIES in
+// scripts/publish_game_versions.py, which never publishes them to the trees; this drops them
+// from the static fallback too.
+const RETIRED_FAMILIES = new Set(["ai-generated", "redbluepill"]);
 
 class ApiError extends Error {
   constructor(status, body) {
@@ -107,6 +116,9 @@ export const nextVersion = (team, params) => getJson(`${team ? TEAM : PUBLIC}/ne
 export const submitFeedback = (team, payload) => postJson(`${team ? TEAM : PUBLIC}/feedback`, payload);
 export const setFeedbackHidden = (feedbackId, hidden) =>
   postJson(`${TEAM}/feedback/${encodeURIComponent(feedbackId)}/hidden`, { hidden });
+// The ideas board (team-only: an idea names its mechanic).
+export const listIdeas = (params) => getJson(`${TEAM}/ideas?${new URLSearchParams(params)}`);
+export const updateIdea = (ideaId, change) => postJson(`${TEAM}/ideas/${encodeURIComponent(ideaId)}`, change);
 
 // ── Static fallback ─────────────────────────────────────────────────────────
 

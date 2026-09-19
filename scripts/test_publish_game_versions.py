@@ -2,6 +2,7 @@ import unittest
 
 from scripts.publish_game_versions import (
     IMPORTED_FAMILIES,
+    credit,
     classify_model,
     find_game_class,
     infer_author,
@@ -59,19 +60,33 @@ class CommitMessageTests(unittest.TestCase):
         self.assertEqual((reason, details), ("recolour hv01", None))
 
 
+class CreditTests(unittest.TestCase):
+    def test_each_family_is_credited_to_its_driver(self) -> None:
+        # Son Pham, 19-Sep-2026: reviewed set Claude-driven, glow-ups GPT-driven, the rest human-tuned.
+        claude_commit = {"kind": "claude", "model": "Claude Opus 5"}
+        self.assertEqual(credit("arena", claude_commit), claude_commit)
+        self.assertEqual(credit("arena", {"kind": "unknown", "model": None}), {"kind": "claude", "model": None})
+        self.assertEqual(credit("custom", claude_commit), {"kind": "human", "model": None})
+        self.assertEqual(credit("contributed-glowup", {"kind": "unknown", "model": None})["kind"], "gpt")
+        self.assertEqual(credit("research", {"kind": "gpt", "model": "GPT-6"})["kind"], "human")
+        self.assertEqual(credit("ai-generated", {"kind": "gpt", "model": "OpenAI GPT-5"})["model"], "OpenAI GPT-5")
+        self.assertEqual(credit("somewhere-new", claude_commit), claude_commit)  # no rule: the evidence stands
+
+
 class SelectionTests(unittest.TestCase):
     MANIFEST = [
         {"id": "g009", "category": "arena"},
         {"id": "ng01", "category": "custom"},
         {"id": "q001-v1", "category": "ai-generated"},
         {"id": "q002-v1", "category": "ai-generated"},
+        {"id": "ab01-v1", "category": "redbluepill"},
     ]
 
     def ids(self, games=None, families=None):
         return [row["id"] for row in select_games(self.MANIFEST, games, families)]
 
-    def test_the_retired_generator_set_stays_off_the_page_by_default(self) -> None:
-        self.assertEqual(self.ids(), ["g009", "ng01"])
+    def test_retired_sets_stay_off_the_page_by_default(self) -> None:
+        self.assertEqual(self.ids(), ["g009", "ng01"])  # no generator dump, no theredbluepill
 
     def test_it_is_published_only_when_named(self) -> None:
         self.assertEqual(self.ids(families="ai-generated"), ["q001-v1", "q002-v1"])

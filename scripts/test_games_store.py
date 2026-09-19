@@ -2,7 +2,7 @@
 
 The pure checks (validation, rate limiting, line numbering, who may call what) always run.
 The database round trip runs only when ARC3_TEST_DATABASE_URL points at a disposable Postgres:
-it DROPS and recreates the four arc3_game* tables there, so never point it at a real catalog.
+it DROPS and recreates the arc3_game* tables there, so never point it at a real catalog.
 
     python -m unittest scripts.test_games_store
     ARC3_TEST_DATABASE_URL=postgresql://... python -m unittest scripts.test_games_store
@@ -27,10 +27,14 @@ from railway.games_store import (
     clean_publication,
     export_feedback,
     insert_feedback,
+    list_ideas,
     list_trees,
     next_version,
     publish_version,
     tree_detail,
+    tree_notes,
+    update_idea,
+    upsert_ideas,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +170,8 @@ class RouteAuthTests(unittest.TestCase):
             ("GET", "/api/v1/games/feedback"),
             ("POST", "/api/v1/games/feedback"),
             ("POST", "/api/v1/games/feedback/3/hidden"),
+            ("GET", "/api/v1/games/ideas"),
+            ("POST", "/api/v1/games/ideas/gpt:q001"),
         ):
             with self.subTest(path=path):
                 status, body = self.call(method, path, {})
@@ -177,7 +183,11 @@ class RouteAuthTests(unittest.TestCase):
 
     def test_machine_routes_need_the_token(self) -> None:
         for headers in ({}, {"Authorization": "Bearer wrong"}, {"X-Forwarded-Email": "son@example.com"}):
-            for method, path in (("PUT", "/api/v1/games/publication"), ("GET", "/api/v1/games/feedback-export")):
+            for method, path in (
+                ("PUT", "/api/v1/games/publication"),
+                ("GET", "/api/v1/games/feedback-export"),
+                ("PUT", "/api/v1/games/ideas/publication"),
+            ):
                 with self.subTest(path=path, headers=headers):
                     status, body = self.call(method, path, headers)
                     self.assertEqual((status, body["error"]), (401, "unauthorized"))
@@ -204,6 +214,7 @@ class ProxyConfigTests(unittest.TestCase):
             '--skip-auth-route="^/api/v1/public/"',
             '--skip-auth-route="^/api/v1/games/publication$"',
             '--skip-auth-route="^/api/v1/games/feedback-export$"',
+            '--skip-auth-route="^/api/v1/games/ideas/publication$"',
             '--skip-auth-route="^/data/_games/"',
         ):
             self.assertIn(route, entrypoint)
@@ -230,7 +241,8 @@ class DatabaseTests(unittest.TestCase):
         cls.connect = staticmethod(lambda: psycopg2.connect(cls.url))
         with cls.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "DROP TABLE IF EXISTS arc3_game_feedback, arc3_game_versions, arc3_games, arc3_game_trees CASCADE"
+                "DROP TABLE IF EXISTS arc3_game_idea_games, arc3_game_ideas, arc3_game_version_parents, "
+                "arc3_game_feedback, arc3_game_versions, arc3_games, arc3_game_trees CASCADE"
             )
             cursor.execute((ROOT / "railway" / "games_schema.sql").read_text(encoding="utf-8"))
         cls.data = Path(tempfile.mkdtemp(prefix="arc3-games-test-"))
@@ -309,6 +321,41 @@ class DatabaseTests(unittest.TestCase):
         records = self.query(lambda c: list(export_feedback(c, {"tree_id": ["q1-v1"]}, include_ip=False)))
         self.assertEqual([r["reviewerClass"] for r in records], ["team", "public"])
         self.assertEqual(records[0]["version"]["reason"], "make c")
+
+    def test_a_crossover_keeps_both_parents_and_ideas_track_what_was_built(self) -> None:
+        self.publish(upload("x-a", "xa", created_at="2026-09-01T00:00:00Z"))
+        self.publish(upload("x-b", "xb", created_at="2026-09-01T00:00:00Z"))
+        upsert = lambda payload: self.query(upsert_ideas, payload)  # noqa: E731
+        seeded = upsert({"ideas": [
+            {"idea_id": "test:one", "source": "test", "title": "One", "pitch": "Push blocks.", "game_ids": ["x-a"]},
+            {"idea_id": "test:two", "source": "test", "title": "Two", "pitch": "Swap colours."},
+            {"idea_id": "test:three", "source": "test", "title": "Three", "pitch": "Never built."},
+        ]})
+        self.assertEqual((seeded["inserted"], seeded["linked"]), (3, 1))
+
+        child = self.publish(upload("x-c", "xc", created_at="2026-09-02T00:00:00Z",
+                                    parent_version_ids=[vid("x-a", "xa"), vid("x-b", "xb")],
+                                    idea_ids=["test:two"], author={"kind": "claude"}))
+        self.assertEqual((child["kind"], child["treeId"], child["parentVersionId"]), ("branch", "x-a", vid("x-a", "xa")))
+        detail = self.query(tree_detail, "x-a")
+        crossover = next(v for v in detail["versions"] if v["gameId"] == "x-c")
+        self.assertEqual(crossover["extraParentVersionIds"], [vid("x-b", "xb")])
+        notes = self.query(tree_notes, "x-a")
+        self.assertEqual([i["ideaId"] for i in notes["ideas"]["x-c"]], ["test:two"])
+        with self.assertRaises(GamesProblem) as caught:
+            self.publish(upload("x-d", "xd", parent_version_ids=[vid("x-a", "xa"), "x-z@000000000000"]))
+        self.assertEqual(caught.exception.code, "parent_not_found")
+        with self.assertRaises(GamesProblem) as caught:
+            self.publish(upload("x-e", "xe", idea_ids=["test:nope"]))
+        self.assertEqual(caught.exception.code, "idea_not_found")
+
+        board = self.query(list_ideas, {"source": ["test"]})
+        self.assertEqual(board["counts"], {"unexplored": 1, "exploring": 0, "explored": 2, "dropped": 0})
+        self.query(update_idea, "test:three", {"status": "dropped", "note": "done before"}, email="son@example.com")
+        upsert({"ideas": [{"idea_id": "test:three", "source": "test", "title": "Three", "pitch": "Reworded."}]})
+        column = self.query(list_ideas, {"source": ["test"], "status": ["dropped"]})["ideas"]
+        self.assertEqual([(i["ideaId"], i["pitch"], i["updatedBy"]) for i in column],
+                         [("test:three", "Reworded.", "son@example.com")])  # re-seeding never undoes a move
 
 
 if __name__ == "__main__":

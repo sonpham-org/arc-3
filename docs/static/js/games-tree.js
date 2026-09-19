@@ -8,7 +8,7 @@
 // Everything user-written (change notes, reviews) goes into the page with textContent, never
 // innerHTML: public reviews are untrusted input read by the signed-in team.
 
-import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260919-trees";
+import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260919-ideas";
 
 export const COL_W = 156;
 export const NODE_W = 128;
@@ -177,11 +177,22 @@ export function renderTreeCanvas(container, versions, { notes, onSelect }) {
   const byId = new Map(versions.map((v) => [v.versionId, v]));
   for (const v of versions) {
     const parent = v.parentVersionId && byId.get(v.parentVersionId);
-    if (!parent) continue;
-    const path = document.createElementNS(svgNS, "path");
-    path.setAttribute("d", edgePath(pos.get(parent.versionId), pos.get(v.versionId), laneH));
-    if (v.kind === "branch") path.setAttribute("class", "branch");
-    svg.appendChild(path);
+    if (parent) {
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", edgePath(pos.get(parent.versionId), pos.get(v.versionId), laneH));
+      if (v.kind === "branch") path.setAttribute("class", "branch");
+      svg.appendChild(path);
+    }
+    // A crossover's other parents, when they sit in this tree: a dotted line, drawn from
+    // wherever that parent is, since it need not be to the left of the child's column.
+    for (const extraId of v.extraParentVersionIds || []) {
+      const extra = byId.get(extraId);
+      if (!extra) continue;
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", edgePath(pos.get(extra.versionId), pos.get(v.versionId), laneH));
+      path.setAttribute("class", "extra");
+      svg.appendChild(path);
+    }
   }
   canvas.appendChild(svg);
 
@@ -412,9 +423,24 @@ export function openVersionDrawer({ tree, version, detail, notes, team, signInUr
   row("Kind", version.kind === "branch" ? "branch (a new game grown from its parent)" : version.kind);
   row("Created", longDate(version.createdAt));
   if (version.parentVersionId) row("Parent", version.parentVersionId);
+  if (version.extraParentVersionIds && version.extraParentVersionIds.length) {
+    row("Also from", version.extraParentVersionIds.join(", "));
+  }
   row("Category", familyLabel(tree.family));
   if (version.sha256) row("Source", `${version.srcFile} · sha256 ${version.sha256.slice(0, 12)}`);
   body.appendChild(meta);
+
+  const ideas = team && notes && notes.ideas ? notes.ideas[version.gameId] || [] : [];
+  if (ideas.length) {
+    const box = el("div", "d-ideas");
+    box.appendChild(el("h3", null, ideas.length === 1 ? "Idea it explores" : "Ideas it explores"));
+    for (const idea of ideas) {
+      const line = el("p");
+      line.append(el("b", null, idea.title), ` · ${idea.axis || idea.source} · ${idea.ideaId}`);
+      box.appendChild(line);
+    }
+    body.appendChild(box);
+  }
 
   if (team && note) {
     const why = el("div", "d-note");

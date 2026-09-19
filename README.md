@@ -31,10 +31,13 @@ model:
 | `custom` | 29 | built in-house |
 | `official` | 25 | the public ARC-AGI-3 games (`environment_files/` in this repo) |
 
-**The Games page shows all of these except `ai-generated`.** Those 571 unreviewed generator
-games stay in `manifest.json`, where arc-explainer mirrors them as "Fresh off the pipeline",
-but they are not published to the evolution trees (`RETIRED_FAMILIES` in
-`scripts/publish_game_versions.py`, taken off the page 19-Sep-2026 as not worth playing).
+**The Games page shows neither `ai-generated` nor `redbluepill`** (19-Sep-2026, not worth
+playing). Both stay in `manifest.json`, which arc-explainer mirrors, but neither is published
+to the evolution trees (`RETIRED_FAMILIES` in `scripts/publish_game_versions.py`). The page
+does show arc.markbarney.net's own sets: its 44 contributed glow-ups, each under the generated
+game it came from, and its 25-game research collection (`publish_game_versions.py
+import-explainer`). Everything we made is one category, **Additional games** (153), beside
+the **Official** 25.
 
 The `arena` rows carry no `description` or `tags`, and their `title` is just the id. That
 is deliberate: arc-explainer uses them to collect a blind human baseline, where a player
@@ -76,11 +79,17 @@ tree's current version (the one to play); on the right, the tree itself, scrolli
 from its seed to its newest versions. Each node is one exact source, with who made it (GPT,
 Claude, a person, or imported), when, and, for the signed-in team, the reason for the change.
 
+Each version is credited to whoever **primarily drove** it: **GPT-driven**, **Claude-driven**,
+or **Human-tuned** (a person actively tuned it). History is credited by family: the reviewed
+arena set Claude-driven, the glow-ups GPT-driven, in-house, research and official human-tuned.
+
 - **seed**: a game that came from nowhere in this catalog.
 - **revision**: the same game, improved. It continues its parent's lane, even when the id
   changes on the way (`q041-v1` → `q041-v2` is one line).
 - **branch**: a new game grown from an old one; it drops to a lane of its own (dashed edge).
 - A line's latest version is its current, best version; the root line's is the tree's.
+- A version can have **several parents** (a crossover). The first places it in its tree; the
+  others are drawn as dotted "also made from" links and listed in its drawer.
 
 Versions live in Railway Postgres (`railway/games_schema.sql`) and their files on the volume
 under `/srv/data/_games/<game_id>/<sha12>/`, served publicly at `/data/_games/`. A version is
@@ -92,6 +101,16 @@ back to `docs/static/games/manifest.json`: every game still plays, without histo
 **Who sees what.** Anyone can browse trees and play any version. Change notes and written
 reviews are team-only (`/api/v1/games/*`, behind Google sign-in), which keeps arena mechanics
 out of public view. `railway/games_store.py` documents every route and who may call it.
+
+### The ideas board
+
+Signed in, the top of the Games page is a board of **every game idea we have**: GPT's 800-idea
+ledger, the 200 Anthropic briefs, and the Flash mechanic lineages, 1,128 in all. The columns are
+*not explored yet · exploring · explored · dropped*. An idea is explored once a game has been
+built from it (the card links to that game); the team moves the rest by hand. Ideas name their
+mechanic, so the board is team-only, like change notes. `publish_game_versions.py ideas`
+(re)loads the ledgers without undoing a card anyone moved; `publish --idea <id>` links a new
+version to the idea it explores and marks that idea explored.
 
 ### Feedback games
 
@@ -113,26 +132,37 @@ Like traces, game versions go through the Railway API with `ARC3_PUBLISH_TOKEN`,
 through Git or a site deploy:
 
 ```bash
-# Every time GPT, Claude or a person evolves a game: one version, one main reason.
+# Every time GPT, Claude or a person evolves a game: one version, one main reason, and who
+# primarily drove it (--driver gpt | claude | human).
 python scripts/publish_game_versions.py publish --game g009 --source path/to/g009.py \
-    --author claude --model "Claude Opus 5" --reason "Walls now show which side is sticky"
+    --driver claude --model "Claude Opus 5" --reason "Walls now show which side is sticky"
 
 # A new game grown from an old one: a new id, with the version it came from.
 python scripts/publish_game_versions.py publish --game g512 --source g512.py --family contributed-glowup \
-    --parent q041-v1@5172e6e8f014 --author gpt --model "GPT-6 (Codex)" --reason "Square-grid remake"
+    --parent q041-v1@5172e6e8f014 --driver gpt --model "GPT-6 (Codex)" --reason "Square-grid remake"
+
+# A crossover: repeat --parent (the first places it in its tree); --idea links a board idea.
+python scripts/publish_game_versions.py publish --game ng02 --source ng02.py --family custom \
+    --parent ng01@4b3379dc06bb --parent hv01@e603b9777756 --idea anthropic:a001 \
+    --driver human --reason "Negative's inversion inside Hive's swarm"
 
 # Everything in docs/static/games/ except the retired ai-generated set, with its history
 # rebuilt from this repo's git log. Idempotent: re-run it after any commit that changes
 # docs/static/games/src/.
 python scripts/publish_game_versions.py sync
 
+# arc.markbarney.net's glow-ups and research collection, from a checkout of arc-explainer;
+# and the idea ledgers onto the ideas board.
+python scripts/publish_game_versions.py import-explainer --repo ../arc-explainer
+python scripts/publish_game_versions.py ideas --explainer ../arc-explainer
+
 # Reviews as JSON lines, team first, for the next evolution pass.
 python scripts/publish_game_versions.py feedback --game g009 --since 2026-09-18T00:00:00Z
 ```
 
-`sync` credits a revision from its commit's `Co-Authored-By` trailer or the file's `Author:`
-header; the official 25 to ARC Prize, the community catalog to its source, and generated
-games to their research metadata. Anything else is shown as unknown rather than guessed.
+`sync` and `import-explainer` credit history by family (`FAMILY_DRIVERS`); a commit's
+`Co-Authored-By` trailer or the file's `Author:` header only supplies the model name when it
+agrees with that driver.
 Thumbnails are the reset frame, rendered locally (needs `arcengine` + Pillow).
 
 ### Rebuilding the catalog
