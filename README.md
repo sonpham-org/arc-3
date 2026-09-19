@@ -31,6 +31,14 @@ model:
 | `custom` | 29 | built in-house |
 | `official` | 25 | the public ARC-AGI-3 games (`environment_files/` in this repo) |
 
+**The Games page shows neither `ai-generated` nor `redbluepill`** (19-Sep-2026, not worth
+playing). Both stay in `manifest.json`, which arc-explainer mirrors, but neither is published
+to the evolution trees (`RETIRED_FAMILIES` in `scripts/publish_game_versions.py`). The page
+does show arc.markbarney.net's own sets: its 44 contributed glow-ups, each under the generated
+game it came from, and its 25-game research collection (`publish_game_versions.py
+import-explainer`). Everything we made is one category, **Additional games** (153), beside
+the **Official** 25.
+
 The `arena` rows carry no `description` or `tags`, and their `title` is just the id. That
 is deliberate: arc-explainer uses them to collect a blind human baseline, where a player
 infers the rules from the frame, so a name spends the data point before the first move.
@@ -43,10 +51,11 @@ with its version suffix (`ft09-0d8bbf25` vs `ft09-9ab2447a`) — never the bare 
 
 Click a game and it runs **the real Python game** in your browser: Pyodide (WASM CPython +
 numpy) in a Web Worker, with `arcengine`'s wheel pulled straight from PyPI and unzipped into
-site-packages. The only thing fetched from us is the game's `.py` source text. Nothing is
-sent to a server, nothing is recorded, there's no login and no leaderboard.
+site-packages. The only thing fetched from us is the game's `.py` source text. Playing sends
+nothing to a server and there's no login and no leaderboard; the one thing ever stored is a
+review you choose to send from **Feedback games** (below).
 
-- Controls: WASD/arrows to move, `r` reset, `z` = ACTION5, `x`/`c` = ACTION7, click = CLICK.
+- Controls: WASD/arrows to move, `r` reset, Space or `z` = ACTION5, `x`/`c` = ACTION7, click = CLICK.
 - Undo, per-level jump strip, FPS control, live status/score.
 - **Tile render modes** (`docs/static/games/arc_tiles.py`): `solid` is the engine's stock
   nearest-neighbour upscale; `tiles` gives every palette colour a fixed deterministic motif
@@ -62,6 +71,99 @@ Those same thumbnails are the site's favicon: `docs/static/js/favicon.js` points
 `<link rel="icon">` at one of the 25 `official` games at random per load, and the icon in the
 page's head is the static fallback for when JavaScript is off. If the official set changes,
 regenerate the id list at the top of `favicon.js` with the one-liner in its comment.
+
+### Evolution trees
+
+The Games page shows **one row per game tree**: on the left, frozen, a big thumbnail of the
+tree's current version (the one to play); on the right, the tree itself, scrolling sideways
+from its seed to its newest versions. Each node is one exact source, with who made it (GPT,
+Claude, a person, or imported), when, and, for the signed-in team, the reason for the change.
+
+Each version is credited to whoever **primarily drove** it: **GPT-driven**, **Claude-driven**,
+or **Human-tuned** (a person actively tuned it). History is credited by family: the reviewed
+arena set Claude-driven, the glow-ups GPT-driven, in-house, research and official human-tuned.
+
+- **seed**: a game that came from nowhere in this catalog.
+- **revision**: the same game, improved. It continues its parent's lane, even when the id
+  changes on the way (`q041-v1` → `q041-v2` is one line).
+- **branch**: a new game grown from an old one; it drops to a lane of its own (dashed edge).
+- A line's latest version is its current, best version; the root line's is the tree's.
+- A version can have **several parents** (a crossover). The first places it in its tree; the
+  others are drawn as dotted "also made from" links and listed in its drawer.
+
+Versions live in Railway Postgres (`railway/games_schema.sql`) and their files on the volume
+under `/srv/data/_games/<game_id>/<sha12>/`, served publicly at `/data/_games/`. A version is
+immutable and content-addressed: `version_id = <game_id>@<first 12 hex of sha256(source)>`,
+the same 12-hex stamp arc-explainer records as `source_version`, so a review on either site
+names the same build. If the API is down, or its database has not been filled, the page falls
+back to `docs/static/games/manifest.json`: every game still plays, without history.
+
+**Who sees what.** Anyone can browse trees and play any version. Change notes and written
+reviews are team-only (`/api/v1/games/*`, behind Google sign-in), which keeps arena mechanics
+out of public view. `railway/games_store.py` documents every route and who may call it.
+
+### The ideas board
+
+Signed in, the top of the Games page is a board of **every game idea we have**: GPT's 800-idea
+ledger, the 200 Anthropic briefs, and the Flash mechanic lineages, 1,128 in all. The columns are
+*not explored yet · exploring · explored · dropped*. An idea is explored once a game has been
+built from it (the card links to that game); the team moves the rest by hand. Ideas name their
+mechanic, so the board is team-only, like change notes. `publish_game_versions.py ideas`
+(re)loads the ledgers without undoing a card anyone moved; `publish --idea <id>` links a new
+version to the idea it explores and marks that idea explored.
+
+### Feedback games
+
+The **Feedback games** button starts a loop: play a game, review it, get the next one. The
+server picks the current version that most needs a review: for a signed-in team member,
+versions no team member has reviewed yet (and never one they reviewed); for the public, the
+least-reviewed. Nothing names or explains the game before or during play. A review stores
+ratings (fun, clarity, difficulty, novelty), flags (the first six are arc-explainer's, so the
+two sites' data joins), five free-text answers, a verdict, and what actually happened (levels,
+actions, resets, undos, time).
+
+Anyone can send one. Signed-in reviews are filed as `team` and always rank ahead of `public`
+ones in every list, summary and export; public ones are rate limited and the team can hide
+spam from the version drawer.
+
+### Publishing a game version (no deploy)
+
+Like traces, game versions go through the Railway API with `ARC3_PUBLISH_TOKEN`, never
+through Git or a site deploy:
+
+```bash
+# Every time GPT, Claude or a person evolves a game: one version, one main reason, and who
+# primarily drove it (--driver gpt | claude | human).
+python scripts/publish_game_versions.py publish --game g009 --source path/to/g009.py \
+    --driver claude --model "Claude Opus 5" --reason "Walls now show which side is sticky"
+
+# A new game grown from an old one: a new id, with the version it came from.
+python scripts/publish_game_versions.py publish --game g512 --source g512.py --family contributed-glowup \
+    --parent q041-v1@5172e6e8f014 --driver gpt --model "GPT-6 (Codex)" --reason "Square-grid remake"
+
+# A crossover: repeat --parent (the first places it in its tree); --idea links a board idea.
+python scripts/publish_game_versions.py publish --game ng02 --source ng02.py --family custom \
+    --parent ng01@4b3379dc06bb --parent hv01@e603b9777756 --idea anthropic:a001 \
+    --driver human --reason "Negative's inversion inside Hive's swarm"
+
+# Everything in docs/static/games/ except the retired ai-generated set, with its history
+# rebuilt from this repo's git log. Idempotent: re-run it after any commit that changes
+# docs/static/games/src/.
+python scripts/publish_game_versions.py sync
+
+# arc.markbarney.net's glow-ups and research collection, from a checkout of arc-explainer;
+# and the idea ledgers onto the ideas board.
+python scripts/publish_game_versions.py import-explainer --repo ../arc-explainer
+python scripts/publish_game_versions.py ideas --explainer ../arc-explainer
+
+# Reviews as JSON lines, team first, for the next evolution pass.
+python scripts/publish_game_versions.py feedback --game g009 --since 2026-09-18T00:00:00Z
+```
+
+`sync` and `import-explainer` credit history by family (`FAMILY_DRIVERS`); a commit's
+`Co-Authored-By` trailer or the file's `Author:` header only supplies the model name when it
+agrees with that driver.
+Thumbnails are the reset frame, rendered locally (needs `arcengine` + Pillow).
 
 ### Rebuilding the catalog
 

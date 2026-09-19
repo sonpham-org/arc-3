@@ -29,6 +29,7 @@ from publication_store import (
 )
 from model_backfill import backfill_catalog_models
 from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
+from games_store import GamesApi
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -221,7 +222,7 @@ def bootstrap_legacy_catalog(cursor, data_root: Path, index: dict) -> int:
     return inserted
 
 
-def migrate_and_bootstrap(schema_path: Path, data_root: Path) -> int:
+def migrate_and_bootstrap(schema_path: Path, data_root: Path, games_schema_path: Path | None = None) -> int:
     schema = schema_path.read_text(encoding="utf-8")
     index_path = data_root / "runs-index.json"
     legacy_index = {"runs": []}
@@ -231,6 +232,8 @@ def migrate_and_bootstrap(schema_path: Path, data_root: Path) -> int:
     with connect() as connection:
         with connection.cursor() as cursor:
             cursor.execute(schema)
+            if games_schema_path is not None:
+                cursor.execute(games_schema_path.read_text(encoding="utf-8"))
             cursor.execute(
                 """
                 UPDATE arc3_catalog_state
@@ -261,6 +264,29 @@ class CatalogHandler(BaseHTTPRequestHandler):
     max_files = 200_000
     max_debugger_body_bytes = 16 * 1024 * 1024
     debugger_relay: DebuggerRelay
+    games_api: GamesApi | None = None
+
+    def handle_games(self, method: str) -> bool:
+        """Route /api/v1/games/* and /api/v1/public/games/* to games_store. True if handled."""
+
+        path = urlparse(self.path).path
+        if self.games_api is None or not GamesApi.owns(path):
+            return False
+        try:
+            response = self.games_api.handle(method, self.path, self.headers, self.rfile.read)
+        except Exception as exc:  # Full detail to Railway logs; the client gets a small error.
+            print(f"games request failed for {method} {path}: {exc}", flush=True)
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "games_unavailable"})
+            return True
+        self.send_response(response.status)
+        self.send_header("Content-Type", response.content_type)
+        self.send_header("Content-Length", str(len(response.body)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        if response.public_read:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(response.body)
+        return True
 
     def send_json(self, status: HTTPStatus | int, payload: str | dict) -> None:
         if not isinstance(payload, str):
@@ -309,6 +335,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
         self.send_relay_response(response.status, response.content_type, response.body)
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.handle_games("GET"):
+            return
         path = urlparse(self.path).path
         try:
             if path.startswith(PUBLIC_PREFIX):
@@ -426,6 +454,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, '{"error":"catalog unavailable"}')
 
     def do_PUT(self) -> None:  # noqa: N802
+        if self.handle_games("PUT"):
+            return
         parsed = urlparse(self.path)
         match = re.fullmatch(r"/api/v1/runs/([^/]+)/publication", parsed.path)
         if not match:
@@ -514,6 +544,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 shutil.rmtree(stage_root, ignore_errors=True)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.handle_games("POST"):
+            return
         path = urlparse(self.path).path
         try:
             if path.startswith(PUBLIC_PREFIX):
@@ -538,15 +570,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8082)
     parser.add_argument("--schema", type=Path, default=Path("/catalog_schema.sql"))
+    parser.add_argument("--games-schema", type=Path, default=Path("/games_schema.sql"))
+    parser.add_argument(
+        "--static-manifest",
+        type=Path,
+        default=Path("/srv/static/games/manifest.json"),
+        help="the image's baked game catalog; reviews of these ids are accepted before upload",
+    )
     parser.add_argument("--bootstrap-root", type=Path, default=Path("/srv/data"))
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    inserted = migrate_and_bootstrap(args.schema, args.bootstrap_root)
+    inserted = migrate_and_bootstrap(args.schema, args.bootstrap_root, args.games_schema)
     CatalogHandler.data_root = args.bootstrap_root
     CatalogHandler.publish_token = os.environ.get("ARC3_PUBLISH_TOKEN", "")
+    CatalogHandler.games_api = GamesApi(
+        connect,
+        args.bootstrap_root,
+        CatalogHandler.publish_token,
+        args.static_manifest,
+    )
     CatalogHandler.max_upload_bytes = int(
         os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))
     )

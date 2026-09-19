@@ -38,6 +38,54 @@ Rule from here: every write-up that lands under `docs/` updates this page the sa
 
 ## 18-Sep-2026 — the oracle marker guard was counting the log, not the prompt
 
+## 18-Sep-2026 — the Games page shows every game as an evolution tree, and collects reviews
+
+**What.** The Games tab is now one row per game tree instead of a grid of cards. Each row has
+a big frozen thumbnail of the current version on the left and, to its right, the tree from seed
+to latest version, scrolling sideways. Each node shows who made it (GPT, Claude, a person,
+imported), when, its feedback and, for the signed-in team, the reason for the change. A new
+**Feedback games** button runs a play-then-review loop, stored in a new database table.
+
+- **Versions are uploaded, not deployed.** `PUT /api/v1/games/publication` (with
+  `ARC3_PUBLISH_TOKEN`, like traces) stores one immutable, content-addressed version:
+  `<game_id>@<sha12>`, the stamp arc-explainer already records as `source_version`. Rows go to
+  Postgres (`railway/games_schema.sql`) and files to `/srv/data/_games/`.
+  `scripts/publish_game_versions.py` handles `publish` (one evolution), `sync` (the whole
+  catalog with its git history) and `feedback` (reviews for the next pass).
+- **Seed, revision, branch.** A revision continues its parent's line even under a new id; a
+  branch is a new game and starts its own line. A line's latest version is its current one.
+- **Reviews.** Anyone can review. Signed-in reviews are `team` and always rank ahead of
+  `public` ones; public ones are rate limited and hideable. Flag names reuse arc-explainer's
+  six, so the two sites' data joins.
+- **Access.** oauth2-proxy gains exactly four skip-auth routes: `^/api/v1/public/` (anonymous;
+  never reads identity headers, never returns notes or review text), the two token routes, and
+  `^/data/_games/` (game files). Everything else under `/api/v1/games/` needs sign-in.
+- **Unchanged for mirrors.** `static/games/manifest.json` and `static/games/src/` are untouched;
+  `/api/v1/public/games/manifest.json` serves the same shape for uploads that never touch Git.
+- **Space is ACTION5.** Left unmapped, it scrolled the page away from the board.
+- **Also 19-Sep, by request.** (1) theredbluepill's 252 games are off the page too, retired like
+  the generator set. (2) Every version is credited to its **primary driver**: GPT-driven,
+  Claude-driven, or Human-tuned. History is credited by family (`FAMILY_DRIVERS`): arena
+  Claude-driven, glow-ups GPT-driven, in-house, research and official human-tuned. (3) The
+  upload API takes **several parents** (`parent_version_ids`; the first places the version in
+  its tree, the rest are dotted "also made from" links) and **idea links** (`idea_ids`). (4) An
+  **ideas board** (team-only) on top of the Games page: 1,128 ideas from the GPT, Anthropic and
+  Flash ledgers in `arc3_game_ideas`, as not explored yet / exploring / explored / dropped, with
+  links to the games built from them. Machines load it with `PUT
+  /api/v1/games/ideas/publication`, and the team moves cards. (5) `import-explainer` brings in
+  arc.markbarney.net's 44 glow-ups, each under the generated game it came from, and its
+  25-game research collection, with their git history from arc-explainer.
+- **The 571 unreviewed `ai-generated` games are off the page** (19-Sep, by request: not worth
+  playing). `sync` skips them and the static fallback drops them, which leaves 361 games: arena,
+  in-house, official and community. They stay in `manifest.json`, so arc-explainer's "Fresh off
+  the pipeline" mirror is unchanged.
+
+**Why it matters.** Each change to a game now carries its reason, its author model and the
+reviews of that exact build, which is the record an evolution loop needs. It still does not
+measure whether a change moves the Kaggle score (AGENTS.md §5).
+
+
+
 **What.** The oracle driver aborted itself 20 s into arm-O pass 1 on a108 (`max_occurrences_in_one_log=2`).
 The second copy was `_write_prompt_log_snapshot`'s own `[TURN TRANSCRIPT SO FAR]` section
 re-printing the same turn's `[USER PROMPT]`, so an arm-O log holds `1 + analysis_steps` copies — a
