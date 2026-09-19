@@ -111,5 +111,7 @@ and why.
 
 You author one game. Do not open other games: not `docs/static/games/`, not the local
 game store, not other folders under the run directory's `games/`, not the pool catalog.
+Keep every scratch or helper file inside your own game folder (for example `<id>/work/`),
+never in a shared temp or scratchpad directory, where other authors' files live too.
 Don't message other agents. Everything you need about your task is in your prompt and this
 brief. If the brief and your prompt disagree, your prompt wins; mention it in `design.md`.
