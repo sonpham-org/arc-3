@@ -21,6 +21,28 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 19-Sep-2026 — ARC-3 LoRA round 4, arm W: train with the Boss's full write-ups in context — launched
+
+Spec §5.4 (`docs/plans/2026-09-19-arc3-lora-round4-spec.md`) and
+`ARC3-Inference/distill/writeup_to_sft.py`. The Boss asked why 80% of his write-ups were
+being left out of round 4: the first cut of the spec excluded the 297 mechanics rules as
+"answer key". That fence is right for the oracle (rules of the game being scored) and wrong
+for training (rules of bp35 in bp35's training context leak nothing into the fenced eval).
+Arm W is the maximal version: round 3's 89 records with the full per-game write-up appended
+once to the system prompt — both explanations, every rule grouped by `introducedOnLevel`,
+every play note with all fields. Names and source citations left out.
+
+Measured by the trainer on a424 before load: 89 records, 2,281 turns, supervised tokens
+**94,012 — unchanged from round 3**, total tokens 1,171,516 (+13%), longest record 15,678,
+0 over cap. Recipe is round 3's with epochs 4 → 2 and save-every 22 (spec §7). Launched
+19-Sep 22:03 UTC, ETA ~2.7h, adapter to `/home/son/arc3-round4/ckpt`. Eval to follow per
+spec §8 with `base`, `round3`, `round4-W` at n=3.
+
+Also fixes spec §3.1: `MechanicPoint` has `introducedOnLevel` on 214 of 297 entries; "no
+level field in the schema" was wrong.
+
+---
+
 ## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
 
 `docs/plans/2026-09-19-arc3-lora-round4-spec.md`. Spec only — no training, no eval, no GPU

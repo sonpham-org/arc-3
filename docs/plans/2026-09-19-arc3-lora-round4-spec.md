@@ -314,6 +314,47 @@ that the block is treated as boilerplate and contributes nothing, in which case 
 reproduces round 3. This is stated here rather than discovered later; the arm-O gate exists
 partly because it probes the same question for a fraction of the cost.
 
+### 5.4 Arm W — full-write-up-conditioned SFT. **Launched 19-Sep, on the Boss's call.**
+
+Added after review, not in the first cut. §3.1 excluded `mechanicsBreakdown` as "answer
+key", by analogy with `extract_sft.py`'s rulebook fence. That analogy is wrong for training:
+the rulebook fence exists because the oracle hands the agent the rules of *the game it is
+being scored on*. Putting bp35's rules into bp35's *training* context leaks nothing into an
+`ar25` eval. The real question is whether a model trained with the write-up in context can
+use anything it learned once the write-up is absent at test time, and that is an empirical
+question, not a leakage one. The Boss asked for the arm; it is the maximal version, so arms
+R and W bracket "how much of the write-up matters".
+
+**Data.** `ARC3-Inference/distill/writeup_to_sft.py`. Round 3's 89 records, unchanged, with
+the full per-game write-up appended once to the system prompt: `simpleExplanation`,
+`mechanicsExplanation`, every `mechanicsBreakdown` rule grouped by `introducedOnLevel`, and
+every `playerObservation` with all fields including `inCode`. Left out: `informalName`,
+`officialTitle`, `source` citations, images. `--fence` required; 0 records dropped.
+Manifest: `/home/son/arc3-round4/data/sft_writeup_manifest.json`.
+
+Measured by the trainer's own corpus pass on a424 (19-Sep 22:03 UTC):
+
+| | round 3 | arm W |
+|---|---|---|
+| records / turns / images | 89 / 2,281 / 2,281 | 89 / 2,281 / 2,281 |
+| supervised tokens | 94,012 | **94,012** (unchanged) |
+| total tokens | 1,037,092 | 1,171,516 (+13%) |
+| tokens max | 13,495 | 15,678 |
+| over cap | 0 | 0 |
+| write-up per game | — | 4,239–9,084 chars (cd82 … bp35) |
+
+**Training.** Round 3's recipe with `--epochs 2 --save-every 22` (§7.2), launched from
+`/home/son/arc3-round4/run_lora_round4w.sh`, log `train.log`, ledger `queue.log`, adapter
+to `/home/son/arc3-round4/ckpt`. Trainer ETA 2.69h at round 3's throughput.
+
+**Eval.** Same as §8: gameplay on the 7 fenced games with `base`, `round3` and `round4-W` as
+arms, n=3, 90 min/pass at 7 lanes. The fenced games get **no** write-up at eval time. Held-out
+CE is a smoke test only.
+
+**Correction to §3.1.** `MechanicPoint` does have a level field: `introducedOnLevel`, present
+on 214 of 297 entries. "Level scoping is a comment convention, not schema" was wrong; the
+`// ---- Level N ----` comments and the field agree, and the builder uses the field.
+
 ---
 
 ## 6. Data-build spec
