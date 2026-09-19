@@ -46,10 +46,13 @@ What it establishes, measured against the artifacts rather than recalled:
 - **Two corrections.** `mechanicsBreakdown` is 297 entries with **zero** `level:` fields — 200
   sit under `// ---- Level N ----` comments; level scoping there is convention, not schema.
   And PR #59's "deliberates half as long" is a **derived quantity**: every config has
-  `max_steps: null`, and 7 games x 90 min = 37,800s against observed 37,786s (base) /
-  37,791s (adapter). Both arms burned the full wall-clock budget, so seconds-per-turn is
-  `budget / turns`. The real finding is that the adapter took ~2x the turns and cleared 5
-  fewer levels.
+  `max_steps: null`, and the two arms' total turn time agrees to **5.4 seconds out of 37,790**
+  (37,785.6s base / 37,791.0s adapter) — a hard wall-clock deadline. Seconds-per-turn is
+  therefore `budget / turns`, and the real finding is that the adapter took ~2x the turns and
+  cleared 5 fewer levels. The implied 90 min/game does **not** match any a108 config in-tree
+  (all say 20), so the round-3 eval used an override or an out-of-tree config — which leaves
+  the eval wall-clock at 5.25-10.5h per pass and in open conflict with PR #59's ~9h estimate.
+  Flagged; must be resolved before a108 time is scheduled.
 - **The ladder lesson is epoch-normalized.** Round 2's "gain done by step 16" was 29 records
   at 14.5 steps/epoch — about 1.1 epochs. Round 4's corpus runs 44.5 steps/epoch, so copying
   step 16 would stop at 0.36 epochs. Ladder is specced in epoch fractions, capped at 2.

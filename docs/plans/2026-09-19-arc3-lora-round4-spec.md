@@ -56,8 +56,20 @@ must not build a falsifier on it. Checked in this repo:
 
 - Every `environment.max_steps` in `ARC3-Inference/configs/*.json` is `null` — **there is no
   action cap.** The budget is `environment.max_runtime_minutes`.
-- 7 games × 90 minutes = 37,800s. Base: 123 turns × 307.2s = **37,786s**. Adapter: 234 turns ×
-  161.5s = **37,791s**. Both arms land within 0.04% of the budget.
+- Base: 123 turns × 307.2s = **37,785.6s**. Adapter: 234 turns × 161.5s = **37,791.0s**. Two
+  independent runs, with different models and roughly 2× different turn counts, agreeing to
+  **5.4 seconds out of 37,790** — 0.014%.
+
+That equality is the evidence, and it needs no config value to stand: two runs do not land
+within five seconds of each other by chance. **Both arms ran to a hard wall-clock deadline.**
+
+A per-game budget follows as a derived figure: 37,786 ÷ 7 ÷ 60 ≈ **90 minutes per game**.
+Flag this, because it does not match the tree: every a108 config in
+`ARC3-Inference/configs/` (`a108.qwen36.json`, `.nvfp4`, `.safe`) sets
+`max_runtime_minutes: 20`, which would give 7 × 20 = 8,400s — off by 4.5×. 90 is the value in
+the **a424** and **openrouter** configs. The round-3 eval ran on a108, so it used either a
+command-line override or a config outside this tree. **Which, is not determinable from what
+is in the repo** (§9.5).
 
 **Both arms burned their full wall-clock budget.** Seconds-per-turn is therefore
 `budget ÷ turns`, an identity, not an independent measurement. The real and still-damning
@@ -335,11 +347,19 @@ Round 4 must not train on rules. `mechanicsBreakdown` is excluded wholesale by n
 it. The harder problem is a play note that is a rule point in disguise — which §3.2 shows is
 the *common* case, not the edge case.
 
-**Stage 1 — structural (implementable, auditable, runs first).** Quarantine a note when:
+**Stage 1 — structural (implementable, auditable, runs first).** Two different operations;
+do not conflate them.
+
+**Field-level strip — never removes a note:**
 
 | rule | rationale |
 |---|---|
-| `inCode` is present | `inCode` is by definition "what the game source says" — it is a rule point. **Strip the field always**; it never enters the rationale block. |
+| `inCode` is present (11 of the 28 trainable notes) | `inCode` is by definition "what the game source says" — it is a rule point. **Drop the field** from the rendered block. The rest of the note survives and remains eligible. Treating this as a quarantine rule would discard 11 of 28 notes and trip the abort condition below on the first run. |
+
+**Note-level quarantine — removes the note entirely:**
+
+| rule | rationale |
+|---|---|
 | `did` absent **and** `expected` absent | Nothing the player *did* or *believed*. `saw` + `happened` alone describes the mechanic, not the reasoning. **Quarantine.** |
 | `saw`/`happened` text matches any `mechanicsBreakdown.text` on the same game above a similarity threshold | The note restates a rule point verbatim. **Quarantine.** Compare against mechanics **without training on them** — read-for-comparison only. |
 
@@ -517,13 +537,28 @@ Round 3's gameplay result was **n=1 per arm at temperature 1.0**. The direction 
 non-negotiable — without it we cannot tell a round-4 improvement from round-3 run-to-run
 variance, which is the single largest unknown in this program.
 
-**Wall clock.** One pass = 7 games × 90 min = 10.5 GPU-hours of game budget; PR #59's observed
-per-pass wall clock was ~1.5h, consistent with the games running concurrently. 3 arms × 3
-passes = 9 passes ≈ **13.5h on a108**, derived from PR #59's own ~9h estimate for 6 passes.
-**Estimate, not measured for a 3-arm matrix.**
+**Wall clock — this is larger than PR #59 implies, and the discrepancy is unresolved.**
 
-If 13.5h is not available, cut **passes before cutting arms**: 2 passes × 3 arms (~9h) is more
-informative than 3 passes × 2 arms. Do not drop the round-3 arm.
+One pass consumed **37,786s = 10.5 hours of game budget** (§1.1, measured). Wall clock is that
+divided by how many games run at once. In-tree a108 configs set
+`environment.concurrent_jobs` to **2** (`a108.qwen36.json`, `.nvfp4`) or **1** (`.safe`):
+
+| concurrency | wall per pass | 9 passes (3 arms × 3) |
+|---|---|---|
+| 1 | 10.5h | ~95h |
+| 2 | **5.25h** | **~47h** |
+
+**PR #59 estimated "~9h on a108" for n ≥ 3 passes per arm.** That implies roughly 1.5h per
+pass, which is incompatible with a measured 10.5h of game budget at any concurrency ≤ 7.
+Either the PR's estimate is wrong, or the eval ran at a concurrency not represented in this
+tree. **Resolve this against the round-3 run artifacts before anyone schedules a108 time** —
+the difference between 9h and 47h is the difference between an overnight job and a week.
+
+Consequently: **do not commit to n=3 until the budget is resolved.** If the honest number is
+~47h, run **2 passes × 3 arms (~31h at concurrency 2)** and say plainly that magnitudes remain
+weakly estimated. Cut **passes before cutting arms** — 2 passes × 3 arms beats 3 passes × 2
+arms, because without the round-3 arm a round-4 improvement cannot be distinguished from
+round-3 run-to-run variance. **Do not drop the round-3 arm.**
 
 Reported per arm: levels cleared, total score, per-game deltas, **reasoning tokens per
 assistant turn**, turns per game, tool validity, and timeout-affected games flagged and
@@ -554,12 +589,16 @@ Steps 2 through 5 each require their own approval. This document authorises none
    until §8.3's round-3 arm is run.
 4. **Round 3's two timeout-affected games (`tr87`, `tu93`) were never triaged.** Cause unknown.
    They may recur in round 4 and contaminate the comparison.
-5. **The 90-minute budget is inferred, not read from the round-3 run config.** `a108` was not
-   reachable by DNS from this host at write time (`gx10-a108.tail57a229.ts.net` did not
-   resolve), so the run config was not read directly. The inference rests on
-   `max_steps: null` in every checked config plus 7 × 90 min = 37,800s matching both arms'
-   observed turn-time totals to within 0.04%. Strong, but arithmetic rather than a file read.
-   **Verify against the round-3 `run_config.json` before citing it as settled.**
+5. **The per-game budget contradicts the in-tree configs, and the round-3 run config was not
+   read.** `gx10-a108.tail57a229.ts.net` did not resolve by DNS from this host at write time,
+   so the config was not read directly. What is solid is the **deadline**: two arms landing
+   within 5.4s of each other cannot be chance. What is **not** solid is the 90-minute figure —
+   it is back-derived from 37,786 ÷ 7, and **every a108 config in this tree says 20 minutes**,
+   which would be off by 4.5×. 90 appears only in the a424 and openrouter configs. So the
+   round-3 eval used an override or an out-of-tree config, and **nothing in the repo says
+   which.** This propagates into §8.3's wall-clock range (5.25h vs 10.5h per pass) and into
+   the unresolved conflict with PR #59's ~9h estimate. **Read the round-3 `run_config.json`
+   before scheduling any a108 time.**
 6. **Rationale block token length is an estimate** (150-400/game). Measurable only once the
    renderer exists. If it runs long, the 13,495-token cap becomes a live constraint (§7.2).
 7. **`slipperySeven.ts`, `gameLevels.ts`, `humanDifficulty.ts` were not examined for
