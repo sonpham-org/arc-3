@@ -40,19 +40,23 @@ What it establishes, measured against the artifacts rather than recalled:
 - **The corpus is thinner than assumed.** 63 notes: 28 joinable, 18 fenced, 17 on games with
   no replay turns. `expected` — the field carrying a mental model — appears in **5 of 63**,
   and in **2** notes on trainable games. ~11-13 notes survive a structural rule-leak filter.
-- **Round 3 honoured the fence by luck, not construction.** `recordings_to_sft.py` has no
-  fence filter at all; the corpus is clean (0 fence records, verified) only because none of
-  the 18 winning recordings was on a fenced game. Round 4's builder makes `--fence` required.
+- **Round 3 honoured the fence by construction, via an optional flag.** `recordings_to_sft.py`
+  has `--exclude-games`; the round-3 corpus was built with the full fence list (130 records
+  unfenced → 89 fenced, per the converter write-up §9–10), and the trained corpus has 0 fence
+  records. The flag has no default, so round 4's builder makes `--fence` required. (The first
+  cut of this spec said there was no fence filter and the fence held by luck; that was wrong.)
 - **Two corrections.** `mechanicsBreakdown` is 297 entries with **zero** `level:` fields — 200
   sit under `// ---- Level N ----` comments; level scoping there is convention, not schema.
   And PR #59's "deliberates half as long" is a **derived quantity**: every config has
   `max_steps: null`, and the two arms' total turn time agrees to **5.4 seconds out of 37,790**
   (37,785.6s base / 37,791.0s adapter) — a hard wall-clock deadline. Seconds-per-turn is
   therefore `budget / turns`, and the real finding is that the adapter took ~2x the turns and
-  cleared 5 fewer levels. The implied 90 min/game does **not** match any a108 config in-tree
-  (all say 20), so the round-3 eval used an override or an out-of-tree config — which leaves
-  the eval wall-clock at 5.25-10.5h per pass and in open conflict with PR #59's ~9h estimate.
-  Flagged; must be resolved before a108 time is scheduled.
+  cleared 5 fewer levels.
+- **Eval budget resolved against a108.** `a108.qwen38.baseline.json` (out of tree, on a108)
+  and both round-3 `run_config.json` files say 90 min/game at 7 lanes, so one pass is 90 min
+  and 3 arms × 3 passes is ~13.5h, consistent with PR #59's ~9h for two arms. The first cut
+  of this spec priced a pass at 5.25–10.5h from the in-tree a108 configs, which are for a
+  different model and did not run.
 - **The ladder lesson is epoch-normalized.** Round 2's "gain done by step 16" was 29 records
   at 14.5 steps/epoch — about 1.1 epochs. Round 4's corpus runs 44.5 steps/epoch, so copying
   step 16 would stop at 0.36 epochs. Ladder is specced in epoch fractions, capped at 2.

@@ -64,12 +64,13 @@ That equality is the evidence, and it needs no config value to stand: two runs d
 within five seconds of each other by chance. **Both arms ran to a hard wall-clock deadline.**
 
 A per-game budget follows as a derived figure: 37,786 ÷ 7 ÷ 60 ≈ **90 minutes per game**.
-Flag this, because it does not match the tree: every a108 config in
-`ARC3-Inference/configs/` (`a108.qwen36.json`, `.nvfp4`, `.safe`) sets
-`max_runtime_minutes: 20`, which would give 7 × 20 = 8,400s — off by 4.5×. 90 is the value in
-the **a424** and **openrouter** configs. The round-3 eval ran on a108, so it used either a
-command-line override or a config outside this tree. **Which, is not determinable from what
-is in the repo** (§9.5).
+That matches the config PR #59 names, `configs/a108.qwen38.baseline.json`, which lives only in
+a108's (non-git) tree and sets `max_runtime_minutes: 90`, `pinned_max_runtime_minutes_per_game:
+90` and `concurrent_jobs: 7`. Both round-3 `run_config.json` files on a108 confirm
+`concurrent_jobs: 7`, `game_count: 7`, `analyzer_timeout_seconds: 900` (read 19-Sep, after the
+first cut of this spec). The in-tree a108 configs (`a108.qwen36.json`, `.nvfp4`, `.safe`) are
+for a different model and say 20 minutes; they are not what the eval ran and are irrelevant
+here. Nobody re-running the eval should use them.
 
 **Both arms burned their full wall-clock budget.** Seconds-per-turn is therefore
 `budget ÷ turns`, an identity, not an independent measurement. The real and still-damning
@@ -153,7 +154,7 @@ line of reasoning — which is to say, it is a rule point wearing a play-note co
 not a hypothetical failure mode to guard against; it is the **majority shape** of this
 corpus. §6.3 specifies the detector, and it is a structural one first.
 
-### 3.3 The fence survives — but round 3 held it by luck, not by construction
+### 3.3 The fence survives — and round 3 held it by construction, with an optional flag
 
 Held-out fence: `ar25 re86 sb26 su15 tr87 tu93 vc33`. All seven have write-up files.
 
@@ -169,21 +170,29 @@ Totals: **63 = 18 on the fence + 45 off it.** The brief's counts are confirmed e
 Training on non-fence write-ups only leaves the fence intact and keeps the round-3 ↔ round-4
 comparison legal.
 
-**Did round 3 itself honour the fence?** Checked two ways:
+**Did round 3 itself honour the fence?** Yes, and by construction:
 
-1. `recordings_to_sft.py` contains **no fence filter, no holdout list, and no reference to
-   any fenced game id** as an exclusion. There is no mechanism in that file that could have
-   enforced the fence.
-2. Round 3's actual corpus — `scratch/sft_human_windowed.jsonl`, 89 records — covers **12
-   games, none of them fenced**: `bp35 cd82 cn04 dc22 ft09 g50t ka59 lp85 ls20 m0r0 r11l s5i5`.
-   **Zero fence records.** Confirmed against `train_report.json` on a424: `records_in: 89`,
-   `records_trained: 89`.
+1. `recordings_to_sft.py` has an `--exclude-games` flag (bare game codes to drop, applied in
+   `build_records` before any record is built). It is **optional with no default**, so the
+   fence is enforced only when the caller passes it.
+2. Round 3's corpus was built with it. `docs/trace-findings/2026-09-18-human-demos-to-sft.md`
+   §10 records the exact command, `--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66`,
+   and §9 there records what it did: the unfenced converter output is 130 records, and the
+   fence drops exactly the 41 records on `ar25 sb26 su15 tu93 vc33`, leaving the 89 that were
+   trained. (`re86` has no winning recording, `tr87`'s recording is missing, `as66` never
+   appears.)
+3. The corpus that was trained — 89 records — covers **12 games, none of them fenced**:
+   `bp35 cd82 cn04 dc22 ft09 g50t ka59 lp85 ls20 m0r0 r11l s5i5`. **Zero fence records.**
+   Confirmed against `train_report.json` on a424: `records_in: 89`, `records_trained: 89`.
 
-**The round-3 result stands.** But the fence held *de facto* — because none of the Boss's 18
-winning recordings happened to be on a fenced game — and not *by construction*. One different
-recording and round 3's headline would have been worthless. **Round 4 must add an explicit
-fence filter to the builder** (§6.4). This is a latent trap in the current tooling, not a
-past error.
+**The round-3 result stands.** The residual weakness is that the flag is optional: a builder
+invoked without it silently produces the 130-record unfenced corpus, and five fenced games
+*do* have winning recordings. **Round 4's builder makes the fence required** (§6.4) so a
+missing flag is an error rather than a leak. This is a hardening of the current tooling, not
+a correction of a past error.
+
+> Correction to the first cut of this spec, which said the converter had "no fence filter"
+> and that round 3 held the fence "by luck". Both were wrong: the flag exists and was used.
 
 ### 3.4 The join — this is the number that decides the round
 
@@ -384,8 +393,8 @@ classification does not get to overrule the structural filter in the permissive 
    passed, so that a fence hit is a loud event rather than a log line.
 
 Given round 3's corpus this should drop **zero** records — there are no fence records in it.
-The filter exists because §3.3 shows the current tooling has no such guard at all, and the
-next corpus may not be so lucky.
+The filter is required rather than optional because §3.3 shows the current converter only
+fences when the caller remembers the flag, and five fenced games do have winning recordings.
 
 ### 6.5 Record format
 
@@ -537,27 +546,28 @@ Round 3's gameplay result was **n=1 per arm at temperature 1.0**. The direction 
 non-negotiable — without it we cannot tell a round-4 improvement from round-3 run-to-run
 variance, which is the single largest unknown in this program.
 
-**Wall clock — this is larger than PR #59 implies, and the discrepancy is unresolved.**
+**Wall clock — resolved against the round-3 run artifacts.**
 
-One pass consumed **37,786s = 10.5 hours of game budget** (§1.1, measured). Wall clock is that
-divided by how many games run at once. In-tree a108 configs set
-`environment.concurrent_jobs` to **2** (`a108.qwen36.json`, `.nvfp4`) or **1** (`.safe`):
+One pass consumed **37,786s = 10.5 hours of game budget** (§1.1, measured), but the eval ran
+all seven games at once: `concurrent_jobs: 7` in both round-3 `run_config.json` files and in
+`a108.qwen38.baseline.json`. So one pass is **90 minutes of wall clock** (PR #59 measured
+12:01→13:31 and 13:34→15:04), and:
 
-| concurrency | wall per pass | 9 passes (3 arms × 3) |
-|---|---|---|
-| 1 | 10.5h | ~95h |
-| 2 | **5.25h** | **~47h** |
+| passes | wall clock |
+|---|---|
+| 1 pass, 1 arm | 1.5h |
+| 3 arms × 3 passes (this spec) | **~13.5h** |
+| 2 arms × 3 passes (PR #59's recommendation) | ~9h — consistent with #59 |
 
-**PR #59 estimated "~9h on a108" for n ≥ 3 passes per arm.** That implies roughly 1.5h per
-pass, which is incompatible with a measured 10.5h of game budget at any concurrency ≤ 7.
-Either the PR's estimate is wrong, or the eval ran at a concurrency not represented in this
-tree. **Resolve this against the round-3 run artifacts before anyone schedules a108 time** —
-the difference between 9h and 47h is the difference between an overnight job and a week.
+The first cut of this spec priced a pass at 5.25–10.5h from the in-tree a108 configs
+(`concurrent_jobs` 1–2); those configs are for a different model and were not what ran.
+n=3 per arm is affordable overnight. The open cost risk is not wall clock but the 900s vLLM
+read timeouts (§9.4): two adapter games in #59 lost 40–72% of their budget to them at 7 lanes,
+and a repeat at 7 lanes may do so again. If lanes are reduced to tame that, wall clock scales
+up in proportion (4 lanes ≈ 2 passes' worth of games per 90 min → ~27h for 9 passes).
 
-Consequently: **do not commit to n=3 until the budget is resolved.** If the honest number is
-~47h, run **2 passes × 3 arms (~31h at concurrency 2)** and say plainly that magnitudes remain
-weakly estimated. Cut **passes before cutting arms** — 2 passes × 3 arms beats 3 passes × 2
-arms, because without the round-3 arm a round-4 improvement cannot be distinguished from
+If anything has to be cut, cut **passes before cutting arms** — 2 passes × 3 arms beats
+3 passes × 2 arms, because without the round-3 arm a round-4 improvement cannot be distinguished from
 round-3 run-to-run variance. **Do not drop the round-3 arm.**
 
 Reported per arm: levels cleared, total score, per-game deltas, **reasoning tokens per
@@ -589,16 +599,10 @@ Steps 2 through 5 each require their own approval. This document authorises none
    until §8.3's round-3 arm is run.
 4. **Round 3's two timeout-affected games (`tr87`, `tu93`) were never triaged.** Cause unknown.
    They may recur in round 4 and contaminate the comparison.
-5. **The per-game budget contradicts the in-tree configs, and the round-3 run config was not
-   read.** `gx10-a108.tail57a229.ts.net` did not resolve by DNS from this host at write time,
-   so the config was not read directly. What is solid is the **deadline**: two arms landing
-   within 5.4s of each other cannot be chance. What is **not** solid is the 90-minute figure —
-   it is back-derived from 37,786 ÷ 7, and **every a108 config in this tree says 20 minutes**,
-   which would be off by 4.5×. 90 appears only in the a424 and openrouter configs. So the
-   round-3 eval used an override or an out-of-tree config, and **nothing in the repo says
-   which.** This propagates into §8.3's wall-clock range (5.25h vs 10.5h per pass) and into
-   the unresolved conflict with PR #59's ~9h estimate. **Read the round-3 `run_config.json`
-   before scheduling any a108 time.**
+5. **Resolved after the first cut: the per-game budget.** `a108.qwen38.baseline.json` on
+   a108 and both round-3 `run_config.json` files were read on 19-Sep: 90 minutes per game,
+   7 lanes, 900s analyzer timeout. §1.1 and §8.3 carry the corrected numbers. What is still
+   not verified is whether 7 lanes is what *causes* the 900s read timeouts (item 4).
 6. **Rationale block token length is an estimate** (150-400/game). Measurable only once the
    renderer exists. If it runs long, the 13,495-token cap becomes a live constraint (§7.2).
 7. **`slipperySeven.ts`, `gameLevels.ts`, `humanDifficulty.ts` were not examined for
