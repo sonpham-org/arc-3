@@ -9,21 +9,27 @@
 const PUBLIC = "/api/v1/public/games";
 const TEAM = "/api/v1/games";
 
-export const FAMILY_ORDER = ["arena", "custom", "ai-generated", "contributed-glowup", "official", "redbluepill"];
-export const FAMILY_LABELS = {
-  arena: "Arena",
-  custom: "In-house",
-  "ai-generated": "AI-generated",
-  "contributed-glowup": "Glow-ups",
+// Visible categories. Everything we made and reviewed is one category, "Additional games"
+// (19-Sep-2026): the reviewed arena set, the in-house games, glow-ups and the research
+// collection. The API still keys on the family; ADDITIONAL is what the "synthetic" filter
+// and pool select server-side (every family but official and redbluepill).
+export const ADDITIONAL = "synthetic";
+export const CATEGORY_ORDER = [ADDITIONAL, "official", "redbluepill"];
+export const CATEGORY_LABELS = {
+  [ADDITIONAL]: "Additional games",
   official: "Official",
-  redbluepill: "Community",
+  redbluepill: "theredbluepill's arc-interactive",
 };
+export const categoryOf = (family) => (family === "official" || family === "redbluepill" ? family : ADDITIONAL);
+export const familyLabel = (family) => CATEGORY_LABELS[categoryOf(family)];
 export const AUTHOR_LABELS = { gpt: "GPT", claude: "Claude", human: "Human", other: "Imported", unknown: "Unknown" };
 export const AUTHOR_GLYPHS = { gpt: "G", claude: "C", human: "H", other: "·", unknown: "?" };
 // Families played blind: never show anything but the id (AGENTS.md: "Games must not speak").
 export const BLIND_FAMILIES = new Set(["arena", "contributed-glowup"]);
-
-export const familyLabel = (family) => FAMILY_LABELS[family] || family;
+// Kept in manifest.json for arc-explainer's mirror, but off this page: the unreviewed generator
+// set. Same list as RETIRED_FAMILIES in scripts/publish_game_versions.py, which never
+// publishes them to the trees; this drops them from the static fallback too.
+const RETIRED_FAMILIES = new Set(["ai-generated"]);
 
 class ApiError extends Error {
   constructor(status, body) {
@@ -110,7 +116,7 @@ export async function staticCatalog() {
   if (!staticGames) {
     // no-store: the catalog changes whenever a game is added (see the old games-play.js note).
     const rows = await fetch("./static/games/manifest.json", { cache: "no-store" }).then((r) => r.json());
-    staticGames = rows.map(staticVersion);
+    staticGames = rows.map(staticVersion).filter((v) => !RETIRED_FAMILIES.has(v.family));
   }
   return staticGames;
 }

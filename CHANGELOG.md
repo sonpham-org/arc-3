@@ -63,6 +63,10 @@ imported), when, its feedback and, for the signed-in team, the reason for the ch
 - **Unchanged for mirrors.** `static/games/manifest.json` and `static/games/src/` are untouched;
   `/api/v1/public/games/manifest.json` serves the same shape for uploads that never touch Git.
 - **Space is ACTION5.** Left unmapped, it scrolled the page away from the board.
+- **The 571 unreviewed `ai-generated` games are off the page** (19-Sep, by request: not worth
+  playing). `sync` skips them and the static fallback drops them, which leaves 361 games: arena,
+  in-house, official and community. They stay in `manifest.json`, so arc-explainer's "Fresh off
+  the pipeline" mirror is unchanged.
 
 **Why it matters.** Each change to a game now carries its reason, its author model and the
 reviews of that exact build, which is the record an evolution loop needs. It still does not

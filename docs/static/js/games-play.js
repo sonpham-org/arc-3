@@ -174,7 +174,8 @@ function enterFeedback(options = {}) {
 function restoreListState() {
   try {
     const saved = JSON.parse(localStorage.getItem(LIST_KEY) || "{}");
-    if (typeof saved.family === "string") list.family = saved.family;
+    // Older saves name a single family ("arena", "custom"); only whole categories exist now.
+    if (["", ...api.CATEGORY_ORDER].includes(saved.family)) list.family = saved.family;
     if (typeof saved.sort === "string") list.sort = saved.sort;
     if (typeof saved.evolved === "boolean") list.evolved = saved.evolved;
   } catch (e) {
@@ -216,16 +217,22 @@ function setupBrowseControls() {
   });
 }
 
+// One chip per category, not per family: arena, in-house and any glow-up or research family
+// all count toward "Additional games".
 function paintFamilies(families) {
   const bar = $("familyChips");
   bar.replaceChildren();
-  const total = Object.values(families || {}).reduce((a, b) => a + b, 0);
-  const ours = Object.entries(families || {})
-    .filter(([name]) => name !== "official" && name !== "redbluepill")
-    .reduce((sum, [, n]) => sum + n, 0);
-  const chips = [["", "All", total], ["synthetic", "Ours", ours]];
-  for (const name of api.FAMILY_ORDER) if (families && families[name]) chips.push([name, api.familyLabel(name), families[name]]);
-  for (const name of Object.keys(families || {})) if (!api.FAMILY_ORDER.includes(name)) chips.push([name, name, families[name]]);
+  const counts = {};
+  let total = 0;
+  for (const [family, n] of Object.entries(families || {})) {
+    const category = api.categoryOf(family);
+    counts[category] = (counts[category] || 0) + n;
+    total += n;
+  }
+  const chips = [["", "All", total]];
+  for (const category of api.CATEGORY_ORDER) {
+    if (counts[category]) chips.push([category, api.CATEGORY_LABELS[category], counts[category]]);
+  }
   for (const [value, label, count] of chips) {
     const chip = document.createElement("button");
     chip.type = "button";

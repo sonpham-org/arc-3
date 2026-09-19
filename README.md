@@ -31,6 +31,11 @@ model:
 | `custom` | 29 | built in-house |
 | `official` | 25 | the public ARC-AGI-3 games (`environment_files/` in this repo) |
 
+**The Games page shows all of these except `ai-generated`.** Those 571 unreviewed generator
+games stay in `manifest.json`, where arc-explainer mirrors them as "Fresh off the pipeline",
+but they are not published to the evolution trees (`RETIRED_FAMILIES` in
+`scripts/publish_game_versions.py`, taken off the page 19-Sep-2026 as not worth playing).
+
 The `arena` rows carry no `description` or `tags`, and their `title` is just the id. That
 is deliberate: arc-explainer uses them to collect a blind human baseline, where a player
 infers the rules from the frame, so a name spends the data point before the first move.
@@ -116,8 +121,9 @@ python scripts/publish_game_versions.py publish --game g009 --source path/to/g00
 python scripts/publish_game_versions.py publish --game g512 --source g512.py --family contributed-glowup \
     --parent q041-v1@5172e6e8f014 --author gpt --model "GPT-6 (Codex)" --reason "Square-grid remake"
 
-# Everything in docs/static/games/, with its history rebuilt from this repo's git log.
-# Idempotent: re-run it after any commit that changes docs/static/games/src/.
+# Everything in docs/static/games/ except the retired ai-generated set, with its history
+# rebuilt from this repo's git log. Idempotent: re-run it after any commit that changes
+# docs/static/games/src/.
 python scripts/publish_game_versions.py sync
 
 # Reviews as JSON lines, team first, for the next evolution pass.

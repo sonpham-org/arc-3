@@ -6,6 +6,7 @@ from scripts.publish_game_versions import (
     find_game_class,
     infer_author,
     model_name,
+    select_games,
     split_commit_message,
 )
 
@@ -56,6 +57,26 @@ class CommitMessageTests(unittest.TestCase):
         self.assertEqual(details, "Pressing up pulls the walker to the ceiling.")
         reason, details = split_commit_message("Games tab: recolour hv01\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n")
         self.assertEqual((reason, details), ("recolour hv01", None))
+
+
+class SelectionTests(unittest.TestCase):
+    MANIFEST = [
+        {"id": "g009", "category": "arena"},
+        {"id": "ng01", "category": "custom"},
+        {"id": "q001-v1", "category": "ai-generated"},
+        {"id": "q002-v1", "category": "ai-generated"},
+    ]
+
+    def ids(self, games=None, families=None):
+        return [row["id"] for row in select_games(self.MANIFEST, games, families)]
+
+    def test_the_retired_generator_set_stays_off_the_page_by_default(self) -> None:
+        self.assertEqual(self.ids(), ["g009", "ng01"])
+
+    def test_it_is_published_only_when_named(self) -> None:
+        self.assertEqual(self.ids(families="ai-generated"), ["q001-v1", "q002-v1"])
+        self.assertEqual(self.ids(games="q002-v1,g009"), ["g009", "q002-v1"])
+        self.assertEqual(self.ids(families="arena,custom"), ["g009", "ng01"])
 
 
 class SourceTests(unittest.TestCase):

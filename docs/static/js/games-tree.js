@@ -412,7 +412,7 @@ export function openVersionDrawer({ tree, version, detail, notes, team, signInUr
   row("Kind", version.kind === "branch" ? "branch (a new game grown from its parent)" : version.kind);
   row("Created", longDate(version.createdAt));
   if (version.parentVersionId) row("Parent", version.parentVersionId);
-  row("Family", familyLabel(tree.family));
+  row("Category", familyLabel(tree.family));
   if (version.sha256) row("Source", `${version.srcFile} · sha256 ${version.sha256.slice(0, 12)}`);
   body.appendChild(meta);
 

@@ -62,6 +62,31 @@ DEFAULT_API_URL = "https://arc3.sonpham.net"
 SRC_ROOT = "docs/static/games/src"
 GAME_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 BLIND_FAMILIES = {"arena", "contributed-glowup"}
+# Categories kept in manifest.json (arc-explainer mirrors them) but not published to the Games
+# page's trees. "ai-generated" is the 571 unreviewed generator games ("Fresh off the pipeline"
+# on arc.markbarney.net), taken off the page on 19-Sep-2026. docs/static/js/games-api.js
+# drops the same list from its static fallback.
+RETIRED_FAMILIES = {"ai-generated"}
+
+
+def family_of(row: dict[str, Any]) -> str:
+    return row.get("category") or ("official" if row.get("official") else "custom")
+
+
+def select_games(manifest: list[dict[str, Any]], games: str | None, families: str | None) -> list[dict[str, Any]]:
+    """The manifest rows `sync` publishes: named ids or named categories if given (a retired
+    category is published only when asked for by name), otherwise everything not retired."""
+
+    rows = manifest
+    if games:
+        wanted = set(games.split(","))
+        rows = [row for row in rows if row["id"] in wanted]
+    if families:
+        wanted_families = set(families.split(","))
+        rows = [row for row in rows if family_of(row) in wanted_families]
+    elif not games:
+        rows = [row for row in rows if family_of(row) not in RETIRED_FAMILIES]
+    return rows
 # Same palette as build_games_manifest.py / games-play.js, so thumbnails match play.
 PALETTE = [
     (255, 255, 255), (204, 204, 204), (153, 153, 153), (102, 102, 102),
@@ -380,7 +405,7 @@ def request(args: argparse.Namespace, method: str, path: str, token: str, body: 
 
 
 def game_entry(manifest_row: dict[str, Any]) -> dict[str, Any]:
-    family = manifest_row.get("category") or ("official" if manifest_row.get("official") else "custom")
+    family = family_of(manifest_row)
     entry = {"game_id": manifest_row["id"], "family": family, "default_fps": manifest_row.get("default_fps")}
     if family not in BLIND_FAMILIES:
         entry.update(
@@ -398,12 +423,7 @@ def game_entry(manifest_row: dict[str, Any]) -> dict[str, Any]:
 
 def cmd_sync(args: argparse.Namespace) -> int:
     manifest = json.loads((REPO / "docs" / "static" / "games" / "manifest.json").read_text(encoding="utf-8"))
-    if args.games:
-        wanted = set(args.games.split(","))
-        manifest = [row for row in manifest if row["id"] in wanted]
-    if args.families:
-        families = set(args.families.split(","))
-        manifest = [row for row in manifest if (row.get("category") or "custom") in families]
+    manifest = select_games(manifest, args.games, args.families)
     by_id = {row["id"]: row for row in manifest}
     found = history(manifest)
     missing = sorted(set(by_id) - set(found))
@@ -622,7 +642,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     sync = commands.add_parser("sync", help="upload the catalog's games with their git history")
     sync.add_argument("--games", help="comma-separated game ids (default: the whole manifest)")
-    sync.add_argument("--families", help="comma-separated categories, e.g. arena,custom")
+    sync.add_argument(
+        "--families",
+        help="comma-separated categories, e.g. arena,custom (default: all but the retired ai-generated set)",
+    )
     sync.add_argument("--limit", type=int, default=0, help="upload at most this many versions")
     sync.add_argument("--batch", type=int, default=40)
     sync.add_argument("--workers", type=int, default=4, help="thumbnail render processes")
