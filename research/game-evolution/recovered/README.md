@@ -56,6 +56,24 @@ level 2 and later, and a random-clearable game is fixed by hardening level 2, ne
 lengthening level 1. `vet_game.py`'s `level1_short`, `level1_safe` and `random_resistance`
 checks are these gates.
 
+## 4. The Flashpoint corpus (where step 1's topics come from)
+
+Codex surveyed the Flashpoint Archive's 20-Mar-2024 SQLite snapshot (30-Aug-2026): 169,962
+archived game records, 129,019 of them Flash. That is metadata (titles, tags, descriptions,
+source links), not the playable files. The 414 MB database is not in git. The local copy is
+`C:\Users\celle\Documents\Codex\2026-08-22\res\outputs\flashpoint-2024-03-20.sqlite`, and it
+can be re-downloaded from `download.flashpointarchive.org/flashpoint.sqlite`. What it produced
+is already in this repo's `research/`:
+- the survey (`flash-game-mechanics-survey.md`);
+- the corpus audit and all genre tags;
+- a ranked long-tail queue of rare-mechanic games, each with its nearest existing game
+  (`flash-long-tail-queue-v1.tsv`);
+- two reviewed lineage ledgers (48 classic lineages and 80 long-tail ones). These became
+  the ideas board's `flash-lineages-v1` and `flash-long-tail-v1` ideas.
+
+The scripts are `scripts/analyze_flashpoint_corpus.py` and `scripts/mine_flashpoint_long_tail.py`.
+Step 1 draws topics from these ideas and from the queue.
+
 ## Related, not carried over
 
 Claude's arena glow-up and differentiation lanes (`arc3games/GLOWUP_RECIPE.md`,
