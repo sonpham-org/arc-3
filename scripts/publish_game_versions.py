@@ -801,12 +801,45 @@ def cmd_ideas(args: argparse.Namespace) -> int:
     return 0
 
 
+def vet_summary(report_path: str, source: bytes) -> dict[str, Any]:
+    """The vetting gate: scripts/vet_game.py must have passed for exactly these bytes.
+    Returns the small summary that rides along in the version's provenance."""
+    try:
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--vet-report {report_path}: unreadable ({exc})") from exc
+    sha = hashlib.sha256(source).hexdigest()
+    if report.get("source_sha256") != sha:
+        raise SystemExit(
+            f"--vet-report is for other bytes ({str(report.get('source_sha256'))[:12]}, this source is {sha[:12]}); "
+            "re-run scripts/vet_game.py on this exact file"
+        )
+    checks = report.get("checks") or {}
+    failed = sorted(name for name, check in checks.items() if check.get("status") == "fail")
+    if report.get("verdict") != "pass" or failed:
+        raise SystemExit(f"--vet-report did not pass (failed: {', '.join(failed) or 'unknown'}); fix the game first")
+    return {
+        "tool": report.get("tool"),
+        "verdict": "pass",
+        "profile": report.get("profile"),
+        "levels": report.get("levels"),
+        "arcengine": report.get("arcengine"),
+        "checked_at": report.get("created_at"),
+        "report_sha256": hashlib.sha256(Path(report_path).read_bytes()).hexdigest(),
+        "warnings": report.get("warnings", []),
+        "checks": {name: check.get("status") for name, check in checks.items()},
+    }
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     if not GAME_ID_RE.fullmatch(args.game):
         raise SystemExit("--game must be letters, digits, dot, underscore or dash")
     source = Path(args.source).read_bytes()
     if not args.keep_crlf:
         source = source.replace(b"\r\n", b"\n")  # hash what git would store
+    if bool(args.vet_report) == bool(args.no_vet):
+        raise SystemExit("pass --vet-report <scripts/vet_game.py report> (or, for a historical backfill, --no-vet <reason>)")
+    vetting = vet_summary(args.vet_report, source) if args.vet_report else {"skipped": args.no_vet[:200]}
     text = source.decode("utf-8")
     class_name = args.class_name or find_game_class(text)
     if not class_name:
@@ -831,7 +864,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
         "reason": args.reason,
         "details": args.details,
         "origin": "publish-cli",
-        "provenance": {"source": Path(args.source).name, **({"commit": args.commit} if args.commit else {})},
+        "provenance": {"source": Path(args.source).name, "vet": vetting, **({"commit": args.commit} if args.commit else {})},
     }
     if args.parent:
         version["parent_version_ids"] = args.parent
@@ -952,6 +985,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     publish.add_argument("--class-name")
     publish.add_argument("--created-at", help="ISO-8601 with timezone (default: now)")
     publish.add_argument("--commit", help="git commit the source came from, for provenance")
+    publish.add_argument("--vet-report", help="scripts/vet_game.py report for exactly this source; publish refuses without a pass")
+    publish.add_argument("--no-vet", metavar="REASON", help="skip the vetting gate, e.g. for a historical backfill; the reason is recorded")
     publish.add_argument("--keep-crlf", action="store_true")
     publish.add_argument("--no-thumbnail", action="store_true")
     publish.add_argument("--dry-run", action="store_true")
