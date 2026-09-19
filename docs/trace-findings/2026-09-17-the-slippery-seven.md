@@ -7,6 +7,8 @@ score on the Kaggle arms. Holds the model-swap comparison (Flash-Next vs 27B on 
 catalog at matched clock), the per-arm Kaggle numbers, the local action-shape evidence, a
 correction to an earlier reset count, and the list of which of the seven still have no
 mechanic page.
+Updated 19-Sep-2026 (Claude Opus 5): §7's documentation hole is marked closed; the three
+missing pages were written the same day in 2026-09-17-dc22-m0r0-tr87-what-they-are.md.
 SRP/DRY check: Pass — this is the 27B-specific zero set, which is NOT the Flash-Next "bottom
 seven" of 2026-09-12-bottom-seven-and-the-moving-frame.md (only three games overlap). Mechanic
 descriptions for sk48, g50t and tn36 are cited to 2026-09-12-bottom-seven-what-each-one-is.md
@@ -160,6 +162,12 @@ landed with the jobs 11/12 reset work — see `2026-09-16-jobs-11-12-reset-guard
 run after that merge has different reset semantics from the one described here.
 
 ## 7. The documentation hole
+
+> **Closed 17-Sep-2026.** The three missing mechanic pages were written the same day:
+> `2026-09-17-dc22-m0r0-tr87-what-they-are.md` covers dc22, m0r0 and tr87, cited to file:line in
+> each game's source. All seven now have a mechanic write-up. The ARC Explainer game pages
+> (`shared/arc3Games/<id>.ts` in arc-explainer) also carry each game's rules level by level.
+> The text below is kept as it was written.
 
 Of the seven, these already have a mechanic write-up and should be read before any new work:
 
