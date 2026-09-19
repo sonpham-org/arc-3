@@ -21,6 +21,48 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
+
+`docs/plans/2026-09-19-arc3-lora-round4-spec.md`. Spec only — no training, no eval, no GPU
+work. Rounds 1-3 all trained on teachers that carried no reasoning, and round 3's gameplay
+collapsed on the held-out fence (7 levels -> 2, PR #59). The spec quantifies why from round
+3's own `train_report.json`: **94,012 supervised tokens across 2,281 assistant turns, 41.2
+per turn** — an action call and nothing else.
+
+What it establishes, measured against the artifacts rather than recalled:
+
+- **`arc-explainer/shared/arc3Games/playerObservations` has never been read by any trainer.**
+  `recordings_to_sft.py` opens arc-explainer only for run identity; `extract_sft.py` never
+  touches it; the sole consumer is the oracle prompt-injection path. No branch or PR through
+  #59 has built this.
+- **The join lands.** Round 3's 89 records join to per-game notes at **100% by game**
+  (2,281/2,281 turns) but only **11% by game+level** (10/89). Game-scoped is the join.
+- **The corpus is thinner than assumed.** 63 notes: 28 joinable, 18 fenced, 17 on games with
+  no replay turns. `expected` — the field carrying a mental model — appears in **5 of 63**,
+  and in **2** notes on trainable games. ~11-13 notes survive a structural rule-leak filter.
+- **Round 3 honoured the fence by luck, not construction.** `recordings_to_sft.py` has no
+  fence filter at all; the corpus is clean (0 fence records, verified) only because none of
+  the 18 winning recordings was on a fenced game. Round 4's builder makes `--fence` required.
+- **Two corrections.** `mechanicsBreakdown` is 297 entries with **zero** `level:` fields — 200
+  sit under `// ---- Level N ----` comments; level scoping there is convention, not schema.
+  And PR #59's "deliberates half as long" is a **derived quantity**: every config has
+  `max_steps: null`, and 7 games x 90 min = 37,800s against observed 37,786s (base) /
+  37,791s (adapter). Both arms burned the full wall-clock budget, so seconds-per-turn is
+  `budget / turns`. The real finding is that the adapter took ~2x the turns and cleared 5
+  fewer levels.
+- **The ladder lesson is epoch-normalized.** Round 2's "gain done by step 16" was 29 records
+  at 14.5 steps/epoch — about 1.1 epochs. Round 4's corpus runs 44.5 steps/epoch, so copying
+  step 16 would stop at 0.36 epochs. Ladder is specced in epoch fractions, capped at 2.
+
+Recommended primary arm: **rationale-conditioned SFT over round 3's 89 records**, gated behind
+a prompt-time control arm that costs one eval pass and may answer the question without any
+training. Primary metric is gameplay on the 7 fenced games, n=3 per arm with round 3 as an
+arm; held-out CE is demoted to a smoke test, discredited by round 2 (CE win, gameplay
+unmeasured) and round 3 (gameplay collapse). Falsifier stated: if round 4 again shortens
+per-turn reasoning without improving clearance, the teacher is not the problem.
+
+---
+
 ## 19-Sep-2026 — the slippery seven's documentation hole is marked closed
 
 `docs/trace-findings/2026-09-17-the-slippery-seven.md` §7 still said dc22, m0r0 and tr87 had
