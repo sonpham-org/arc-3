@@ -21,6 +21,36 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 18-Sep-2026 — the oracle marker guard was counting the log, not the prompt
+
+**What.** The oracle driver aborted itself 20 s into arm-O pass 1 on a108 (`max_occurrences_in_one_log=2`).
+The second copy was `_write_prompt_log_snapshot`'s own `[TURN TRANSCRIPT SO FAR]` section
+re-printing the same turn's `[USER PROMPT]`, so an arm-O log holds `1 + analysis_steps` copies — a
+floor of 2 — and the assertion added in `67c03956d` was unsatisfiable by any arm-O pass. The wire
+message lists (`*_requests.jsonl`, `message_count: 2`) carried exactly one copy on all seven games:
+**the injection was never wrong.** `test_oracle_injection.py` missed it because it drove the real
+writer with `transcript="(dry build)"`, a placeholder holding no rulebook.
+
+- **`check_oracle_marker.sh`** now asks its two questions of two artifacts. *Treatment* (the
+  missing-`export` check) still counts prompt-log files, `== expected`. *Retention* (the confound
+  from build doc §3.3) moves to `*_requests.jsonl` and asserts no single request's message list
+  carries the block more than once. The per-file figure is printed as `log_occurrences_max` with
+  its construction stated, and is not asserted on.
+- **Strictly stronger, not looser.** The retention check now reads the bytes sent to vLLM, and it
+  accumulates one line per request, so by turn 5 it exercises `_persistent_history_messages` on
+  the live duck/graft path — which the 20 s check never could against an empty history.
+- **`test_oracle_injection.py`** feeds the writer a real turn transcript and adds a deliberate
+  double-injection case (block put back into a retained turn); the guard refuses it, rc=1.
+- **Nothing under `ARC3-Inference/inference/` changed** — `git diff origin/main -- ARC3-Inference/inference/`
+  is empty, which is the proof that arm B's rendered prompt is byte-identical and that the banked
+  `20260918_161821_qwen38-27b-oracle-b-p1` (247 wire requests, 0 rulebook copies) stands unre-run.
+- The aborted O run is fenced with an `INVALID_MARKER_GUARD_ABORT` file and unbanked; it was a
+  valid arm-O pass, but 20 s and one request per game is not a result.
+
+**Why it matters.** Loosening this guard on preference rather than evidence would have poisoned
+every number the experiment produces. Write-up, with the per-artifact evidence and the list of
+what is still unverified: `docs/trace-findings/2026-09-18-oracle-marker-guard-artifact.md`.
+
 ## 18-Sep-2026 (later) — the oracle test is launched on a108, and LoRA round 3 is queued on a424
 
 **What.** Step 4 of `docs/plans/2026-09-18-oracle-test-plan.md` §6, plus the round-3 training
