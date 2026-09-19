@@ -10,6 +10,7 @@ from the Games page's public trees API and the private mechanic descriptors, the
   anchor   new-seed mode: sample the anchor for a new seed from its 5 nearest games
   pair     normal mode: least-improved first game, partner from the farthest 20%
   draw     step 3: three mechanic-family candidates for a game, weighted 1/(1+adopted+drawn)
+  publish  vet with the step's profile, upload through publish_game_versions.py, log it
   log      append one event to the public ledger (ids only)
 
 Distance follows Codex's v3 sampler (weighted overlap of mechanic phrases, primary x3 and
@@ -30,6 +31,7 @@ import math
 import random
 import re
 import secrets
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -250,6 +252,57 @@ def cmd_draw(args) -> int:
     return 0
 
 
+STEP_PROFILES = {"seed": "seed", "glowup": "glowup", "playability": "glowup"}
+# Publishing names its target explicitly: the publish CLI falls back to production's token.
+TARGETS = {"local": "http://127.0.0.1:8090", "production": "https://arc3.sonpham.net"}
+STEP_PREFIX = {"seed": "Seed:", "glowup": "Glow-up:", "playability": "Playability:"}
+
+
+def cmd_publish(args) -> int:
+    """One loop step, published: the vetting profile is the step's, the reason names the
+    step, and the ledger records the version id. Seeds get the loop's family; later steps
+    are revisions of their parent."""
+    folder = Path(args.dir)
+    source, trace = folder / f"{args.game}.py", folder / f"{args.game}.trace.json"
+    profile = STEP_PROFILES[args.step]
+    if not args.reason.startswith(STEP_PREFIX[args.step]):
+        raise SystemExit(f"a {args.step} reason starts with '{STEP_PREFIX[args.step]}'")
+    if args.step != "seed" and not args.parent:
+        raise SystemExit(f"a {args.step} version needs --parent (the version it improves)")
+    report_path = folder / f"vet.{args.step}.json"
+    vet = subprocess.run([sys.executable, str(ROOT / "scripts" / "vet_game.py"), "--source", str(source), "--trace", str(trace),
+                          "--profile", profile, "--out", str(report_path), "--strips", str(folder / "strips"),
+                          "--time-budget", str(args.time_budget)], capture_output=True, text=True)
+    print(vet.stdout.strip().splitlines()[-1] if vet.stdout.strip() else vet.stderr.strip())
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+    if vet.returncode != 0 or report.get("verdict") != "pass":
+        log_event({"event": "vet", "step": args.step, "game_id": args.game, "verdict": "fail",
+                   "failed": sorted(k for k, c in report.get("checks", {}).items() if c["status"] == "fail")})
+        raise SystemExit(f"{args.game}: vet failed; nothing published")
+    api_url = TARGETS[args.target]
+    command = [sys.executable, str(ROOT / "scripts" / "publish_game_versions.py"), "--api-url", api_url, "publish",
+               "--game", args.game, "--source", str(source), "--driver", args.driver, "--model", args.model,
+               "--reason", args.reason, "--vet-report", str(report_path)]
+    if args.step == "seed":
+        command += ["--family", args.family]
+    else:
+        command += ["--kind", "revision", "--parent", args.parent]
+    for idea in args.idea or []:
+        command += ["--idea", idea]
+    if args.details_file:
+        command += ["--details", Path(args.details_file).read_text(encoding="utf-8")[:20000]]
+    done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode != 0:
+        raise SystemExit(f"publish failed: {done.stderr.strip()[-600:] or done.stdout.strip()[-600:]}")
+    text = done.stdout
+    result = json.loads(text[text.rindex("{", 0, text.rindex('"status"')):])
+    record = log_event({"event": "publish", "step": args.step, "game_id": args.game, "version_id": result["versionId"],
+                        "parent": args.parent, "ideas": args.idea or [], "target": args.target,
+                        "status": result.get("status"), "vet_warnings": report.get("warnings", [])})
+    print(json.dumps(record))
+    return 0
+
+
 def cmd_log(args) -> int:
     event = json.loads(args.json)
     if "event" not in event:
@@ -282,12 +335,26 @@ def main(argv: list[str] | None = None) -> int:
     draw.add_argument("-k", type=int, default=3)
     draw.add_argument("--seed", type=int)
     draw.add_argument("--record", action="store_true")
+    pub = sub.add_parser("publish")
+    pub.add_argument("--game", required=True)
+    pub.add_argument("--step", required=True, choices=sorted(STEP_PROFILES))
+    pub.add_argument("--target", required=True, choices=sorted(TARGETS), help="local dev stack or production; no default on purpose")
+    pub.add_argument("--dir", required=True, help="folder holding <game>.py and <game>.trace.json")
+    pub.add_argument("--reason", required=True)
+    pub.add_argument("--parent")
+    pub.add_argument("--idea", action="append")
+    pub.add_argument("--details-file")
+    pub.add_argument("--family", default="evolution")
+    pub.add_argument("--driver", default="claude", choices=("gpt", "claude", "human", "other"))
+    pub.add_argument("--model", default="Claude Opus 5")
+    pub.add_argument("--time-budget", type=float, default=180.0)
     log = sub.add_parser("log")
     log.add_argument("json")
     args = parser.parse_args(argv)
     if args.command in ("nearest", "anchor", "pair") and not args.descriptors:
         raise SystemExit("--descriptors is required (the private pool descriptors file)")
-    commands = {"status": cmd_status, "nearest": cmd_nearest, "anchor": cmd_anchor, "pair": cmd_pair, "draw": cmd_draw, "log": cmd_log}
+    commands = {"status": cmd_status, "nearest": cmd_nearest, "anchor": cmd_anchor, "pair": cmd_pair, "draw": cmd_draw,
+                "publish": cmd_publish, "log": cmd_log}
     return commands[args.command](args)
 
 

@@ -42,6 +42,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 TOOL = "vet_game.py/1"
 TRACE_FORMAT = "arc3-trace/1"
 ALLOWED_IMPORTS = {
@@ -240,11 +242,34 @@ def replay_trace(cls, levels: list[list[tuple[int, dict]]]) -> dict[str, Any]:
     }
 
 
-def random_input(rng: random.Random, available: list[int]) -> tuple[int, dict[str, int]]:
+def random_input(rng: random.Random, available: list[int], frame=None, targets=()) -> tuple[int, dict[str, int]]:
+    """A random player that clicks on things, not only on empty space. A third of clicks land
+    anywhere on the screen; a third pick a random non-background colour on screen and click a
+    pixel of it (so each kind of object is equally likely, however small); a third click an
+    engine-declared target (`sys_click` sprites) when the game has any. Clicking uniformly
+    alone almost never hits a small button, which made click games look random-proof."""
     action_id = rng.choice(available)
-    if action_id == 6:
-        return 6, {"x": rng.randrange(64), "y": rng.randrange(64)}
-    return action_id, {}
+    if action_id != 6:
+        return action_id, {}
+    roll = rng.random()
+    if roll < 1 / 3 and targets:
+        x, y = rng.choice(targets)
+        return 6, {"x": x, "y": y}
+    if roll < 2 / 3 and frame is not None:
+        values, counts = np.unique(frame, return_counts=True)
+        colours = [int(v) for v, c in zip(values, counts) if c != counts.max()]
+        if colours:
+            ys, xs = np.nonzero(frame == rng.choice(colours))
+            k = rng.randrange(len(xs))
+            return 6, {"x": int(xs[k]), "y": int(ys[k])}
+    return 6, {"x": rng.randrange(64), "y": rng.randrange(64)}
+
+
+def click_targets(game) -> list[tuple[int, int]]:
+    try:
+        return [(int(a.data["x"]), int(a.data["y"])) for a in game._get_valid_clickable_actions()]
+    except Exception:  # a game with unusual sprites must not break the harness
+        return []
 
 
 def random_run(snapshot, rng: random.Random, budget: int, retry: bool) -> dict[str, Any]:
@@ -255,8 +280,10 @@ def random_run(snapshot, rng: random.Random, budget: int, retry: bool) -> dict[s
     available = [int(a) for a in player.game._available_actions if int(a) != 0]
     out: dict[str, Any] = {"actions": 0, "cleared_at": None, "game_over_at": None, "game_overs": 0, "silent": {}, "tried": {}}
     before = None
+    screen = player.game.camera.render(player.game.current_level.get_sprites()) if 6 in available else None
     for step in range(budget):
-        action_id, data = random_input(rng, available)
+        targets = click_targets(player.game) if 6 in available else []
+        action_id, data = random_input(rng, available, before if before is not None else screen, targets)
         result = player.act(action_id, data)
         out["actions"] = step + 1
         final = result.frame[-1]
@@ -434,7 +461,7 @@ def vet(source_path: Path, trace_path: Path | None, profile_name: str, class_nam
     tried: dict[int, int] = {}
     fuzz_problem = None
     max_frames = max(first["max_frames"], second["max_frames"])
-    random_report: dict[str, Any] = {"mode": "uniform over available actions; clicks uniform over the 64x64 screen", "seed": seed, "levels": []}
+    random_report: dict[str, Any] = {"mode": "uniform over available actions; clicks split between anywhere, a random on-screen colour, and engine click targets", "seed": seed, "levels": []}
 
     def runs(snapshot, count, budget, retry, share):
         nonlocal fuzz_problem, max_frames
