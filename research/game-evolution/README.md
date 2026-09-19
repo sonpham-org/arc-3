@@ -50,9 +50,17 @@ of simulated versus human evidence, and "never fabricate a trace or weaken a che
 - **When:** at least 80% of the pool is improved, or someone asks for new games.
 - **How many:** a generation is 10 seeds (Codex's first generation size), never more than
   20% of the pool.
-- **Topics:** unexplored ideas from the ideas board (`/api/v1/games/ideas`), one axis per
-  seed, and not close to an existing game. Link the idea when publishing (`--idea`), so the
-  board shows it as explored.
+- **Topics come from real games first.** Draw from the Flash corpus: the 48 classic Flash
+  lineages, the 80 reviewed long-tail lineages, then fresh picks from the ranked long-tail
+  queue of real Flash games (`research/flash-long-tail-queue-v1.tsv`, mined from Flashpoint's
+  129,019 Flash records; see [recovered/](recovered/README.md)). Real players already found
+  those mechanics fun. Brainstormed lists (GPT's 800 designs, the 200 briefs in
+  `anthropic-build-ideas-v1.tsv`) are a last resort. Generation 1 (19-Sep-2026) is the
+  exception: 9 of its 10 topics came from the briefs, and Son asked that later generations
+  take theirs from the Flash corpus.
+- One topic per mechanic family, each unexplored on the ideas board (`/api/v1/games/ideas`)
+  and not close to an existing game (`evolution_loop.py nearest`). Link the idea when
+  publishing (`--idea`), so the board shows it as explored.
 - **Authors:** one fresh, isolated agent per seed, following [AUTHOR_BRIEF.md](AUTHOR_BRIEF.md).
   A seed has 3-5 levels, a level 1 that teaches the idea, and passes `vet_game.py --profile seed`.
   It may be plain, but not broken, cloned or cosmetic.
