@@ -13,7 +13,7 @@ SRP/DRY check: Pass - measurement is run by distill/eval_lora.py and the ARC3 ha
 
 # ARC-3 LoRA round 3 — the held-out evaluation — 19-Sep-2026
 
-**Status: IN PROGRESS — this file is being written as the runs complete.**
+**Status: COMPLETE.** Both gameplay arms finished `rc=0`; all numbers below are measured.
 
 ---
 
@@ -261,18 +261,212 @@ I used no separate port and created no config file; the server is the stock
 
 ---
 
-## 4. STEP 3 — matched gameplay passes
+## 4. STEP 3 — matched gameplay passes on the held-out games
 
-*(results pending)*
+Two passes, **sequential, never concurrent**, against the **same** vLLM server, differing in
+one thing: which model id the analyzer asks for.
+
+```bash
+cd /home/son/GitHub/arc-3/ARC3-Inference && make interactive \
+  CONFIG_PATH=configs/a108.qwen38.baseline.json \
+  GAME="ar25-0c556536,re86-8af5384d,sb26-7fbdac44,su15-1944f8ab,tr87-cd924810,tu93-0768757b,vc33-5430563c" \
+  MODEL=<qwen38-27b-nvfp4 | round3> \
+  RUN_NAME=round3-heldout-<base|lora> CONCURRENT_JOBS=7 N_PASSES=1
+```
+
+All seven held-out games including `tr87` (it has no *solved-level records*, which only barred
+it from the CE corpus; it is perfectly playable). Both run dirs confirm `game_count: 7` and the
+exact seven ids — checked on disk ~70s into each pass, before committing to the 90 minutes,
+rather than discovered afterwards.
+
+| arm | run dir | started | ended | rc |
+|---|---|---|---|---|
+| base | `runs/20260919_120114_round3-heldout-base` | 12:01:12 | 13:31:16 | 0 |
+| adapter | `runs/20260919_133433_round3-heldout-lora` | 13:34:31 | 15:04:35 | 0 |
+
+### Parity
+
+Running the oracle's own `parity()` logic over the two `run_config.json` files
+(same flatten, same ignore set):
+
+```
+unexpected_diffs = ['.model']
+  .model: base='qwen38-27b-nvfp4'  lora='round3'
+```
+
+**The only configuration difference between the arms is the model id** — the variable under
+test. Same games, same order, same 7 lanes, same 102,985 context, same temperature 1.0 /
+top_p 0.95 / top_k 20, same 90-minute per-game cap, same server process, same pinned settings
+from `a108.qwen38.baseline.json` whose `_pin.note` demands exactly that.
+
+### Results, per game
+
+`lv` = levels cleared. `err` = turns lost to vLLM read timeouts (`request_error`, no response
+at all — see the timeout note below). `tool%` = share of turns that **did** get a response and
+emitted at least one tool call.
+
+**BASE arm** (`qwen38-27b-nvfp4`)
+
+| game | lv | /total | score | actions | turns | tool-ok | tool% | terminated |
+|---|---|---|---|---|---|---|---|---|
+| ar25 | 1 | 8 | 2.778 | 23 | 19 | 2 | 100% | gave_up |
+| re86 | 1 | 8 | 1.954 | 31 | 13 | 3 | 100% | gave_up |
+| sb26 | 1 | 8 | 2.778 | 55 | 21 | 1 | 100% | gave_up |
+| su15 | 1 | 9 | 2.222 | 24 | 20 | 1 | 100% | gave_up |
+| tr87 | 0 | 6 | 0.000 | 36 | 14 | 2 | 100% | gave_up |
+| tu93 | 1 | 9 | 0.334 | 81 | 15 | 1 | 100% | gave_up |
+| vc33 | 2 | 7 | 10.714 | 20 | 21 | 1 | 100% | gave_up |
+| **TOTAL** | **7** | 55 | **20.780** | 270 | 123 | 11 | **100%** | 7/7 gave_up |
+
+**ADAPTER arm** (`round3`)
+
+| game | lv | /total | score | actions | turns | tool-ok | tool% | terminated |
+|---|---|---|---|---|---|---|---|---|
+| ar25 | 0 | 8 | 0.000 | 32 | 24 | 1 | 100% | gave_up |
+| re86 | 0 | 8 | 0.000 | 52 | 38 | 1 | 100% | gave_up |
+| sb26 | 1 | 8 | 0.510 | 44 | 42 | 1 | 100% | gave_up |
+| su15 | 0 | 9 | 0.000 | 50 | 56 | 1 | 100% | gave_up |
+| tr87 | 0 | 6 | 0.000 | 1 | 9 | **5** | 100% | gave_up |
+| tu93 | 0 | 9 | 0.000 | 39 | 13 | **3** | 100% | gave_up |
+| vc33 | 1 | 7 | 0.194 | 51 | 52 | 1 | 100% | gave_up |
+| **TOTAL** | **2** | 55 | **0.705** | 269 | 234 | 13 | **100%** | 7/7 gave_up |
+
+### Head to head
+
+| metric | base | adapter | change |
+|---|---|---|---|
+| levels cleared | **7** | **2** | **−5** |
+| total score | **20.780** | **0.705** | **−96.6%** |
+| games improved | — | **0 / 7** | — |
+| games regressed | — | **5 / 7** | ar25, re86, su15, tu93, vc33 |
+| games tied | — | 2 / 7 | sb26 (1=1), tr87 (0=0) |
+| actions | 270 | 269 | ≈ equal |
+| solver turns | 123 | 234 | +90% |
+| mean turn wall time | 307.2s | 161.5s | −47% |
+| tool-validity (of answered turns) | **100%** | **100%** | none |
+| turns lost to server timeouts | 11 / 123 | 13 / 234 | — |
+| wall time lost to timeouts | 5,914s | 6,705s | comparable |
+| termination | 7/7 `gave_up` | 7/7 `gave_up` | both hit the 90-min cap |
+
+**Not a tool-format regression — and this is now exact.** Every solver turn that received a
+response emitted a well-formed tool call, in **both** arms, on **every** game: 112/112 for base
+and 221/221 for the adapter, **100% either side**. The two arms also issued near-identical
+action counts (270 vs 269). The adapter is emitting valid tool calls and acting on the board; it
+is simply acting much less effectively.
+
+> **Correction.** An earlier cut of this table reported 91.1% / 94.4% tool validity. That was
+> wrong: it counted turns that died on a vLLM **read timeout** — where no response arrived at
+> all, so there was nothing to be malformed — as tool failures. Excluding `request_error` turns,
+> which is the only defensible denominator, both arms are at 100%.
+
+**Server timeouts hit both arms and are not adapter-specific**, but they are not evenly spread.
+Base lost 11 turns / 5,914s; the adapter lost 13 turns / 6,705s. Per-turn the base arm actually
+timed out *more often* (8.9% vs 5.6%). Two adapter games were badly damaged, though:
+**`tr87` lost 3,877s of its 5,400s budget to five consecutive 900s timeouts (72% of the run) and
+managed a single action**, and `tu93` lost 2,180s (40%). Those two adapter runs should be treated
+as compromised by infrastructure, not as clean measurements of the adapter.
+
+The verdict survives dropping them. Over the five uncompromised games
+(`ar25 re86 sb26 su15 vc33`): base **6 levels / 20.446**, adapter **2 levels / 0.704**, with
+**4 regressed, 1 tied, 0 improved**.
+
+**The mechanism is visible in the turn timings.** Both arms ran the same 90-minute wall clock
+per game, but the adapter fitted 234 turns into it against base's 123, and its mean turn took
+161.5s against 307.2s. The adapter deliberates roughly half as long per turn. That is exactly
+what training on *human demonstrations* would be expected to do — humans do not write 300
+seconds of model-style analysis before pressing a key — and on this harness the long
+deliberation is evidently doing real work. Round 3 traded it away.
 
 ---
 
 ## 5. Verdict
 
-*(pending)*
+**Round 3 is a regression on gameplay. Not "cannot distinguish" — measurably worse.**
+
+On the seven held-out games, base cleared **7 levels / 20.780 score**; the round-3 adapter
+cleared **2 levels / 0.705 score**. **Zero of seven games improved. Five regressed, two tied.**
+Restricted to the five games not damaged by server timeouts, it is base **6 levels / 20.446**
+against adapter **2 levels / 0.704**, 4 regressed / 1 tied / 0 improved. That is the number
+Hermes' standard asks for, and it points the wrong way.
+
+This is not the overfitting-to-trained-games story, because the adapter was never shown these
+seven games. It is a straightforward capability regression on unseen games — and it is not a
+formatting or tool-use break either: tool validity is 100% on both sides. The most likely
+reading, supported by the turn timings, is that the human-demo corpus taught the model to stop
+deliberating — turns roughly half as long, twice as many of them, near-identical action count,
+far fewer levels cleared. The behaviour it imitated is human, and it is worse at this harness
+than what the base model already did.
+
+The held-out **CE** result (§2) is consistent with this but did not and could not establish it:
+round 3 moved off the base model's token distribution (39/40 records, +0.0093), exactly as
+predicted for a human-demo adapter, and that sign alone was uninformative. The round-2 arm
+reproducing its banked uniform improvement (40/40, −0.0173) in the same load is what licenses
+trusting either number.
+
+**Honest limits on this verdict.**
+
+- **n = 1 pass per game per arm, at `temperature 1.0`.** These are stochastic samples, not
+  means. Over the five non-tied games, a clean 5-worse / 0-better split is
+  **one-sided p ≈ 0.031** on a sign test (two-sided 0.0625). The *direction* is solid; the
+  *magnitude* (−96.6% score) is a single draw and must not be quoted as an effect size.
+- **Two adapter games were degraded by server timeouts,** not by the adapter (`tr87` lost 72%
+  of its budget, `tu93` 40%). Dropping both still leaves base 6 levels / 20.446 vs adapter
+  2 levels / 0.704 over the remaining five games, 4 regressed / 1 tied / 0 improved — so the
+  conclusion does not rest on the compromised runs. But the clean comparison is five games, not
+  seven.
+- **Both arms were runtime-capped on all 14 runs** (`gave_up` at 90 minutes). This measures
+  "levels cleared within 90 minutes," not asymptotic ability. An adapter that is merely *slower
+  per level* would look like this too — though the adapter's turns were *faster*, not slower,
+  which argues against that reading.
+- **The CE arm and the gameplay arm ran on different weights** (BF16 on a424, NVFP4 on a108).
+
+Before round 3 is abandoned outright, the cheap confirmation is n ≥ 3 passes per arm — roughly
+nine more hours on a108, same recipe, nothing new to build — and raising the analyzer timeout
+or lane count to stop the 900s read timeouts eating whole games.
+
+**Recommendation:** do not promote the round-3 adapter. The windowed human-demo corpus, used
+this way, makes the agent worse on held-out games. If the human demos are to be kept, the next
+experiment should probably preserve deliberation length rather than let imitation shorten it.
+
+### Server teardown and the oracle
+
+The LoRA-enabled server was stopped after the adapter arm finished (§3 records why this
+matters). **A future oracle P4 must relaunch vLLM without `--enable-lora`** — that flag is
+server-level, does not appear in `run_config.json`, and the oracle's own parity check would not
+catch it.
 
 ---
 
 ## 6. What I did NOT verify
 
-*(pending)*
+1. **That the LoRA applies to all seven target modules.** The logprob A/B proves the adapter
+   changes the model's output distribution; it does not prove every one of
+   `o_proj, in_proj_z, in_proj_qkv, k_proj, out_proj, v_proj, q_proj` is being applied. Given
+   the `update_packed_mapping` difference between vLLM 0.19.0 and the 0.26.0 that actually
+   serves (§3), a *partial* application is possible and would mean the gameplay arm tested
+   something weaker than the trained adapter. Both arms ran on the same served weights, so the
+   comparison is valid either way — but "round 3 as served" may not equal "round 3 as trained."
+2. **Numerical equivalence of the BF16-trained adapter on an NVFP4 base.** The adapter's
+   `base_model_name_or_path` is the BF16 model; a108 serves NVFP4. I did not quantify the error
+   this introduces. The CE arm (§2, on a424) *did* run against the BF16 base, so the two steps
+   are not measuring the same stack.
+3. **That 90 minutes is enough to separate the arms.** Every game in both arms terminated
+   `gave_up` at the cap. I did not run an uncapped or longer pass.
+4. **Statistical robustness of the gameplay result.** n=1 pass per game per arm, temperature
+   1.0. No repeat passes were run.
+5. **Whether the round-2 adapter would also regress on gameplay.** Only base and round 3 were
+   played. Round 2 appears in the CE arm only.
+6. **The `as66` claim.** I repeated the round-2 write-up's finding that `as66` is absent from
+   all run dirs rather than re-deriving it; I verified only that it is named in
+   `extract_sft.py`'s help text.
+7. **Base-arm comparability to the banked oracle arm-B numbers.** My base arm ran on a
+   LoRA-enabled server (`--enable-lora` also flips `cudagraph_specialize_lora`). It is matched
+   to *my* adapter arm, not to the oracle's passes. Do not cross-compare.
+8. **The root cause of the 900s vLLM read timeouts.** They occurred in both arms (11 base /
+   13 adapter turns) and I did not diagnose them — 7 concurrent lanes against a 102,985-token
+   context on one GB10 is the obvious suspect, but I did not confirm it, and I did not check
+   whether the banked oracle passes show the same rate. Anyone repeating this should look before
+   trusting per-game budgets.
+9. **`train_report.json` internals for round 3.** I read its scalar summary
+   (178 steps, 18,462s wall, 224.7 tok/s) and took the corpus composition from the JSONL
+   directly; I did not audit the loss curve the brief quotes (0.2740 → 0.0325).
