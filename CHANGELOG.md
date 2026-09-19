@@ -21,6 +21,13 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 19-Sep-2026 — the slippery seven's documentation hole is marked closed
+
+`docs/trace-findings/2026-09-17-the-slippery-seven.md` §7 still said dc22, m0r0 and tr87 had
+no mechanic page. They got one the same day, in
+`docs/trace-findings/2026-09-17-dc22-m0r0-tr87-what-they-are.md`. §7 now says so at the top;
+the original text is left as written. (Claude Opus 5)
+
 ## 19-Sep-2026 — HARNESS-NOTES.md, the one page to read first
 
 **What.** A single always-current page at the repo root: seven harness recommendations in
