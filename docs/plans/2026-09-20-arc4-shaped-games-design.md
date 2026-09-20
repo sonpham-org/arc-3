@@ -149,7 +149,7 @@ world has stopped agreeing. It never considers waiting as a move.
 **Levels.** Six. Two seasons at first, four later, and the last levels shorten the season so
 timing gets tight.
 
-### 4. Control room and far bridge
+### 4. Control room and far bridge (build this one last)
 
 **What you see at the start.** A small room full of switches. One exit, leading off screen.
 
@@ -168,6 +168,10 @@ many round trips, and the level needs several correct settings in sequence.
 
 **Where the agent breaks.** It cannot connect a cause to an effect a hundred actions later
 and several screens away. It gives up on the switches as decorative.
+
+**Why it goes last.** Reading a number off a bank of switches is the kind of symbolic
+guess that killed the q-series. Nobody builds this until a person has cleared one of the
+other long games. If people cannot clear those, this one gets redesigned, not built.
 
 **Levels.** Six. Level one has two switches and the effect is on the next screen. Later
 levels add switches, distance, and settings that have to be applied in order.
@@ -196,6 +200,9 @@ with a goal. It treats the creatures as interchangeable because they look interc
 **Levels.** Six. No rival in the first two. One rival from level three. Two, with different
 routes, in the last.
 
+The rival moves by a fixed rule with no randomness. Given the same player inputs it does
+the same thing every time. Otherwise a recorded win cannot be replayed to prove the level.
+
 ### 6. Cartographer
 
 **What you see at the start.** Darkness, a small lit circle around you, and a tiny grid in a
@@ -217,12 +224,52 @@ purpose with no reward in sight. It looks for a goal object, finds none, and thr
 **Levels.** Five. Small map and every cell counts, then bigger maps and only some cells
 count, then a map with dead ends that cost a lot to explore.
 
+## Answers to the first round of questions
+
+**Ids.** The ledger runs g001 to g303 with no gaps, so the six get the next block:
+
+| id | game |
+|---|---|
+| g304 | the crawler |
+| g305 | shrines and seals |
+| g306 | seasons |
+| g307 | control room and far bridge |
+| g308 | the herd |
+| g309 | cartographer |
+
+Add all six to the ledger now as `status: "idea"` so the ids are taken, and flip each to
+`built` when it lands. Nothing in g500 to g599; that range is reserved.
+
+**Tag.** Every one of the six carries `"series": "arc4"` in its ledger row, and the line
+`SERIES: arc4` in the authoring docstring of its `.py` file. Grep for either and you get
+exactly these games and nothing else. The contiguous id block is a backup, not the tag.
+
+**Build order.** Crawler first and alone. Then cartographer, then shrines and seals, then
+seasons, then the herd. Control room last, and only after a human has cleared one of the
+others.
+
+**Branch discipline in the arena repo.** Same rule as here. Branch from `origin/master` in
+a worktree, open a PR, never commit on `master`, and leave the uncommitted Kaggle files in
+that tree alone.
+
+**The wait problem in seasons** is settled above: every action passes time, and action 5
+is an explicit wait.
+
+**The long-session question** is still open and the crawler is the test. If the feedback
+site cannot hold a thirty-minute sitting, that is a fix in arc-explainer, not a reason to
+shorten the games.
+
 ## Two things to sort out before the first one ships
 
 **Checking that a level can be won.** The reference verifier explores every possible state.
 On a map this size that will never finish. Instead, each game ships with a written-out
 winning move sequence that the verifier replays, plus a check that every region you need
 is reachable from the start. Good enough, and honest about what it proves.
+
+That is a change to the verifier rule, not just a new file. The existing games all use
+exhaustive search. Land the new rule as its own small change to the arc3games README, and
+land it before the crawler's verifier, so the crawler is not the thing that quietly
+changed the rule.
 
 **Getting people to play them.** A long game needs a long sitting. Nobody has played a
 thirty-minute game on the feedback site, and we do not know whether the session handling
