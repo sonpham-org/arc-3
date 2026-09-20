@@ -12,10 +12,10 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260920-onepage";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-onepage";
+import * as api from "./games-api.js?v=20260920-rail";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-rail";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
-import { createIdeasBoard } from "./games-ideas.js?v=20260920-onepage";
+import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -491,28 +491,89 @@ function commentText(review) {
   return parts.filter(Boolean).join(" — ");
 }
 
+function agoLabel(iso) {
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds < 90) return "just now";
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  if (seconds < 7 * 86400) return `${Math.round(seconds / 86400)}d ago`;
+  return shortDate(iso);
+}
+
+// What the commenter actually did, from the review's own telemetry: context the words often skip.
+function playedLabel(review) {
+  const bits = [];
+  if (review.levelsCompleted != null) bits.push(`${review.levelsCompleted}/${review.levelsTotal ?? "?"} levels`);
+  if (review.actions) bits.push(`${review.actions} actions`);
+  if (review.seconds) bits.push(`${Math.floor(review.seconds / 60)}:${String(review.seconds % 60).padStart(2, "0")}`);
+  const outcome = { won: "won", lost: "lost", gave_up: "gave up", in_progress: "still going" }[review.outcome];
+  if (outcome) bits.push(outcome);
+  return bits.join(" · ");
+}
+
 function paintComments(context) {
   const list = $("commentList");
   list.replaceChildren();
   const reviews = (context.notes.feedback || []).filter((review) => !review.hidden && commentText(review));
+  $("commentCount").textContent = reviews.length || "";
   if (!reviews.length) {
     const empty = document.createElement("li");
     empty.className = "comment-empty";
-    empty.textContent = "No comments yet. Play it and say what you think.";
+    empty.textContent = "Nothing yet. Play it and say what you think.";
     list.appendChild(empty);
   }
-  for (const review of reviews.slice(0, 12)) {
+  const versions = context.detail ? context.detail.versions : [];
+  for (const review of reviews.slice(0, 40)) {
     const item = document.createElement("li");
+    item.className = "comment" + (review.reviewerClass === "team" ? " team" : "");
+
+    const head = document.createElement("div");
+    head.className = "c-head";
     const who = document.createElement("span");
-    who.className = "comment-who";
-    const about = review.versionId && review.versionId !== context.version.versionId ? ` · on v${review.versionId.slice(-12)}` : "";
-    const team = review.reviewerClass === "team" ? "" : " · public";
-    who.textContent = `${review.reviewer || "anonymous"} · ${shortDate(review.createdAt)}${about}${team}`;
+    who.className = "c-who";
+    who.textContent = (review.reviewer || "anonymous").split("@")[0];
+    const when = document.createElement("span");
+    when.className = "c-when";
+    when.textContent = agoLabel(review.createdAt);
+    when.title = longDate(review.createdAt);
+    head.append(who, when);
+    if (review.reviewerClass !== "team") {
+      const badge = document.createElement("span");
+      badge.className = "c-badge";
+      badge.textContent = "public";
+      head.appendChild(badge);
+    }
+    const onVersion = versions.find((v) => v.versionId === review.versionId);
+    if (onVersion && review.versionId !== context.version.versionId) {
+      const chip = document.createElement("span");
+      chip.className = "c-version";
+      chip.textContent = `v${onVersion.number || 1}`;
+      chip.title = "written on an earlier version";
+      head.appendChild(chip);
+    }
+    item.appendChild(head);
+
+    const played = playedLabel(review);
+    if (played) {
+      const line = document.createElement("div");
+      line.className = "c-played";
+      line.textContent = played;
+      item.appendChild(line);
+    }
     const body = document.createElement("p");
+    body.className = "c-body";
     body.textContent = commentText(review);
-    item.append(who, body);
+    item.appendChild(body);
     list.appendChild(item);
   }
+
+  // What you have done so far, so a comment can be read against it.
+  const mine = player.telemetry();
+  $("commentPlayed").textContent = mine && mine.actions
+    ? `you: ${playedLabel({ levelsCompleted: mine.levelsCompleted, levelsTotal: mine.levelsTotal, actions: mine.actions, seconds: mine.seconds })}`
+    : "";
+
   const form = $("commentForm");
   form.onsubmit = async (event) => {
     event.preventDefault();
