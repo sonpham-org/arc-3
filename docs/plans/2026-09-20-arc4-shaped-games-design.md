@@ -106,7 +106,10 @@ than in each design:
   rule at all. Every game gets them.
 
 **The rule for using any of this in the other four: if deleting the borrow does not change
-the solve, delete it.** Four games that all have gear, curses and wardens are four crawler
+the solve, delete it.** The worked example is cartographer refusing the overload rule. Being
+over the carry limit gives the world a second step, and a second step only costs you because
+something is walking toward you. Nothing is walking toward you in cartographer, so the rule
+would be decoration there, and it is left out and the limit made hard instead. Four games that all have gear, curses and wardens are four crawler
 reskins, `differentiate.py` will say so, and the mechanics doc's own standard convicts us --
 if the differentiation loop cannot tell a composition apart from its parents, the composition
 was nominal and the design failed. Each design below therefore says what it borrows, what
@@ -295,7 +298,11 @@ levels add switches, distance, and settings that have to be applied in order.
 `mechanics.json` yet and has to be adopted before this game's ledger row is written -- see
 the arena-repo list at the bottom. `patterned-adversary` is the wrong home for it and the
 mechanics doc says why: a patrolling hazard threatens your body and can be dodged by timing,
-a rival threatens your objective and cannot be dodged, because it is not aiming at you.
+a rival threatens your objective and cannot be dodged, because it is not aiming at you. The
+distinction is what the thing threatens, not how it chooses -- this rival follows a fixed
+script, because replay verification needs it to, and that does not make it a patrol.
+`real-time-strategy` is the other near miss: that axis wants a world tick independent of the
+player, and here the world advances exactly once per player action.
 
 **What you see at the start.** You, and a handful of small creatures that follow you when you
 get near them.
@@ -321,6 +328,12 @@ it is going first; leading one is fast. Since you cannot tell the right creature
 the cost of bringing them all is exactly what forces you to work out which one it is. Delete
 that rule and the answer is always "take everything," and the mechanic the game is about
 stops existing.
+
+Note for whoever builds it that this is not the crawler's rule with a different input. The
+crawler asks a static question about an inventory you control. This asks a question about a
+following herd, which the rival edits: steal a creature and the player's step rate changes
+without the player doing anything. `_overloaded(body)` does not port. The rule is the same
+sentence and a different mechanic.
 
 **How it reveals itself.** A gate opens for one creature and not another. Later, you turn
 around and one of yours is walking off with someone else.
