@@ -82,10 +82,13 @@ moves, so all distance must come from changes to it.
 | `no_plateau` | 10 | no three levels in a row within 12% of one another |
 | `finale` | 10 | the last level is the longest, or within 10% of it |
 
+Plus two gates from playing it, when a felt report is supplied (`--felt`), and step 5 requires
+one: `felt_rising`, the per-level demand ratings rise (rank correlation at least 0.5, last
+above first), and `felt_verdict`, the player says the game `climbs`. Both outrank the number.
+
 `rising`, `teach_first` and `shape` are hard gates past the seed stage. The measure is a
-proxy: a long dull level scores as a hard one, so a reviewer reads each level's declared
-`why_harder` against the level itself and says whether it truly asks for more. A game that
-scores well and reads as flat has failed, whatever the number says.
+proxy: a long dull level scores as a hard one. A game that scores well and feels flat has
+failed, whatever the number says.
 
 ## English QC scale (0 = simple English, 1 = slop)
 

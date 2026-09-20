@@ -190,9 +190,28 @@ winning trace's actions per level and scores, out of 100:
 | `finale` | 10 | the last level is the game's longest, or within 10% of it |
 
 A version passes at **75** with `rising`, `teach_first` and (past the seed stage) `shape`
-all green. Actions per level is a proxy, not difficulty itself: a long dull level is long,
-not hard. So the measured score never stands alone — a reviewer reads the declared
-`why_harder` lines against the levels and says whether each one really asks for more.
+all green.
+
+**And it has to feel like it climbs.** Actions per level is a proxy, not difficulty: a long
+dull level is long, not hard, and a game can read as a tidy rising ladder and still feel like
+the same puzzle eight times. So someone plays the levels in order and rates what each one
+demands, 1 to 5, with a line on what it adds and whether it was solved. That report is a hard
+gate, above the number:
+
+```
+python scripts/curve_score.py --trace <trace> --metadata metadata.json --felt played.json
+```
+
+```json
+{"played_by": "fresh agent, no source", "verdict": "climbs",
+ "levels": [{"level": 1, "demand": 1, "what_it_adds": "the rule, in two actions",
+             "actions_taken": 9, "solved": true}]}
+```
+
+The demands must rise (rank correlation at least 0.5, and the last level above the first) and
+the verdict must be `climbs`. A game that scores 100 and reads as flat has failed. For games
+that arrived without a winning trace, playing them is also how the curve gets measured at all:
+the player's own actions per level stand in for the trace.
 
 **Publish:** `--kind revision`, reason `Curve: <what the levels now ask, in order>`. Say what
 changed from the version before, because that reason is what a reader sees when they hover

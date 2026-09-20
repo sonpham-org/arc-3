@@ -6,13 +6,21 @@ Purpose: these games are training data. A game whose levels sit at one difficult
 model (or a person) one thing and then repeats it, and a game that jumps straight to hard
 teaches nothing at all. The loop's final step shapes the curve, and this scores it.
 
-Two sources of evidence:
+Three sources of evidence:
 
 - **Measured.** The winning trace's actions per level, which is what the game costs to solve.
   It is a proxy, not difficulty itself: a long dull level is long, not hard. That is why the
   shape below is declared and reviewed rather than inferred.
 - **Declared.** `metadata.json` carries a `curriculum`: one entry per level with its role, the
   mechanics it introduces, and one line on what it asks that the level before did not.
+- **Felt.** Someone plays the levels in order and rates what each one demands of them, 1 to 5,
+  and says whether the game feels like it climbs. This is the judgement the other two serve:
+  a game can read as a tidy rising ladder of action counts and still feel like the same puzzle
+  eight times. Pass `--felt report.json`:
+  `{"played_by": "...", "levels": [{"level": 1, "demand": 1, "what_it_adds": "...",
+  "actions_taken": 9, "solved": true}, ...], "verdict": "climbs|flat|jumps", "notes": "..."}`.
+  When it is given, the felt reading is a hard gate: the demands must rise and the verdict
+  must be `climbs`, whatever the measured score says.
 
 The roles, in order, with how many levels each may take:
 
@@ -116,7 +124,26 @@ def check_shape(curriculum: list[dict], levels: int) -> tuple[int, dict[str, Any
     return max(0, points), {"status": "pass" if points == 25 else "warn", "detail": detail}
 
 
-def score(actions: list[int], curriculum: list[dict], profile: str) -> dict[str, Any]:
+def check_felt(felt: dict) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The played reading: do the levels demand more as they go, and did it feel that way?"""
+    levels = felt.get("levels") or []
+    demands = [float(level.get("demand", 0)) for level in levels]
+    verdict = str(felt.get("verdict", "")).lower()
+    if len(demands) < 3:
+        problem = {"status": "fail", "detail": "a felt report needs a demand rating for at least three levels"}
+        return problem, problem
+    trend = spearman(demands)
+    rising = trend >= 0.5 and demands[-1] > demands[0]
+    return (
+        {"status": "pass" if rising else "fail",
+         "detail": f"demand ratings {[int(d) for d in demands]} (rank correlation {trend}); they must rise"},
+        {"status": "pass" if verdict == "climbs" else "fail",
+         "detail": f"the player who played it says the difficulty {verdict or 'was not judged'}"
+                   + (f": {felt['notes']}"[:200] if felt.get("notes") else "")},
+    )
+
+
+def score(actions: list[int], curriculum: list[dict], profile: str, felt: dict | None = None) -> dict[str, Any]:
     levels = len(actions)
     checks: dict[str, dict[str, Any]] = {}
     points = 0
@@ -166,9 +193,13 @@ def score(actions: list[int], curriculum: list[dict], profile: str) -> dict[str,
     }
     points += 10 if finale_ok else 0
 
+    if felt:
+        checks["felt_rising"], checks["felt_verdict"] = check_felt(felt)
     hard_gates = [checks["rising"]["status"] != "fail", checks["teach_first"]["status"] != "fail"]
     if profile != "seed":
         hard_gates.append(checks["shape"]["status"] != "fail")
+    if felt:  # a played reading outranks the proxy: it is what "harder" means
+        hard_gates += [checks["felt_rising"]["status"] == "pass", checks["felt_verdict"]["status"] == "pass"]
     return {
         "levels": levels,
         "actions_per_level": actions,
@@ -186,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metadata", type=Path, help="metadata.json holding the declared curriculum")
     parser.add_argument("--source", type=Path, help="recorded in the report, for provenance")
     parser.add_argument("--profile", choices=("seed", "glowup"), default="glowup")
+    parser.add_argument("--felt", type=Path, help="a played report: per-level demand ratings and whether it climbs")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
 
@@ -207,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": args.source.name if args.source else None,
         "profile": args.profile,
-        **score(actions, curriculum, args.profile),
+        **score(actions, curriculum, args.profile, json.loads(args.felt.read_text(encoding="utf-8")) if args.felt else None),
     }
     if args.out:
         args.out.write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")

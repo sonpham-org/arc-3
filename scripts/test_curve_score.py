@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from scripts.curve_score import score, shape_matches, spearman
+from scripts.curve_score import check_felt, score, shape_matches, spearman
 
 
 def curriculum(roles, mechanics=None):
@@ -91,3 +91,28 @@ def test_the_report_carries_what_the_ledger_records():
     assert report["actions_per_level"] == RISING
     assert report["levels"] == 9
     assert json.dumps(report)  # serialisable for the ledger and the version's provenance
+
+
+def felt(demands, verdict="climbs"):
+    return {"played_by": "agent", "verdict": verdict,
+            "levels": [{"level": i + 1, "demand": d, "what_it_adds": "more", "solved": True} for i, d in enumerate(demands)]}
+
+
+def test_a_played_reading_can_fail_a_game_the_numbers_liked():
+    # Perfect measured curve, but every level felt the same to the player.
+    report = score(RISING, curriculum(GOOD_ROLES, GOOD_MECHANICS), "glowup", felt=felt([2] * 9, "flat"))
+    assert report["score"] == 100
+    assert report["verdict"] == "fail"
+    assert report["checks"]["felt_rising"]["status"] == "fail"
+    assert report["checks"]["felt_verdict"]["status"] == "fail"
+
+
+def test_a_played_reading_that_climbs_passes():
+    report = score(RISING, curriculum(GOOD_ROLES, GOOD_MECHANICS), "glowup", felt=felt([1, 1, 2, 2, 3, 3, 4, 4, 5]))
+    assert report["verdict"] == "pass"
+    assert report["checks"]["felt_rising"]["status"] == "pass"
+
+
+def test_a_felt_report_needs_enough_levels():
+    rising, _ = check_felt(felt([1, 3]))
+    assert rising["status"] == "fail" and "at least three" in rising["detail"]
