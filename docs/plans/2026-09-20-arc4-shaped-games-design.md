@@ -280,3 +280,48 @@ copes. Find out with the crawler before building the other five.
 Camera follow, a room graph, fog, and a minimap strip will show up in most of these. Write
 them once as helpers beside `sprite_book.py` so the six games share one implementation and
 the packager can inline it the way it already inlines the sprite helpers.
+
+## What building the crawler taught, 20-September-2026
+
+g304 is built, verified and live on both surfaces. Five games remain. These are the
+things that cost time, written down because they will repeat.
+
+**Patrols that are meant to meet each other almost never do by accident, and the
+arithmetic that makes them meet will put the meeting in the wrong place.** A vertical
+patrol at `(wx,wy)` meets a horizontal one at `(hx,hy)` exactly when `wx-hx == hy-wy`,
+and they meet on `(wx,hy)`. The obvious offsets put that cell on top of whatever the
+puzzle uses. This matters most for **the herd**, whose rival shepherd is specified to
+move by a fixed rule: a rival parked on a gate or a creature you need blocks it for as
+long as it stands there, which is a stall rather than a puzzle. Check it rather than
+eyeball it.
+
+**Anything a player can be blocked out of needs a check that it is not blocked
+permanently.** Two separate faults in g304 were of this shape and neither was visible in
+a diff: a door that covered one cell of a two-cell hall could simply be walked around,
+and a room joined by a mis-declared link was connected to nothing at all, stranding a
+tile no route could reach. Both now have gates in the verifier. Write those gates for the
+next game before the levels, not after.
+
+**Keep every state-changing thing monotone if you possibly can.** The crawler's rune
+gates light permanently rather than toggling, and that single decision is what makes its
+verification exact and cheap: with control passing from anywhere and everything else
+monotone, each body's reach can be settled alone and the coupling is only the set of
+things opened. A toggle is the better mechanic and tr87's name points straight at it, and
+it also turns a few thousand states into about a hundred million. If a game needs
+toggles, budget for a different verifier rather than discovering this late.
+
+**Verification here is replay, not exhaustion, and should be labelled as such.** Each
+level ships a recorded winning action sequence that replays through a fresh engine. That
+proves the level is winnable and that the shipped rules are the rules that won it. It
+does not prove no dead end exists, and none of these games yet carries a Part B foil.
+
+**Two engine facts worth knowing before designing.** `Level.grid_size` must be left unset,
+because the engine resizes the camera to it and the camera refuses anything over 64 — a
+world larger than the window cannot be declared that way. And the engine's clickable-target
+list does not subtract the camera offset, so on a scrolling world the coordinates offered
+to an agent are world coordinates while the frame is a moved window. The crawler therefore
+has no click at all. Any of the remaining five that wants one needs this resolved first.
+
+**On the long-session question.** The crawler is playable on `arena.sonpham.net` with
+anonymous telemetry running, so the gate below is now answerable. Getting the answer needs
+people to play it, which has not happened yet.
