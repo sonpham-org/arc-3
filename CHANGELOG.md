@@ -21,6 +21,57 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
+
+`docs/plans/2026-09-19-arc3-lora-round4-spec.md`. Spec only — no training, no eval, no GPU
+work. Rounds 1-3 all trained on teachers that carried no reasoning, and round 3's gameplay
+collapsed on the held-out fence (7 levels -> 2, PR #59). The spec quantifies why from round
+3's own `train_report.json`: **94,012 supervised tokens across 2,281 assistant turns, 41.2
+per turn** — an action call and nothing else.
+
+What it establishes, measured against the artifacts rather than recalled:
+
+- **`arc-explainer/shared/arc3Games/playerObservations` has never been read by any trainer.**
+  `recordings_to_sft.py` opens arc-explainer only for run identity; `extract_sft.py` never
+  touches it; the sole consumer is the oracle prompt-injection path. No branch or PR through
+  #59 has built this.
+- **The join lands.** Round 3's 89 records join to per-game notes at **100% by game**
+  (2,281/2,281 turns) but only **11% by game+level** (10/89). Game-scoped is the join.
+- **The corpus is thinner than assumed.** 63 notes: 28 joinable, 18 fenced, 17 on games with
+  no replay turns. `expected` — the field carrying a mental model — appears in **5 of 63**,
+  and in **2** notes on trainable games. ~11-13 notes survive a structural rule-leak filter.
+- **Round 3 honoured the fence by construction, via an optional flag.** `recordings_to_sft.py`
+  has `--exclude-games`; the round-3 corpus was built with the full fence list (130 records
+  unfenced → 89 fenced, per the converter write-up §9–10), and the trained corpus has 0 fence
+  records. The flag has no default, so round 4's builder makes `--fence` required. (The first
+  cut of this spec said there was no fence filter and the fence held by luck; that was wrong.)
+- **Two corrections.** `mechanicsBreakdown` is 297 entries with **zero** `level:` fields — 200
+  sit under `// ---- Level N ----` comments; level scoping there is convention, not schema.
+  And PR #59's "deliberates half as long" is a **derived quantity**: every config has
+  `max_steps: null`, and the two arms' total turn time agrees to **5.4 seconds out of 37,790**
+  (37,785.6s base / 37,791.0s adapter) — a hard wall-clock deadline. Seconds-per-turn is
+  therefore `budget / turns`, and the real finding is that the adapter took ~2x the turns and
+  cleared 5 fewer levels.
+- **Eval budget resolved against a108.** `a108.qwen38.baseline.json` (out of tree, on a108)
+  and both round-3 `run_config.json` files say 90 min/game at 7 lanes, so one pass is 90 min
+  and 3 arms × 3 passes is ~13.5h, consistent with PR #59's ~9h for two arms. The first cut
+  of this spec priced a pass at 5.25–10.5h from the in-tree a108 configs, which are for a
+  different model and did not run.
+- **The ladder lesson is epoch-normalized.** Round 2's "gain done by step 16" was 29 records
+  at 14.5 steps/epoch — about 1.1 epochs. Round 4's corpus runs 44.5 steps/epoch, so copying
+  step 16 would stop at 0.36 epochs. Ladder is specced in epoch fractions, capped at 2.
+
+Recommended primary arm: **rationale-conditioned SFT over round 3's 89 records**, gated behind
+a prompt-time control arm that costs one eval pass and may answer the question without any
+training. Primary metric is gameplay on the 7 fenced games, n=3 per arm with round 3 as an
+arm; held-out CE is demoted to a smoke test, discredited by round 2 (CE win, gameplay
+unmeasured) and round 3 (gameplay collapse). Falsifier stated: if round 4 again shortens
+per-turn reasoning without improving clearance, the teacher is not the problem.
+
+---
+
+---
+
 ## 20-Sep-2026 — comments on a game, and a tick that feeds the training pipeline
 
 The Games page now carries the team's comments on each game, newest first, stored in Postgres
