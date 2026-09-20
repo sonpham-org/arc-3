@@ -126,6 +126,29 @@ Anyone can send one. Signed-in reviews are filed as `team` and always rank ahead
 ones in every list, summary and export; public ones are rate limited and the team can hide
 spam from the version drawer.
 
+### Comments, and "good to train"
+
+Each game's page carries the team's running comments, newest first, and a tick on the version
+you are looking at:
+
+- **Comments** are free text about a game, stored in the Railway database
+  (`arc3_game_comments`). They are team-only to read and write, like change notes, because a
+  comment names mechanics and most families are played blind. A comment can be about the whole
+  game or about the exact version you were playing when you wrote it.
+- **Good to train** marks that exact version as fit for the training pipeline, with who ticked
+  it and when. It is per version, not per game, because the pipeline trains on exact bytes and
+  the next version of the same game may not be fit at all.
+
+The pipeline pulls the ticked set with the publish token, so it needs no browser session:
+
+```bash
+curl -H "Authorization: Bearer $ARC3_PUBLISH_TOKEN"   https://arc3.sonpham.net/api/v1/games/training-set
+```
+
+It answers `{"count": N, "versions": [{"versionId", "gameId", "family", "sha256", "sourceUrl",
+"author", "markedBy", "markedAt"}, ...]}`, so a training run can fetch each source by its
+content-addressed URL and know exactly which bytes a person approved.
+
 ### Publishing a game version (no deploy)
 
 Like traces, game versions go through the Railway API with `ARC3_PUBLISH_TOKEN`, never

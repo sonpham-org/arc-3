@@ -8,7 +8,7 @@
 // Everything user-written (change notes, reviews) goes into the page with textContent, never
 // innerHTML: public reviews are untrusted input read by the signed-in team.
 
-import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260919-ideas";
+import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260920-comments";
 
 export const COL_W = 156;
 export const NODE_W = 128;

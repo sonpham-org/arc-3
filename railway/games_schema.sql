@@ -145,3 +145,26 @@ CREATE TABLE IF NOT EXISTS arc3_game_idea_games (
 );
 
 CREATE INDEX IF NOT EXISTS arc3_game_idea_games_game_idx ON arc3_game_idea_games (game_id);
+
+-- Comments: the team's running notes on a game, newest first under the board. Team-only,
+-- like change notes: a comment names mechanics, and most families are played blind.
+CREATE TABLE IF NOT EXISTS arc3_game_comments (
+    comment_id bigserial PRIMARY KEY,
+    tree_id text NOT NULL,
+    game_id text NOT NULL,
+    version_id text,
+    body text NOT NULL CHECK (length(body) BETWEEN 1 AND 2000),
+    author text NOT NULL,
+    hidden boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS arc3_game_comments_tree_idx ON arc3_game_comments (tree_id, created_at DESC);
+
+-- "Good to train": a person ticked this exact version as fit for the training pipeline.
+-- It is deliberately per version, not per game, because the pipeline trains on exact bytes.
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok boolean;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_by text;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS arc3_game_versions_train_idx ON arc3_game_versions (train_ok) WHERE train_ok;

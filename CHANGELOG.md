@@ -21,6 +21,20 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 20-Sep-2026 — comments on a game, and a tick that feeds the training pipeline
+
+The Games page now carries the team's comments on each game, newest first, stored in Postgres
+(`arc3_game_comments`) and team-only like change notes. Beside them, a "Good to train" tick on
+the version being played records that a person judged those exact bytes fit for training, with
+who and when (`train_ok` on `arc3_game_versions`).
+
+The training pipeline reads the ticked set through `GET /api/v1/games/training-set` with the
+publish token, which answers each version's content-addressed source URL. The tick is per
+version, not per game: the pipeline trains on exact bytes, and the next version of the same
+game may not be fit at all. (Claude Opus 5)
+
+---
+
 ## 19-Sep-2026 — the game evolution loop, recovered and reformed; uploads are vetted
 
 Codex's pair glow-up loop had only ever lived in a local workspace. Its program, rubric,
