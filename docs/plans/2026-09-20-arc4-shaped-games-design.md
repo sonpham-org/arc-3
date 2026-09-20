@@ -403,6 +403,50 @@ the trade is learned before it is needed; boots from level three.
 minimap -- and it is monotone, so it can be verified exactly instead of by replay alone.
 Write the helpers here, for the four games after it.
 
+**Built, 20-September-2026, and four things about it differ from the paragraphs above.**
+Five levels, 35x24 up to 66x44 cells, covering routes of 205 to 737 moves. What changed:
+
+- **There is no third piece of gear and the carry limit is not "cannot pick up a third".**
+  Two pieces, both weighing two, and a body that carries three, so it holds one or the
+  other and a station swaps them where they lie. A third piece had no work to do and would
+  have failed the delete test, so the sentence above is wrong and the game is right.
+- **The axis is not `resource-economy`.** That axis is a finite, spendable, non-renewable
+  budget, and nothing in this game is spent: stations are never used up and the fog never
+  falls back. The gear is `tool-composition` with the sign flipped -- the win needs both
+  capabilities and the body can never hold both -- and no axis in `mechanics.json` covers
+  abilities that exclude each other. It is written up as a proposal, not assigned.
+- **The lantern is required, not a speed-up.** Some counted ground is sealed inside the
+  stone, two cells from anywhere a body can stand: pale ground you can map and never walk.
+  A bare body's light does not reach it and the lantern's does. So the trade the design
+  promised is a hard requirement on both sides -- boots for the ground past the rubble,
+  lantern for the ground behind the wall -- and never at the same moment.
+- **Level five forces the swap the others only offer.** A lantern and a boots station
+  stand inside a boots-only region with ground only visible from in there: walk in booted,
+  change where the lantern lies, map it, change back, walk out.
+
+**The verification paid more than this brief expected.** Monotone was the right call and it
+bought more than a cheap check: every counted cell is shown lightable by some reachable
+body, so each level is winnable *by construction* rather than because a route happened to
+win; no dead end exists, computed over the condensation of the movement graph rather than
+argued; and it carries a Part B foil -- a policy that walks to every object on the map and
+stops -- which loses on all five levels. Two of the three gaps g304 shipped with are closed
+for this game. The replay sits on top of that and proves the shipped rules are the rules
+that won.
+
+**Two traps for shrines, seasons and the herd.** Both cost time here and both were caught
+by checks written before the levels, which is the rule this brief already states.
+
+*An ability gate pair can make a level unwinnable in one line.* Ground behind wall needs
+the lantern; ground past rubble needs the boots; ground behind wall *inside* a boots-only
+region needs both at once and cannot be done. Two levels shipped that way and were caught,
+from measuring against what a booted body can reach instead of a bare one. Any game in
+this series with two exclusive abilities has this bug available to it.
+
+*A seal seals nothing if the rooms have already grown into each other.* Rubbling every
+corridor into a region did not cut it off, because the generated caves touched across
+their shared boundary. Shrines and seals is the same shape of problem with walls instead
+of rubble, and it will land there too.
+
 ## Answers to the first round of questions
 
 **Ids.** The ledger runs g001 to g303 with no gaps, so the six get the next block:
