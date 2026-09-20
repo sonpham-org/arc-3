@@ -87,7 +87,7 @@ FEEDBACK_FLAGS = (
     "has_text",
 )
 RATING_FIELDS = ("fun", "clarity", "difficulty", "novelty")
-TEXT_LIMITS = {"goal_guess": 2000, "liked": 2000, "disliked": 2000, "suggestion": 2000, "bugs": 2000}
+TEXT_LIMITS = {"comment": 4000, "goal_guess": 2000, "liked": 2000, "disliked": 2000, "suggestion": 2000, "bugs": 2000}
 COUNT_FIELDS = ("levels_completed", "levels_total", "actions", "resets", "undos", "seconds")
 OUTCOMES = ("won", "lost", "gave_up", "in_progress")
 VERDICTS = ("keep", "revise", "branch", "retire")
@@ -97,7 +97,6 @@ MAX_THUMB_BYTES = 512 * 1024
 MAX_PUBLICATION_BODY = 4 * 1024 * 1024
 MAX_FEEDBACK_BODY = 64 * 1024
 MAX_REASON = 500
-MAX_COMMENT = 2000
 MAX_DETAILS = 20_000
 MAX_PROVENANCE = 16 * 1024
 PUBLICATION_LOCK = 0x61726333  # "arc3": serializes version uploads so parents resolve in order
@@ -1148,74 +1147,10 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
         "games": game_notes,
         "feedback": feedback,
         "ideas": ideas,
-        "comments": list_comments(cursor, tree_id),
     }
 
 
-# ── Comments and the training tick ───────────────────────────────────────────
-
-
-def clean_comment(payload: Any) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise GamesProblem(400, "invalid_body", "expected a JSON object")
-    body = _text(payload.get("body"), "body", MAX_COMMENT, required=True)
-    item = {"game_id": _game_id(payload.get("game_id"), "game_id"), "body": body, "version_id": None}
-    if payload.get("version_id"):
-        item["version_id"] = _version_id(payload.get("version_id"), "version_id")
-        if item["version_id"].split("@")[0] != item["game_id"]:
-            raise GamesProblem(400, "version_game_mismatch", "version_id belongs to another game")
-    return item
-
-
-def insert_comment(cursor: Any, item: dict[str, Any], *, author: str) -> dict[str, Any]:
-    cursor.execute("SELECT tree_id FROM arc3_games WHERE game_id = %s", (item["game_id"],))
-    row = _one(cursor)
-    if not row:
-        raise GamesProblem(404, "game_not_found", f"no such game: {item['game_id']}")
-    tree_id = row["tree_id"]
-    cursor.execute(
-        """
-        INSERT INTO arc3_game_comments (tree_id, game_id, version_id, body, author)
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING comment_id, created_at
-        """,
-        (tree_id, item["game_id"], item["version_id"], item["body"], author),
-    )
-    added = _one(cursor)
-    return {
-        "apiVersion": 1,
-        "commentId": added["comment_id"],
-        "treeId": tree_id,
-        "gameId": item["game_id"],
-        "versionId": item["version_id"],
-        "body": item["body"],
-        "author": author,
-        "createdAt": iso(added["created_at"]),
-    }
-
-
-def list_comments(cursor: Any, tree_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Newest first. Team-only, like change notes."""
-
-    cursor.execute(
-        """
-        SELECT comment_id, game_id, version_id, body, author, hidden, created_at
-        FROM arc3_game_comments WHERE tree_id = %s AND NOT hidden
-        ORDER BY created_at DESC LIMIT %s
-        """,
-        (tree_id, max(1, min(int(limit), 200))),
-    )
-    return [
-        {
-            "commentId": row["comment_id"],
-            "gameId": row["game_id"],
-            "versionId": row["version_id"],
-            "body": row["body"],
-            "author": row["author"],
-            "createdAt": iso(row["created_at"]),
-        }
-        for row in _rows(cursor)
-    ]
+# ── The training tick ────────────────────────────────────────────────────────
 
 
 def set_train_ok(cursor: Any, version_id: str, good: bool, *, email: str) -> dict[str, Any]:
@@ -1437,10 +1372,10 @@ def insert_feedback(
             game_id, version_id, reviewer_class, reviewer, visitor_id, outcome,
             levels_completed, levels_total, actions, resets, undos, seconds,
             fun, clarity, difficulty, novelty, flags,
-            goal_guess, liked, disliked, suggestion, bugs, verdict, client, ip_hint
+            comment, goal_guess, liked, disliked, suggestion, bugs, verdict, client, ip_hint
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING feedback_id, created_at
         """,
@@ -1864,12 +1799,6 @@ class GamesApi:
                     return _json(200, next_version(cursor, query, reviewer=email))
             if path == f"{team}/feedback":
                 return self._jsonl(query, include_ip=True)
-            match = re.fullmatch(rf"{re.escape(team)}/trees/([^/]+)/comments", path)
-            if match:
-                with self._cursor() as cursor:
-                    tree = unquote(match.group(1))
-                    limit = int((query.get("limit") or ["50"])[0] or 50)
-                    return _json(200, {"apiVersion": 1, "treeId": tree, "comments": list_comments(cursor, tree, limit)})
             if path == f"{team}/training-set":
                 with self._cursor() as cursor:
                     return _json(200, training_set(cursor))
@@ -1891,24 +1820,6 @@ class GamesApi:
                         static_game_ids=self.static_game_ids,
                     )
                 return _json(201, result)
-            if path == f"{team}/comments":
-                item = clean_comment(self._read(read_body, headers, 8 * 1024))
-                with self._cursor(commit=True) as cursor:
-                    return _json(201, insert_comment(cursor, item, author=email))
-            match = re.fullmatch(rf"{re.escape(team)}/comments/(\d+)/hidden", path)
-            if match:
-                body = self._read(read_body, headers, 1024)
-                hidden = body.get("hidden") if isinstance(body, dict) else None
-                if not isinstance(hidden, bool):
-                    raise GamesProblem(400, "invalid_hidden", "send {\"hidden\": true|false}")
-                with self._cursor(commit=True) as cursor:
-                    cursor.execute(
-                        "UPDATE arc3_game_comments SET hidden = %s WHERE comment_id = %s RETURNING comment_id",
-                        (hidden, int(match.group(1))),
-                    )
-                    if not cursor.fetchone():
-                        raise GamesProblem(404, "comment_not_found", "no such comment")
-                return _json(200, {"apiVersion": 1, "commentId": int(match.group(1)), "hidden": hidden})
             match = re.fullmatch(rf"{re.escape(team)}/versions/([^/]+)/train", path)
             if match:
                 body = self._read(read_body, headers, 1024)

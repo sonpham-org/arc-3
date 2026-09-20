@@ -72,6 +72,18 @@ per-turn reasoning without improving clearance, the teacher is not the problem.
 
 ---
 
+## 20-Sep-2026 (later) — one page, one field: the review is the comment
+
+The review form asked for four ratings, eleven flags, five text boxes and a verdict, and the
+game page had a second comment box beside it. Son: "I don't need all of this, just one big
+comment field is enough." So a review is now one free-text comment (plus what the player did,
+which is captured automatically), the separate comments table is dropped again, and a game's
+page lists its reviews as its comments. The split "Play" and "Review" buttons are one action:
+you open a game, play it, and the comment box is on the same page. The queue view keeps a
+Previous game button, so you can step back without going home. (Claude Opus 5)
+
+---
+
 ## 20-Sep-2026 — comments on a game, and a tick that feeds the training pipeline
 
 The Games page now carries the team's comments on each game, newest first, stored in Postgres

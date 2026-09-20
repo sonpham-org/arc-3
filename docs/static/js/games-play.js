@@ -12,10 +12,10 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260920-comments";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-comments";
+import * as api from "./games-api.js?v=20260920-onepage";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-onepage";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
-import { createIdeasBoard } from "./games-ideas.js?v=20260920-comments";
+import { createIdeasBoard } from "./games-ideas.js?v=20260920-onepage";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -102,7 +102,6 @@ async function init() {
   $("undoBtn").addEventListener("click", doUndo);
   $("liveToggleBtn").addEventListener("click", toggleLive);
   $("liveFpsInput").addEventListener("input", (e) => { liveFps = +e.target.value; restartLiveTick(); });
-  $("reviewThisBtn").addEventListener("click", () => current && enterFeedback({ version: current.version }));
   $("feedbackBtn").addEventListener("click", () => enterFeedback());
   $("versionDrawer").querySelector(".drawer-close").addEventListener("click", closeVersionDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeVersionDrawer(); });
@@ -312,7 +311,6 @@ async function renderList() {
     loadNotes: api.treeNotes,
     whenVisible,
     onPlay: (tree, version) => playVersion(version, tree, null),
-    onReview: (tree, version) => enterFeedback({ version }),
     onNode: openDrawerFor,
   };
   for (const tree of data.trees) container.appendChild(renderTreeRow(tree, ctx));
@@ -359,7 +357,6 @@ async function openDrawerFor(tree, version, detail, notes) {
     team: !!me,
     signInUrl: api.signInUrl(),
     onPlay: (t, v, d) => playVersion(v, t, d),
-    onReview: (t, v) => enterFeedback({ version: v }),
     onHide: async (review, button) => {
       button.disabled = true;
       try {
@@ -487,40 +484,60 @@ function paintTrainTick(context) {
   };
 }
 
+function commentText(review) {
+  // A review is the comment. Older reviews predate the single field, so fall back to whatever
+  // their writer filled in.
+  const parts = [review.comment, review.liked, review.disliked, review.suggestion, review.bugs, review.goalGuess];
+  return parts.filter(Boolean).join(" — ");
+}
+
 function paintComments(context) {
   const list = $("commentList");
   list.replaceChildren();
-  const comments = context.notes.comments || [];
-  if (!comments.length) {
+  const reviews = (context.notes.feedback || []).filter((review) => !review.hidden && commentText(review));
+  if (!reviews.length) {
     const empty = document.createElement("li");
     empty.className = "comment-empty";
-    empty.textContent = "No comments yet.";
+    empty.textContent = "No comments yet. Play it and say what you think.";
     list.appendChild(empty);
   }
-  for (const comment of comments.slice(0, 12)) {
+  for (const review of reviews.slice(0, 12)) {
     const item = document.createElement("li");
     const who = document.createElement("span");
     who.className = "comment-who";
-    const about = comment.versionId && comment.versionId !== context.version.versionId ? ` · on v${comment.versionId.slice(-12)}` : "";
-    who.textContent = `${comment.author} · ${shortDate(comment.createdAt)}${about}`;
+    const about = review.versionId && review.versionId !== context.version.versionId ? ` · on v${review.versionId.slice(-12)}` : "";
+    const team = review.reviewerClass === "team" ? "" : " · public";
+    who.textContent = `${review.reviewer || "anonymous"} · ${shortDate(review.createdAt)}${about}${team}`;
     const body = document.createElement("p");
-    body.textContent = comment.body;
+    body.textContent = commentText(review);
     item.append(who, body);
     list.appendChild(item);
   }
   const form = $("commentForm");
   form.onsubmit = async (event) => {
     event.preventDefault();
-    const body = $("commentBody").value.trim();
-    if (!body) return;
+    const comment = $("commentBody").value.trim();
+    if (!comment) return;
     const error = $("commentError");
     error.hidden = true;
     const button = form.querySelector("button");
     button.disabled = true;
     try {
-      const added = await api.addComment({ game_id: context.version.gameId, version_id: context.version.versionId, body });
-      context.notes.comments = [added, ...(context.notes.comments || [])];
+      const played = player.telemetry();
+      await api.submitFeedback(true, {
+        game_id: context.version.gameId,
+        version_id: context.version.versionId,
+        comment,
+        outcome: played.state === "WIN" ? "won" : played.state === "GAME_OVER" ? "lost" : "in_progress",
+        levels_completed: played.levelsCompleted,
+        levels_total: played.levelsTotal ?? null,
+        actions: played.actions,
+        resets: played.resets,
+        undos: played.undos,
+        seconds: played.seconds,
+      });
       $("commentBody").value = "";
+      context.notes = await api.treeNotes(context.tree.treeId).catch(() => context.notes);
       paintComments(context);
     } catch (err) {
       error.hidden = false;

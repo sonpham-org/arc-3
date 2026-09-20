@@ -131,10 +131,11 @@ spam from the version drawer.
 Each game's page carries the team's running comments, newest first, and a tick on the version
 you are looking at:
 
-- **Comments** are free text about a game, stored in the Railway database
-  (`arc3_game_comments`). They are team-only to read and write, like change notes, because a
-  comment names mechanics and most families are played blind. A comment can be about the whole
-  game or about the exact version you were playing when you wrote it.
+- **Comments are reviews.** One free-text comment is the whole review, stored with the review
+  (`arc3_game_feedback.comment`) along with what the player actually did — levels, actions,
+  resets, time — which is captured automatically. A game's page lists them newest first. They
+  are team-only to read, like change notes, because a comment names mechanics and most
+  families are played blind.
 - **Good to train** marks that exact version as fit for the training pipeline, with who ticked
   it and when. It is per version, not per game, because the pipeline trains on exact bytes and
   the next version of the same game may not be fit at all.
