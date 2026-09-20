@@ -23,14 +23,19 @@ from railway.games_store import (
     GamesProblem,
     SlidingWindowLimiter,
     assign_lines,
+    clean_comment,
     clean_feedback,
     clean_publication,
     export_feedback,
+    insert_comment,
     insert_feedback,
+    list_comments,
     list_ideas,
     list_trees,
     next_version,
     publish_version,
+    set_train_ok,
+    training_set,
     tree_detail,
     tree_notes,
     update_idea,
@@ -241,8 +246,9 @@ class DatabaseTests(unittest.TestCase):
         cls.connect = staticmethod(lambda: psycopg2.connect(cls.url))
         with cls.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "DROP TABLE IF EXISTS arc3_game_idea_games, arc3_game_ideas, arc3_game_version_parents, "
-                "arc3_game_feedback, arc3_game_versions, arc3_games, arc3_game_trees CASCADE"
+                "DROP TABLE IF EXISTS arc3_game_comments, arc3_game_idea_games, arc3_game_ideas, "
+                "arc3_game_version_parents, arc3_game_feedback, arc3_game_versions, arc3_games, "
+                "arc3_game_trees CASCADE"
             )
             cursor.execute((ROOT / "railway" / "games_schema.sql").read_text(encoding="utf-8"))
         cls.data = Path(tempfile.mkdtemp(prefix="arc3-games-test-"))
@@ -356,6 +362,56 @@ class DatabaseTests(unittest.TestCase):
         column = self.query(list_ideas, {"source": ["test"], "status": ["dropped"]})["ideas"]
         self.assertEqual([(i["ideaId"], i["pitch"], i["updatedBy"]) for i in column],
                          [("test:three", "Reworded.", "son@example.com")])  # re-seeding never undoes a move
+
+    def test_comments_and_the_training_tick(self) -> None:
+        self.publish(upload("c1-v1", "a", created_at="2026-09-05T00:00:00Z", family="evolution"))
+        self.publish(upload("c1-v1", "b", created_at="2026-09-06T00:00:00Z"))
+        first, second = vid("c1-v1", "a"), vid("c1-v1", "b")
+
+        # A comment is free text about a game, optionally about one version.
+        item = clean_comment({"game_id": "c1-v1", "version_id": second, "body": " level 2 drags "})
+        self.assertEqual(item["body"], "level 2 drags")
+        added = self.query(insert_comment, item, author="son@example.com")
+        self.assertEqual((added["treeId"], added["versionId"]), ("c1-v1", second))
+        self.query(insert_comment, clean_comment({"game_id": "c1-v1", "body": "the palette works"}), author="son@example.com")
+
+        comments = self.query(list_comments, "c1-v1")
+        self.assertEqual([c["body"] for c in comments], ["the palette works", "level 2 drags"])  # newest first
+        self.assertEqual(comments[0]["author"], "son@example.com")
+
+        for bad, code in (
+            ({"game_id": "c1-v1"}, "missing_body"),
+            ({"game_id": "c1-v1", "body": ""}, "missing_body"),
+            ({"game_id": "c1-v1", "body": "x" * 2001}, "body_too_long"),
+            ({"game_id": "c1-v1", "body": "x", "version_id": vid("other", "a")}, "version_game_mismatch"),
+        ):
+            with self.subTest(code=code):
+                with self.assertRaises(GamesProblem) as caught:
+                    clean_comment(bad)
+                self.assertEqual(caught.exception.code, code)
+        with self.assertRaises(GamesProblem) as caught:
+            self.query(insert_comment, clean_comment({"game_id": "nope", "body": "hi"}), author="son@example.com")
+        self.assertEqual(caught.exception.code, "game_not_found")
+
+        # The tick is per version: ticking the new one leaves the old one alone.
+        self.assertEqual(self.query(training_set)["count"], 0)
+        ticked = self.query(set_train_ok, second, True, email="son@example.com")
+        self.assertEqual((ticked["trainOk"], ticked["trainOkBy"]), (True, "son@example.com"))
+        chosen = self.query(training_set)
+        self.assertEqual([v["versionId"] for v in chosen["versions"]], [second])
+        self.assertTrue(chosen["versions"][0]["sourceUrl"].startswith(f"/data/_games/c1-v1/{second[-12:]}/"))
+
+        notes = self.query(tree_notes, "c1-v1")
+        self.assertTrue(notes["notes"][second]["trainOk"])
+        self.assertIsNone(notes["notes"][first]["trainOk"])
+        self.assertEqual(len(notes["comments"]), 2)
+
+        # Unticking clears the name with it, and an unknown version is a 404.
+        self.assertFalse(self.query(set_train_ok, second, False, email="son@example.com")["trainOk"])
+        self.assertEqual(self.query(training_set)["count"], 0)
+        with self.assertRaises(GamesProblem) as caught:
+            self.query(set_train_ok, "c1-v1@000000000000", True, email="son@example.com")
+        self.assertEqual(caught.exception.code, "version_not_found")
 
 
 if __name__ == "__main__":

@@ -117,6 +117,15 @@ export const submitFeedback = (team, payload) => postJson(`${team ? TEAM : PUBLI
 export const setFeedbackHidden = (feedbackId, hidden) =>
   postJson(`${TEAM}/feedback/${encodeURIComponent(feedbackId)}/hidden`, { hidden });
 // The ideas board (team-only: an idea names its mechanic).
+// Comments and the training tick are team-only, like change notes: a comment names mechanics,
+// and most families are played blind.
+export const listComments = (treeId, limit = 50) =>
+  getJson(`${TEAM}/trees/${encodeURIComponent(treeId)}/comments?limit=${limit}`);
+export const addComment = (payload) => postJson(`${TEAM}/comments`, payload);
+export const setCommentHidden = (commentId, hidden) => postJson(`${TEAM}/comments/${commentId}/hidden`, { hidden });
+export const setTrainOk = (versionId, good) =>
+  postJson(`${TEAM}/versions/${encodeURIComponent(versionId)}/train`, { good });
+
 export const listIdeas = (params) => getJson(`${TEAM}/ideas?${new URLSearchParams(params)}`);
 export const updateIdea = (ideaId, change) => postJson(`${TEAM}/ideas/${encodeURIComponent(ideaId)}`, change);
 

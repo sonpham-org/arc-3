@@ -126,25 +126,71 @@ Anyone can send one. Signed-in reviews are filed as `team` and always rank ahead
 ones in every list, summary and export; public ones are rate limited and the team can hide
 spam from the version drawer.
 
+### Comments, and "good to train"
+
+Each game's page carries the team's running comments, newest first, and a tick on the version
+you are looking at:
+
+- **Comments** are free text about a game, stored in the Railway database
+  (`arc3_game_comments`). They are team-only to read and write, like change notes, because a
+  comment names mechanics and most families are played blind. A comment can be about the whole
+  game or about the exact version you were playing when you wrote it.
+- **Good to train** marks that exact version as fit for the training pipeline, with who ticked
+  it and when. It is per version, not per game, because the pipeline trains on exact bytes and
+  the next version of the same game may not be fit at all.
+
+The pipeline pulls the ticked set with the publish token, so it needs no browser session:
+
+```bash
+curl -H "Authorization: Bearer $ARC3_PUBLISH_TOKEN"   https://arc3.sonpham.net/api/v1/games/training-set
+```
+
+It answers `{"count": N, "versions": [{"versionId", "gameId", "family", "sha256", "sourceUrl",
+"author", "markedBy", "markedAt"}, ...]}`, so a training run can fetch each source by its
+content-addressed URL and know exactly which bytes a person approved.
+
 ### Publishing a game version (no deploy)
 
 Like traces, game versions go through the Railway API with `ARC3_PUBLISH_TOKEN`, never
-through Git or a site deploy:
+through Git or a site deploy. The server stores whatever bytes it is given and never runs
+game code, so the check happens before upload: `publish` refuses a source unless
+`scripts/vet_game.py` passed for exactly those bytes. The vetting gate plays the game in the
+site's engine (arcengine 0.9.3). It checks that the game:
+- loads, and a recorded winning trace clears every level;
+- replays identically, from scratch and from a deep copy (Undo);
+- restarts a level on RESET without losing earlier levels;
+- has a short level 1 that can't be lost, and no level where random play dies in its first
+  10 actions;
+- has levels 2 and up that random play can't clear;
+- keeps every action under 60 frames.
+
+The report's summary rides along in the version's provenance. The gate can't judge fun,
+clarity or novelty; the evolution loop's reviews do that ([research/game-evolution/](research/game-evolution/README.md)).
 
 ```bash
+# Vet first: a winning trace per level, and the profile (seed = 3+ levels, glowup = 7-12).
+python scripts/vet_game.py --source path/to/g009.py --trace g009.trace.json --profile glowup \
+    --out g009.vet.json --strips strips/
+
 # Every time GPT, Claude or a person evolves a game: one version, one main reason, and who
 # primarily drove it (--driver gpt | claude | human).
 python scripts/publish_game_versions.py publish --game g009 --source path/to/g009.py \
-    --driver claude --model "Claude Opus 5" --reason "Walls now show which side is sticky"
+    --driver claude --model "Claude Opus 5" --reason "Walls now show which side is sticky" \
+    --vet-report g009.vet.json
 
 # A new game grown from an old one: a new id, with the version it came from.
 python scripts/publish_game_versions.py publish --game g512 --source g512.py --family contributed-glowup \
-    --parent q041-v1@5172e6e8f014 --driver gpt --model "GPT-6 (Codex)" --reason "Square-grid remake"
+    --parent q041-v1@5172e6e8f014 --driver gpt --model "GPT-6 (Codex)" --reason "Square-grid remake" \
+    --vet-report g512.vet.json
 
 # A crossover: repeat --parent (the first places it in its tree); --idea links a board idea.
 python scripts/publish_game_versions.py publish --game ng02 --source ng02.py --family custom \
     --parent ng01@4b3379dc06bb --parent hv01@e603b9777756 --idea anthropic:a001 \
-    --driver human --reason "Negative's inversion inside Hive's swarm"
+    --driver human --reason "Negative's inversion inside Hive's swarm" --vet-report ng02.vet.json
+
+# Try a game the way a first-time player would (the loop's cold-start test).
+python scripts/play_game.py start --session try1 --source path/to/g009.py
+python scripts/play_game.py act --session try1 right
 
 # Everything in docs/static/games/ except the retired ai-generated set, with its history
 # rebuilt from this repo's git log. Idempotent: re-run it after any commit that changes

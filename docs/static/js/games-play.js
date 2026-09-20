@@ -12,10 +12,10 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260919-ideas";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260919-ideas";
+import * as api from "./games-api.js?v=20260920-comments";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-comments";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
-import { createIdeasBoard } from "./games-ideas.js?v=20260919-ideas";
+import { createIdeasBoard } from "./games-ideas.js?v=20260920-comments";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -435,6 +435,7 @@ async function playVersion(version, tree, detail) {
   const context = { version, tree, detail };
   current = context;
   renderVersionSidebar();
+  renderTeamPanels(context);
   await loadVersion(version, { blind: false });
   if (!detail && !version.static) {
     try {
@@ -444,6 +445,90 @@ async function playVersion(version, tree, detail) {
       /* the sidebar just lists what it has */
     }
   }
+}
+
+// The team's panels under the version list: the training tick for the version on screen, and
+// the game's comments, newest first. Signed out, neither exists (both are team-only reads).
+async function renderTeamPanels(context) {
+  const box = $("commentsBox");
+  const trainBox = $("trainBox");
+  box.hidden = trainBox.hidden = !me || !context.version.versionId;
+  if (box.hidden) return;
+  if (!context.notes) {
+    try {
+      context.notes = await api.treeNotes(context.tree.treeId);
+    } catch (err) {
+      context.notes = { notes: {}, comments: [] };
+    }
+  }
+  if (current !== context) return;
+  paintTrainTick(context);
+  paintComments(context);
+}
+
+function paintTrainTick(context) {
+  const note = (context.notes.notes || {})[context.version.versionId] || {};
+  const tick = $("trainOk");
+  tick.checked = note.trainOk === true;
+  $("trainWho").textContent = note.trainOk && note.trainOkBy ? `${note.trainOkBy}, ${shortDate(note.trainOkAt)}` : "";
+  tick.onchange = async () => {
+    const good = tick.checked;
+    tick.disabled = true;
+    try {
+      const result = await api.setTrainOk(context.version.versionId, good);
+      context.notes.notes[context.version.versionId] = { ...note, trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt };
+      $("trainWho").textContent = result.trainOk ? `${result.trainOkBy}, ${shortDate(result.trainOkAt)}` : "";
+    } catch (err) {
+      tick.checked = !good; // the tick means what the server holds, not what was clicked
+      $("trainWho").textContent = `could not save (${err.message})`;
+    } finally {
+      tick.disabled = false;
+    }
+  };
+}
+
+function paintComments(context) {
+  const list = $("commentList");
+  list.replaceChildren();
+  const comments = context.notes.comments || [];
+  if (!comments.length) {
+    const empty = document.createElement("li");
+    empty.className = "comment-empty";
+    empty.textContent = "No comments yet.";
+    list.appendChild(empty);
+  }
+  for (const comment of comments.slice(0, 12)) {
+    const item = document.createElement("li");
+    const who = document.createElement("span");
+    who.className = "comment-who";
+    const about = comment.versionId && comment.versionId !== context.version.versionId ? ` · on v${comment.versionId.slice(-12)}` : "";
+    who.textContent = `${comment.author} · ${shortDate(comment.createdAt)}${about}`;
+    const body = document.createElement("p");
+    body.textContent = comment.body;
+    item.append(who, body);
+    list.appendChild(item);
+  }
+  const form = $("commentForm");
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const body = $("commentBody").value.trim();
+    if (!body) return;
+    const error = $("commentError");
+    error.hidden = true;
+    const button = form.querySelector("button");
+    button.disabled = true;
+    try {
+      const added = await api.addComment({ game_id: context.version.gameId, version_id: context.version.versionId, body });
+      context.notes.comments = [added, ...(context.notes.comments || [])];
+      $("commentBody").value = "";
+      paintComments(context);
+    } catch (err) {
+      error.hidden = false;
+      error.textContent = `Could not post (${err.message}).`;
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 function renderVersionSidebar() {

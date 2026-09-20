@@ -70,6 +70,50 @@ per-turn reasoning without improving clearance, the teacher is not the problem.
 
 ---
 
+---
+
+## 20-Sep-2026 — comments on a game, and a tick that feeds the training pipeline
+
+The Games page now carries the team's comments on each game, newest first, stored in Postgres
+(`arc3_game_comments`) and team-only like change notes. Beside them, a "Good to train" tick on
+the version being played records that a person judged those exact bytes fit for training, with
+who and when (`train_ok` on `arc3_game_versions`).
+
+The training pipeline reads the ticked set through `GET /api/v1/games/training-set` with the
+publish token, which answers each version's content-addressed source URL. The tick is per
+version, not per game: the pipeline trains on exact bytes, and the next version of the same
+game may not be fit at all. (Claude Opus 5)
+
+---
+
+## 19-Sep-2026 — the game evolution loop, recovered and reformed; uploads are vetted
+
+Codex's pair glow-up loop had only ever lived in a local workspace. Its program, rubric,
+QC, recovery and isolation rules were in two unpushed commits, and its job was paused.
+They are now in `research/game-evolution/recovered/`. The September fix rounds and the
+clarity loop that shaped them are summarised alongside. Game-specific records stay out,
+because those games are shown blind. The loop is reformed as v4 (`research/game-evolution/README.md`)
+into four steps: grow, pair far apart, glow up, and make it playable. The last step is new.
+It makes the two fix rounds permanent: games must not die right away, level 1 must teach,
+and objects move whole and briefly.
+
+`scripts/vet_game.py` is the new vetting gate. Before this, the upload API accepted any
+bytes and the CLI only tried to draw a thumbnail. The gate plays the game in the site's
+engine and checks:
+- a winning trace clears every level;
+- determinism and Undo-safety;
+- RESET;
+- level-1 length and safety;
+- early deaths;
+- random-play resistance on levels 2 and up;
+- frames per action.
+
+It writes a report bound to the source's sha256. `publish_game_versions.py publish` now
+refuses without a passing report for the same bytes, and records its summary in the
+version's provenance. `scripts/play_game.py` is the cold-start play tool, and
+`scripts/evolution_loop.py` does the pool arithmetic: status, nearest games, anchors, pairs,
+and the ledger. (Claude Opus 5)
+
 ## 19-Sep-2026 — the slippery seven's documentation hole is marked closed
 
 `docs/trace-findings/2026-09-17-the-slippery-seven.md` §7 still said dc22, m0r0 and tr87 had

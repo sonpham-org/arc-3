@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **Author:** Mark Barney / Claude Opus 5
-**Date:** 05-September-2026 (as66 test-only note added 17-September-2026, Claude Opus 5; game-version rule added 18-September-2026, Claude Opus 5)
+**Date:** 05-September-2026 (as66 test-only note added 17-September-2026, Claude Opus 5; game-version rule added 18-September-2026, Claude Opus 5; vetting gate and evolution loop added 19-September-2026, Claude Opus 5)
 **Purpose:** What an AI agent must know before touching this project, and the specific
 false assumptions that agents keep making. Every item below is something that has actually
 gone wrong, not a hypothetical.
@@ -142,9 +142,17 @@ The Games page draws each game as a tree of versions. When you change a game, pu
 new source as a version, with the one main reason for the change and the model that made it:
 
 ```bash
+python scripts/vet_game.py --source <file.py> --trace <file.trace.json> --profile glowup --out <file.vet.json>
 python scripts/publish_game_versions.py publish --game <id> --source <file.py> \
-    --driver claude --model "Claude Opus 5" --reason "<the one thing this version changes>"
+    --driver claude --model "Claude Opus 5" --reason "<the one thing this version changes>" \
+    --vet-report <file.vet.json>
 ```
+
+`publish` refuses a source that has no passing `vet_game.py` report for those exact bytes: the
+vetting gate is the only machine check between a file and the public Games page. The loop that
+decides *what* to change (grow, pair far apart, glow up, make it playable) is
+[research/game-evolution/README.md](research/game-evolution/README.md); its author agents
+follow [AUTHOR_BRIEF.md](research/game-evolution/AUTHOR_BRIEF.md).
 
 `--driver` is who **primarily drove** the version: `gpt`, `claude`, or `human` (a person
 actively tuned it). A new game grown out of an old one gets a **new id** and
