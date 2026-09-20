@@ -10,7 +10,7 @@ from the Games page's public trees API and the private mechanic descriptors, the
   anchor   new-seed mode: sample the anchor for a new seed from its 5 nearest games
   pair     normal mode: least-improved first game, partner from the farthest 20%
   draw     step 3: three mechanic-family candidates for a game, weighted 1/(1+adopted+drawn)
-  publish  vet with the step's profile, upload through publish_game_versions.py, log it
+  publish  vet and curve-score with the step's profile, upload, and log it
   log      append one event to the public ledger (ids only)
 
 Distance follows Codex's v3 sampler (weighted overlap of mechanic phrases, primary x3 and
@@ -252,10 +252,10 @@ def cmd_draw(args) -> int:
     return 0
 
 
-STEP_PROFILES = {"seed": "seed", "glowup": "glowup", "playability": "glowup"}
+STEP_PROFILES = {"seed": "seed", "glowup": "glowup", "playability": "glowup", "curve": "glowup"}
 # Publishing names its target explicitly: the publish CLI falls back to production's token.
 TARGETS = {"local": "http://127.0.0.1:8090", "production": "https://arc3.sonpham.net"}
-STEP_PREFIX = {"seed": "Seed:", "glowup": "Glow-up:", "playability": "Playability:"}
+STEP_PREFIX = {"seed": "Seed:", "glowup": "Glow-up:", "playability": "Playability:", "curve": "Curve:"}
 
 
 def cmd_publish(args) -> int:
@@ -280,6 +280,17 @@ def cmd_publish(args) -> int:
                    "failed": sorted(k for k, c in report.get("checks", {}).items() if c["status"] == "fail")})
         raise SystemExit(f"{args.game}: vet failed; nothing published")
     api_url = TARGETS[args.target]
+    # Step 5: past the seed, a version also has to climb (research/game-evolution/README.md).
+    curve_path = folder / f"curve.{args.step}.json"
+    curve = subprocess.run([sys.executable, str(ROOT / "scripts" / "curve_score.py"), "--trace", str(trace),
+                            "--metadata", str(folder / "metadata.json"), "--source", str(source),
+                            "--profile", profile, "--out", str(curve_path)], capture_output=True, text=True)
+    curve_report = json.loads(curve_path.read_text(encoding="utf-8")) if curve_path.exists() else {}
+    print(curve.stdout.strip().splitlines()[-1] if curve.stdout.strip() else curve.stderr.strip())
+    if args.step != "seed" and curve_report.get("verdict") != "pass" and not args.allow_flat:
+        log_event({"event": "curve", "step": args.step, "game_id": args.game, "verdict": "fail",
+                   "score": curve_report.get("score"), "failed": sorted(k for k, c in curve_report.get("checks", {}).items() if c["status"] == "fail")})
+        raise SystemExit(f"{args.game}: the difficulty curve scores {curve_report.get('score')}/100; nothing published (--allow-flat overrides)")
     command = [sys.executable, str(ROOT / "scripts" / "publish_game_versions.py"), "--api-url", api_url, "publish",
                "--game", args.game, "--source", str(source), "--driver", args.driver, "--model", args.model,
                "--reason", args.reason, "--vet-report", str(report_path)]
@@ -298,7 +309,9 @@ def cmd_publish(args) -> int:
     result = json.loads(text[text.rindex("{", 0, text.rindex('"status"')):])
     record = log_event({"event": "publish", "step": args.step, "game_id": args.game, "version_id": result["versionId"],
                         "parent": args.parent, "ideas": args.idea or [], "target": args.target,
-                        "status": result.get("status"), "vet_warnings": report.get("warnings", [])})
+                        "status": result.get("status"), "vet_warnings": report.get("warnings", []),
+                        "curve": {"score": curve_report.get("score"), "verdict": curve_report.get("verdict"),
+                                  "trend": curve_report.get("trend"), "actions_per_level": curve_report.get("actions_per_level")}})
     print(json.dumps(record))
     return 0
 
@@ -348,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     pub.add_argument("--driver", default="claude", choices=("gpt", "claude", "human", "other"))
     pub.add_argument("--model", default="Claude Opus 5")
     pub.add_argument("--time-budget", type=float, default=180.0)
+    pub.add_argument("--allow-flat", action="store_true", help="publish even though the difficulty curve fails; the score is still recorded")
     log = sub.add_parser("log")
     log.add_argument("json")
     args = parser.parse_args(argv)

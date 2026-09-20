@@ -66,15 +66,43 @@ This is a hard rule; it exists because earlier games shipped embarrassing motion
 - **Settled.** The last frame of an action is the settled state. Level transitions and RESET
   are instant and distinct from moves.
 
-## Levels
+## Levels, and the curve they climb
 
 - **Seed (loop step 1):** 3-5 levels. Level 1 teaches the idea; each later level adds one
   real new demand (a new component, rule, constraint, or combination), never just a bigger
   board. A seed may be plain, but not broken, cloned, or cosmetic.
-- **Glow-up (steps 3-4):** 7-12 levels. Levels 2-6 each introduce a genuine demand; at least
-  two late levels combine three or more earlier demands; no more than two consecutive levels
-  are larger instances of the same task. From level 2 on, random play (250 actions, retrying
+- **Glow-up (steps 3-4):** 7-12 levels. From level 2 on, random play (250 actions, retrying
   after any loss) must not clear a level.
+- **The curve (step 5), which applies from the glow-up on.** These games are training data:
+  a game whose levels sit at one difficulty teaches its idea once and repeats it. Give each
+  level a role, in this order, and declare it:
+
+  | Role | Levels | What the level is |
+  |---|---:|---|
+  | `teach` | 1 | the mechanic is visible; a couple of actions win; nothing can be lost |
+  | `stretch` | 0-2 | the same mechanic asked for harder: bigger map, more pieces, longer chain |
+  | `introduce` | 1 | a second mechanic, taught as plainly as the first |
+  | `combine` | 1-2 | both mechanics in one problem, harder than either alone |
+  | `turn` | 1 | one or two more mechanics, or a learned rule changes, or the view hides something relied on |
+  | `compose` | 2 | everything so far, at full size |
+  | `finale` | 0-1 | the hardest level; it may carry one last mechanic |
+
+  `introduce` and `combine` may run twice in a longer game. Every mechanic a level introduces
+  must come back later. Level 1 stays at most 10 actions and at most half the median level,
+  the work per level must climb across the game (rank correlation at least 0.5, the last
+  third averaging about 1.6x the first), no three levels in a row sit at one size, and the
+  last level is the longest.
+
+  Put it in `metadata.json` as `curriculum`, one entry per level:
+
+  ```json
+  {"level": 4, "role": "combine", "introduces": [], "uses": ["tide", "two-ended-load"],
+   "why_harder": "the tide now closes the bar the level-3 route depended on"}
+  ```
+
+  Then run `python D:/codex-work/arc3-evolution-loop-20260919/scripts/curve_score.py --trace <id>.trace.json --metadata metadata.json --out curve.json`.
+  It must reach 75/100. Actions per level is only a proxy: a long dull level is long, not
+  hard, so your `why_harder` lines have to survive a reviewer reading them against the levels.
 
 ## Files you deliver (in your folder only)
 
@@ -83,7 +111,8 @@ This is a hard rule; it exists because earlier games shipped embarrassing motion
   `{"format": "arc3-trace/1", "levels": [{"actions": [4, 4, 2, [6, 31, 20], 5]}, ...]}`,
   one list per level. Use 1-5 and 7 for keys, `[6, x, y]` for a click. Each list must
   end exactly on the action that clears its level.
-- `metadata.json`: `primary`, `secondary` (list), `core_verb`, `controlled_subject`
+- `metadata.json`: `curriculum` (from the glow-up on: one entry per level, see above), plus
+  `primary`, `secondary` (list), `core_verb`, `controlled_subject`
   (avatar | object | cursor | field | network | world | multiple-avatars), `control`
   (keyboard-4dir | keyboard-4dir+action | click | keyboard+click | action-only), `topology`,
   `temporal`, `information`, `objective`, `loss`, `levels`, `visual` (12 words max), and
@@ -92,6 +121,7 @@ This is a hard rule; it exists because earlier games shipped embarrassing motion
 - `design.md`: at most one page. The idea in one sentence; what each level adds; how level 1
   teaches it; and what you deliberately left out.
 - `vet.json` + `strips/`: the output of the gate below, on your final file.
+- `curve.json`: `curve_score.py`'s report, from the glow-up on.
 
 ## The gate you run before you stop
 

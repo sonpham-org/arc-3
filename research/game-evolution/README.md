@@ -6,13 +6,15 @@ Companions: [AUTHOR_BRIEF.md](AUTHOR_BRIEF.md) (what every author agent follows)
 rule below came from, including the v3 originals verbatim).
 
 The loop makes the game set bigger, better, and more different from itself, one published
-version at a time. It has four steps, always in this order:
+version at a time. It has five steps, always in this order:
 
 1. **Grow**: when most games have been improved, add new seed games on new topics.
 2. **Pair far apart**: sample two games that are as different as possible.
 3. **Glow up**: rebuild each sampled game to the quality bar, pulling the pair further apart.
 4. **Make it playable**: the game must not die right away, must be clear from its first
    level, and must move objects without silly animation.
+5. **Shape the curve**: every level asks for more than the one before, and the game climbs
+   from a level 1 that teaches to a finale that composes everything.
 
 Every step ends with a published version on the Games page (arc3.sonpham.net), with its
 reason and its primary driver, so each game's tree shows how it evolved.
@@ -143,6 +145,58 @@ and every new seed before it counts as improved.
 QC results are `provisional_pass` when only simulated testers were used and
 `human_confirmed` only after a real first-time player passes. A real player's failure
 reopens the game. Simulated reviewers are never reported as human evidence.
+
+## Step 5: shape the curve
+
+The last step, and the one that decides whether a game is worth training on. A game whose
+levels all sit at one difficulty teaches its idea once and then repeats it. A game that
+jumps straight to hard teaches nothing. **Every level should ask for more than the one
+before, and the game as a whole must climb.** Not every step has to be a jump, but the game
+must never drift sideways for long.
+
+**The shape.** Each level takes one role, in this order:
+
+| Role | Levels | What the level is |
+|---|---:|---|
+| `teach` | 1 | The mechanic is visible. A couple of actions win. Nothing can be lost. |
+| `stretch` | 0-2 | The same mechanic, asked for harder: a bigger map, more pieces to handle, a longer chain of the same reasoning. |
+| `introduce` | 1 | A second mechanic arrives, taught as plainly as the first. |
+| `combine` | 1-2 | Both mechanics in one problem, harder than either alone. |
+| `turn` | 1 | One or two more mechanics arrive, or a rule the player has learned changes under them, or the view hides something they were relying on. |
+| `compose` | 2 | Everything so far, at full size. |
+| `finale` | 0-1 | The hardest level in the game. It may carry one last mechanic. |
+
+`introduce` and `combine` may run a second time in a longer game, which is how a 7-12 level
+game fills out. Every mechanic a level introduces must come back later: a mechanic used once
+is a detour, not a curriculum.
+
+**Declare it.** `metadata.json` carries a `curriculum`, one entry per level:
+
+```json
+{"level": 4, "role": "combine", "introduces": [], "uses": ["tide", "two-ended-load"],
+ "why_harder": "the tide now closes the bar the level-3 route depended on"}
+```
+
+**Measure it.** `scripts/curve_score.py --trace <trace> --metadata <metadata.json>` reads the
+winning trace's actions per level and scores, out of 100:
+
+| Check | Points | Pass |
+|---|---:|---|
+| `shape` | 25 | the declared roles read as the shape above, every mechanic reused, every level after the first says what it asks for |
+| `rising` | 25 | rank correlation between level order and actions is at least 0.5 |
+| `teach_first` | 15 | level 1 is at most 10 actions and at most half the median level |
+| `growth` | 15 | the last third averages 1.6x the first third |
+| `no_plateau` | 10 | no three levels in a row within 12% of each other |
+| `finale` | 10 | the last level is the game's longest, or within 10% of it |
+
+A version passes at **75** with `rising`, `teach_first` and (past the seed stage) `shape`
+all green. Actions per level is a proxy, not difficulty itself: a long dull level is long,
+not hard. So the measured score never stands alone — a reviewer reads the declared
+`why_harder` lines against the levels and says whether each one really asks for more.
+
+**Publish:** `--kind revision`, reason `Curve: <what the levels now ask, in order>`. Say what
+changed from the version before, because that reason is what a reader sees when they hover
+the node in the game's tree.
 
 ## Publishing, and the vetting gate
 

@@ -71,6 +71,22 @@ moves, so all distance must come from changes to it.
 | A newcomer gets it | cold start: first meaningful action ≤ 60 s, level 1 ≤ 5 min, rule explained |
 | It can be said simply | English QC: max of four scores ≤ 0.20 |
 
+## Difficulty curve (step 5): pass at 75, measured by `scripts/curve_score.py`
+
+| Check | Points | Pass |
+|---|---:|---|
+| `shape` | 25 | the declared roles read `teach, stretch(0-2), [introduce, combine(1-2)](1-2), turn, compose(2), finale(0-1)`; every introduced mechanic is used again; every level after the first says what it asks that the last did not |
+| `rising` | 25 | rank correlation between level order and actions in the winning trace is at least 0.5 |
+| `teach_first` | 15 | level 1 is at most 10 actions and at most half the median level |
+| `growth` | 15 | the last third of levels averages 1.6x the actions of the first third |
+| `no_plateau` | 10 | no three levels in a row within 12% of one another |
+| `finale` | 10 | the last level is the longest, or within 10% of it |
+
+`rising`, `teach_first` and `shape` are hard gates past the seed stage. The measure is a
+proxy: a long dull level scores as a hard one, so a reviewer reads each level's declared
+`why_harder` against the level itself and says whether it truly asks for more. A game that
+scores well and reads as flat has failed, whatever the number says.
+
 ## English QC scale (0 = simple English, 1 = slop)
 
 | Score | Meaning |
