@@ -21,6 +21,43 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 20-Sep-2026 — Games play view: a per-game tuning panel in the sidebar
+
+`docs/static/games/params/*.json`, `docs/static/js/games-tuning.js`, wiring in
+`games-play.js`, `index.html` and `games.css`. Five games only -- mx78, mc18, br10, mb64,
+hg51 -- and no backend change, no new endpoint, no generator.
+
+The panel turns a game's own module-level constants while it is on screen. A knob rewrites the
+constant's line in the source text the player was loaded from and hands the whole module back
+to `gameLoad()`, which re-execs it in the Pyodide worker; derived constants recompute for free
+because the module is re-imported (hg51's `MAST = 3 * NOTCH + 2`). Which constants a game
+offers is **data, not code** -- one JSON file per game, so controlled procedural generation can
+later write these files rather than patch a renderer.
+
+What keeps it from lying about a catalog that moves under it:
+
+- **Drift.** The evolution loop rewrites these games (mx78 reached v2 and mc18 v3 while this
+  was being written). Every knob is matched against the bytes actually fetched, and one that no
+  longer resolves to exactly one line-anchored scalar assignment is dropped from the panel
+  rather than applied blind. An evolved game degrades to fewer sliders, never to a broken panel.
+- **What will not be patched.** Tuple unpacks (`CELL, GRID, CAP = 8, 8, 3`) and expressions
+  (`CELL = 8 if hard else 6`) never match, so they cannot be silently rewritten into something
+  that drops a branch. This is why **mc18 exposes no knobs at all**: it declares its geometry
+  and palette entirely in tuple-unpack form. The panel says so instead of inventing one.
+- **Rollback.** A bad value is a Python exception, not something we could have predicted. The
+  last set of values that loaded is kept; a throw restores it, reloads with it, and prints the
+  exception's last line in the panel. The player is never stranded on "FAILED TO LOAD" -- which
+  is exactly why this path does not go through `loadVersion()`.
+
+Ranges are measured, not guessed. Every knob in every spec was driven to each value in its
+declared span in a real browser: all of them load. Three first guesses did not survive that and
+were corrected -- hg51's `CELL` loads **only** at its published 5 (the level rows are written
+five pixels per cell), `X0` gives out past 5, `HUD_Y` below 49 -- and hg51's `COLS` turned out
+to be declared and never read, so it is not offered. Knob counts: mx78 8, br10 9, mb64 12,
+hg51 5, mc18 0.
+
+---
+
 ## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
 
 `docs/plans/2026-09-19-arc3-lora-round4-spec.md`. Spec only — no training, no eval, no GPU

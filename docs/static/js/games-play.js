@@ -16,6 +16,7 @@ import * as api from "./games-api.js?v=20260920-rail";
 import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-rail";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
+import { createTuning } from "./games-tuning.js?v=20260920-tuning";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -40,6 +41,7 @@ let listToken = 0;
 let current = null;         // the play view's context: { version, tree, detail }
 let active = null;          // the version loaded in the player, in either view
 let loadToken = 0;
+let tuning = null;          // the sidebar's per-game constant panel (games-tuning.js)
 let state = {};             // {grid, state, levels_completed, win_levels, available_actions, tile_scale}
 let stepCount = 0;
 let tileMode = "solid";     // "solid" | "tiles" | "random" -- see games/arc_tiles.py
@@ -108,6 +110,7 @@ async function init() {
   setupBrowseControls();
   setupTileBar();
   setupFilterBar();
+  tuning = createTuning({ root: $("tuningPanel"), apply: applyTunedSource });
   setupCanvasInput();
   setupKeyboard();
   setInterval(() => { if (active && stageVisible() && !document.hidden) telemetry.seconds += 1; }, 1000);
@@ -165,6 +168,9 @@ function showBrowse() {
 function enterFeedback(options = {}) {
   closeVersionDrawer();
   stopLiveIfRunning();
+  // Blind play: the stage moves into #feedbackView, the sidebar does not. Tear the panel down
+  // anyway so a game's constants can never be a second way to tell which game is on screen.
+  if (tuning) tuning.detach();
   showView("feedback");
   if (location.hash !== "#feedback") history.replaceState(null, "", "#feedback");
   feedback.enter(options);
@@ -660,7 +666,9 @@ async function loadVersion(version, { blind }) {
   $("engineLoading").hidden = gameEngineReady();
 
   active = null;
+  tuning.detach();
   let loaded;
+  let sourceText = "";
   try {
     await ensureGameEngine();
     const source = await api.fetchSource(version.sourceUrl);
@@ -669,6 +677,7 @@ async function loadVersion(version, { blind }) {
     if (token !== loadToken) return null;
     state = next;
     active = version;
+    sourceText = source.text;
     loaded = { sha256: source.sha256 };
   } catch (err) {
     if (token !== loadToken) return null;
@@ -699,7 +708,48 @@ async function loadVersion(version, { blind }) {
   updateTileBar();
   updateFilterBar();
   buildLevelStrip();
+  // The panel is built against the bytes just loaded, so a knob the evolution loop has since
+  // renamed or folded into an expression simply is not offered. Fire and forget: it fetches its
+  // own spec, and a game without one leaves the sidebar exactly as it was.
+  tuning.attach(version, sourceText, { blind: hideName }).catch(() => tuning.detach());
   return loaded;
+}
+
+// The tuning panel's reload. Deliberately not loadVersion(): that one's failure path is a dead
+// end ("FAILED TO LOAD") and a knob pushed too far has to leave a playable game behind, so the
+// caller in games-tuning.js rolls back to the last set of values that loaded. Throws if the
+// patched module did not come up.
+async function applyTunedSource(patchedSource) {
+  if (!active) throw new Error("no game is loaded");
+  const token = loadToken;
+  const level = state.levels_completed || 0;
+  stopLiveIfRunning();
+  processing = true;
+  canvas().style.cursor = "wait";
+  try {
+    let next = await gameLoad(patchedSource, active.className);
+    if (token !== loadToken) return; // navigated to another version mid-reload
+    if (!next || next.error) throw new Error((next && next.error) || "the patched game did not load");
+    // Constants bake in at import, so the level restarts either way; put the player back on the
+    // one they were tuning, clamped in case the new geometry builds fewer levels.
+    const target = Math.min(level, Math.max(0, (next.win_levels || 1) - 1));
+    if (target > 0) {
+      const jumped = await gameJumpLevel(target);
+      if (token !== loadToken) return;
+      if (jumped && !jumped.error) next = jumped;
+    }
+    state = next;
+    stepCount = 0;
+    render(state.grid);
+    updateTopBar();
+    updateTileBar();
+    updateFilterBar();
+    buildLevelStrip();
+    checkEnd();
+  } finally {
+    processing = false;
+    canvas().style.cursor = (state.available_actions || []).includes(6) ? "crosshair" : "default";
+  }
 }
 
 // ── Tile modes ───────────────────────────────────────────────────────────
