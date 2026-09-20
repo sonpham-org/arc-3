@@ -15,8 +15,11 @@ import json, sys, os, statistics
 
 # Same ignore set as run_oracle_multipass.sh's parity(): fields that legitimately differ
 # between two runs of an identical configuration.
-IGNORE = {'.generated_at', '.kaggle_competition', '.kaggle_dataset', '.run_name',
-          '.started_at', '.run_dir', '.output_dir'}
+# run_oracle_multipass.sh's parity() ignores `.generated_at` and the two Kaggle slug fields.
+# Both slug fields are derived from RUN_NAME, which must differ between arms so their run
+# dirs do not collide -- they are naming, not configuration. Everything else must match.
+IGNORE = {'.generated_at', '.deployment.kaggle.kernel_slug', '.deployment.kaggle.kernel_title',
+          '.run_name', '.started_at', '.run_dir', '.output_dir'}
 
 def flat(d, p=''):
     out = {}

@@ -157,10 +157,123 @@ box-invariant quantity.
 
 ---
 
-## 4. Results
+## 4. Results — the n=1 sweep
 
-*Pending — filled in as passes land. Base pass 1 is complete and is recorded below; the
-remaining arms and passes are running.*
+Parity checked mechanically with the oracle's `parity()` flatten and ignore set: every arm
+against base pass 1 returns `unexpected_diffs = ['.model']`. **The only configuration
+difference between the arms is which served model id the analyzer asks for.**
+
+| arm | levels | score | actions | turns | timed-out turns | tool% | reasoning chars/turn | mean turn s |
+|---|---|---|---|---|---|---|---|---|
+| base | **3** | **7.778** | 58 | 49 | 26 | 100% | 2,456 | 807 |
+| round3 | **3** | 6.971 | 152 | 76 | 15 | 100% | 1,946 | 503 |
+| **round4W** | **1** | **2.778** | 57 | 55 | 13 | 100% | 2,429 | 709 |
+
+Per game, levels cleared and score:
+
+| game | base | round3 | round4W |
+|---|---|---|---|
+| ar25 | 1 / 2.778 | 0 / 0.000 | 0 / 0.000 |
+| re86 | 0 / 0.000 | 0 / 0.000 | 0 / 0.000 |
+| sb26 | 1 / 2.778 | 1 / 2.778 | 1 / 2.778 |
+| su15 | 1 / 2.222 | 1 / 2.033 | 0 / 0.000 |
+| tr87 | 0 / 0.000 | 0 / 0.000 | 0 / 0.000 |
+| tu93 | 0 / 0.000 | 0 / 0.000 | 0 / 0.000 |
+| vc33 | 0 / 0.000 | 1 / 2.160 | 0 / 0.000 |
+
+All 21 game-runs terminated `cancelled` at the 90-minute cap. Tool validity is 100% of
+answered turns in every arm — as in round 3, this is not a formatting or tool-use break.
+
+### 4.1 The falsifier does not fire as written, and the reason matters
+
+The spec's falsifier is:
+
+> if arm W again shortens deliberation without improving clearance, the teacher is not the problem.
+
+**Arm W did not shorten deliberation.** At 2,429 reasoning characters per answered turn it is
+within 1% of base's 2,456, and well above round 3's 1,946. On the quantity round 3 was
+supposed to have broken, **arm W looks like base, not like round 3.** The write-up appears to
+have done what it was meant to do.
+
+So the antecedent is false and the falsifier as phrased does not fire. What happened instead
+is worse for the hypothesis, not better: **deliberation was restored to base levels and
+clearance still went down** — 3 levels to 1, 7.778 to 2.778, at n=1. Round 4's premise was
+that round 3 lost capability by losing the reasoning. Arm W got the reasoning back and did not
+get the capability back. On this evidence, restoring rationale is not sufficient.
+
+Stated precisely, because it is the whole point of the round: the spec offered a two-way test
+and got a third outcome. The honest reading is not "the teacher is the problem" and not "the
+teacher is not the problem," but **"deliberation length was never the mechanism"** — round 3's
+shortened turns were a symptom that travelled with the regression, not its cause. Fixing the
+symptom did not fix the outcome.
+
+### 4.2 Round 3 did not collapse on this box
+
+Round 3 scored 3 levels / 6.971, level with base on levels. On a108 it scored 2 against base's
+7. **Its behavioural signature is intact** — shortest deliberation of the three arms, most
+turns (76), and by far the most actions (152 against base's 58) — but the clearance loss is
+absent.
+
+This is recorded as an observation, not explained. Candidate accounts, none tested here:
+a108 applied a BF16-trained adapter to NVFP4 weights whereas a424 applies it to the BF16
+weights it was trained on; or this box's compressed turn budget compresses all arms toward
+each other. **Unverified.** Distinguishing them needs a108, which was unavailable.
+
+It does carry one consequence worth stating: round 3's a108 collapse should be treated as less
+firmly established than PR #59 presented it, since it does not reproduce under a matched-weights
+serving setup.
+
+### 4.3 What n=1 can and cannot support
+
+These are single stochastic samples at temperature 1.0. Round 3's eval made the same caveat
+and it applies at least as hard here, because the counts are smaller: base and round 3 differ
+by one level in *neither* direction, and arm W is two levels below both.
+
+Arm W is below base on 2 of 7 games (ar25, su15), tied on 5, and ahead on none. Two games is
+not significant on a sign test. **The direction is suggestive; the magnitude is not usable.**
+Further passes are running to address exactly this.
+
+---
+
+## 4.9 Infrastructure: the arm-W pass that was discarded
+
+Arm W's first attempt (`20260920_173604`) is **not** in the table and is not scored. About 90
+seconds in, vLLM stopped producing tokens: generation throughput 0.0 tok/s with 7 requests
+running, KV usage flat at 5.5%, and **no engine log line for 29 minutes** while the EngineCore
+process sat at 96% GPU and 296% CPU with its main thread in state `R` and all workers parked
+in `futex_do_wait`. That is a wedge, not slow generation.
+
+Its four completed requests before the hang were unremarkable (245–367 completion tokens,
+77–110s) — nothing about the adapter's output explains it. Every subsequent "timeout" in that
+run was a dead server, so the run measures the infrastructure and was discarded rather than
+reported.
+
+The server was killed (GPU confirmed back to 0%, memory reclaimed from 111 GB to 3 GB),
+restarted with byte-identical configuration, and arm W re-run in full. The re-run completed
+`rc=0` with healthy generation throughout. The wedge **did not reproduce**, so it is recorded
+as a one-off on vLLM 0.24.0 rather than an arm-W property.
+
+**One parity caveat created by that restart, stated rather than buried.** The reloaded server
+profiled a larger KV cache than the original — **732,835 tokens / 7.12x** concurrency versus
+**679,103 / 6.59x** — because more host memory was free at boot. The configuration is
+identical and `run_config.json` cannot show this, so the arms are *not* perfectly matched at
+the server level: base and round 3 ran at 6.59x, arm W at 7.12x. The difference is in arm W's
+favour (less preemption pressure), and measured preemption was **zero** in every pass, so it
+does not explain arm W scoring lower. It is disclosed because a reader cannot recover it from
+the artifacts.
+
+---
+
+## 5. Verdict
+
+*Pending the remaining passes. The n=1 read is above: arm W is the weakest of the three arms
+on the primary metric while matching base on deliberation.*
+
+---
+
+## 4.99 Appendix — base pass 1, per game
+
+*(retained from the first commit)*
 
 ### Base, pass 1 (`runs/20260920_142058_r4w-a424-base-p1`, 14:20:58–15:58:41 UTC)
 
@@ -184,10 +297,6 @@ range in both directions — a round-3-style collapse would show, and so would a
 was allowed to continue on that basis.
 
 ---
-
-## 5. Verdict
-
-*Pending.*
 
 ## 6. Not verified / open questions
 

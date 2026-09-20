@@ -21,6 +21,46 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 20-Sep-2026 — Round 4 arm W: gameplay eval on the fenced seven (a424, a108 offline)
+
+`docs/trace-findings/2026-09-20-arc3-round4-arm-w-gameplay-eval.md` plus the harness under
+`docs/trace-findings/round4-arm-w-eval/`. Measurement only — no training, no corpus rebuild,
+no adapter modified.
+
+**a108 was offline for the whole evaluation**, so gameplay ran on a424 against
+`Qwen3.8-27B-BF16` rather than a108's NVFP4. Base was re-run as its own arm and **no number
+here is comparable to round 3's a108 result.**
+
+n=1 sweep, seven fenced games, 90-min cap, arms differing only in `.model` (checked with the
+oracle's own `parity()`):
+
+| arm | levels | score | reasoning chars/turn | tool% |
+|---|---|---|---|---|
+| base | 3 | 7.778 | 2,456 | 100% |
+| round3 | 3 | 6.971 | 1,946 | 100% |
+| round4W | 1 | 2.778 | 2,429 | 100% |
+
+- **The spec's falsifier does not fire as written.** It required arm W to *shorten*
+  deliberation; arm W matches base within 1% (2,429 vs 2,456) and is well above round 3.
+  Deliberation was restored and clearance still fell. The reading is that deliberation length
+  was a symptom of round 3's regression, not its mechanism.
+- **Round 3 did not collapse on this box** — 3 levels, level with base, against 2-vs-7 on
+  a108. Its signature (shortest deliberation, most turns, 152 actions vs base's 58) is intact
+  but the clearance loss is absent. Unexplained; a108 was unavailable to isolate it. Round
+  3's a108 collapse should be treated as less firmly established than PR #59 presented it.
+- Pre-flight gates recorded: both adapters proven non-no-op on **vLLM 0.24.0** by greedy
+  logprob A/B (rounds 1-3 never tested this version, and a silent no-op would have read as
+  "round 4 is neutral"); measured 4.26 tok/s per lane at 7 lanes, ~3.7 tok/s in-harness flat
+  across 4.9k-24k prompts; zero preemption.
+- **900s analyzer timeout is the binding constraint on this box.** At ~3.7 tok/s it truncates
+  any turn wanting more than ~3,300 output tokens; base lost 26 of 49 turns. Raising it was
+  considered and rejected with arithmetic, recorded in the doc.
+- One arm-W pass was **discarded, not scored**: vLLM wedged at 0.0 tok/s with 7 requests
+  running for 29 minutes at 96% GPU. Re-run after restart completed clean; the wedge did not
+  reproduce.
+
+---
+
 ## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
 
 `docs/plans/2026-09-19-arc3-lora-round4-spec.md`. Spec only — no training, no eval, no GPU
