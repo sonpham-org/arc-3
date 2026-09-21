@@ -440,6 +440,25 @@ def _format_model_response_meta(
     return "\n".join(lines)
 
 
+
+# Sentence-level rewrites applied only when a grid image is attached. Kept next to the prompt
+# builder so a drift in the source text fails loudly at build time instead of silently leaving
+# the measure-the-board steering in place.
+_IMAGE_FIRST_OVERRIDES = (
+    (
+        "- The raw numeric grid is intentionally not exposed. Use `current_frame.segmentation` as your primary view of the board -- objects, colors, shapes, containment, adjacency, and cross-frame object hashes. Use `current_frame.ascii` only to read a small, specific region; do not scan the whole board with it.\n",
+        "- The raw numeric grid is intentionally not exposed. The attached picture is your view of the board -- look at it and say what you see. `current_frame.segmentation` and `current_frame.ascii` exist to settle one specific detail you could not read off the picture; do not survey the board with either.\n",
+    ),
+    (
+        "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n",
+        "- You have already looked at the picture. Use `current_frame.segmentation` only to settle a detail that looking did not settle -- an exact coordinate you need for a click, or whether two things really are the same shape.\n",
+    ),
+    (
+        "- Use `current_frame.ascii` only to read a small, specific region of the board when `segmentation` is not enough; never use it to scan or summarize the whole board.\n",
+        "- Use `current_frame.ascii` only to read a few cells you are unsure of; never to scan or summarize the whole board.\n",
+    ),
+)
+
 def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt = (
         "You are playing a video game. This game is generally easy for humans. "
@@ -461,6 +480,15 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
     if compact_reasoning_enabled():
         prompt += COMPACT_REASONING_ADDENDUM
+    if current_grid_image_enabled():
+        # With a picture attached, the board is something the model looks at, not something it
+        # measures. Two inherited sentences name `segmentation` the primary view and that is what
+        # sends every turn straight into a whole-board object dump; rewrite them rather than leave
+        # the prompt arguing with itself.
+        for stale, fresh in _IMAGE_FIRST_OVERRIDES:
+            if stale not in prompt:
+                raise RuntimeError("image-first override missed its target sentence")
+            prompt = prompt.replace(stale, fresh)
     return prompt
 
 
@@ -1787,6 +1815,7 @@ class ToolAgent:
             if self._step_env_callback is None:
                 raise RuntimeError("action(actions) is not available in this session.")
             normalized_actions = self._normalize_python_actions(actions)
+            act_first_dropped = 0
             if self._act_first_phase and len(normalized_actions) > 1:
                 # One press per turn during act-first. Without this the phase is trivially
                 # escaped: run 20260921_175604 batched ten UPs in a single turn and jumped
@@ -1796,6 +1825,7 @@ class ToolAgent:
                     "act-first: truncating batch of %d to 1 action",
                     len(normalized_actions),
                 )
+                act_first_dropped = len(normalized_actions) - 1
                 normalized_actions = normalized_actions[:1]
             if terminal_action_result is not None:
                 reason = _terminal_action_reason(terminal_action_result) or "terminal_state"
@@ -1830,6 +1860,21 @@ class ToolAgent:
             if not isinstance(raw_payload, dict):
                 raise RuntimeError("action(actions) did not return a JSON-like payload.")
             compact_payload = self._compact_action_result(raw_payload)
+            if act_first_dropped:
+                # Never drop actions silently: the model reads executed_actions and will
+                # otherwise reason as though the whole batch ran. Observed in run
+                # 20260921_180906, where it asked for thirty RIGHT presses, got one, and
+                # spent its first thinking turn explaining why "twenty presses" moved
+                # nothing -- a confusion the harness had manufactured.
+                compact_payload["requested_count"] = len(normalized_actions) + act_first_dropped
+                compact_payload["executed_count"] = len(normalized_actions)
+                compact_payload["stopped_early"] = True
+                compact_payload["stop_reason"] = "act_first_one_action_per_turn"
+                compact_payload["stop_detail"] = (
+                    f"Act-first phase: one action per turn. {act_first_dropped} queued "
+                    "action(s) were NOT executed. Only the first one ran. Do not assume "
+                    "the rest happened."
+                )
             next_valid_actions = raw_payload.get("valid_actions")
             if isinstance(next_valid_actions, list):
                 self._current_valid_actions = _normalize_valid_actions(next_valid_actions)

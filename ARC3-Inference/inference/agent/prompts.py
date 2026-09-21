@@ -61,10 +61,11 @@ STRUCTURED_RUNTIME_STATE_ADDENDUM = (
 )
 
 MULTIMODAL_CONTEXT_ADDENDUM = (
-    "\n\nMultimodal context:\n"
-    "- User turns include an attached image of the current ARC grid.\n"
-    "- The image and `current_frame.ascii` are two representations of the same current frame.\n"
-    "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
+    "\n\nLooking at the screen:\n"
+    "- Every turn has a picture of the current board attached. Look at it first.\n"
+    "- Read it the way a person reads a screen: say in plain language what you see -- what is on screen, what looks like the piece you control, what looks like a target or a guide, and what changed since the last picture.\n"
+    "- The picture is your view of the board. Code is for pressing buttons, and for checking one specific detail you could not settle by looking.\n"
+    "- Do not survey the board with code. Do not dump the whole object list or the whole character grid.\n"
 )
 
 LAST_ANIMATION_ADDENDUM = (
