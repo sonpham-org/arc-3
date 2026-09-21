@@ -52,6 +52,29 @@ that touched only `prompts.py` would silently drop half this arm.
 Patches are kept out of `main` on purpose: committing them would change the default prompt for
 every other arm.
 
+### Relationship to the change that landed on `main` the same evening
+
+While this arm was running, commit `ed5fd27e4` ("prompts: remove scoring pressure and
+gauge-suspicion coaching") landed on `main` and edited the same material. **They are different
+treatments and must not be conflated.**
+
+- `ed5fd27e4` removes more (also "Optimize for the shortest reliable sequence", the
+  "execute the shortest reliable valid action" turn instruction, and the "You have not acted
+  yet. Investigate first." retry) **and adds a replacement line**: "Not everything on screen is
+  part of the puzzle ... one may even show you the arrangement you are meant to produce."
+- This arm adds nothing. It was specified as pure subtraction with one reframe, explicitly
+  barred from adding anything that tells the model what a display or strip means in either
+  direction. That replacement line is exactly the kind of guidance it may not carry.
+
+So this arm isolates *removing the pressure*; `ed5fd27e4` tests *removing it and explaining
+displays instead*. Independently, `ed5fd27e4` reframed the opening line to "You are playing a
+video game. You learn the controls the way any player does: ..." — near-identical in intent to
+this arm's reframe, arrived at separately.
+
+**Baseline pin.** This arm was built against `819b2260d`, the repo HEAD before `ed5fd27e4`. The
+control arm is that prompt (`prompts.py` md5 `58225c1f...`, `tool_agent.py` md5 `31cf7b8c...`).
+It is the correct control for this comparison and is *not* current `main`.
+
 ## Why this arm ships its own control
 
 The existing a424 baseline (`r4w-a424-base-p1/p2`, `~/GitHub/arc-3` tree on that box) **cannot**
