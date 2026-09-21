@@ -5,11 +5,18 @@ PURPOSE: Boss's ARC-3 scorecard inventory, re-pulled 17-Sep 12:24 EDT, SEPTEMBER
 Answers: which of the 25 pinned duck games still lack a COMPLETE (won) human game from him.
 Supersedes INVENTORY-SEPT-20260916-1340.md, which predates six wins (ar25/s5i5/sb26/su15/tu93
 on 16-Sep, vc33 on 17-Sep).
+Update 21-Sep-2026 (Claude Opus 5): a "since this pull" note with the four later wins.
 SRP/DRY check: Pass — same puller and same filter rules as the 16-Sep doc; this is a refresh,
 not a new method.
 -->
 
 # Boss ARC-3 inventory — SEPTEMBER ONLY — 17-Sep-2026 12:24 EDT
+
+> **Since this pull (update 21-Sep-2026).** This is a snapshot and is left as it was. Boss has
+> since won four of the games listed below as missing: `tr87` (17-Sep, 211 actions), `wa30`
+> (17-Sep, 1,517), `lf52` (20-Sep, 1,163) and `sk48` (21-Sep, 856, replay
+> `7f07c3de-ec0a-412c-a710-2e19b3303581`). Still without a win: `re86`, `sc25`, `sp80`, `tn36`.
+> Source: arc-explainer `shared/arc3Games/humanPlay.generated.json`, pulled 21-Sep.
 
 Puller: `tools/pull_boss_scorecards.py`.
 Raw: `boss-cards-20260917T122423.json`, `boss-runs-20260917T122423.json`.
