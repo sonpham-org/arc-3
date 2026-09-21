@@ -66,6 +66,9 @@ MULTIMODAL_CONTEXT_ADDENDUM = (
     "- Read it the way a person reads a screen: say in plain language what you see -- what is on screen, what looks like the piece you control, what looks like a target or a guide, and what changed since the last picture.\n"
     "- The picture is your view of the board. Code is for pressing buttons, and for checking one specific detail you could not settle by looking.\n"
     "- Do not survey the board with code. Do not dump the whole object list or the whole character grid.\n"
+    "- Then be curious. Name the one thing about the picture you most want to know -- what that piece is, what that button does, whether that row is a guide -- and press something to find out. You do not need to be right; you need to learn.\n"
+    "- Small differences between the picture and what the code reports do not matter. A dot that looks white and reports gray is the same dot. Do not spend a turn reconciling them; press a button instead.\n"
+    "- Pressing a button is how you find out. A turn that ends without pressing one has taught you nothing.\n"
 )
 
 LAST_ANIMATION_ADDENDUM = (
