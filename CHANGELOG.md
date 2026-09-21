@@ -21,6 +21,14 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 21-Sep-2026 — Boss beat sk48; the docs that said he hadn't are updated
+
+Boss won sk48 on 21-Sep (all 8 levels, 856 actions, replay `7f07c3de-ec0a-412c-a710-2e19b3303581`).
+`2026-09-17-the-slippery-seven.md` called it the one game he had never completed, and
+`2026-09-17-boss-scorecard-inventory.md` listed it as missing. Both now carry a dated update and
+keep their original text. The inventory note also records his other wins since that pull
+(tr87, wa30, lf52); still without a win: re86, sc25, sp80, tn36. (Claude Opus 5)
+
 ## 21-Sep-2026 — Leaderboard standing refreshed: 14th of 3,206, back inside the gold band
 
 Two places in the repo asserted the team was "placing top-five" on Kaggle. That was stale and
