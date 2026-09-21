@@ -141,6 +141,55 @@ python3.14 scripts/verify_game_params.py           # ~7min, exit 1 if any spec f
 `serve_games_local.py` exists because `docs/static/games/manifest.json` is a stale fallback
 predating the evolution trees, so a purely static local server cannot reach a game the API knows
 about. It serves the working tree's specs against the live catalog.
+## 21-Sep-2026 — Games play view: a Sprites tab beside the tuning panel
+
+`docs/static/games/sprites/*.json`, `docs/static/js/games-sprites.js`,
+`scripts/measure_game_sprites.py`, `scripts/verify_game_sprites.py`,
+`tests/games-sprites.test.mjs`, and wiring in `games-play.js`, `index.html` and `games.css`.
+Thirty games, and no backend change, no new endpoint.
+
+A second tab in the play view's left sidebar, edit-only, that repaints a game's literal glyph
+art while it is on screen: click or drag a cell, and the game reloads with the new art. Same
+shape as the tuning panel next to it -- the art worth editing is declared as data in
+`docs/static/games/sprites/<id>.json`, so a new game is a JSON file and not a code change, and
+a game with no spec gets no tab at all rather than an empty one.
+
+Sprite edits and knob edits compose through **one** pipeline. Both panels write their edits into
+`games-play.js`, which rebuilds the module from the version's original bytes on every reload --
+knobs first, since they rewrite whole `NAME = <int>` lines, then sprites, which rewrite literal
+expressions no knob patch can touch. Two panels each keeping their own patched copy would mean
+the second to apply silently dropped the first's work.
+
+A sprite is anchored on the exact source text of its own literal, not on a name and not on a
+line number. The best art in the catalog has no name -- sd78's beetles live at
+`SPECIES_ART["ladybird"]["stand"]` -- and line numbers are worthless because the bytes the
+player runs come from the API's head, which moves under us. The anchor has to occur exactly once
+in the fetched source or the sprite is dropped from the panel, which is the rule `readScalar()`
+already uses in `games-tuning.js` for the same reason.
+
+The brush is limited to the symbols that sprite already uses, and this is a correctness
+requirement rather than a simplification. Cell values mean different things per game: some store
+ARC palette indices, some store indices into a two-entry colour tuple (painting a 12 there is an
+`IndexError`, not a recolour), and sd78 maps characters through its own `ART_KEY` where `"X"`
+means "substitute the species colour at build time". A 16-swatch palette would be right for one
+encoding and broken for the other three.
+
+**What is not offered, and why.** Most of the catalog has no sprite. The dominant drawing idiom
+across ~600 of 938 sources is a solid rectangle painted at a computed offset
+(`f[24:35, x:x+7] = AGENT`) -- the actor translates, but there is no pixel art in it. Of the
+literal 2D arrays that do exist, most are not art either: `DIRS = [[0,1],[1,0],[0,-1],[-1,0]]`
+is a direction table, the q-family's 3x3 `RULES`/`SIG`/`BASE` are response matrices, `BAYER` is
+a dither matrix, and `pc01 _G1.._G7` and `pr01 MAZE` are level maps. None of those translate and
+none are shipped. Blind families are excluded exactly as they are from the tuning panel: a
+picture of the actor is a more direct read of a game's shape than a list of constant names.
+
+Every default is extracted from the live head source by `measure_game_sprites.py`, and no
+literal ships as a sprite until a patched copy of the game has loaded, drawn a **different**
+frame, stepped and reset on every one of its levels. That check earns its keep: it rejected
+`g035 FIGURE_CORE`, `g013 STONE_MASK` and `q266 SIG`, which are assigned and never read, and
+`rw01 WALKER_PIXELS`, whose layout carries per-line comments explaining that its order is a
+Bayer fill sequence the game consumes in order as a drain animation -- reflowing that to gain an
+editor would have silently changed the animation and the progress denominator both.
 
 ---
 

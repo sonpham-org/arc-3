@@ -16,7 +16,8 @@ import * as api from "./games-api.js?v=20260920-rail";
 import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-rail";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
-import { createTuning } from "./games-tuning.js?v=20260920-tuning";
+import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
+import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -42,6 +43,15 @@ let current = null;         // the play view's context: { version, tree, detail 
 let active = null;          // the version loaded in the player, in either view
 let loadToken = 0;
 let tuning = null;          // the sidebar's per-game constant panel (games-tuning.js)
+let spriteEditor = null;    // the sidebar's per-game art panel (games-sprites.js)
+// The two sidebar panels edit the same module, so they may not each keep their own patched copy
+// of it -- the second to apply would drop the first's work. Both write here instead, and every
+// reload is built from the version's original bytes with both sets of edits laid on in a fixed
+// order: knobs first (they rewrite whole `NAME = <int>` lines), then sprites (they rewrite
+// literal expressions, which no knob patch can touch).
+let baseSource = "";        // the exact bytes the version loaded from
+let knobEdits = {};         // name -> value, as last applied by the tuning panel
+let spriteEdits = [];       // [{sprite, grid}], as last applied by the sprite panel
 let state = {};             // {grid, state, levels_completed, win_levels, available_actions, tile_scale}
 let stepCount = 0;
 let tileMode = "solid";     // "solid" | "tiles" | "random" -- see games/arc_tiles.py
@@ -110,7 +120,17 @@ async function init() {
   setupBrowseControls();
   setupTileBar();
   setupFilterBar();
-  tuning = createTuning({ root: $("tuningPanel"), apply: applyTunedSource });
+  tuning = createTuning({
+    root: $("tuningPanel"),
+    // The patched source the panel hands over is ignored on purpose: it carries only its own
+    // edits. The values are what matter, and composed() re-lays them alongside the sprites.
+    apply: (_patched, values) => { knobEdits = values; return applyTunedSource(composed()); },
+  });
+  spriteEditor = createSprites({
+    root: $("spritePanel"),
+    apply: (snapshot) => { spriteEdits = snapshot; return applyTunedSource(composed()); },
+  });
+  setupPanelTabs();
   setupCanvasInput();
   setupKeyboard();
   setInterval(() => { if (active && stageVisible() && !document.hidden) telemetry.seconds += 1; }, 1000);
@@ -171,6 +191,8 @@ function enterFeedback(options = {}) {
   // Blind play: the stage moves into #feedbackView, the sidebar does not. Tear the panel down
   // anyway so a game's constants can never be a second way to tell which game is on screen.
   if (tuning) tuning.detach();
+  if (spriteEditor) spriteEditor.detach();
+  hidePanelTabs();
   showView("feedback");
   if (location.hash !== "#feedback") history.replaceState(null, "", "#feedback");
   feedback.enter(options);
@@ -667,6 +689,8 @@ async function loadVersion(version, { blind }) {
 
   active = null;
   tuning.detach();
+  spriteEditor.detach();
+  hidePanelTabs();
   let loaded;
   let sourceText = "";
   try {
@@ -711,8 +735,57 @@ async function loadVersion(version, { blind }) {
   // The panel is built against the bytes just loaded, so a knob the evolution loop has since
   // renamed or folded into an expression simply is not offered. Fire and forget: it fetches its
   // own spec, and a game without one leaves the sidebar exactly as it was.
+  baseSource = sourceText;
+  knobEdits = {};
+  spriteEdits = [];
   tuning.attach(version, sourceText, { blind: hideName }).catch(() => tuning.detach());
+  // Fire and forget, like the tuning panel: a game with no sprite spec leaves the sidebar exactly
+  // as it was, with no second tab and no empty panel.
+  spriteEditor.attach(version, sourceText, { blind: hideName })
+    .then((count) => showPanelTabs(count > 0))
+    .catch(() => { spriteEditor.detach(); hidePanelTabs(); });
   return loaded;
+}
+
+// The module both sidebar panels are really editing: the version's own bytes, with the knob
+// values and then the sprite art laid on. Rebuilt from scratch on every apply rather than
+// accumulated, so a knob put back to its published value really is put back.
+function composed() {
+  let out = patchSource(baseSource, knobEdits);
+  for (const { sprite, grid } of spriteEdits) out = patchSprite(out, sprite, fromGrid(sprite, grid));
+  return out;
+}
+
+// ── The sidebar's two panels ─────────────────────────────────────────────────
+// The strip is only worth drawing when there is something to switch to. A game with no sprite
+// spec keeps the single tuning panel it has always had, and says nothing about sprites at all.
+
+function setupPanelTabs() {
+  for (const tab of document.querySelectorAll("#panelTabs .panel-tab")) {
+    tab.addEventListener("click", () => selectPanel(tab.dataset.panel));
+  }
+}
+
+function selectPanel(which) {
+  for (const tab of document.querySelectorAll("#panelTabs .panel-tab")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.panel === which));
+  }
+  $("tuningPanel").hidden = which !== "tune";
+  $("spritePanel").hidden = which !== "sprites";
+}
+
+function showPanelTabs(hasSprites) {
+  $("panelTabs").hidden = !hasSprites;
+  if (!hasSprites) {
+    $("spritePanel").hidden = true;
+    return;
+  }
+  selectPanel("tune");
+}
+
+function hidePanelTabs() {
+  $("panelTabs").hidden = true;
+  $("spritePanel").hidden = true;
 }
 
 // The tuning panel's reload. Deliberately not loadVersion(): that one's failure path is a dead
