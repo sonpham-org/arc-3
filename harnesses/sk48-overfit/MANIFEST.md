@@ -50,5 +50,5 @@ no override. These transcripts contain the answer key to sk48. Not renamed, not 
 
 ## Score
 
-No level cleared; no game action taken. See the trace-findings doc — the 0.00 carries no
+No level cleared and no game action taken as of 17:40 EDT; run 4 (harness defaults restored) is still going. The three earlier runs were confounded by an imposed tool-step ceiling -- see the trace-findings doc. The 0.00 carries no information about the model and must not be quoted beside the a108 sk48 0.00.
 information about the model and must not be quoted beside the a108 sk48 0.00.

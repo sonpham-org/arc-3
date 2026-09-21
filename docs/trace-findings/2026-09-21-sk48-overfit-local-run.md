@@ -165,27 +165,13 @@ them.
 
 ## What actually happened
 
-The run of record was still playing when this was written (its 240-minute budget expires
-about 21:03 EDT); it was deliberately **left running** so the full trace accumulates. Everything
-below is from the harness log and artifacts as of **17:35 EDT**, and is stable across all three
-configurations.
+**Status at the time of writing (17:40 EDT): still running, no level cleared yet, and the
+earlier zero-action reading has been corrected — see the correction below before reading the
+table.**
 
-**Level by level: nothing. The model never cleared a level, because it never took a single game
-action.** `action_count=0` in every `solver turn start` line of all three runs, and
-`benchmark.json` shows `levels_completed: 0`, `actions_per_level: [0,0,0,0,0,0,0,0]`.
+### The injection worked, and that is the solid finding
 
-That is the result, and it needs stating precisely, because it is **not** the failure mode the
-directive anticipated:
-
-- It is **not** a tool-call format failure. Tool calls parse fine. `smoke_tool_call.py` passed
-  before launch, and in the run itself requests come back `finish=tool_calls tool_calls=1` with
-  well-formed `python` calls.
-- It is **not** a context blowout. The window is 49,152 and the largest prompt observed was
-  17,847 tokens.
-- It is **not** the model failing to understand the game. This is the important part.
-
-**The injected text landed.** The model's own `world_model` ledger, written by it on turn 1,
-reads:
+The model's own `world_model` ledger, written by it on turn 1, reads:
 
 > `"game": "Skew Kebab (sk48), 8 levels. L1: one rod (pink handle, gray zigzag bar) + rail;`
 > `column of red/blue/green beads; bottom reference strip is the win condition (order red,`
@@ -194,73 +180,88 @@ reads:
 It names the game, identifies the rod and handle, locates the beads, and — the line the removed
 HUD rule would have argued it out of — states that **the bottom reference strip is the win
 condition**, in the right colour order. In the untuned run it also correctly recorded the
-push-block mechanic, the free Undo, and the 196-energy budget. It read the board accurately too,
-resolving the rail to columns 16–22 and the bead column to 42–45 from the ASCII frame.
+push-block mechanic, the free Undo, and the 196-energy budget, and it read the board accurately
+from the ASCII frame, resolving the rail to columns 16–22 and the bead column to 42–45.
 
-**What it never does is act.** Every analysis step is consumed by `python` calls that inspect
-the frame and return `step_executed=False`, so the harness re-prompts: *"The previous `python`
-call inspected the frame but did not execute `action(...)`."* The model answers with more
-inspection. The loop runs out of tool steps and the turn ends having moved nothing.
+That is the strongest evidence in this run and it is not in doubt: **told plainly what the game
+is, the model understood it.**
 
-| run | tool steps | max output | wall | requests | game actions |
-|---|---|---|---|---|---|
-| 1 untuned | 12 | unbounded | 23 min | 4 | **0** |
-| 2 | 3 | 3,000 | 9 min | 3 (2 truncated) | **0** |
-| 3 of record | 3 | 7,000 | 20 min (step 1) | 3 | **0** |
+### Correction: three of the four runs were mis-configured by me, not by the harness
 
-The reasoning volume is the mechanism. On run 3 the model produced **20,242 and 21,088
-characters of reasoning** on single requests — one of them hit the 7,000-token ceiling and
-returned no tool call at all. At the measured **~10.8 tokens/sec** that is nine to ten minutes
-of wall clock per request, and three requests per analysis step is twenty minutes per step with
-nothing to show for it.
+My first three runs produced zero game actions, and I initially wrote that up as a property of
+the model. That was wrong, and the error was mine.
 
-The arithmetic that follows is the honest part. A level-1 clear is 14 actions at best (the
-engine run in the Boss's write-up) and 61 at the harness's own baseline. At twenty minutes per
-analysis step and zero actions produced per step so far, level 1 is not reachable in 240
-minutes, and would not be reachable in 24 hours at this rate.
+`LOCAL_ANALYZER_TOOL_STEPS` defaults to **12**: within one analysis step the model gets up to
+twelve `python` calls, accumulating inspection results in context, with twelve chances to
+converge on an `action(...)` call. Reading an early 551.9s request as raw slowness — it was in
+fact **endpoint contention** from a peer process, as that run's own `CONTENTION-NOTE.md`
+records — I cut the loop to 3 steps to save wall clock. That is a ceiling I imposed, and
+`inference/agent/tool_agent.py` confirms it proves nothing: **the final tool step carries no
+forced-action escalation.** The same "you did not execute `action(...)`" follow-up is used at
+step 3 as at step 1, so a run capped at 3 simply gets cut off earlier and starts a fresh
+analysis step from a thinner context. I built a treadmill and then measured it.
+
+| run | tool steps | max output | outcome | reading |
+|---|---|---|---|---|
+| 1 untuned | 12 (default) | unbounded | killed at request **4 of 12** | inconclusive — killed mid-loop, and partly contended |
+| 2 | 3 | 3,000 | `finish=length`, thinking truncated before the tool call | inconclusive — cap artifact |
+| 3 | 3 | 7,000 | 3 requests, 2 inspections, 0 actions | inconclusive — imposed ceiling |
+| 4 of record | 12 (default) | 10,000 | **running**, sole client, full 240 min | the faithful test |
+
+So the honest statement of what is known: **the model has not yet moved a piece, and the first
+three attempts to measure that were confounded by my own tuning.** Run 4 — launched 17:38 EDT
+with the harness defaults restored, output raised to 10,000 tokens so thinking is not
+truncated, a single client on the endpoint, and no early kill — is the first configuration that
+actually tests the question.
+
+### What is genuinely measured
+
+- **Generation throughput: ~10.8 tokens/sec**, clean and uncontended. That is real and it is
+  this box's hard limit.
+- **Reasoning volume is large**: single requests produced 20,242 and 21,088 characters of
+  reasoning. At 10.8 tok/s that is nine to ten minutes of wall clock per request. With the
+  default twelve tool steps, one analysis step can legitimately cost over an hour here.
+- **A level-1 clear is 14 actions at best** (the engine run in the Boss's write-up) and 61 at
+  the harness's own `base_actions_per_level`. Even granting convergence, that arithmetic is
+  brutal on this box.
+- **It is not a tool-call format failure** (calls parse; the pre-flight smoke test passed) and
+  **not a context blowout** (window 49,152; largest prompt seen 17,847 tokens).
 
 ## Verdict
 
-**A maximally-told 27B could not play this game on this box — but not for the reason the
-question implies, and the run does not answer the question the Boss actually asked.**
+**Partial, and deliberately not stated more strongly than the evidence supports.**
 
-Three things are true and should not be collapsed into each other:
+1. **Telling it worked — this part is settled.** Given the name, the mechanics and the Boss's
+   own notes, the model correctly identified Skewer Kebabs, the reference strip as the win
+   condition, the required colour order, and the board geometry. Comprehension was not the
+   bottleneck. That is a real point in favour of the overfit idea and of removing the HUD line,
+   and it is worth having on its own.
 
-1. **Telling it worked.** Given the name, the mechanics and the Boss's own notes, the model
-   correctly identified Skewer Kebabs, the reference strip as the win condition, the required
-   colour order, and the board geometry. On the evidence here, comprehension was not the
-   bottleneck. That is a real point in favour of the overfit hypothesis and of removing the HUD
-   line.
-2. **Execution never started.** It would not convert a correct, stated plan into an
-   `action(...)` call. It inspected, re-inspected, and re-inspected. This is a sharper version
-   of the failure already named in
-   `docs/trace-findings/2026-09-18-never-cleared-scope-and-failure-audit.md`: *not converting a
-   stated uncertainty into the cheapest action that resolves it.* Here the uncertainty was not
-   even the model's own — it had been handed the answer and still probed instead of moving. The
-   rulebook removes the uncertainty; it does not install the habit.
-3. **This box confounds the measurement.** At ~10.8 tok/s, 4-bit MLX on an M4 Pro, every
-   knob that would bound the inspection loop also truncates the reasoning that is the
-   deliverable. Run 2 proves that directly: cap output low enough to afford the loop and the
-   thinking block gets cut before the tool call. I cannot separate "the model won't act" from
-   "the model needs more tokens to reach the act, and this box cannot pay for them" with the
-   evidence in hand.
+2. **Whether it can execute is still open.** It has not yet converted that correct,
+   handed-to-it plan into an `action(...)` call. But the three runs that showed zero actions
+   were configured by me in a way that could not have shown otherwise, so they are not evidence
+   about the model. Run 4 is the first fair test and it is still going.
 
-So: **no level cleared, no action taken, and the score is 0.00 — and that 0.00 carries no
-information about the model.** It should not be quoted, and specifically must not be set beside
+3. **This box is a poor instrument regardless.** At ~10.8 tok/s with 20K-character reasoning
+   blocks, every knob that bounds the inspection loop also truncates the reasoning that is the
+   deliverable — run 2 demonstrates that directly. Even a well-behaved model would struggle to
+   reach 14 actions here inside 240 minutes.
+
+**No level cleared, no action taken so far, and the score is 0.00 — and that 0.00 carries no
+information about the model.** It must not be quoted, and specifically must not be set beside
 the a108 0.00 on sk48 as though the two measured the same thing.
 
 **What would settle it.** The same treatment on a box that generates at 50+ tok/s — which is
-exactly the a424 arm a peer sub-agent launched at 16:50 EDT (see the conflict section). There,
-20K characters of reasoning costs seconds rather than ten minutes, and the question "will it act
-once it has been told?" gets a clean answer. If it inspects forever there too, the finding is
-about the model and is worth a great deal. Recommend reading this run as the *local feasibility
-probe it turned out to be*, and reading the a424 arms for the capability answer.
+exactly the a424 arm a peer sub-agent launched at 16:50 EDT (see below). There, a 20K-character
+reasoning block costs seconds rather than ten minutes, and "will it act once it has been told?"
+gets a clean answer. Read this run as the local feasibility probe it turned out to be; read the
+a424 arms for the capability answer.
 
-**A cheap follow-up worth one run:** the harness accepts batched actions
-(`action(actions)`, `prompts.py` line 145 already encourages it) and the injected text ends with
-a five-step plan. A variant that pushes the model to commit to a short opening sequence *before*
-inspecting — or that hands it the first three moves outright — would test execution directly
-instead of testing it through a perception loop this box cannot afford.
+**A cheap follow-up worth one run:** the harness accepts batched actions (`action(actions)`,
+already encouraged at `prompts.py:145`) and the injected text ends with a five-step plan. A
+variant that pushes the model to commit to a short opening sequence *before* inspecting — or
+that hands it the first three moves outright — would test execution directly rather than
+through a perception loop this box cannot afford.
 
 ## Coordination conflict found mid-run — flagged, not resolved
 
@@ -306,7 +307,8 @@ per the conflict above.
 ~/bubba-workspace/arc3-sft/runs/
   20260921_162713_20260921_sk48-overfit-oracle-local-mlx/           # run 1, untuned pace evidence
   20260921_165207_20260921_sk48-overfit-oracle-local-mlx-bounded/   # run 2, over-tight cap
-  20260921_170341_20260921_sk48-overfit-oracle-local-mlx-bounded2/  # run 3, arm of record
+  20260921_170341_20260921_sk48-overfit-oracle-local-mlx-bounded2/  # run 3, imposed-ceiling
+  20260921_173838_20260921_sk48-overfit-oracle-local-mlx-faithful/   # run 4, arm of record
 ~/bubba-workspace/arc3-run/sk48-overfit-*.log                       # launcher stdout
 ~/GitHub/arc-3/datasets/explainer-games/rulebooks-sk48-overfit/sk48.txt   # treatment (gitignored)
 ~/GitHub/arc-3/scripts/run_sk48_overfit_local.sh                    # launcher

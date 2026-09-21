@@ -46,10 +46,10 @@ export LOCAL_ANALYZER_CONTEXT_WINDOW="49152"
 # tokens is the difference between a reachable level-1 clear and a pre-determined null.
 # Capping thinking is also aligned with the overfit hypothesis rather than a compromise of it:
 # a model handed the mechanics should not need 16,000 characters re-deriving them.
-export LOCAL_ANALYZER_TOOL_STEPS="3"
-export LOCAL_ANALYZER_MAX_OUTPUT="7000"
+export LOCAL_ANALYZER_TOOL_STEPS="12"
+export LOCAL_ANALYZER_MAX_OUTPUT="10000"
 
-RUN_NAME="20260921_sk48-overfit-oracle-local-mlx-bounded2"
+RUN_NAME="20260921_sk48-overfit-oracle-local-mlx-faithful"
 
 cd "$INF"
 exec .venv/bin/python -m inference.framework.run \
