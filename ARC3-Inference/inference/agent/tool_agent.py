@@ -211,7 +211,7 @@ _COMPACTION_PROMPT = (
     "conversation. Before they disappear, fold everything durable into the knowledge ledger.\n"
     "Rules:\n"
     "- Output ONLY a JSON object. Its keys are the ledger fields: action_semantics, "
-    "object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes, world_model, "
+    "object_taxonomy, win_pattern, level_log, cross_level_notes, world_model, "
     "goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes. "
     "Omit fields "
     "with nothing new; omitted fields keep their previous value.\n"
@@ -340,13 +340,12 @@ def _extract_labeled_blocks(content: str, labels: list[str]) -> dict[str, str]:
 
 
 # The knowledge ledger is two-tier, mirroring how ARC-AGI-3 games are organized:
-# levels share mechanics (what actions do, what objects are, where the HUD is)
+# levels share mechanics (what actions do, what objects are, what wins)
 # but change layouts and goals. Game-tier fields persist across level
 # transitions; level-tier fields are wiped when a level ends.
 _LEDGER_GAME_KEYS: tuple[str, ...] = (
     "action_semantics",
     "object_taxonomy",
-    "hud_map",
     "win_pattern",
     "level_log",
     "cross_level_notes",
@@ -367,7 +366,6 @@ _LEDGER_LABEL_TO_KEY: dict[str, str] = {
     "Action semantics": "action_semantics",
     "Action model": "action_semantics",
     "Object taxonomy": "object_taxonomy",
-    "HUD map": "hud_map",
     "Win pattern": "win_pattern",
     "Level log": "level_log",
     "Cross-level notes": "cross_level_notes",
@@ -444,8 +442,11 @@ def _format_model_response_meta(
 
 def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt = (
-        "You are playing a video game. You learn the controls the way any player does: "
-        "by pressing them and watching what happens on screen."
+        "You are playing a video game. This game is generally easy for humans. "
+        "Think about the game like a human and not like a coding agent. "
+        "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
+        "imaginative functions. MOUSE is a click at a row and column you choose. "
+        "ACTION7, when it is available, usually lets you undo your last move."
     )
     prompt += GAME_OVERVIEW_ADDENDUM
     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
@@ -1088,6 +1089,7 @@ class ToolAgent:
         self._tool_output_chars = max(256, self._tool_output_tokens * 4)
         self._save_request_logs = bool(save_request_logs)
         self._act_first_stall = 0
+        self._act_first_phase = False
         self._system_prompt = _build_system_prompt(
             tool_output_tokens=self._tool_output_tokens,
         )
@@ -1349,7 +1351,7 @@ class ToolAgent:
             return
         if summary.get("level_transition") or summary.get("run_complete") or summary.get("game_over"):
             # Level-tier knowledge dies with the level; game-tier knowledge
-            # (action semantics, object taxonomy, HUD map, win pattern,
+            # (action semantics, object taxonomy, win pattern,
             # level log) is exactly what must survive into the next one.
             for key in _LEDGER_LEVEL_KEYS:
                 self._summarized_knowledge[key] = ""
@@ -1517,7 +1519,7 @@ class ToolAgent:
                                     "Your knowledge ledger, carried forward to every later turn. A JSON object with "
                                     "string fields in two tiers. Game tier, persists across levels: action_semantics "
                                     "(verified effect of each action, with step refs), object_taxonomy (what each "
-                                    "color/shape is), hud_map (any screen region you have confirmed by playing is not part of the puzzle), win_pattern "
+                                    "color/shape is), win_pattern "
                                     "(what completing a level required), level_log (one line per finished level: "
                                     "actions used, the trick), cross_level_notes. Level tier, resets each level: "
                                     "world_model (current level's layout and behavior), goal_model, recent_findings, "
@@ -1785,6 +1787,16 @@ class ToolAgent:
             if self._step_env_callback is None:
                 raise RuntimeError("action(actions) is not available in this session.")
             normalized_actions = self._normalize_python_actions(actions)
+            if self._act_first_phase and len(normalized_actions) > 1:
+                # One press per turn during act-first. Without this the phase is trivially
+                # escaped: run 20260921_175604 batched ten UPs in a single turn and jumped
+                # from action 5 to action 14, so action 11 never got its own turn and the
+                # thinking-back-on question -- the point of the arm -- went untested.
+                log.info(
+                    "act-first: truncating batch of %d to 1 action",
+                    len(normalized_actions),
+                )
+                normalized_actions = normalized_actions[:1]
             if terminal_action_result is not None:
                 reason = _terminal_action_reason(terminal_action_result) or "terminal_state"
                 compact_payload = {
@@ -2081,6 +2093,7 @@ class ToolAgent:
         effective_tool_steps = (
             _ARC3_ACT_FIRST_PROBES + 1 if act_first_phase else self._tool_steps
         )
+        self._act_first_phase = act_first_phase
         if act_first_phase:
             log.info(
                 "act-first phase active action=%d probes=%d thinking=off",
@@ -2531,6 +2544,7 @@ class ToolAgent:
                 self._history_messages = previous_history_messages
             self._step_env_callback = None
             self._current_valid_actions = []
+            self._act_first_phase = False
 
         if act_first_phase:
             if step_executed:

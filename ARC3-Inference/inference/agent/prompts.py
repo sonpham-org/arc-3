@@ -10,26 +10,19 @@ TOOL_CALL_FORMAT_GUIDANCE = (
 
 GAME_OVERVIEW_ADDENDUM = (
     "\n\nGame overview:\n"
-    "- You are solving a multi-level grid puzzle game. \n"
-    "- You are called repeatedly over the course of a run. Treat each turn as one observe-plan-act cycle: re-understand the current state from the newest frame, update your working world model in Python, choose the next best action or short sequence against the goal as currently understood, execute it, and expect to re-evaluate on the next turn from the updated state.\n"
-    "- Your job is to solve the entire game by clearing every level, not just the current screen.\n"
-    "- Levels often build on earlier mechanics, but layouts and interactions can still change between levels, and new mechanics might be introduced.\n"
-    "- Not everything on screen is part of the puzzle. Some displays just tell you how many moves are left, or which level you are on, or are decoration. Others are part of the puzzle, and one may even show you the arrangement you are meant to produce. Work out which is which by playing, not by assuming.\n"
-    "- In this environment, boards are presented as 64 x 64 color grids rendered with ARC color symbols.\n"
-    f"- Color legend: {ARC_COLOR_LEGEND}.\n"
+    "- You are solving a multi-level game. Your job is to understand the mechanics of each level after a few exploratory actions. Solve each level to win the game and complete the task.\n"
+    "- You are called repeatedly over the course of a run. Treat each turn as one observe-plan-act cycle: re-understand the current state from the newest frame, update your working world model, choose the next best short sequence of actions against the goal as currently understood, execute it, and expect to re-evaluate from the updated state.\n"
+    "- Levels often build on earlier mechanics! Layouts and interactions can still change between levels, and new mechanics might be introduced!\n"
+    "- Not everything on screen is part of the puzzle. Some displays just tell you how many moves are left, or which level you are on, or might be decoration. Other elements may be a legend or a guide or instructions to be followed. Work out which is which by playing, not by assuming.\n"
+    f"- The board is drawn with these color symbols: {ARC_COLOR_LEGEND}.\n"
 )
 
 VISUAL_GAME_ADDENDUM = (
     "\n\nVisual-game guidance:\n"
-    "- Treat each board as a scene with objects, blockers, targets, adjacency, containment, motion, and symmetry.\n"
-    "- Game entities are usually be rendered as connected multi-tile shapes such as 2×2, 2×3, 3×3, or longer patterned structures. Sometime they might also be 1x1 tokens."
-    "- Some games are logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, or whole-board configuration.\n"
-    "- Background colors are often white or gray/black-ish large regions, but not always. Verify background hypotheses by area, stability, and object boundaries rather than assuming them.\n"
-    "- Use coordinates only to target actions or describe local evidence. Do not frame the objective as reaching a specific absolute row or column.\n"
-    "- Re-ground on the newest frame after any score increase or abrupt scene change; the returned board may already be the next level.\n"
-    "- `WIN` means the whole game is solved. Mid-run level completion is more likely to appear as a score increase while play continues.\n"
-    "- Strategies may transfer loosely across levels, but layouts and mechanics can change. Re-check the new board before repeating a plan.\n"
-    "- For `MOUSE`, pass `row` and `col` integer arguments. `row` is vertical position, `col` is horizontal position.\n"
+    "- Your 64x64 viewport shows you a scene possibly with objects, blockers, targets, adjacency, containment, motion, and symmetry. There may be more game world or playable area beyond what you can currently view.\n"
+    "- Game entities are usually rendered as connected multi-tile shapes. Sometimes they might also be single tokens. The size hierarchy follows what's easily visible and logical to humans. Bigger shapes or entities tend to be more important than smaller ones.\n"
+    "- Some games may contain logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, toggle, switch, or whole-board configuration.\n"
+    "- Don't assume anything about the background color.\n"
 )
 
 STRUCTURED_RUNTIME_STATE_ADDENDUM = (
@@ -63,7 +56,7 @@ STRUCTURED_RUNTIME_STATE_ADDENDUM = (
     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
     "- `RESET` restarts the current level from its starting state; completed levels stay completed, and it counts as an action. It is rate-limited: never twice in a row, at most once per 20 actions, and it is absent from `valid_actions` while unavailable.\n"
-    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
+    "- `ACTION7` is a valid action when it appears in `valid_actions`. It most often undoes your last move, but it is game-specific, so confirm what it does with one safe probe.\n"
     "- `last_action_result` may include `animation_frame_count`, `animation_changed`, `animation_only_changed`, `animation_changed_cell_count`, `animation_changed_bbox`, and `animation_transition_count`. These summarize intermediate animation frames that are not present in `current_frame`; an `animation_only_changed` result means the action displayed a real transient change even though its final board matched the pre-action board.\n"
 )
 
