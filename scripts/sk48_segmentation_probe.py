@@ -71,7 +71,8 @@ def shape_of(node, bb):
     # A handle occupies a 6x6 footprint, but its fill varies by level: an outline ring in lvl 1-3
     # and 5-8 (18 px), a SOLID block in lvl 4 (~30 px, and colored black -- the same value as the
     # play-area background, only separable here because the strip background is charcoal). Nothing
-    # else in sk48 has a 6x6 footprint, so the footprint alone is the reliable signature.
+    # else has a 6x6 footprint in any of the 8 opening frames tested, so the footprint alone is a
+    # reliable signature here; it is not a verified claim about every sk48 frame.
     if (h, w) == (HANDLE_SIDE, HANDLE_SIDE):
         return "handle"
     if (h, w) == (MARKER_SIDE, MARKER_SIDE) and node["pixels"] == 4:

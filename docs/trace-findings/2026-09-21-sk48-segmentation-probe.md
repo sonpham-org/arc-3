@@ -98,6 +98,12 @@ target. In lvl6 the interior has one horizontal run (row 27: b,b,b) and one vert
 39, 45: R,R,R), matching the two reference skewers. The board is not harder to segment than the
 strip — it is harder to *align* with the strip.
 
+The strip side has a built-in invariant (`beads accounted for = N/N`); the interior side does not,
+so the handle-face exclusion was audited separately. Across all 8 levels and both zones it removes
+21 nodes, every one of them exactly concentric with its host handle at offset (+1,+1) and colored
+white or charcoal — never a colored bead. No genuine bead is dropped, so the counts above are real.
+(Level 7 having 5 interior beads against 6 reference slots is game state, not a probe artifact.)
+
 **4. Total object count, and is the strip distinguishable from the HUD?** 46–111 nodes per level, which
 is small and readable, not a haystack. **sk48's 64×64 frame contains no HUD or timer bar at all** —
 the "LEVEL 4 / 8" text, HELP and RESET buttons visible in the Boss's screenshots are the web
@@ -133,7 +139,7 @@ took a run-then-adjacency rule to fix. That error happened with the full ascii i
 a 2×2 center whose color keys that reference skewer to a specific playable skewer — lvl4's yellow
 and sky-blue markers are how you know which target is which. Segmentation preserves these as nodes.
 But the 6×6 handle ring is **broken where the shaft attaches** (verified in raw ascii, e.g. lvl6
-rows 215–216 col 10 are shaft dashes, not ring), so the interior is not topologically enclosed and
+grid rows 57–58 col 10 are shaft dashes, not ring), so the interior is not topologically enclosed and
 `children` assigns it no parent. Nesting has to be recovered geometrically. Two related shape
 subtleties: a bead may render as a 12 px ring around a 2×2 center — a marker inside the bead, **not**
 occlusion (lvl5 node 43, `b` with a `W` center, which *is* an enclosed child); and lvl4's handles are
