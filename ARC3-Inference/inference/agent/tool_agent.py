@@ -31,6 +31,7 @@ from inference.agent.prompts import (
     COMPACT_REASONING_TURN_REMINDER,
 )
 
+from inference.agent.persona import opening_persona_block, persona
 from inference.agent.reasoning_style import compact_reasoning_enabled
 from inference.agent.oracle_rules import load_rulebook, render_block, strip_block
 
@@ -461,9 +462,8 @@ _IMAGE_FIRST_OVERRIDES = (
 
 def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt = (
-        "You are playing a video game. This game is generally easy for humans. "
-        "Think about the game like a human and not like a coding agent. "
-        "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
+        opening_persona_block()
+        + "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
         "imaginative functions. MOUSE is a click at a row and column you choose. "
         "ACTION7 is undo: it takes back your last move. Not every game offers it, but where it is offered that is what it does. Undo is not the same as RESET."
     )
@@ -489,6 +489,7 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
             if stale not in prompt:
                 raise RuntimeError("image-first override missed its target sentence")
             prompt = prompt.replace(stale, fresh)
+    log.info("system prompt built persona=%s chars=%d", persona(), len(prompt))
     return prompt
 
 
