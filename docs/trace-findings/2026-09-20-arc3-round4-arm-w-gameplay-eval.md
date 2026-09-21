@@ -15,9 +15,12 @@ SRP/DRY check: Pass -- the round-4 spec is docs/plans/2026-09-19-arc3-lora-round
 
 # ARC-3 round 4, arm W — held-out gameplay evaluation — 20-Sep-2026
 
-**Status: IN PROGRESS.** This file is committed early on purpose, so the method and the
-pre-flight measurements survive independently of whether the full pass schedule finishes.
-Numbers are marked as they land. Anything not yet measured says so.
+**Status: COMPLETE, and stopped short of the planned schedule.** The spec asked for n=3 per
+arm. **n=1 is complete and matched across all three arms and is the result.** n=2 finished for
+`base` and `round3` only; arm W's second pass was destroyed twice and the run was then stopped
+because **the eval workload was rebooting the box** (§4.9). That was a stability decision, not
+a measurement decision, and it was not the Boss's call to make because the interim never
+reached him — see §7.
 
 ---
 
@@ -219,55 +222,160 @@ a108 applied a BF16-trained adapter to NVFP4 weights whereas a424 applies it to 
 weights it was trained on; or this box's compressed turn budget compresses all arms toward
 each other. **Unverified.** Distinguishing them needs a108, which was unavailable.
 
-It does carry one consequence worth stating: round 3's a108 collapse should be treated as less
-firmly established than PR #59 presented it, since it does not reproduce under a matched-weights
-serving setup.
+**This claim is under-powered and must not be quoted as established.** Round 3's own two
+passes on this box were **3 levels and 1 level** (§4.4). A single 3-level pass is weak evidence
+that round 3 "does not collapse here" when its very next pass landed at 1. The fair statement
+is that round 3's a424 result is *not obviously a collapse*, and that its second pass is
+indistinguishable from arm W's first. Round 3's a108 collapse may still be real; this run
+neither confirms nor refutes it, and any suggestion that PR #59 was wrong would be over-reading
+two passes.
 
 ### 4.3 What n=1 can and cannot support
 
-These are single stochastic samples at temperature 1.0. Round 3's eval made the same caveat
-and it applies at least as hard here, because the counts are smaller: base and round 3 differ
-by one level in *neither* direction, and arm W is two levels below both.
+These are single stochastic samples at temperature 1.0. Arm W is below base on 2 of 7 games
+(ar25, su15), tied on 5, and ahead on none. Two games is not significant on a sign test.
+**The direction is suggestive; the magnitude is not usable.**
 
-Arm W is below base on 2 of 7 games (ar25, su15), tied on 5, and ahead on none. Two games is
-not significant on a sign test. **The direction is suggestive; the magnitude is not usable.**
-Further passes are running to address exactly this.
+### 4.4 The second passes, and why they are variance evidence rather than an arm comparison
+
+`base` and `round3` each completed a second pass. **Arm W did not** — its pass 2 was destroyed
+twice (§4.9). So there is no matched n=2 comparison, and none is offered:
+
+| arm | pass 1 | pass 2 | levels | score |
+|---|---|---|---|---|
+| base | 3 lv / 7.778 | 2 lv / 5.556 | **[3, 2]** | [7.778, 5.556] |
+| round3 | 3 lv / 6.971 | 1 lv / 2.778 | **[3, 1]** | [6.971, 2.778] |
+| round4W | 1 lv / 2.778 | *(destroyed)* | **[1]** | [2.778] |
+
+**Averaging base and round 3 over two passes and comparing that to arm W's single pass would
+be an unmatched comparison, and the parity discipline applied everywhere else in this document
+forbids it.** The second passes earn their place for one reason only, and it is an important
+one:
+
+> **The pass-to-pass spread inside an arm is about as large as the gap between arms.**
+> Round 3 moved 3 → 1 across two passes of the *same* adapter on the *same* box. Arm W's single
+> pass scored 1. On this evidence arm W's 1-level pass is not distinguishable from an ordinary
+> low draw of an arm that also produces 3-level passes.
+
+This is the single most important limitation on everything above. The n=1 *ordering*
+(base ≥ round3 > round4W) is what this run supports. The *size* of arm W's deficit is not
+established, and a reader who takes "3 levels to 1" as an effect size will be over-reading it.
 
 ---
 
-## 4.9 Infrastructure: the arm-W pass that was discarded
+## 4.9 Infrastructure: three destroyed passes, and the run being stopped
 
-Arm W's first attempt (`20260920_173604`) is **not** in the table and is not scored. About 90
-seconds in, vLLM stopped producing tokens: generation throughput 0.0 tok/s with 7 requests
-running, KV usage flat at 5.5%, and **no engine log line for 29 minutes** while the EngineCore
-process sat at 96% GPU and 296% CPU with its main thread in state `R` and all workers parked
-in `futex_do_wait`. That is a wedge, not slow generation.
+Three arm-W passes were destroyed. **None of them is in any table**, and all three run dirs are
+preserved on a424 under `DISCARDED_` prefixes rather than deleted.
 
-Its four completed requests before the hang were unremarkable (245–367 completion tokens,
-77–110s) — nothing about the adapter's output explains it. Every subsequent "timeout" in that
-run was a dead server, so the run measures the infrastructure and was discarded rather than
-reported.
+**1. `DISCARDED_vllmwedge_20260920_173604` — vLLM wedge.** About 90 seconds in, vLLM stopped
+producing tokens: generation throughput 0.0 tok/s with 7 requests running, KV usage flat at
+5.5%, and **no engine log line for 29 minutes** while the EngineCore process sat at 96% GPU and
+296% CPU with its main thread in state `R` and all workers parked in `futex_do_wait`. That is a
+wedge, not slow generation. Its four completed requests beforehand were unremarkable
+(245–367 completion tokens, 77–110s), so nothing about the adapter's output explains it. Every
+subsequent "timeout" in that run was a dead server. After a restart the pass was re-run in full
+and completed `rc=0` with healthy generation — **the wedge did not reproduce**, so it is
+recorded as a one-off on vLLM 0.24.0 and not as an arm-W property. The re-run
+(`20260920_181652`) is the pass reported in §4.
 
-The server was killed (GPU confirmed back to 0%, memory reclaimed from 111 GB to 3 GB),
-restarted with byte-identical configuration, and arm W re-run in full. The re-run completed
-`rc=0` with healthy generation throughout. The wedge **did not reproduce**, so it is recorded
-as a one-off on vLLM 0.24.0 rather than an arm-W property.
+**2 and 3. `DISCARDED_reboot_20260920_230111` and `DISCARDED_reboot2_20260921_000355` — the box
+rebooted, twice.** a424 rebooted at **23:54** and again at **00:12**, each time killing the
+arm-W pass in flight. `last -x reboot` shows no other reboot on this box since 30-Aug, so these
+two are ours.
 
-**One parity caveat created by that restart, stated rather than buried.** The reloaded server
-profiled a larger KV cache than the original — **732,835 tokens / 7.12x** concurrency versus
-**679,103 / 6.59x** — because more host memory was free at boot. The configuration is
-identical and `run_config.json` cannot show this, so the arms are *not* perfectly matched at
-the server level: base and round 3 ran at 6.59x, arm W at 7.12x. The difference is in arm W's
-favour (less preemption pressure), and measured preemption was **zero** in every pass, so it
-does not explain arm W scoring lower. It is disclosed because a reader cannot recover it from
-the artifacts.
+### The cause, and it is this eval's own configuration
+
+From the kernel log of the boot in between:
+
+```
+Sep 21 00:01:53 gx10-a424 kernel: NVRM: nvCheckOkFailedNoLog: Check failed:
+  Out of memory [NV_ERR_NO_MEMORY] (0x00000051)
+  returned from _memdescAllocInternal(pMemDesc) @ mem_desc.c:1359
+```
+
+That fired during this eval's own vLLM start. The arithmetic behind it:
+
+| | |
+|---|---|
+| host memory, total (unified) | **121 GB** |
+| model weights, BF16 | **51.75 GiB** on disk, ~66 GB resident |
+| KV cache at `gpu_memory_utilization: 0.85` | **43.56 GiB** |
+| observed steady-state during passes | **109–111 GB used, swap active** |
+
+**`gpu_memory_utilization: 0.85` is not survivable for a long run on this box.** It leaves
+single-digit GB for the OS on a machine where GPU and host memory are the same pool. It held
+for roughly eight hours and five passes, then stopped holding. This is a defect in how this
+eval was configured, not a fault of a424, and it is the direct reason the run stopped.
+
+**Recommendation for the next eval on a424:** drop `gpu_memory_utilization` to ~0.75 and
+re-measure. The cost is a smaller KV cache and therefore fewer than 7 lanes, which scales wall
+clock up in proportion — the spec's §8.3 already prices that at roughly 27h for 9 passes at 4
+lanes. A slower schedule that finishes beats a faster one that reboots the box.
+
+**Why the run stopped here rather than continuing at lower utilization.** Lowering utilization
+changes the server configuration, so a sixth pass run that way would not be matched to the five
+already banked — it would not produce the balanced n=2 it was meant to produce. Continuing at
+0.85 meant continuing to crash someone else's machine. Neither option produced a comparable
+arm-W pass 2, so the run was stopped and the box left clean.
+
+### Server-level parity wrinkle across three boots
+
+The server was booted three times from byte-identical configuration, and profiled a **different
+KV cache each time** because a different amount of host memory was free. `run_config.json`
+cannot show this, so it is recorded explicitly:
+
+| boot | KV cache | max concurrency @ 102,985 | passes run under it |
+|---|---|---|---|
+| 1 | 679,103 tokens | **6.59x** | base-p1, round3-p1 |
+| 2 | 732,835 tokens | **7.12x** | round4W-p1 |
+| 3 | 638,805 tokens | **6.20x** | base-p2, round3-p2 |
+
+All three are at or below the 7 lanes actually used. **Measured preemption was zero in every
+pass**, so no pass is known to have been throttled by this — but the arms are not perfectly
+matched at the server level, and arm W's reported pass ran under the *most* favourable of the
+three. That direction matters: it cannot explain arm W scoring lower.
+
+### Final state of a424
+
+vLLM stopped, no compute processes on the GPU, **GPU utilization 0%**, memory back to
+**3 GB used of 121**, stale server PID file removed, and the three `DISCARDED_` run dirs left
+in place as evidence. `~/arc3-round2`, `~/arc3-round3` and the oracle `banked/` dirs were never
+touched; nothing outside `~/arc3-round4/eval/` was written.
 
 ---
 
 ## 5. Verdict
 
-*Pending the remaining passes. The n=1 read is above: arm W is the weakest of the three arms
-on the primary metric while matching base on deliberation.*
+**Arm W did not improve gameplay. On the one matched sweep this run completed, it was the
+weakest of the three arms** — 1 level / 2.778 against base's 3 / 7.778 and round 3's 3 / 6.971,
+on seven held-out games it was never trained on, with arms differing only in `.model`.
+
+**The spec's falsifier does not fire, because its antecedent is false.** It required arm W to
+shorten deliberation. Arm W matched base within 1% (2,429 vs 2,456 reasoning characters per
+answered turn) and sat well above round 3's 1,946. The write-up did the thing it was designed
+to do: it put the reasoning back.
+
+**And clearance still fell.** That is the finding. Round 4's premise was that round 3 lost
+capability *because* it lost the rationale, with shortened deliberation as the visible symptom.
+Arm W restored the deliberation and did not restore the capability. The most defensible reading
+is that **deliberation length was a symptom that travelled with round 3's regression, not its
+mechanism** — so a fourth round aimed squarely at that symptom was aimed at the wrong thing.
+
+What this does **not** establish:
+
+- **Not a magnitude.** n=1. Round 3's own passes on this box ran [3, 1], a spread as large as
+  the gap being measured. Arm W's single 1-level pass is not distinguishable from a low draw.
+- **Not a formatting or tool-use failure.** Tool validity was 100% of answered turns in every
+  arm, as in round 3.
+- **Not a comparison to round 3's a108 numbers.** Different box, different weights. Base was
+  re-run here precisely so that no such comparison is needed.
+- **Not a verdict on the write-up corpus itself.** Only the final checkpoint (step 88) was
+  tested. The checkpoint ladder (`adapter-step44`, `adapter-step22`) was scheduled after the
+  main arms and **was never reached.** Given that round 2's gain was done by step 16 and step 48
+  regressed, and that arm W ended at loss 0.0380 — round 3's neighbourhood — an over-training
+  explanation for arm W's result **remains open and untested.** That is the single most
+  valuable follow-up.
 
 ---
 
@@ -300,8 +408,31 @@ was allowed to continue on that basis.
 
 ## 6. Not verified / open questions
 
-- a108 never returned, so this evaluation could not be run on the box the spec names, and no
-  cross-box comparison is available. Unverified: whether a424 and a108 would rank the arms the
-  same way.
+- **The checkpoint ladder was never run.** `adapter-step44` and `adapter-step22` are untested.
+  Over-training is an open explanation for arm W's result. Highest-value follow-up.
+- **No matched n=2.** Arm W has one pass; base and round 3 have two. n=3 was never approached.
+- a108 never returned, so this could not run on the box the spec names, and no cross-box
+  comparison is available. Unverified: whether a424 and a108 would rank the arms the same way,
+  and whether round 3's a108 collapse is a serving artifact.
 - The distribution of intended output length above ~3,300 tokens is unmeasurable from these
   artifacts, because timed-out requests report no token count.
+- The vLLM wedge (§4.9) has no root cause. It did not reproduce; it is unexplained, not fixed.
+
+## 7. Process note: the interim never reached the Boss
+
+The brief asked for an interim post to `#arc-3` after the n=1 sweep, and for the Boss to decide
+n=2 versus n=3 against measured wall clock. **The n=1 sweep completed and the interim was
+written, but every attempt to post it failed** — the agent's Discord tool returned
+`MCP server "openclaw" is not connected` from roughly 19:00 UTC onward (the gateway itself was
+healthy; the session's MCP bundle had dropped). Roughly ten attempts over six hours all failed.
+
+Two consequences, stated plainly rather than papered over:
+
+1. **The Boss never got the n=2-versus-n=3 decision he was supposed to make.** The run continued
+   to n=2 by default, per the brief's instruction to proceed absent direction.
+2. **The run then stopped on box instability, not on his call.** Had the interim landed, the
+   recommendation in it was to stop at n=2 and spend the saved passes on the `adapter-step44`
+   ladder arm. As it happened, neither the third passes nor the ladder were run.
+
+Results were committed and pushed to PR #65 as they landed for exactly this reason, so the
+measurements survived the comms failure.
