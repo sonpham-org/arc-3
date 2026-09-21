@@ -168,9 +168,13 @@ reason, so write that subject as the reason.
 
 ## 3. How to talk to the boss
 
-He is a **video game producer**, not a CS professor, and he says so. He is also placing
-top-five on the Kaggle leaderboard, so he knows the domain — it is the jargon and the
-volume that get in the way, not the concepts.
+He is a **video game producer**, not a CS professor, and he says so. He is also, with Son,
+**14th of 3,206 teams** on the ARC-AGI-3 *public* Kaggle leaderboard — score 7.36, checked
+21-Sep-2026 — which is inside the gold-medal band (top 16 at this team count). So he knows
+the domain; it is the jargon and the volume that get in the way, not the concepts. Medals
+settle on the **private** leaderboard at the 02-Nov close, so the band is a position, not a
+medal. Re-check before repeating the number: `kaggle competitions leaderboard -c
+arc-prize-2026-arc-agi-3 --download`.
 
 - **Plain language. No decimals unless he asks.** "Two-thirds of the screen is empty" beats
   a table of edge densities.

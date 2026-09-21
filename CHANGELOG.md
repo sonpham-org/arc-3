@@ -21,6 +21,29 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 21-Sep-2026 — Leaderboard standing refreshed: 14th of 3,206, back inside the gold band
+
+Two places in the repo asserted the team was "placing top-five" on Kaggle. That was stale and
+nobody could tell how stale, because neither claim carried a date or a source.
+
+Pulled the live public leaderboard for `arc-prize-2026-arc-agi-3`
+(`kaggle competitions leaderboard --download`, snapshot `2026-09-21T12:13:49Z`, 3,206 teams):
+`Son Pham & Mark Barney` is **rank 14, score 7.36, 55 submissions**, last submission
+`2026-09-21 00:16:37`. Gold at 3,206 teams is the top 16, so the standing is two places inside
+the band.
+
+- `AGENTS.md` §3 and `docs/how-this-feeds-kaggle.md` §7 now state the rank, the team count, the
+  date, and the command that reproduces it, instead of an adjective that rots.
+- Both say **public** leaderboard. Medals are awarded on the **private** board at the
+  02-Nov-2026 close; a public band is a position, not a medal.
+- §7 records the margin, because the margin is the story: ranks 11-16 span 7.39 to 7.22, so the
+  band is held by 0.14 points — inside the seed noise §8 of that same page already documents.
+
+`docs/trace-findings/2026-09-17-seed-variance-and-the-sb26-jackpot.md` §1 also says "top-five",
+and was deliberately left alone: it describes an external competitor, not this team.
+
+---
+
 ## 21-Sep-2026 — Tuning panels for the rest of the catalog, measured by a script instead of by hand
 
 `scripts/measure_game_params.py`, `scripts/verify_game_params.py`,
