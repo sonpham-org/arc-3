@@ -446,7 +446,7 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
         "Think about the game like a human and not like a coding agent. "
         "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
         "imaginative functions. MOUSE is a click at a row and column you choose. "
-        "ACTION7, when it is available, usually lets you undo your last move."
+        "ACTION7 is undo: it takes back your last move. Not every game offers it, but where it is offered that is what it does. Undo is not the same as RESET."
     )
     prompt += GAME_OVERVIEW_ADDENDUM
     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
