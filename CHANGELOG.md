@@ -21,6 +21,129 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 21-Sep-2026 — Tuning panels for the rest of the catalog, measured by a script instead of by hand
+
+`scripts/measure_game_params.py`, `scripts/verify_game_params.py`,
+`scripts/serve_games_local.py`, and 60 new `docs/static/games/params/*.json`. No change to
+`games-tuning.js` or any other shipped code: the runtime contract from 20-Sep is unchanged and
+this only writes data for it.
+
+The five specs from 20-Sep were hand-measured in a browser over about half an hour. That does
+not reach the rest of the catalog, so the measuring is now a script. It parses each game's head
+source, collects the module-level `NAME = <int>` assignments the patcher can actually rewrite,
+and scans outward from each published value to find how far it can move before the game stops
+loading, resetting, stepping or drawing a legal 64x64 frame. **60 games got a panel, 334
+sliders now ship across 65 specs.** A full run is 71 seconds.
+
+**The catalog is 191 trees; only 69 of them can ever show a panel.** This is the number worth
+arguing with, and it is not a limit of the generator:
+
+- **78 games are in blind families** (53 `arena`, 25 `research`). `games-tuning.js` refuses to
+  attach a panel to a blind family at all, because a list of named constants is a second way to
+  read a game's shape — the leak `BLIND_FAMILIES` exists to stop. Measuring them would produce
+  files nothing renders, so they are skipped, and `--include-blind` is there for when that
+  product decision changes. **It is a product decision, not a technical one.**
+- **44 are retired** (`ai-generated`), already off the Games page.
+- Of the 69 left: 60 got a spec, 5 are the hand-written ones, and 4 got nothing.
+
+**The five hand-written specs are byte-identical.** They are on an explicit skip list with the
+reason, not regenerated-and-compared, because this script's derived English is honestly worse
+than a person's. They remain the quality bar.
+
+**A measured range here is a safety band, not a taste band, and the two are different things.**
+The 20-Sep specs record how far a constant can move and still *look right*. This records how far
+it can move before it *breaks*, which is wider. Measured on br10, `CELL` loads cleanly from 4 to
+24 with an unchanging colour count and a smoothly rising occupancy: there is no discontinuity
+anywhere near the hand-chosen maximum of 10, so no headless check can find that edge. Clamping
+to some fraction of the hand-written precedent would have been the guess the whole approach
+exists to avoid, so the band is the honest one and it is looser. Against the two hand-measured
+games the generator recovers **every** knob a person shipped — br10 9 of 9, hg51 5 of 5 — with
+ranges that contain the hand-chosen ones.
+
+One range rule is a contract decision rather than a measurement, and is labelled as such in the
+script: no slider is handed a value below `min(0, default)`. Negative geometry constants pass
+every check available — at hg51's `X0 = -6` the occupancy is *identical* to `X0 = 0` — because
+numpy's negative indexing silently wraps the drawing to the far side of the screen instead of
+raising. That is a bug surface, not a tuning range. Colour-named constants are likewise held to
+the engine's sixteen colours; a padding colour survived to 45 only because it never reached a
+frame to be validated.
+
+**Labels and notes are mechanically derived, and that is a real drop from five hand-written
+specs.** Stated plainly rather than slipped in:
+
+- `note` is the author's own trailing comment on the assignment line, verbatim, and is **omitted
+  entirely** when there is none. 117 of 300 generated sliders carry one. A missing note is
+  honest; "Slot" is noise wearing a lab coat.
+- `label` comes from the constant name through a small abbreviation map, so it reads like "Move
+  frames" and "Gate colour" but will never read as well as a person's. A short unknown part stays
+  upper-case (`GL`, `CW`) so an abbreviation looks like one instead of a mangled word.
+- `group` is keyword-classified into the four groups the hand-written specs already use.
+  Misgroupings survive: a few of ts01's colour names land in "Tuning" because they are not in the
+  vocabulary. It puts a slider under the wrong heading and nothing worse.
+- Panels are capped at 12 sliders — the size of the largest hand-written spec — with at most 4
+  palette entries, so a colour-heavy game cannot crowd out its geometry and rules. 17 games hit
+  the cap; 180 measured knobs were left out by it. Knobs a probe watched change the game take cap
+  slots first, then commented ones.
+
+**A knob that no probe saw do anything is still shipped when there is room, and that is
+deliberate.** An earlier version dropped them and lost br10's `FALL` and hg51's `WIN_HOLD` — real
+knobs the hand pass measured, invisible to a blind ten-action probe because `WIN_HOLD` only fires
+on a won level. A filter that rejects known ground truth is a wrong filter, so the only rejection
+on that axis is an AST one: a constant the module never reads cannot do anything. 159 shipped
+sliders are unproven by probe in that sense. The exception is a panel where *nothing* moved,
+which would be sliders that visibly do nothing: `cn04-2fe56bfb` is the catalog's only one and
+gets no file. CPython flagged it and the browser independently agreed.
+
+**Every slider was turned in a real browser, and that is the gate.** Ranges are measured in
+CPython 3.13 against a locally installed arcengine; the site runs Pyodide, a different
+interpreter and a different build, so a CPython measurement is a claim and not a result.
+`verify_game_params.py` drives Chromium over the play view and checks four things per spec: every
+declared knob renders, every declared minimum and maximum loads with no fault reported, turning a
+knob changes the board, and "Reset to defaults" brings the opening board back. **65 of 65 specs
+pass**, including the five hand-written ones. Two findings came out of it that a spot-check of ten
+would have missed, and one non-finding:
+
+- `cn04-2fe56bfb`'s inert panel, above.
+- A run that reused one browser page produced **two** false results at once: slider counts
+  belonging to the previous game, and three games "failing" because an earlier game's
+  unrecoverable rollback had wedged the Pyodide worker for the rest of the session. Every game now
+  gets a new page, closed after. The cost is a Pyodide boot each time.
+- The non-finding: ts01's `DEFAULT_FPS = 1` appeared to fail in Pyodide but not CPython, which
+  would have meant the whole measuring approach was unsound. On a fresh page it passes twice over.
+  It was the wedged worker above, not a divergence.
+
+**Pre-existing runtime finding, not a blocker.** On dw01, `T_WALL = 2` — one past its measured
+maximum — hangs the engine hard enough that `games-tuning.js` cannot reload the last good values
+either, and the panel correctly falls back to "Could not be put back — reload the page". It is
+unreachable from the shipped slider, which stops at 1. Recorded because the rollback path has a
+floor, not because anything here crosses it.
+
+**The official 25 are their own bucket, easy to cut.** 21 of them have a spec and it is thin:
+two template constants, `BACKGROUND_COLOR` and `PADDING_COLOR`, 44 sliders across all 21. Four
+games have no spec at all — `bp35`, `ft09` and `lf52` declare no patchable scalar, and `cn04` is
+the inert one. Deleting the 21 official specs would be one `rm` and would cost nothing else.
+
+**Specs go stale by design, which is why the generator is committed and re-runnable.** The
+evolution loop rewrites these sources continuously, so a spec written for v2 will meet v4. Each
+file records the `sha256` it was measured from, so staleness can be spotted without re-measuring,
+and the runtime already degrades safely: a knob that no longer resolves to one scalar assignment
+is dropped from the panel rather than applied blind. An evolved game loses sliders, never breaks.
+Measurements are cached under `scratch/` by `(gameId, sha256)`, so a re-run only measures what
+moved. The full sequence, and note it spans two interpreters — the generator needs 3.13 for
+arcengine and `match`, the verifier needs 3.14 for playwright:
+
+```
+python3.13 scripts/serve_games_local.py &          # docs/ locally, /api/ and /data/ proxied live
+python3.13 scripts/measure_game_params.py          # 71s, writes the specs
+python3.14 scripts/verify_game_params.py           # ~7min, exit 1 if any spec fails
+```
+
+`serve_games_local.py` exists because `docs/static/games/manifest.json` is a stale fallback
+predating the evolution trees, so a purely static local server cannot reach a game the API knows
+about. It serves the working tree's specs against the live catalog.
+
+---
+
 ## 20-Sep-2026 — Games play view: a per-game tuning panel in the sidebar
 
 `docs/static/games/params/*.json`, `docs/static/js/games-tuning.js`, wiring in
