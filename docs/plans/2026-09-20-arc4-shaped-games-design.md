@@ -163,7 +163,7 @@ with below. Control passes by walking into the idle body or with ACTION5, not by
 it -- the paragraph above predates knowing there is no click. It is the only game in the
 ledger on the moving-frame axis.
 
-### 2. Shrines and seals (build third)
+### 2. Shrines and seals (built)
 
 **Axis.** `delayed-consequence` x `moving-frame-of-reference`. Monotone, so it gets the
 cheap exact check rather than replay alone.
@@ -210,7 +210,34 @@ and a dependency chain that forces a specific order.
 
 This is the Pokémon-shaped one.
 
-### 3. Seasons (build fourth)
+**Built, 20-September-2026, and it came out close to the spec.** One overworld 65x65
+cells -- four windows across rather than three, because at three the first two levels were
+only 158 and 148 moves -- shared by all six levels, and the district graph is a tree, so a
+journey between two corners goes back through the middle and the map is worth learning.
+Routes 208, 212, 264, 330, 374, 434 moves, chosen by measuring the shortest honest route
+for all 36 candidate chains rather than by guessing. Two departures from the paragraphs
+above:
+
+- **The sanctum is visible from the first screen and that is deliberate.** The design said
+  "open ground, a wall in the distance, nothing else". What shipped starts the body beside
+  a sealed door it cannot open, which is the only thing the game ever says about what it
+  wants -- the goal is stated and the means are three windows away. That is a better
+  opening than a blank field and it still tells the player nothing about how.
+- **Level one carries a teaching wall.** One seal of the first plate's own colour stands on
+  that plate's own screen, so the first press is SEEN to do something before the game
+  starts acting at a distance. Every later level is checked to have no seal on the screen
+  of the plate that opens it. Without this the game's whole mechanic is invisible for the
+  length of a first playthrough, which is how the q-series failed.
+
+**And it is verified exhaustively, which is what monotone bought.** Lighting is monotone
+and walking is otherwise reversible, so the puzzle is a graph over (cell, plates lit) --
+9,000 to 25,000 states per level -- searched in full: winnable, no dead end, the chain
+forced link by link. On top of that a frame-level witness for the failure mode itself:
+stand somewhere blind to a plate's colour, walk to the plate, light it, walk back to the
+same cell, and the two frames are byte-identical. The world changed and the observation
+did not, which is the claim `off-screen-state-must-be-inferred` makes, proved in pixels.
+
+### 3. Seasons (build next)
 
 **Axis.** `cyclic-time` x `moving-frame-of-reference`, with weight doing the joining. Not
 monotone: replay verification only, and budget for that before the levels are drawn.
@@ -355,7 +382,7 @@ puzzle. That check goes in before the levels are drawn, not after.
 **Levels.** Six. No rival in the first two. One rival from level three. Two, with different
 routes, in the last.
 
-### 6. Cartographer (build next)
+### 6. Cartographer (built)
 
 **Axis.** `occlusion-and-fog` x `moving-frame-of-reference` x `resource-economy`. Monotone --
 fog lifts, cells count, nothing un-counts -- so it can be checked exactly and cheaply, which
@@ -589,3 +616,38 @@ control-transfer. The built game has the first, second and fourth: the rune gate
 set of runes lit, in any order, so nothing in it is ordered carriage. That is a fine game and
 an honest gap. Either the ordered pocket goes in on a later pass, or the claim gets corrected
 to three parts. It should not sit uncorrected while four more games are written on top of it.
+
+## How a game actually reaches a player, 20-September-2026
+
+This brief said nothing about publishing and the answer turned out to be three routes, not
+the two the arena's own doc describes. Written down because the next person will ask.
+
+1. **arena.sonpham.net** serves `webgames/<id>/` from the arena's Flask app, deployed from
+   `master`. An HTML build plus a ledger row is the whole of it. Anonymous telemetry runs.
+2. **arc.markbarney.net** (arc-explainer) reads ARCEngine games from its own repository, not
+   over HTTP. Publishing means running its importer against `arc3games/` and committing that
+   repo's regenerated output. Its own `CONTRIBUTING.md` is the procedure.
+3. **arc3.sonpham.net** has a publication API, and it is the one to use:
+   `scripts/publish_game_versions.py publish` in this repo, with `ARC3_PUBLISH_TOKEN`
+   (resolved from the linked Railway service when unset). No git, no deploy. It **refuses a
+   source without a passing `scripts/vet_game.py` report bound to the exact bytes**, and
+   that report needs a recorded winning trace. Publish the stripped `dist/` build, never the
+   authoring source.
+
+g304, g305 and g309 all went through route 3 on 20-September-2026. g304 had never been
+through it at all before that -- it had only reached arc-explainer.
+
+**Two things about the gate that the next person should not discover the hard way.**
+
+`vet_game.py` replays each level's recorded win **after a RESET**, and that caught a bug in
+g309 nothing in the arena repo could see: `level_reset()` cleared the carried gear, so a
+player who arrived at a level holding the lantern and then reset lost it. The engine-side
+verifier replays from a fresh engine and the webgames one never resets, so both were blind.
+**Anything in this series that carries state between levels has that bug available to it**,
+and seasons carries gear across levels by design.
+
+And the profiles do not fit these games. There are two: `seed` (3-12 levels, lenient) and
+`glowup`, which wants 7+ levels **and a level-one win in at most 10 actions**. Our level
+ones are 205 to 258 moves, which is the design rather than a defect, so all three published
+as `seed` carrying a `level1_short` warning. A long-horizon profile is the missing piece and
+nobody should invent one quietly -- it is a change to what "checked" means for this series.
