@@ -184,6 +184,11 @@ _ACT_FIRST_FOLLOWUP = (
 _LOCAL_ANALYZER_TEMPERATURE = _get_env_float("LOCAL_ANALYZER_TEMPERATURE", 0.6)
 _LOCAL_ANALYZER_TOP_P = _get_env_float("LOCAL_ANALYZER_TOP_P", 0.95)
 _LOCAL_ANALYZER_TOP_K = _get_env_int("LOCAL_ANALYZER_TOP_K", 20)
+_LOCAL_ANALYZER_MIN_P = (
+    _get_env_float("LOCAL_ANALYZER_MIN_P", -1.0)
+    if os.environ.get("LOCAL_ANALYZER_MIN_P", "").strip()
+    else None
+)
 _LOCAL_ANALYZER_SEED = _get_env_int("LOCAL_ANALYZER_SEED", -1)
 _REQUEST_SAFETY_MARGIN_TOKENS = 512
 _CONTEXT_OVERFLOW_RETRY_TRIM_TOKENS = 512
@@ -1584,6 +1589,7 @@ class ToolAgent:
             temperature=_LOCAL_ANALYZER_TEMPERATURE,
             top_p=_LOCAL_ANALYZER_TOP_P,
             top_k=_LOCAL_ANALYZER_TOP_K,
+            min_p=_LOCAL_ANALYZER_MIN_P,
             thinking=bool(_LOCAL_ANALYZER_ENABLE_THINKING) if thinking_override is None else thinking_override,
             tools=tools,
             tool_choice=_request_tool_choice(tools),

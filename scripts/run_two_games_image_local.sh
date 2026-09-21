@@ -30,6 +30,15 @@ export LOCAL_ANALYZER_CONTEXT_WINDOW="49152"
 export LOCAL_ANALYZER_MAX_OUTPUT="10000"
 export LOCAL_ANALYZER_TOOL_STEPS="12"
 
+# Sampling, pinned by the Boss 21-Sep-2026. Previously we sent temperature/top-p/top-k from the
+# harness defaults, sent no min-p at all (so the server's own default applied), and sent no seed,
+# which left every Mini arm differing by sampling noise as well as by prompt.
+export LOCAL_ANALYZER_TEMPERATURE="0.9"
+export LOCAL_ANALYZER_TOP_P="1.0"
+export LOCAL_ANALYZER_TOP_K="500"
+export LOCAL_ANALYZER_MIN_P="0"
+export LOCAL_ANALYZER_SEED="0"
+
 # The board picture goes in the prompt.
 export MULTIMODAL_CONTEXT="current_grid"
 export MULTIMODAL_UPSCALE="4"
