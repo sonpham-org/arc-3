@@ -148,10 +148,54 @@ Independently, that commit reframed the opening line to "You are playing a video
 the controls the way any player does: ..." — arrived at separately, near-identical in intent to
 this arm's reframe.
 
-## 5. Results
+## 5. A serving defect found while running this, which blocks every arm on this box
 
-_Pending — both arms must finish._
+The first launch of the stripped arm produced **zero game actions in 25 games** and every game
+sat on turn 1 retrying forever. That is not a model result. It is a tool-call parser mismatch,
+and it is worth more than this arm is.
 
-## 6. Verdict
+The server was started with `--tool-call-parser hermes`. **The model does not emit hermes
+format.** It emits Qwen's XML:
+
+    <tool_call>
+    <function=python>
+    <parameter=code>
+    print(1+1)
+    </parameter>
+    </function>
+    </tool_call>
+
+Confirmed directly against the running server with a single three-hundred-token request and a
+trivial tool definition: `finish_reason: stop`, **native `tool_calls`: zero**, the entire call
+delivered as `content` text. Not inferred from the run — reproduced on demand.
+
+Across all 27 answered turns of the voided launch, every single one logged
+`tool_call_markup_in_text: yes` and `tool_calls_recovered_from_markup: yes`. The harness's
+markup-recovery fallback rescued **100%** of them. That fallback is why the runs look like they
+are working, and it is why this went unnoticed: turn 1 completes and looks healthy.
+
+The damage shows on the **second** request of a turn, the one that carries the tool result back.
+Request 1 returned for 25 of 25 games, short and clean, 327–499 tokens. Request 2 returned for
+2 and timed out at the 900-second analyzer limit for the rest, each timeout costing about 1,220
+seconds of the game's wall before the harness retried the turn from `action_count=0` — forever.
+With the stop condition never recognised natively, the generation does not end where the tool
+call ends.
+
+This is the same signature the sk48 BF16 arm recorded and attributed to an uncapped output
+budget (`2026-09-21-sk48-overfit-a424.md` §5.2). That arm used `hermes` too. The corrected
+configuration proposed there — a larger `LOCAL_ANALYZER_MAX_OUTPUT` and a longer per-request
+timeout — treats the symptom. **The parser is the cause.** The round-4W baseline on this box
+used `qwen3_coder` and did issue actions, which fits.
+
+`qwen3_coder` and `qwen3_xml` are both registered in this vLLM build (0.19.0). `qwen3_coder` is
+the one the emitted markup matches and the one the round-4W baseline used.
+
+The first launch is retained as `VOID-hermesparser-stripped` and no number from it is quoted.
+
+## 6. Results
+
+_Pending — see §8 on box contention._
+
+## 7. Verdict
 
 _Pending._
