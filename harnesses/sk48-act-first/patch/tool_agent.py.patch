@@ -1,8 +1,6 @@
-diff --git a/ARC3-Inference/inference/agent/tool_agent.py b/ARC3-Inference/inference/agent/tool_agent.py
-index df491f04e..2ad012321 100644
---- a/ARC3-Inference/inference/agent/tool_agent.py
-+++ b/ARC3-Inference/inference/agent/tool_agent.py
-@@ -162,6 +162,24 @@ _LOCAL_ANALYZER_TOOL_TIMEOUT = _get_env_int("LOCAL_ANALYZER_TOOL_TIMEOUT", 30)
+--- /tmp/tool_agent.py.orig	2026-09-21 17:54:26
++++ ARC3-Inference/inference/agent/tool_agent.py	2026-09-21 19:13:54
+@@ -162,6 +162,24 @@
  _LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS = _get_env_int("LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS", 1024)
  _LOCAL_ANALYZER_YIELD_SECONDS = _get_env_float("LOCAL_ANALYZER_YIELD_SECONDS", 0.0)
  _LOCAL_ANALYZER_ENABLE_THINKING = _get_env_bool("LOCAL_ANALYZER_ENABLE_THINKING", True)
@@ -27,27 +25,100 @@ index df491f04e..2ad012321 100644
  _LOCAL_ANALYZER_TEMPERATURE = _get_env_float("LOCAL_ANALYZER_TEMPERATURE", 0.6)
  _LOCAL_ANALYZER_TOP_P = _get_env_float("LOCAL_ANALYZER_TOP_P", 0.95)
  _LOCAL_ANALYZER_TOP_K = _get_env_int("LOCAL_ANALYZER_TOP_K", 20)
-@@ -425,7 +443,10 @@ def _format_model_response_meta(
+@@ -193,7 +211,7 @@
+     "conversation. Before they disappear, fold everything durable into the knowledge ledger.\n"
+     "Rules:\n"
+     "- Output ONLY a JSON object. Its keys are the ledger fields: action_semantics, "
+-    "object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes, world_model, "
++    "object_taxonomy, win_pattern, level_log, cross_level_notes, world_model, "
+     "goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes. "
+     "Omit fields "
+     "with nothing new; omitted fields keep their previous value.\n"
+@@ -322,13 +340,12 @@
  
+ 
+ # The knowledge ledger is two-tier, mirroring how ARC-AGI-3 games are organized:
+-# levels share mechanics (what actions do, what objects are, where the HUD is)
++# levels share mechanics (what actions do, what objects are, what wins)
+ # but change layouts and goals. Game-tier fields persist across level
+ # transitions; level-tier fields are wiped when a level ends.
+ _LEDGER_GAME_KEYS: tuple[str, ...] = (
+     "action_semantics",
+     "object_taxonomy",
+-    "hud_map",
+     "win_pattern",
+     "level_log",
+     "cross_level_notes",
+@@ -349,7 +366,6 @@
+     "Action semantics": "action_semantics",
+     "Action model": "action_semantics",
+     "Object taxonomy": "object_taxonomy",
+-    "HUD map": "hud_map",
+     "Win pattern": "win_pattern",
+     "Level log": "level_log",
+     "Cross-level notes": "cross_level_notes",
+@@ -423,9 +439,34 @@
+         lines.append(_trim_log_text(json.dumps(tool_calls, indent=2, ensure_ascii=True)))
+     return "\n".join(lines)
+ 
++
++
++# Sentence-level rewrites applied only when a grid image is attached. Kept next to the prompt
++# builder so a drift in the source text fails loudly at build time instead of silently leaving
++# the measure-the-board steering in place.
++_IMAGE_FIRST_OVERRIDES = (
++    (
++        "- The raw numeric grid is intentionally not exposed. Use `current_frame.segmentation` as your primary view of the board -- objects, colors, shapes, containment, adjacency, and cross-frame object hashes. Use `current_frame.ascii` only to read a small, specific region; do not scan the whole board with it.\n",
++        "- The raw numeric grid is intentionally not exposed. The attached picture is your view of the board -- look at it and say what you see. `current_frame.segmentation` and `current_frame.ascii` exist to settle one specific detail you could not read off the picture; do not survey the board with either.\n",
++    ),
++    (
++        "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n",
++        "- You have already looked at the picture. Use `current_frame.segmentation` only to settle a detail that looking did not settle -- an exact coordinate you need for a click, or whether two things really are the same shape.\n",
++    ),
++    (
++        "- Use `current_frame.ascii` only to read a small, specific region of the board when `segmentation` is not enough; never use it to scan or summarize the whole board.\n",
++        "- Use `current_frame.ascii` only to read a few cells you are unsure of; never to scan or summarize the whole board.\n",
++    ),
++)
  
  def _build_system_prompt(*, tool_output_tokens: int) -> str:
 -    prompt = "You are a coding agent solving a grid-based puzzle game."
 +    prompt = (
-+        "You are playing a video game. You learn the controls the way any player does: "
-+        "by pressing them and watching what happens on screen."
++        "You are playing a video game. This game is generally easy for humans. "
++        "Think about the game like a human and not like a coding agent. "
++        "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
++        "imaginative functions. MOUSE is a click at a row and column you choose. "
++        "ACTION7 is undo: it takes back your last move. Not every game offers it, but where it is offered that is what it does. Undo is not the same as RESET."
 +    )
      prompt += GAME_OVERVIEW_ADDENDUM
      prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
      if full_frame_enabled():
-@@ -1066,6 +1087,7 @@ class ToolAgent:
+@@ -439,6 +480,15 @@
+     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
+     if compact_reasoning_enabled():
+         prompt += COMPACT_REASONING_ADDENDUM
++    if current_grid_image_enabled():
++        # With a picture attached, the board is something the model looks at, not something it
++        # measures. Two inherited sentences name `segmentation` the primary view and that is what
++        # sends every turn straight into a whole-board object dump; rewrite them rather than leave
++        # the prompt arguing with itself.
++        for stale, fresh in _IMAGE_FIRST_OVERRIDES:
++            if stale not in prompt:
++                raise RuntimeError("image-first override missed its target sentence")
++            prompt = prompt.replace(stale, fresh)
+     return prompt
+ 
+ 
+@@ -1066,6 +1116,8 @@
          self._tool_output_tokens = max(64, _LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS)
          self._tool_output_chars = max(256, self._tool_output_tokens * 4)
          self._save_request_logs = bool(save_request_logs)
 +        self._act_first_stall = 0
++        self._act_first_phase = False
          self._system_prompt = _build_system_prompt(
              tool_output_tokens=self._tool_output_tokens,
          )
-@@ -1244,7 +1266,7 @@ class ToolAgent:
+@@ -1244,7 +1296,7 @@
  
          pieces = [prefix]
          if summary.get("board_changed"):
@@ -56,7 +127,16 @@ index df491f04e..2ad012321 100644
          else:
              pieces.append("did not show a confirmed board change; treat this as weak evidence until verified.")
          stop_reason = _normalize_summary_text(summary.get("stop_reason"))
-@@ -1457,11 +1479,11 @@ class ToolAgent:
+@@ -1327,7 +1379,7 @@
+             return
+         if summary.get("level_transition") or summary.get("run_complete") or summary.get("game_over"):
+             # Level-tier knowledge dies with the level; game-tier knowledge
+-            # (action semantics, object taxonomy, HUD map, win pattern,
++            # (action semantics, object taxonomy, win pattern,
+             # level log) is exactly what must survive into the next one.
+             for key in _LEDGER_LEVEL_KEYS:
+                 self._summarized_knowledge[key] = ""
+@@ -1457,11 +1509,11 @@
              )
          else:
              lines.append(
@@ -70,16 +150,16 @@ index df491f04e..2ad012321 100644
          )
          if "MOUSE" in _normalize_valid_actions(valid_actions):
              lines.append("If you use MOUSE, include integer row and col arguments.")
-@@ -1495,7 +1517,7 @@ class ToolAgent:
+@@ -1495,7 +1547,7 @@
                                      "Your knowledge ledger, carried forward to every later turn. A JSON object with "
                                      "string fields in two tiers. Game tier, persists across levels: action_semantics "
                                      "(verified effect of each action, with step refs), object_taxonomy (what each "
 -                                    "color/shape is), hud_map (which regions are indicators, not board), win_pattern "
-+                                    "color/shape is), hud_map (any screen region you have confirmed by playing is not part of the puzzle), win_pattern "
++                                    "color/shape is), win_pattern "
                                      "(what completing a level required), level_log (one line per finished level: "
                                      "actions used, the trick), cross_level_notes. Level tier, resets each level: "
                                      "world_model (current level's layout and behavior), goal_model, recent_findings, "
-@@ -1536,6 +1558,11 @@ class ToolAgent:
+@@ -1536,6 +1588,11 @@
              tool_choice=_request_tool_choice(tools),
              seed=_LOCAL_ANALYZER_SEED,
          )
@@ -91,7 +171,48 @@ index df491f04e..2ad012321 100644
          def post_chat(request_payload: dict[str, Any]) -> requests.Response:
              return requests.post(
                  f"{self._model.base_url.rstrip('/')}/chat/completions",
-@@ -2046,6 +2073,20 @@ class ToolAgent:
+@@ -1758,6 +1815,18 @@
+             if self._step_env_callback is None:
+                 raise RuntimeError("action(actions) is not available in this session.")
+             normalized_actions = self._normalize_python_actions(actions)
++            act_first_dropped = 0
++            if self._act_first_phase and len(normalized_actions) > 1:
++                # One press per turn during act-first. Without this the phase is trivially
++                # escaped: run 20260921_175604 batched ten UPs in a single turn and jumped
++                # from action 5 to action 14, so action 11 never got its own turn and the
++                # thinking-back-on question -- the point of the arm -- went untested.
++                log.info(
++                    "act-first: truncating batch of %d to 1 action",
++                    len(normalized_actions),
++                )
++                act_first_dropped = len(normalized_actions) - 1
++                normalized_actions = normalized_actions[:1]
+             if terminal_action_result is not None:
+                 reason = _terminal_action_reason(terminal_action_result) or "terminal_state"
+                 compact_payload = {
+@@ -1791,6 +1860,21 @@
+             if not isinstance(raw_payload, dict):
+                 raise RuntimeError("action(actions) did not return a JSON-like payload.")
+             compact_payload = self._compact_action_result(raw_payload)
++            if act_first_dropped:
++                # Never drop actions silently: the model reads executed_actions and will
++                # otherwise reason as though the whole batch ran. Observed in run
++                # 20260921_180906, where it asked for thirty RIGHT presses, got one, and
++                # spent its first thinking turn explaining why "twenty presses" moved
++                # nothing -- a confusion the harness had manufactured.
++                compact_payload["requested_count"] = len(normalized_actions) + act_first_dropped
++                compact_payload["executed_count"] = len(normalized_actions)
++                compact_payload["stopped_early"] = True
++                compact_payload["stop_reason"] = "act_first_one_action_per_turn"
++                compact_payload["stop_detail"] = (
++                    f"Act-first phase: one action per turn. {act_first_dropped} queued "
++                    "action(s) were NOT executed. Only the first one ran. Do not assume "
++                    "the rest happened."
++                )
+             next_valid_actions = raw_payload.get("valid_actions")
+             if isinstance(next_valid_actions, list):
+                 self._current_valid_actions = _normalize_valid_actions(next_valid_actions)
+@@ -2046,6 +2130,21 @@
              previous_step_summary=self._last_step_summary,
          )
          display_action_num = _display_action_number(action_num)
@@ -103,6 +224,7 @@ index df491f04e..2ad012321 100644
 +        effective_tool_steps = (
 +            _ARC3_ACT_FIRST_PROBES + 1 if act_first_phase else self._tool_steps
 +        )
++        self._act_first_phase = act_first_phase
 +        if act_first_phase:
 +            log.info(
 +                "act-first phase active action=%d probes=%d thinking=off",
@@ -112,7 +234,7 @@ index df491f04e..2ad012321 100644
          log.info(
              "analyzer turn start action=%d analysis_step=%s level=%s frame_step=%s "
              "valid_actions=%s timeout=%s max_output=%s transcript=%s prompt_log=%s",
-@@ -2134,7 +2175,7 @@ class ToolAgent:
+@@ -2134,7 +2233,7 @@
  
          try:
              turn_count = 0
@@ -121,7 +243,7 @@ index df491f04e..2ad012321 100644
                  yielded_control_reason = control_yield_reason()
                  if yielded_control_reason is not None:
                      break
-@@ -2160,6 +2201,8 @@ class ToolAgent:
+@@ -2160,6 +2259,8 @@
                  )
                  try:
                      request_kwargs: dict[str, Any] = {"tools": tools}
@@ -130,7 +252,7 @@ index df491f04e..2ad012321 100644
                      if request_timeout_seconds is not None:
                          request_kwargs["request_timeout_seconds"] = request_timeout_seconds
                      if self._save_request_logs:
-@@ -2314,7 +2357,9 @@ class ToolAgent:
+@@ -2314,7 +2415,9 @@
                      yielded_control_reason = control_yield_reason()
                      if yielded_control_reason is not None:
                          break
@@ -141,7 +263,7 @@ index df491f04e..2ad012321 100644
                      if tool_call_markup_in_text:
                          followup_prefix = (
                              "You did not call a tool. We detected `<tool_call>` markup inside your reasoning or assistant text, "
-@@ -2332,6 +2377,8 @@ class ToolAgent:
+@@ -2332,6 +2435,8 @@
                          "then call `action(actions)` inside Python with the best valid action or ordered batch that your code selected. "
                          f"{TOOL_CALL_FORMAT_GUIDANCE}"
                      )
@@ -150,7 +272,7 @@ index df491f04e..2ad012321 100644
                      append_transcript("USER PROMPT", followup_prompt)
                      messages.append({"role": "user", "content": followup_prompt})
                      continue
-@@ -2419,6 +2466,8 @@ class ToolAgent:
+@@ -2419,6 +2524,8 @@
                              "evidence needed, choose the best probe or move, and call `action(...)` before the "
                              "snippet ends. If `MOUSE` is valid, use integer `row` and `col`."
                          )
@@ -159,9 +281,11 @@ index df491f04e..2ad012321 100644
                      append_transcript("USER PROMPT", action_followup_prompt)
                      messages.append({"role": "user", "content": action_followup_prompt})
                      yielded_control_reason = control_yield_reason()
-@@ -2483,6 +2532,26 @@ class ToolAgent:
+@@ -2482,7 +2589,28 @@
+                 self._history_messages = previous_history_messages
              self._step_env_callback = None
              self._current_valid_actions = []
++            self._act_first_phase = False
  
 +        if act_first_phase:
 +            if step_executed:
