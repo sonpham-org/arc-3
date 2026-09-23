@@ -31,13 +31,22 @@ Every long run dies on the wall clock, not on a decision (HARNESS-NOTES §1.7), 
 
 Doubling the clock roughly doubled the actions and took the score from ~14.3 to 25.07. **There is
 no ceiling visible at 264 minutes.** That justifies Son's step 2 (3x the clock) on its own, and it
-also prices the router: in this regime roughly **250 extra actions ≈ 1 point of mean score**.
+also prices the router — but the marginal rate is worse than the average one, and the router is paid
+at the margin: inside 132 minutes the harness scores a point per **229** actions, while the 3,846
+*extra* actions the 264-minute run took bought 10.75 points, i.e. a point per **358** actions. Later
+actions are worth ~35 % less than early ones (the 264 run's efficiency is 3.52 score/1k actions vs
+4.36 at 132 min). Use **358 actions per point** for any router payoff estimate.
 
 The same run gives the cost side: 4,505,797 generated tokens over 7,129 actions ≈ **632 generated
 tokens per action**, at 284 tok/s aggregate across 7 lanes. Thinking is nearly all of that. So a
 router that safely halves generated tokens on a fraction *f* of turns buys about `f/2` more actions
-in the same clock — at f = 0.5, ~25 % more actions, worth ~7 points at the 264-minute operating
-point if the conversion above holds.
+in the same clock — at f = 0.5, ~25 % more actions. On a 264-minute run that is ~1,780 extra actions
+at the marginal rate of 358 actions/point, so **~5 points**, not the ~7 a naive average-rate estimate
+gives. Worth having, and worth being honest that the router is paid in the cheapest actions.
+
+**Which harness this rides on.** LA-CR (Loop A deletions on the shipped clean-return base) is the
+best measured 132-minute harness: 18.01 / 19.24 mean score, 4 game wins across the pair, 5.19
+score per 1k actions. Full census in §8.
 
 ## 1. What already constrains the design
 
@@ -149,3 +158,26 @@ prize it is trying to win.
   scientific risk, and 4b is the only thing that catches it.
 - **The router wins actions and loses levels.** The direct-agent result is exactly this failure at
   the extreme. The paired arm in §6.5 must be scored on levels/score, never on actions.
+
+## 8. Harness census, 23-Sep (all w7, Flash-Next, 25 games)
+
+Measured from each run's own `runs/summary.txt`, not from memory.
+
+| harness | n | mean score | mean actions | score / 1k actions | wins |
+|---|---|---|---|---|---|
+| **LA-CR** (Loop A on clean-return) | 2 | **18.62** | 3,586 | 5.19 | **4** |
+| LAB-v5 (Loop A+B on compaction v5) | 2 | 17.68 | 3,240 | **5.46** | 3 |
+| LA-RF (LA + genre reframe) | 1 | 14.90 | 3,517 | 4.24 | 0 |
+| clean-return — the 7.36 base | 3 | 14.32 | 3,283 | 4.36 | 1 |
+| LA-v5 (Loop A on compaction v5) | 2 | 14.46 | 3,244 | 4.46 | 1 |
+| LB-CR | 2 | 13.28 | 3,385 | 3.92 | 1 |
+| LAB-CR | 2 | 13.23 | 3,298 | 4.01 | 1 |
+| compaction-v5-clean-return | 2 | 12.66 | 3,281 | 3.86 | 0 |
+| clean-return @ **264 min** | 1 | 25.07 | 7,129 | 3.52 | 2 |
+
+LA-CR wins on total score; LAB-v5 is nominally the most action-efficient, but at n=2 each the gap
+(5.46 vs 5.19) is inside the spread of the individual runs (6.26 / 4.72 against 5.33 / 5.07), so
+treat them as tied on efficiency and separated on score.
+
+The last row is the one that matters for §0: **efficiency falls as the clock grows.** Any plan that
+buys actions must be scored against 358 actions/point, not 229.
