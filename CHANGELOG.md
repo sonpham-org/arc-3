@@ -21,6 +21,264 @@ that had reserved it no longer has a number reserved.
 
 ---
 
+## 21-Sep-2026 — Boss beat sk48; the docs that said he hadn't are updated
+
+Boss won sk48 on 21-Sep (all 8 levels, 856 actions, replay `7f07c3de-ec0a-412c-a710-2e19b3303581`).
+`2026-09-17-the-slippery-seven.md` called it the one game he had never completed, and
+`2026-09-17-boss-scorecard-inventory.md` listed it as missing. Both now carry a dated update and
+keep their original text. The inventory note also records his other wins since that pull
+(tr87, wa30, lf52); still without a win: re86, sc25, sp80, tn36. (Claude Opus 5)
+
+## 21-Sep-2026 — Leaderboard standing refreshed: 14th of 3,206, back inside the gold band
+
+Two places in the repo asserted the team was "placing top-five" on Kaggle. That was stale and
+nobody could tell how stale, because neither claim carried a date or a source.
+
+Pulled the live public leaderboard for `arc-prize-2026-arc-agi-3`
+(`kaggle competitions leaderboard --download`, snapshot `2026-09-21T12:13:49Z`, 3,206 teams):
+`Son Pham & Mark Barney` is **rank 14, score 7.36, 55 submissions**, last submission
+`2026-09-21 00:16:37`. Gold at 3,206 teams is the top 16, so the standing is two places inside
+the band.
+
+- `AGENTS.md` §3 and `docs/how-this-feeds-kaggle.md` §7 now state the rank, the team count, the
+  date, and the command that reproduces it, instead of an adjective that rots.
+- Both say **public** leaderboard. Medals are awarded on the **private** board at the
+  02-Nov-2026 close; a public band is a position, not a medal.
+- §7 records the margin, because the margin is the story: ranks 11-16 span 7.39 to 7.22, so the
+  band is held by 0.14 points — inside the seed noise §8 of that same page already documents.
+
+`docs/trace-findings/2026-09-17-seed-variance-and-the-sb26-jackpot.md` §1 also says "top-five",
+and was deliberately left alone: it describes an external competitor, not this team.
+
+---
+
+## 21-Sep-2026 — Tuning panels for the rest of the catalog, measured by a script instead of by hand
+
+`scripts/measure_game_params.py`, `scripts/verify_game_params.py`,
+`scripts/serve_games_local.py`, and 60 new `docs/static/games/params/*.json`. No change to
+`games-tuning.js` or any other shipped code: the runtime contract from 20-Sep is unchanged and
+this only writes data for it.
+
+The five specs from 20-Sep were hand-measured in a browser over about half an hour. That does
+not reach the rest of the catalog, so the measuring is now a script. It parses each game's head
+source, collects the module-level `NAME = <int>` assignments the patcher can actually rewrite,
+and scans outward from each published value to find how far it can move before the game stops
+loading, resetting, stepping or drawing a legal 64x64 frame. **60 games got a panel, 334
+sliders now ship across 65 specs.** A full run is 71 seconds.
+
+**The catalog is 191 trees; only 69 of them can ever show a panel.** This is the number worth
+arguing with, and it is not a limit of the generator:
+
+- **78 games are in blind families** (53 `arena`, 25 `research`). `games-tuning.js` refuses to
+  attach a panel to a blind family at all, because a list of named constants is a second way to
+  read a game's shape — the leak `BLIND_FAMILIES` exists to stop. Measuring them would produce
+  files nothing renders, so they are skipped, and `--include-blind` is there for when that
+  product decision changes. **It is a product decision, not a technical one.**
+- **44 are retired** (`ai-generated`), already off the Games page.
+- Of the 69 left: 60 got a spec, 5 are the hand-written ones, and 4 got nothing.
+
+**The five hand-written specs are byte-identical.** They are on an explicit skip list with the
+reason, not regenerated-and-compared, because this script's derived English is honestly worse
+than a person's. They remain the quality bar.
+
+**A measured range here is a safety band, not a taste band, and the two are different things.**
+The 20-Sep specs record how far a constant can move and still *look right*. This records how far
+it can move before it *breaks*, which is wider. Measured on br10, `CELL` loads cleanly from 4 to
+24 with an unchanging colour count and a smoothly rising occupancy: there is no discontinuity
+anywhere near the hand-chosen maximum of 10, so no headless check can find that edge. Clamping
+to some fraction of the hand-written precedent would have been the guess the whole approach
+exists to avoid, so the band is the honest one and it is looser. Against the two hand-measured
+games the generator recovers **every** knob a person shipped — br10 9 of 9, hg51 5 of 5 — with
+ranges that contain the hand-chosen ones.
+
+One range rule is a contract decision rather than a measurement, and is labelled as such in the
+script: no slider is handed a value below `min(0, default)`. Negative geometry constants pass
+every check available — at hg51's `X0 = -6` the occupancy is *identical* to `X0 = 0` — because
+numpy's negative indexing silently wraps the drawing to the far side of the screen instead of
+raising. That is a bug surface, not a tuning range. Colour-named constants are likewise held to
+the engine's sixteen colours; a padding colour survived to 45 only because it never reached a
+frame to be validated.
+
+**Labels and notes are mechanically derived, and that is a real drop from five hand-written
+specs.** Stated plainly rather than slipped in:
+
+- `note` is the author's own trailing comment on the assignment line, verbatim, and is **omitted
+  entirely** when there is none. 117 of 300 generated sliders carry one. A missing note is
+  honest; "Slot" is noise wearing a lab coat.
+- `label` comes from the constant name through a small abbreviation map, so it reads like "Move
+  frames" and "Gate colour" but will never read as well as a person's. A short unknown part stays
+  upper-case (`GL`, `CW`) so an abbreviation looks like one instead of a mangled word.
+- `group` is keyword-classified into the four groups the hand-written specs already use.
+  Misgroupings survive: a few of ts01's colour names land in "Tuning" because they are not in the
+  vocabulary. It puts a slider under the wrong heading and nothing worse.
+- Panels are capped at 12 sliders — the size of the largest hand-written spec — with at most 4
+  palette entries, so a colour-heavy game cannot crowd out its geometry and rules. 17 games hit
+  the cap; 180 measured knobs were left out by it. Knobs a probe watched change the game take cap
+  slots first, then commented ones.
+
+**A knob that no probe saw do anything is still shipped when there is room, and that is
+deliberate.** An earlier version dropped them and lost br10's `FALL` and hg51's `WIN_HOLD` — real
+knobs the hand pass measured, invisible to a blind ten-action probe because `WIN_HOLD` only fires
+on a won level. A filter that rejects known ground truth is a wrong filter, so the only rejection
+on that axis is an AST one: a constant the module never reads cannot do anything. 159 shipped
+sliders are unproven by probe in that sense. The exception is a panel where *nothing* moved,
+which would be sliders that visibly do nothing: `cn04-2fe56bfb` is the catalog's only one and
+gets no file. CPython flagged it and the browser independently agreed.
+
+**Every slider was turned in a real browser, and that is the gate.** Ranges are measured in
+CPython 3.13 against a locally installed arcengine; the site runs Pyodide, a different
+interpreter and a different build, so a CPython measurement is a claim and not a result.
+`verify_game_params.py` drives Chromium over the play view and checks four things per spec: every
+declared knob renders, every declared minimum and maximum loads with no fault reported, turning a
+knob changes the board, and "Reset to defaults" brings the opening board back. **65 of 65 specs
+pass**, including the five hand-written ones. Two findings came out of it that a spot-check of ten
+would have missed, and one non-finding:
+
+- `cn04-2fe56bfb`'s inert panel, above.
+- A run that reused one browser page produced **two** false results at once: slider counts
+  belonging to the previous game, and three games "failing" because an earlier game's
+  unrecoverable rollback had wedged the Pyodide worker for the rest of the session. Every game now
+  gets a new page, closed after. The cost is a Pyodide boot each time.
+- The non-finding: ts01's `DEFAULT_FPS = 1` appeared to fail in Pyodide but not CPython, which
+  would have meant the whole measuring approach was unsound. On a fresh page it passes twice over.
+  It was the wedged worker above, not a divergence.
+
+**Pre-existing runtime finding, not a blocker.** On dw01, `T_WALL = 2` — one past its measured
+maximum — hangs the engine hard enough that `games-tuning.js` cannot reload the last good values
+either, and the panel correctly falls back to "Could not be put back — reload the page". It is
+unreachable from the shipped slider, which stops at 1. Recorded because the rollback path has a
+floor, not because anything here crosses it.
+
+**The official 25 are their own bucket, easy to cut.** 21 of them have a spec and it is thin:
+two template constants, `BACKGROUND_COLOR` and `PADDING_COLOR`, 44 sliders across all 21. Four
+games have no spec at all — `bp35`, `ft09` and `lf52` declare no patchable scalar, and `cn04` is
+the inert one. Deleting the 21 official specs would be one `rm` and would cost nothing else.
+
+**Specs go stale by design, which is why the generator is committed and re-runnable.** The
+evolution loop rewrites these sources continuously, so a spec written for v2 will meet v4. Each
+file records the `sha256` it was measured from, so staleness can be spotted without re-measuring,
+and the runtime already degrades safely: a knob that no longer resolves to one scalar assignment
+is dropped from the panel rather than applied blind. An evolved game loses sliders, never breaks.
+Measurements are cached under `scratch/` by `(gameId, sha256)`, so a re-run only measures what
+moved. The full sequence, and note it spans two interpreters — the generator needs 3.13 for
+arcengine and `match`, the verifier needs 3.14 for playwright:
+
+```
+python3.13 scripts/serve_games_local.py &          # docs/ locally, /api/ and /data/ proxied live
+python3.13 scripts/measure_game_params.py          # 71s, writes the specs
+python3.14 scripts/verify_game_params.py           # ~7min, exit 1 if any spec fails
+```
+
+`serve_games_local.py` exists because `docs/static/games/manifest.json` is a stale fallback
+predating the evolution trees, so a purely static local server cannot reach a game the API knows
+about. It serves the working tree's specs against the live catalog.
+## 21-Sep-2026 — Games play view: a Sprites tab beside the tuning panel
+
+`docs/static/games/sprites/*.json`, `docs/static/js/games-sprites.js`,
+`scripts/measure_game_sprites.py`, `scripts/verify_game_sprites.py`,
+`tests/games-sprites.test.mjs`, and wiring in `games-play.js`, `index.html` and `games.css`.
+Thirty games, and no backend change, no new endpoint.
+
+A second tab in the play view's left sidebar, edit-only, that repaints a game's literal glyph
+art while it is on screen: click or drag a cell, and the game reloads with the new art. Same
+shape as the tuning panel next to it -- the art worth editing is declared as data in
+`docs/static/games/sprites/<id>.json`, so a new game is a JSON file and not a code change, and
+a game with no spec gets no tab at all rather than an empty one.
+
+Sprite edits and knob edits compose through **one** pipeline. Both panels write their edits into
+`games-play.js`, which rebuilds the module from the version's original bytes on every reload --
+knobs first, since they rewrite whole `NAME = <int>` lines, then sprites, which rewrite literal
+expressions no knob patch can touch. Two panels each keeping their own patched copy would mean
+the second to apply silently dropped the first's work.
+
+A sprite is anchored on the exact source text of its own literal, not on a name and not on a
+line number. The best art in the catalog has no name -- sd78's beetles live at
+`SPECIES_ART["ladybird"]["stand"]` -- and line numbers are worthless because the bytes the
+player runs come from the API's head, which moves under us. The anchor has to occur exactly once
+in the fetched source or the sprite is dropped from the panel, which is the rule `readScalar()`
+already uses in `games-tuning.js` for the same reason.
+
+The brush is limited to the symbols that sprite already uses, and this is a correctness
+requirement rather than a simplification. Cell values mean different things per game: some store
+ARC palette indices, some store indices into a two-entry colour tuple (painting a 12 there is an
+`IndexError`, not a recolour), and sd78 maps characters through its own `ART_KEY` where `"X"`
+means "substitute the species colour at build time". A 16-swatch palette would be right for one
+encoding and broken for the other three.
+
+**What is not offered, and why.** Most of the catalog has no sprite. The dominant drawing idiom
+across ~600 of 938 sources is a solid rectangle painted at a computed offset
+(`f[24:35, x:x+7] = AGENT`) -- the actor translates, but there is no pixel art in it. Of the
+literal 2D arrays that do exist, most are not art either: `DIRS = [[0,1],[1,0],[0,-1],[-1,0]]`
+is a direction table, the q-family's 3x3 `RULES`/`SIG`/`BASE` are response matrices, `BAYER` is
+a dither matrix, and `pc01 _G1.._G7` and `pr01 MAZE` are level maps. None of those translate and
+none are shipped. Blind families are excluded exactly as they are from the tuning panel: a
+picture of the actor is a more direct read of a game's shape than a list of constant names.
+
+Every default is extracted from the live head source by `measure_game_sprites.py`, and no
+literal ships as a sprite until a patched copy of the game has loaded, drawn a **different**
+frame, stepped and reset on every one of its levels. That check earns its keep: it rejected
+`g035 FIGURE_CORE`, `g013 STONE_MASK` and `q266 SIG`, which are assigned and never read, and
+`rw01 WALKER_PIXELS`, whose layout carries per-line comments explaining that its order is a
+Bayer fill sequence the game consumes in order as a drain animation -- reflowing that to gain an
+editor would have silently changed the animation and the progress denominator both.
+
+---
+
+## 20-Sep-2026 — Games play view: a per-game tuning panel in the sidebar
+
+`docs/static/games/params/*.json`, `docs/static/js/games-tuning.js`, wiring in
+`games-play.js`, `index.html` and `games.css`. Five games only -- mx78, mc18, br10, mb64,
+hg51 -- and no backend change, no new endpoint, no generator.
+
+The panel turns a game's own module-level constants while it is on screen. A knob rewrites the
+constant's line in the source text the player was loaded from and hands the whole module back
+to `gameLoad()`, which re-execs it in the Pyodide worker; derived constants recompute for free
+because the module is re-imported (hg51's `MAST = 3 * NOTCH + 2`). Which constants a game
+offers is **data, not code** -- one JSON file per game, so controlled procedural generation can
+later write these files rather than patch a renderer.
+
+What keeps it from lying about a catalog that moves under it:
+
+- **Drift.** The evolution loop rewrites these games (mx78 reached v2 and mc18 v3 while this
+  was being written). Every knob is matched against the bytes actually fetched, and one that no
+  longer resolves to exactly one line-anchored scalar assignment is dropped from the panel
+  rather than applied blind. An evolved game degrades to fewer sliders, never to a broken panel.
+- **What will not be patched.** Tuple unpacks (`CELL, GRID, CAP = 8, 8, 3`) and expressions
+  (`CELL = 8 if hard else 6`) never match, so they cannot be silently rewritten into something
+  that drops a branch. This is why **mc18 exposes no knobs at all**: it declares its geometry
+  and palette entirely in tuple-unpack form. The panel says so instead of inventing one.
+- **Rollback.** A bad value is a Python exception, not something we could have predicted. The
+  last set of values that loaded is kept; a throw restores it, reloads with it, and prints the
+  exception's last line in the panel. The player is never stranded on "FAILED TO LOAD" -- which
+  is exactly why this path does not go through `loadVersion()`.
+
+Ranges are measured, not guessed. Every knob in every spec was driven to each value in its
+declared span in a real browser: all of them load. Three first guesses did not survive that and
+were corrected -- hg51's `CELL` loads **only** at its published 5 (the level rows are written
+five pixels per cell), `X0` gives out past 5, `HUD_Y` below 49 -- and hg51's `COLS` turned out
+to be declared and never read, so it is not offered. Knob counts: mx78 8, br10 9, mb64 12,
+hg51 5, mc18 0.
+## 19-Sep-2026 — ARC-3 LoRA round 4, arm W: train with the Boss's full write-ups in context — launched
+
+Spec §5.4 (`docs/plans/2026-09-19-arc3-lora-round4-spec.md`) and
+`ARC3-Inference/distill/writeup_to_sft.py`. The Boss asked why 80% of his write-ups were
+being left out of round 4: the first cut of the spec excluded the 297 mechanics rules as
+"answer key". That fence is right for the oracle (rules of the game being scored) and wrong
+for training (rules of bp35 in bp35's training context leak nothing into the fenced eval).
+Arm W is the maximal version: round 3's 89 records with the full per-game write-up appended
+once to the system prompt — both explanations, every rule grouped by `introducedOnLevel`,
+every play note with all fields. Names and source citations left out.
+
+Measured by the trainer on a424 before load: 89 records, 2,281 turns, supervised tokens
+**94,012 — unchanged from round 3**, total tokens 1,171,516 (+13%), longest record 15,678,
+0 over cap. Recipe is round 3's with epochs 4 → 2 and save-every 22 (spec §7). Launched
+19-Sep 22:03 UTC, ETA ~2.7h, adapter to `/home/son/arc3-round4/ckpt`. Eval to follow per
+spec §8 with `base`, `round3`, `round4-W` at n=3.
+
+Also fixes spec §3.1: `MechanicPoint` has `introducedOnLevel` on 214 of 297 entries; "no
+level field in the schema" was wrong.
+
+---
 ## 20-Sep-2026 — Round 4 arm W: gameplay eval on the fenced seven (a424; a108 offline)
 
 `docs/trace-findings/2026-09-20-arc3-round4-arm-w-gameplay-eval.md` plus the harness under
@@ -113,6 +371,62 @@ unmeasured) and round 3 (gameplay collapse). Falsifier stated: if round 4 again 
 per-turn reasoning without improving clearance, the teacher is not the problem.
 
 ---
+
+---
+
+## 20-Sep-2026 (later) — one page, one field: the review is the comment
+
+The review form asked for four ratings, eleven flags, five text boxes and a verdict, and the
+game page had a second comment box beside it. Son: "I don't need all of this, just one big
+comment field is enough." So a review is now one free-text comment (plus what the player did,
+which is captured automatically), the separate comments table is dropped again, and a game's
+page lists its reviews as its comments. The split "Play" and "Review" buttons are one action:
+you open a game, play it, and the comment box is on the same page. The queue view keeps a
+Previous game button, so you can step back without going home. (Claude Opus 5)
+
+---
+
+## 20-Sep-2026 — comments on a game, and a tick that feeds the training pipeline
+
+The Games page now carries the team's comments on each game, newest first, stored in Postgres
+(`arc3_game_comments`) and team-only like change notes. Beside them, a "Good to train" tick on
+the version being played records that a person judged those exact bytes fit for training, with
+who and when (`train_ok` on `arc3_game_versions`).
+
+The training pipeline reads the ticked set through `GET /api/v1/games/training-set` with the
+publish token, which answers each version's content-addressed source URL. The tick is per
+version, not per game: the pipeline trains on exact bytes, and the next version of the same
+game may not be fit at all. (Claude Opus 5)
+
+---
+
+## 19-Sep-2026 — the game evolution loop, recovered and reformed; uploads are vetted
+
+Codex's pair glow-up loop had only ever lived in a local workspace. Its program, rubric,
+QC, recovery and isolation rules were in two unpushed commits, and its job was paused.
+They are now in `research/game-evolution/recovered/`. The September fix rounds and the
+clarity loop that shaped them are summarised alongside. Game-specific records stay out,
+because those games are shown blind. The loop is reformed as v4 (`research/game-evolution/README.md`)
+into four steps: grow, pair far apart, glow up, and make it playable. The last step is new.
+It makes the two fix rounds permanent: games must not die right away, level 1 must teach,
+and objects move whole and briefly.
+
+`scripts/vet_game.py` is the new vetting gate. Before this, the upload API accepted any
+bytes and the CLI only tried to draw a thumbnail. The gate plays the game in the site's
+engine and checks:
+- a winning trace clears every level;
+- determinism and Undo-safety;
+- RESET;
+- level-1 length and safety;
+- early deaths;
+- random-play resistance on levels 2 and up;
+- frames per action.
+
+It writes a report bound to the source's sha256. `publish_game_versions.py publish` now
+refuses without a passing report for the same bytes, and records its summary in the
+version's provenance. `scripts/play_game.py` is the cold-start play tool, and
+`scripts/evolution_loop.py` does the pool arithmetic: status, nearest games, anchors, pairs,
+and the ledger. (Claude Opus 5)
 
 ## 19-Sep-2026 — the slippery seven's documentation hole is marked closed
 

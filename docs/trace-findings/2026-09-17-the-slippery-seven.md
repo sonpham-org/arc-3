@@ -7,6 +7,7 @@ score on the Kaggle arms. Holds the model-swap comparison (Flash-Next vs 27B on 
 catalog at matched clock), the per-arm Kaggle numbers, the local action-shape evidence, a
 correction to an earlier reset count, and the list of which of the seven still have no
 mechanic page.
+Updated 21-Sep-2026 (Claude Opus 5): Boss's wins on sk48 and tr87 noted in §3.
 Updated 19-Sep-2026 (Claude Opus 5): §7's documentation hole is marked closed; the three
 missing pages were written the same day in 2026-09-17-dc22-m0r0-tr87-what-they-are.md.
 SRP/DRY check: Pass — this is the 27B-specific zero set, which is NOT the Flash-Next "bottom
@@ -83,6 +84,8 @@ turns.
 1. **`sk48` is hard for everything** — 0.39 / 0.29, 84% / 90% zero. Model-independent. It is
    also the one game the Boss himself has never completed (`2026-09-17-boss-scorecard-inventory.md`:
    GAME_OVER, 6 levels, 889 actions, 11-Sep — his closest miss).
+   **Update 21-Sep-2026: Boss has now won sk48** — all 8 levels, 856 actions, replay
+   `7f07c3de-ec0a-412c-a710-2e19b3303581`. It is still the hardest of the seven for the models.
 2. **`g50t` is hard for both, worse on the 27B** — 53% → 90% zero. A known-difficult game that
    the smaller model turns into a wall.
 3. **`dc22`, `m0r0`, `sc25`, `tn36`, `tr87` are a 27B-specific collapse.** Flash-Next clears
@@ -91,6 +94,9 @@ turns.
 
 `dc22`, `g50t` and `m0r0` each have a **human WIN** from the Boss in September, so none of the
 three is unsolvable in principle.
+
+**Update 21-Sep-2026:** since this was written Boss has also won `tr87` (17-Sep, 211 actions) and
+`sk48` (21-Sep, 856 actions). Five of the seven now have a human win; `sc25` and `tn36` do not.
 
 ## 4. Only four of the seven ever ran on Kaggle at all
 

@@ -31,6 +31,7 @@ from inference.agent.prompts import (
     COMPACT_REASONING_TURN_REMINDER,
 )
 
+from inference.agent.persona import opening_persona_block, persona
 from inference.agent.reasoning_style import compact_reasoning_enabled
 from inference.agent.oracle_rules import load_rulebook, render_block, strip_block
 
@@ -162,9 +163,32 @@ _LOCAL_ANALYZER_TOOL_TIMEOUT = _get_env_int("LOCAL_ANALYZER_TOOL_TIMEOUT", 30)
 _LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS = _get_env_int("LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS", 1024)
 _LOCAL_ANALYZER_YIELD_SECONDS = _get_env_float("LOCAL_ANALYZER_YIELD_SECONDS", 0.0)
 _LOCAL_ANALYZER_ENABLE_THINKING = _get_env_bool("LOCAL_ANALYZER_ENABLE_THINKING", True)
+
+# --- sk48 act-first arm (harnesses/sk48-act-first) -------------------------------
+# For the first N environment actions the agent is forced to PLAY rather than measure:
+# thinking off, a hard one-probe-per-turn ceiling, and blunt "press something now"
+# retries. After action N it reverts to the harness defaults so it can look at what its
+# own moves did. N=0 disables the phase entirely, which is the default, so an unset
+# environment leaves every other arm byte-identical in behaviour.
+_ARC3_ACT_FIRST_ACTIONS = _get_env_int("ARC3_ACT_FIRST_ACTIONS", 0)
+# Probes allowed per turn during the phase. 1 probe + 1 forced retry = 2 requests.
+_ARC3_ACT_FIRST_PROBES = max(1, _get_env_int("ARC3_ACT_FIRST_PROBES", 1))
+# Hard escape. The solver retries a non-acting turn forever (framework/solver.py: a bare
+# `continue` on `not step_executed`), which is exactly how the four prior sk48 runs burned
+# their whole budget at action 1. Abort instead, so "it will not act" is a reported finding
+# rather than a silent four-hour null.
+_ARC3_ACT_FIRST_MAX_STALL = max(1, _get_env_int("ARC3_ACT_FIRST_MAX_STALL", 6))
+_ACT_FIRST_FOLLOWUP = (
+    'You have not pressed anything yet this turn. Press a button NOW. Reply with a single `python` tool call and nothing else. One line is fine: call `action(...)` with any valid action. Do not inspect the frame, do not print a segmentation dump, do not explain. You will see the result on the next turn -- pressing it is how you find out what it does. If `MOUSE` is valid, use integer `row` and `col`. '
+)
 _LOCAL_ANALYZER_TEMPERATURE = _get_env_float("LOCAL_ANALYZER_TEMPERATURE", 0.6)
 _LOCAL_ANALYZER_TOP_P = _get_env_float("LOCAL_ANALYZER_TOP_P", 0.95)
 _LOCAL_ANALYZER_TOP_K = _get_env_int("LOCAL_ANALYZER_TOP_K", 20)
+_LOCAL_ANALYZER_MIN_P = (
+    _get_env_float("LOCAL_ANALYZER_MIN_P", -1.0)
+    if os.environ.get("LOCAL_ANALYZER_MIN_P", "").strip()
+    else None
+)
 _LOCAL_ANALYZER_SEED = _get_env_int("LOCAL_ANALYZER_SEED", -1)
 _REQUEST_SAFETY_MARGIN_TOKENS = 512
 _CONTEXT_OVERFLOW_RETRY_TRIM_TOKENS = 512
@@ -193,7 +217,7 @@ _COMPACTION_PROMPT = (
     "conversation. Before they disappear, fold everything durable into the knowledge ledger.\n"
     "Rules:\n"
     "- Output ONLY a JSON object. Its keys are the ledger fields: action_semantics, "
-    "object_taxonomy, hud_map, win_pattern, level_log, cross_level_notes, world_model, "
+    "object_taxonomy, win_pattern, level_log, cross_level_notes, world_model, "
     "goal_model, recent_findings, open_questions, current_plan, strategy_log, failed_probes. "
     "Omit fields "
     "with nothing new; omitted fields keep their previous value.\n"
@@ -322,13 +346,12 @@ def _extract_labeled_blocks(content: str, labels: list[str]) -> dict[str, str]:
 
 
 # The knowledge ledger is two-tier, mirroring how ARC-AGI-3 games are organized:
-# levels share mechanics (what actions do, what objects are, where the HUD is)
+# levels share mechanics (what actions do, what objects are, what wins)
 # but change layouts and goals. Game-tier fields persist across level
 # transitions; level-tier fields are wiped when a level ends.
 _LEDGER_GAME_KEYS: tuple[str, ...] = (
     "action_semantics",
     "object_taxonomy",
-    "hud_map",
     "win_pattern",
     "level_log",
     "cross_level_notes",
@@ -349,7 +372,6 @@ _LEDGER_LABEL_TO_KEY: dict[str, str] = {
     "Action semantics": "action_semantics",
     "Action model": "action_semantics",
     "Object taxonomy": "object_taxonomy",
-    "HUD map": "hud_map",
     "Win pattern": "win_pattern",
     "Level log": "level_log",
     "Cross-level notes": "cross_level_notes",
@@ -424,8 +446,32 @@ def _format_model_response_meta(
     return "\n".join(lines)
 
 
+
+# Sentence-level rewrites applied only when a grid image is attached. Kept next to the prompt
+# builder so a drift in the source text fails loudly at build time instead of silently leaving
+# the measure-the-board steering in place.
+_IMAGE_FIRST_OVERRIDES = (
+    (
+        "- The raw numeric grid is intentionally not exposed. Use `current_frame.segmentation` as your primary view of the board -- objects, colors, shapes, containment, adjacency, and cross-frame object hashes. Use `current_frame.ascii` only to read a small, specific region; do not scan the whole board with it.\n",
+        "- The raw numeric grid is intentionally not exposed. The attached picture is your view of the board -- look at it and say what you see. `current_frame.segmentation` and `current_frame.ascii` exist to settle one specific detail you could not read off the picture; do not survey the board with either.\n",
+    ),
+    (
+        "- Use `current_frame.segmentation` as your primary view of the board -- objects, colors, containment, adjacency, and cross-frame object hashes.\n",
+        "- You have already looked at the picture. Use `current_frame.segmentation` only to settle a detail that looking did not settle -- an exact coordinate you need for a click, or whether two things really are the same shape.\n",
+    ),
+    (
+        "- Use `current_frame.ascii` only to read a small, specific region of the board when `segmentation` is not enough; never use it to scan or summarize the whole board.\n",
+        "- Use `current_frame.ascii` only to read a few cells you are unsure of; never to scan or summarize the whole board.\n",
+    ),
+)
+
 def _build_system_prompt(*, tool_output_tokens: int) -> str:
-    prompt = "You are a coding agent solving a grid-based puzzle game."
+    prompt = (
+        opening_persona_block()
+        + "UP, DOWN, LEFT and RIGHT are directional. SPACE has a variety of different "
+        "imaginative functions. MOUSE is a click at a row and column you choose. "
+        "ACTION7 is undo: it takes back your last move. Not every game offers it, but where it is offered that is what it does. Undo is not the same as RESET."
+    )
     prompt += GAME_OVERVIEW_ADDENDUM
     prompt += STRUCTURED_RUNTIME_STATE_ADDENDUM
     if full_frame_enabled():
@@ -439,6 +485,16 @@ def _build_system_prompt(*, tool_output_tokens: int) -> str:
     prompt += COMPACT_TOOL_SESSION_ADDENDUM.format(tool_output_tokens=tool_output_tokens)
     if compact_reasoning_enabled():
         prompt += COMPACT_REASONING_ADDENDUM
+    if current_grid_image_enabled():
+        # With a picture attached, the board is something the model looks at, not something it
+        # measures. Two inherited sentences name `segmentation` the primary view and that is what
+        # sends every turn straight into a whole-board object dump; rewrite them rather than leave
+        # the prompt arguing with itself.
+        for stale, fresh in _IMAGE_FIRST_OVERRIDES:
+            if stale not in prompt:
+                raise RuntimeError("image-first override missed its target sentence")
+            prompt = prompt.replace(stale, fresh)
+    log.info("system prompt built persona=%s chars=%d", persona(), len(prompt))
     return prompt
 
 
@@ -1066,6 +1122,8 @@ class ToolAgent:
         self._tool_output_tokens = max(64, _LOCAL_ANALYZER_TOOL_OUTPUT_TOKENS)
         self._tool_output_chars = max(256, self._tool_output_tokens * 4)
         self._save_request_logs = bool(save_request_logs)
+        self._act_first_stall = 0
+        self._act_first_phase = False
         self._system_prompt = _build_system_prompt(
             tool_output_tokens=self._tool_output_tokens,
         )
@@ -1244,7 +1302,7 @@ class ToolAgent:
 
         pieces = [prefix]
         if summary.get("board_changed"):
-            pieces.append("produced a board change; verify that it affected gameplay objects rather than only HUD elements.")
+            pieces.append("produced a board change; check what changed.")
         else:
             pieces.append("did not show a confirmed board change; treat this as weak evidence until verified.")
         stop_reason = _normalize_summary_text(summary.get("stop_reason"))
@@ -1327,7 +1385,7 @@ class ToolAgent:
             return
         if summary.get("level_transition") or summary.get("run_complete") or summary.get("game_over"):
             # Level-tier knowledge dies with the level; game-tier knowledge
-            # (action semantics, object taxonomy, HUD map, win pattern,
+            # (action semantics, object taxonomy, win pattern,
             # level log) is exactly what must survive into the next one.
             for key in _LEDGER_LEVEL_KEYS:
                 self._summarized_knowledge[key] = ""
@@ -1457,11 +1515,11 @@ class ToolAgent:
             )
         else:
             lines.append(
-                "Inspect the newest transition in Python and distinguish gameplay change from HUD-only change."
+                "Inspect the newest transition in Python and note what actually changed."
             )
         lines.append(
             "Call `python` with compact inspection/search code and the revised required `world_model` ledger, "
-            "then execute the shortest reliable valid action or batch via `action(actions)`. Stop on any terminal result."
+            "then execute a valid action or batch via `action(actions)`. Stop on any terminal result."
         )
         if "MOUSE" in _normalize_valid_actions(valid_actions):
             lines.append("If you use MOUSE, include integer row and col arguments.")
@@ -1495,7 +1553,7 @@ class ToolAgent:
                                     "Your knowledge ledger, carried forward to every later turn. A JSON object with "
                                     "string fields in two tiers. Game tier, persists across levels: action_semantics "
                                     "(verified effect of each action, with step refs), object_taxonomy (what each "
-                                    "color/shape is), hud_map (which regions are indicators, not board), win_pattern "
+                                    "color/shape is), win_pattern "
                                     "(what completing a level required), level_log (one line per finished level: "
                                     "actions used, the trick), cross_level_notes. Level tier, resets each level: "
                                     "world_model (current level's layout and behavior), goal_model, recent_findings, "
@@ -1531,11 +1589,17 @@ class ToolAgent:
             temperature=_LOCAL_ANALYZER_TEMPERATURE,
             top_p=_LOCAL_ANALYZER_TOP_P,
             top_k=_LOCAL_ANALYZER_TOP_K,
+            min_p=_LOCAL_ANALYZER_MIN_P,
             thinking=bool(_LOCAL_ANALYZER_ENABLE_THINKING) if thinking_override is None else thinking_override,
             tools=tools,
             tool_choice=_request_tool_choice(tools),
             seed=_LOCAL_ANALYZER_SEED,
         )
+        if thinking_override is False:
+            payload["reasoning_effort"] = "none"
+            template_kwargs = payload.get("chat_template_kwargs")
+            if isinstance(template_kwargs, dict):
+                template_kwargs["enable_thinking"] = False
         def post_chat(request_payload: dict[str, Any]) -> requests.Response:
             return requests.post(
                 f"{self._model.base_url.rstrip('/')}/chat/completions",
@@ -1758,6 +1822,18 @@ class ToolAgent:
             if self._step_env_callback is None:
                 raise RuntimeError("action(actions) is not available in this session.")
             normalized_actions = self._normalize_python_actions(actions)
+            act_first_dropped = 0
+            if self._act_first_phase and len(normalized_actions) > 1:
+                # One press per turn during act-first. Without this the phase is trivially
+                # escaped: run 20260921_175604 batched ten UPs in a single turn and jumped
+                # from action 5 to action 14, so action 11 never got its own turn and the
+                # thinking-back-on question -- the point of the arm -- went untested.
+                log.info(
+                    "act-first: truncating batch of %d to 1 action",
+                    len(normalized_actions),
+                )
+                act_first_dropped = len(normalized_actions) - 1
+                normalized_actions = normalized_actions[:1]
             if terminal_action_result is not None:
                 reason = _terminal_action_reason(terminal_action_result) or "terminal_state"
                 compact_payload = {
@@ -1791,6 +1867,21 @@ class ToolAgent:
             if not isinstance(raw_payload, dict):
                 raise RuntimeError("action(actions) did not return a JSON-like payload.")
             compact_payload = self._compact_action_result(raw_payload)
+            if act_first_dropped:
+                # Never drop actions silently: the model reads executed_actions and will
+                # otherwise reason as though the whole batch ran. Observed in run
+                # 20260921_180906, where it asked for thirty RIGHT presses, got one, and
+                # spent its first thinking turn explaining why "twenty presses" moved
+                # nothing -- a confusion the harness had manufactured.
+                compact_payload["requested_count"] = len(normalized_actions) + act_first_dropped
+                compact_payload["executed_count"] = len(normalized_actions)
+                compact_payload["stopped_early"] = True
+                compact_payload["stop_reason"] = "act_first_one_action_per_turn"
+                compact_payload["stop_detail"] = (
+                    f"Act-first phase: one action per turn. {act_first_dropped} queued "
+                    "action(s) were NOT executed. Only the first one ran. Do not assume "
+                    "the rest happened."
+                )
             next_valid_actions = raw_payload.get("valid_actions")
             if isinstance(next_valid_actions, list):
                 self._current_valid_actions = _normalize_valid_actions(next_valid_actions)
@@ -2046,6 +2137,21 @@ class ToolAgent:
             previous_step_summary=self._last_step_summary,
         )
         display_action_num = _display_action_number(action_num)
+        # sk48 act-first arm: the opening N actions are played, not measured.
+        act_first_phase = (
+            _ARC3_ACT_FIRST_ACTIONS > 0 and display_action_num <= _ARC3_ACT_FIRST_ACTIONS
+        )
+        # Local, not self._tool_steps, so the ceiling cannot leak into a later turn.
+        effective_tool_steps = (
+            _ARC3_ACT_FIRST_PROBES + 1 if act_first_phase else self._tool_steps
+        )
+        self._act_first_phase = act_first_phase
+        if act_first_phase:
+            log.info(
+                "act-first phase active action=%d probes=%d thinking=off",
+                display_action_num,
+                _ARC3_ACT_FIRST_PROBES,
+            )
         log.info(
             "analyzer turn start action=%d analysis_step=%s level=%s frame_step=%s "
             "valid_actions=%s timeout=%s max_output=%s transcript=%s prompt_log=%s",
@@ -2134,7 +2240,7 @@ class ToolAgent:
 
         try:
             turn_count = 0
-            while self._tool_steps is None or turn_count < self._tool_steps:
+            while effective_tool_steps is None or turn_count < effective_tool_steps:
                 yielded_control_reason = control_yield_reason()
                 if yielded_control_reason is not None:
                     break
@@ -2160,6 +2266,8 @@ class ToolAgent:
                 )
                 try:
                     request_kwargs: dict[str, Any] = {"tools": tools}
+                    if act_first_phase:
+                        request_kwargs["thinking_override"] = False
                     if request_timeout_seconds is not None:
                         request_kwargs["request_timeout_seconds"] = request_timeout_seconds
                     if self._save_request_logs:
@@ -2314,7 +2422,9 @@ class ToolAgent:
                     yielded_control_reason = control_yield_reason()
                     if yielded_control_reason is not None:
                         break
-                    followup_prefix = "You have not acted yet. Investigate first. "
+                    followup_prefix = "You have not acted yet. "
+                    if act_first_phase:
+                        followup_prefix = _ACT_FIRST_FOLLOWUP
                     if tool_call_markup_in_text:
                         followup_prefix = (
                             "You did not call a tool. We detected `<tool_call>` markup inside your reasoning or assistant text, "
@@ -2332,6 +2442,8 @@ class ToolAgent:
                         "then call `action(actions)` inside Python with the best valid action or ordered batch that your code selected. "
                         f"{TOOL_CALL_FORMAT_GUIDANCE}"
                     )
+                    if act_first_phase:
+                        followup_prompt = followup_prefix + TOOL_CALL_FORMAT_GUIDANCE
                     append_transcript("USER PROMPT", followup_prompt)
                     messages.append({"role": "user", "content": followup_prompt})
                     continue
@@ -2419,6 +2531,8 @@ class ToolAgent:
                             "evidence needed, choose the best probe or move, and call `action(...)` before the "
                             "snippet ends. If `MOUSE` is valid, use integer `row` and `col`."
                         )
+                    if act_first_phase:
+                        action_followup_prompt = _ACT_FIRST_FOLLOWUP
                     append_transcript("USER PROMPT", action_followup_prompt)
                     messages.append({"role": "user", "content": action_followup_prompt})
                     yielded_control_reason = control_yield_reason()
@@ -2482,6 +2596,27 @@ class ToolAgent:
                 self._history_messages = previous_history_messages
             self._step_env_callback = None
             self._current_valid_actions = []
+            self._act_first_phase = False
+
+        if act_first_phase:
+            if step_executed:
+                self._act_first_stall = 0
+            else:
+                self._act_first_stall += 1
+                log.warning(
+                    "act-first: no action at action=%d (%d consecutive)",
+                    display_action_num,
+                    self._act_first_stall,
+                )
+                if self._act_first_stall >= _ARC3_ACT_FIRST_MAX_STALL:
+                    # The solver's `not step_executed` branch is a bare `continue`, so
+                    # without this the run sits at action 1 until wallclock expires --
+                    # the null result the four prior sk48 runs produced. Fail loudly.
+                    raise RuntimeError(
+                        f"act-first abort: model did not call action(...) on "
+                        f"{self._act_first_stall} consecutive turns at action "
+                        f"{display_action_num}"
+                    )
 
         if step_executed:
             status_message = "Step executed."

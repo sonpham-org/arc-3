@@ -43,6 +43,7 @@ def build_chat_payload(
     top_p: float,
     top_k: int,
     thinking: bool,
+    min_p: float | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | None = None,
     seed: int | None = None,
@@ -65,6 +66,10 @@ def build_chat_payload(
     if normalized == "vllm":
         if top_k > 0:
             payload["top_k"] = top_k
+        # min_p is only sent when explicitly configured. Left unset, the server applies its own
+        # default, which is not a value we chose -- so an arm that cares about it must pin it.
+        if min_p is not None:
+            payload["min_p"] = min_p
         payload["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
         if seed is not None and seed >= 0:
             payload["seed"] = seed

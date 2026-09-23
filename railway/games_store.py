@@ -87,7 +87,7 @@ FEEDBACK_FLAGS = (
     "has_text",
 )
 RATING_FIELDS = ("fun", "clarity", "difficulty", "novelty")
-TEXT_LIMITS = {"goal_guess": 2000, "liked": 2000, "disliked": 2000, "suggestion": 2000, "bugs": 2000}
+TEXT_LIMITS = {"comment": 4000, "goal_guess": 2000, "liked": 2000, "disliked": 2000, "suggestion": 2000, "bugs": 2000}
 COUNT_FIELDS = ("levels_completed", "levels_total", "actions", "resets", "undos", "seconds")
 OUTCOMES = ("won", "lost", "gave_up", "in_progress")
 VERDICTS = ("keep", "revise", "branch", "retire")
@@ -799,6 +799,14 @@ def _rows(cursor: Any) -> list[dict[str, Any]]:
     return [dict(zip(names, row)) for row in cursor.fetchall()]
 
 
+def _one(cursor: Any) -> dict[str, Any] | None:
+    """One row as a dict, whatever cursor factory the caller is using."""
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return dict(row) if isinstance(row, dict) else dict(zip([column[0] for column in cursor.description], row))
+
+
 def _pool_filter(pool: str | None) -> tuple[str, list[Any]]:
     if not pool or pool == "synthetic":
         return "g.family <> ALL(%s)", [list(NOT_SYNTHETIC)]
@@ -1076,7 +1084,7 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
     cursor.execute(
         """
         SELECT version_id, reason, details, author_kind, author_model, author_name,
-               origin, provenance, published_at
+               origin, provenance, published_at, train_ok, train_ok_by, train_ok_at
         FROM arc3_game_versions WHERE tree_id = %s
         """,
         (tree_id,),
@@ -1093,6 +1101,9 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
             "origin": row["origin"],
             "provenance": row["provenance"],
             "publishedAt": iso(row["published_at"]),
+            "trainOk": row["train_ok"],
+            "trainOkBy": row["train_ok_by"],
+            "trainOkAt": iso(row["train_ok_at"]),
         }
         for row in _rows(cursor)
     }
@@ -1137,6 +1148,67 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
         "feedback": feedback,
         "ideas": ideas,
     }
+
+
+# ── The training tick ────────────────────────────────────────────────────────
+
+
+def set_train_ok(cursor: Any, version_id: str, good: bool, *, email: str) -> dict[str, Any]:
+    """Tick one exact version as fit to train on. Per version, not per game: the pipeline
+    trains on exact bytes, and the next version of the same game may not be fit at all."""
+
+    version_id = _version_id(version_id, "version_id")
+    cursor.execute(
+        """
+        UPDATE arc3_game_versions
+           SET train_ok = %s, train_ok_by = %s, train_ok_at = now()
+         WHERE version_id = %s
+        RETURNING version_id, game_id, tree_id, train_ok, train_ok_by, train_ok_at
+        """,
+        (good, email if good else None, version_id),
+    )
+    row = _one(cursor)
+    if not row:
+        raise GamesProblem(404, "version_not_found", f"not published: {version_id}")
+    print(f"games: train_ok={good} on {version_id} by {email}", flush=True)
+    return {
+        "apiVersion": 1,
+        "versionId": row["version_id"],
+        "gameId": row["game_id"],
+        "treeId": row["tree_id"],
+        "trainOk": row["train_ok"],
+        "trainOkBy": row["train_ok_by"],
+        "trainOkAt": iso(row["train_ok_at"]),
+    }
+
+
+def training_set(cursor: Any) -> dict[str, Any]:
+    """Every version a person ticked as good to train, for the training pipeline to pull."""
+
+    cursor.execute(
+        """
+        SELECT v.version_id, v.game_id, v.tree_id, v.sha256, v.src_file, v.kind,
+               v.author_kind, v.author_model, v.train_ok_by, v.train_ok_at, g.family
+        FROM arc3_game_versions AS v JOIN arc3_games AS g ON g.game_id = v.game_id
+        WHERE v.train_ok ORDER BY v.tree_id, v.published_at
+        """
+    )
+    versions = [
+        {
+            "versionId": row["version_id"],
+            "gameId": row["game_id"],
+            "treeId": row["tree_id"],
+            "family": row["family"],
+            "kind": row["kind"],
+            "sha256": row["sha256"],
+            "sourceUrl": f"/data/_games/{row['game_id']}/{row['sha256'][:12]}/{row['src_file']}",
+            "author": {"kind": row["author_kind"], "model": row["author_model"]},
+            "markedBy": row["train_ok_by"],
+            "markedAt": iso(row["train_ok_at"]),
+        }
+        for row in _rows(cursor)
+    ]
+    return {"apiVersion": 1, "count": len(versions), "versions": versions}
 
 
 def feedback_record(row: dict[str, Any], *, include_ip: bool = False) -> dict[str, Any]:
@@ -1300,10 +1372,10 @@ def insert_feedback(
             game_id, version_id, reviewer_class, reviewer, visitor_id, outcome,
             levels_completed, levels_total, actions, resets, undos, seconds,
             fun, clarity, difficulty, novelty, flags,
-            goal_guess, liked, disliked, suggestion, bugs, verdict, client, ip_hint
+            comment, goal_guess, liked, disliked, suggestion, bugs, verdict, client, ip_hint
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING feedback_id, created_at
         """,
@@ -1665,6 +1737,12 @@ class GamesApi:
             payload = self._read(read_body, headers, MAX_IDEAS_BODY)
             with self._cursor(commit=True) as cursor:
                 return _json(200, upsert_ideas(cursor, payload))
+        if path == f"{team}/training-set":
+            self.require_token(headers)
+            if method != "GET":
+                raise GamesProblem(405, "method_not_allowed", "use GET")
+            with self._cursor() as cursor:
+                return _json(200, training_set(cursor))
         if path == f"{team}/feedback-export":
             self.require_token(headers)
             if method != "GET":
@@ -1721,6 +1799,9 @@ class GamesApi:
                     return _json(200, next_version(cursor, query, reviewer=email))
             if path == f"{team}/feedback":
                 return self._jsonl(query, include_ip=True)
+            if path == f"{team}/training-set":
+                with self._cursor() as cursor:
+                    return _json(200, training_set(cursor))
         if method == "POST":
             match = re.fullmatch(rf"{re.escape(team)}/ideas/([^/]+)", path)
             if match:
@@ -1739,6 +1820,14 @@ class GamesApi:
                         static_game_ids=self.static_game_ids,
                     )
                 return _json(201, result)
+            match = re.fullmatch(rf"{re.escape(team)}/versions/([^/]+)/train", path)
+            if match:
+                body = self._read(read_body, headers, 1024)
+                good = body.get("good") if isinstance(body, dict) else None
+                if not isinstance(good, bool):
+                    raise GamesProblem(400, "invalid_good", "send {\"good\": true|false}")
+                with self._cursor(commit=True) as cursor:
+                    return _json(200, set_train_ok(cursor, unquote(match.group(1)), good, email=email))
             match = re.fullmatch(rf"{re.escape(team)}/feedback/(\d+)/hidden", path)
             if match:
                 body = self._read(read_body, headers, 1024)

@@ -12,10 +12,12 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260919-ideas";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260919-ideas";
+import * as api from "./games-api.js?v=20260920-rail";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-rail";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
-import { createIdeasBoard } from "./games-ideas.js?v=20260919-ideas";
+import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
+import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
+import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -40,6 +42,16 @@ let listToken = 0;
 let current = null;         // the play view's context: { version, tree, detail }
 let active = null;          // the version loaded in the player, in either view
 let loadToken = 0;
+let tuning = null;          // the sidebar's per-game constant panel (games-tuning.js)
+let spriteEditor = null;    // the sidebar's per-game art panel (games-sprites.js)
+// The two sidebar panels edit the same module, so they may not each keep their own patched copy
+// of it -- the second to apply would drop the first's work. Both write here instead, and every
+// reload is built from the version's original bytes with both sets of edits laid on in a fixed
+// order: knobs first (they rewrite whole `NAME = <int>` lines), then sprites (they rewrite
+// literal expressions, which no knob patch can touch).
+let baseSource = "";        // the exact bytes the version loaded from
+let knobEdits = {};         // name -> value, as last applied by the tuning panel
+let spriteEdits = [];       // [{sprite, grid}], as last applied by the sprite panel
 let state = {};             // {grid, state, levels_completed, win_levels, available_actions, tile_scale}
 let stepCount = 0;
 let tileMode = "solid";     // "solid" | "tiles" | "random" -- see games/arc_tiles.py
@@ -102,13 +114,23 @@ async function init() {
   $("undoBtn").addEventListener("click", doUndo);
   $("liveToggleBtn").addEventListener("click", toggleLive);
   $("liveFpsInput").addEventListener("input", (e) => { liveFps = +e.target.value; restartLiveTick(); });
-  $("reviewThisBtn").addEventListener("click", () => current && enterFeedback({ version: current.version }));
   $("feedbackBtn").addEventListener("click", () => enterFeedback());
   $("versionDrawer").querySelector(".drawer-close").addEventListener("click", closeVersionDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeVersionDrawer(); });
   setupBrowseControls();
   setupTileBar();
   setupFilterBar();
+  tuning = createTuning({
+    root: $("tuningPanel"),
+    // The patched source the panel hands over is ignored on purpose: it carries only its own
+    // edits. The values are what matter, and composed() re-lays them alongside the sprites.
+    apply: (_patched, values) => { knobEdits = values; return applyTunedSource(composed()); },
+  });
+  spriteEditor = createSprites({
+    root: $("spritePanel"),
+    apply: (snapshot) => { spriteEdits = snapshot; return applyTunedSource(composed()); },
+  });
+  setupPanelTabs();
   setupCanvasInput();
   setupKeyboard();
   setInterval(() => { if (active && stageVisible() && !document.hidden) telemetry.seconds += 1; }, 1000);
@@ -166,6 +188,11 @@ function showBrowse() {
 function enterFeedback(options = {}) {
   closeVersionDrawer();
   stopLiveIfRunning();
+  // Blind play: the stage moves into #feedbackView, the sidebar does not. Tear the panel down
+  // anyway so a game's constants can never be a second way to tell which game is on screen.
+  if (tuning) tuning.detach();
+  if (spriteEditor) spriteEditor.detach();
+  hidePanelTabs();
   showView("feedback");
   if (location.hash !== "#feedback") history.replaceState(null, "", "#feedback");
   feedback.enter(options);
@@ -312,7 +339,6 @@ async function renderList() {
     loadNotes: api.treeNotes,
     whenVisible,
     onPlay: (tree, version) => playVersion(version, tree, null),
-    onReview: (tree, version) => enterFeedback({ version }),
     onNode: openDrawerFor,
   };
   for (const tree of data.trees) container.appendChild(renderTreeRow(tree, ctx));
@@ -359,7 +385,6 @@ async function openDrawerFor(tree, version, detail, notes) {
     team: !!me,
     signInUrl: api.signInUrl(),
     onPlay: (t, v, d) => playVersion(v, t, d),
-    onReview: (t, v) => enterFeedback({ version: v }),
     onHide: async (review, button) => {
       button.disabled = true;
       try {
@@ -435,6 +460,7 @@ async function playVersion(version, tree, detail) {
   const context = { version, tree, detail };
   current = context;
   renderVersionSidebar();
+  renderTeamPanels(context);
   await loadVersion(version, { blind: false });
   if (!detail && !version.static) {
     try {
@@ -444,6 +470,171 @@ async function playVersion(version, tree, detail) {
       /* the sidebar just lists what it has */
     }
   }
+}
+
+// The team's panels under the version list: the training tick for the version on screen, and
+// the game's comments, newest first. Signed out, neither exists (both are team-only reads).
+async function renderTeamPanels(context) {
+  const box = $("commentsBox");
+  const trainBox = $("trainBox");
+  box.hidden = trainBox.hidden = !me || !context.version.versionId;
+  if (box.hidden) return;
+  if (!context.notes) {
+    try {
+      context.notes = await api.treeNotes(context.tree.treeId);
+    } catch (err) {
+      context.notes = { notes: {}, comments: [] };
+    }
+  }
+  if (current !== context) return;
+  paintTrainTick(context);
+  paintComments(context);
+}
+
+function paintTrainTick(context) {
+  const note = (context.notes.notes || {})[context.version.versionId] || {};
+  const tick = $("trainOk");
+  tick.checked = note.trainOk === true;
+  $("trainWho").textContent = note.trainOk && note.trainOkBy ? `${note.trainOkBy}, ${shortDate(note.trainOkAt)}` : "";
+  tick.onchange = async () => {
+    const good = tick.checked;
+    tick.disabled = true;
+    try {
+      const result = await api.setTrainOk(context.version.versionId, good);
+      context.notes.notes[context.version.versionId] = { ...note, trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt };
+      $("trainWho").textContent = result.trainOk ? `${result.trainOkBy}, ${shortDate(result.trainOkAt)}` : "";
+    } catch (err) {
+      tick.checked = !good; // the tick means what the server holds, not what was clicked
+      $("trainWho").textContent = `could not save (${err.message})`;
+    } finally {
+      tick.disabled = false;
+    }
+  };
+}
+
+function commentText(review) {
+  // A review is the comment. Older reviews predate the single field, so fall back to whatever
+  // their writer filled in.
+  const parts = [review.comment, review.liked, review.disliked, review.suggestion, review.bugs, review.goalGuess];
+  return parts.filter(Boolean).join(" — ");
+}
+
+function agoLabel(iso) {
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds < 90) return "just now";
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  if (seconds < 7 * 86400) return `${Math.round(seconds / 86400)}d ago`;
+  return shortDate(iso);
+}
+
+// What the commenter actually did, from the review's own telemetry: context the words often skip.
+function playedLabel(review) {
+  const bits = [];
+  if (review.levelsCompleted != null) bits.push(`${review.levelsCompleted}/${review.levelsTotal ?? "?"} levels`);
+  if (review.actions) bits.push(`${review.actions} actions`);
+  if (review.seconds) bits.push(`${Math.floor(review.seconds / 60)}:${String(review.seconds % 60).padStart(2, "0")}`);
+  const outcome = { won: "won", lost: "lost", gave_up: "gave up", in_progress: "still going" }[review.outcome];
+  if (outcome) bits.push(outcome);
+  return bits.join(" · ");
+}
+
+function paintComments(context) {
+  const list = $("commentList");
+  list.replaceChildren();
+  const reviews = (context.notes.feedback || []).filter((review) => !review.hidden && commentText(review));
+  $("commentCount").textContent = reviews.length || "";
+  if (!reviews.length) {
+    const empty = document.createElement("li");
+    empty.className = "comment-empty";
+    empty.textContent = "Nothing yet. Play it and say what you think.";
+    list.appendChild(empty);
+  }
+  const versions = context.detail ? context.detail.versions : [];
+  for (const review of reviews.slice(0, 40)) {
+    const item = document.createElement("li");
+    item.className = "comment" + (review.reviewerClass === "team" ? " team" : "");
+
+    const head = document.createElement("div");
+    head.className = "c-head";
+    const who = document.createElement("span");
+    who.className = "c-who";
+    who.textContent = (review.reviewer || "anonymous").split("@")[0];
+    const when = document.createElement("span");
+    when.className = "c-when";
+    when.textContent = agoLabel(review.createdAt);
+    when.title = longDate(review.createdAt);
+    head.append(who, when);
+    if (review.reviewerClass !== "team") {
+      const badge = document.createElement("span");
+      badge.className = "c-badge";
+      badge.textContent = "public";
+      head.appendChild(badge);
+    }
+    const onVersion = versions.find((v) => v.versionId === review.versionId);
+    if (onVersion && review.versionId !== context.version.versionId) {
+      const chip = document.createElement("span");
+      chip.className = "c-version";
+      chip.textContent = `v${onVersion.number || 1}`;
+      chip.title = "written on an earlier version";
+      head.appendChild(chip);
+    }
+    item.appendChild(head);
+
+    const played = playedLabel(review);
+    if (played) {
+      const line = document.createElement("div");
+      line.className = "c-played";
+      line.textContent = played;
+      item.appendChild(line);
+    }
+    const body = document.createElement("p");
+    body.className = "c-body";
+    body.textContent = commentText(review);
+    item.appendChild(body);
+    list.appendChild(item);
+  }
+
+  // What you have done so far, so a comment can be read against it.
+  const mine = player.telemetry();
+  $("commentPlayed").textContent = mine && mine.actions
+    ? `you: ${playedLabel({ levelsCompleted: mine.levelsCompleted, levelsTotal: mine.levelsTotal, actions: mine.actions, seconds: mine.seconds })}`
+    : "";
+
+  const form = $("commentForm");
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const comment = $("commentBody").value.trim();
+    if (!comment) return;
+    const error = $("commentError");
+    error.hidden = true;
+    const button = form.querySelector("button");
+    button.disabled = true;
+    try {
+      const played = player.telemetry();
+      await api.submitFeedback(true, {
+        game_id: context.version.gameId,
+        version_id: context.version.versionId,
+        comment,
+        outcome: played.state === "WIN" ? "won" : played.state === "GAME_OVER" ? "lost" : "in_progress",
+        levels_completed: played.levelsCompleted,
+        levels_total: played.levelsTotal ?? null,
+        actions: played.actions,
+        resets: played.resets,
+        undos: played.undos,
+        seconds: played.seconds,
+      });
+      $("commentBody").value = "";
+      context.notes = await api.treeNotes(context.tree.treeId).catch(() => context.notes);
+      paintComments(context);
+    } catch (err) {
+      error.hidden = false;
+      error.textContent = `Could not post (${err.message}).`;
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 function renderVersionSidebar() {
@@ -497,7 +688,11 @@ async function loadVersion(version, { blind }) {
   $("engineLoading").hidden = gameEngineReady();
 
   active = null;
+  tuning.detach();
+  spriteEditor.detach();
+  hidePanelTabs();
   let loaded;
+  let sourceText = "";
   try {
     await ensureGameEngine();
     const source = await api.fetchSource(version.sourceUrl);
@@ -506,6 +701,7 @@ async function loadVersion(version, { blind }) {
     if (token !== loadToken) return null;
     state = next;
     active = version;
+    sourceText = source.text;
     loaded = { sha256: source.sha256 };
   } catch (err) {
     if (token !== loadToken) return null;
@@ -536,7 +732,97 @@ async function loadVersion(version, { blind }) {
   updateTileBar();
   updateFilterBar();
   buildLevelStrip();
+  // The panel is built against the bytes just loaded, so a knob the evolution loop has since
+  // renamed or folded into an expression simply is not offered. Fire and forget: it fetches its
+  // own spec, and a game without one leaves the sidebar exactly as it was.
+  baseSource = sourceText;
+  knobEdits = {};
+  spriteEdits = [];
+  tuning.attach(version, sourceText, { blind: hideName }).catch(() => tuning.detach());
+  // Fire and forget, like the tuning panel: a game with no sprite spec leaves the sidebar exactly
+  // as it was, with no second tab and no empty panel.
+  spriteEditor.attach(version, sourceText, { blind: hideName })
+    .then((count) => showPanelTabs(count > 0))
+    .catch(() => { spriteEditor.detach(); hidePanelTabs(); });
   return loaded;
+}
+
+// The module both sidebar panels are really editing: the version's own bytes, with the knob
+// values and then the sprite art laid on. Rebuilt from scratch on every apply rather than
+// accumulated, so a knob put back to its published value really is put back.
+function composed() {
+  let out = patchSource(baseSource, knobEdits);
+  for (const { sprite, grid } of spriteEdits) out = patchSprite(out, sprite, fromGrid(sprite, grid));
+  return out;
+}
+
+// ── The sidebar's two panels ─────────────────────────────────────────────────
+// The strip is only worth drawing when there is something to switch to. A game with no sprite
+// spec keeps the single tuning panel it has always had, and says nothing about sprites at all.
+
+function setupPanelTabs() {
+  for (const tab of document.querySelectorAll("#panelTabs .panel-tab")) {
+    tab.addEventListener("click", () => selectPanel(tab.dataset.panel));
+  }
+}
+
+function selectPanel(which) {
+  for (const tab of document.querySelectorAll("#panelTabs .panel-tab")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.panel === which));
+  }
+  $("tuningPanel").hidden = which !== "tune";
+  $("spritePanel").hidden = which !== "sprites";
+}
+
+function showPanelTabs(hasSprites) {
+  $("panelTabs").hidden = !hasSprites;
+  if (!hasSprites) {
+    $("spritePanel").hidden = true;
+    return;
+  }
+  selectPanel("tune");
+}
+
+function hidePanelTabs() {
+  $("panelTabs").hidden = true;
+  $("spritePanel").hidden = true;
+}
+
+// The tuning panel's reload. Deliberately not loadVersion(): that one's failure path is a dead
+// end ("FAILED TO LOAD") and a knob pushed too far has to leave a playable game behind, so the
+// caller in games-tuning.js rolls back to the last set of values that loaded. Throws if the
+// patched module did not come up.
+async function applyTunedSource(patchedSource) {
+  if (!active) throw new Error("no game is loaded");
+  const token = loadToken;
+  const level = state.levels_completed || 0;
+  stopLiveIfRunning();
+  processing = true;
+  canvas().style.cursor = "wait";
+  try {
+    let next = await gameLoad(patchedSource, active.className);
+    if (token !== loadToken) return; // navigated to another version mid-reload
+    if (!next || next.error) throw new Error((next && next.error) || "the patched game did not load");
+    // Constants bake in at import, so the level restarts either way; put the player back on the
+    // one they were tuning, clamped in case the new geometry builds fewer levels.
+    const target = Math.min(level, Math.max(0, (next.win_levels || 1) - 1));
+    if (target > 0) {
+      const jumped = await gameJumpLevel(target);
+      if (token !== loadToken) return;
+      if (jumped && !jumped.error) next = jumped;
+    }
+    state = next;
+    stepCount = 0;
+    render(state.grid);
+    updateTopBar();
+    updateTileBar();
+    updateFilterBar();
+    buildLevelStrip();
+    checkEnd();
+  } finally {
+    processing = false;
+    canvas().style.cursor = (state.available_actions || []).includes(6) ? "crosshair" : "default";
+  }
 }
 
 // ── Tile modes ───────────────────────────────────────────────────────────

@@ -31,6 +31,8 @@ from railway.games_store import (
     list_trees,
     next_version,
     publish_version,
+    set_train_ok,
+    training_set,
     tree_detail,
     tree_notes,
     update_idea,
@@ -356,6 +358,40 @@ class DatabaseTests(unittest.TestCase):
         column = self.query(list_ideas, {"source": ["test"], "status": ["dropped"]})["ideas"]
         self.assertEqual([(i["ideaId"], i["pitch"], i["updatedBy"]) for i in column],
                          [("test:three", "Reworded.", "son@example.com")])  # re-seeding never undoes a move
+
+    def test_a_review_carries_one_comment_and_a_version_can_be_ticked_for_training(self) -> None:
+        self.publish(upload("c1-v1", "a", created_at="2026-09-05T00:00:00Z", family="evolution"))
+        self.publish(upload("c1-v1", "b", created_at="2026-09-06T00:00:00Z"))
+        first, second = vid("c1-v1", "a"), vid("c1-v1", "b")
+
+        # One free-text field is the whole review; it is what the game's page shows.
+        item = clean_feedback({"game_id": "c1-v1", "version_id": second, "comment": " level 2 drags "})
+        self.assertEqual(item["comment"], "level 2 drags")
+        self.query(insert_feedback, item, reviewer_class="team", reviewer="son@example.com",
+                   ip_hint=None, static_game_ids=set())
+        with self.assertRaises(GamesProblem) as caught:
+            clean_feedback({"game_id": "c1-v1", "version_id": second})
+        self.assertEqual(caught.exception.code, "empty_feedback")
+
+        notes = self.query(tree_notes, "c1-v1")
+        self.assertEqual([f["comment"] for f in notes["feedback"]], ["level 2 drags"])
+
+        # The tick is per version: ticking the new one leaves the old one alone.
+        self.assertEqual(self.query(training_set)["count"], 0)
+        ticked = self.query(set_train_ok, second, True, email="son@example.com")
+        self.assertEqual((ticked["trainOk"], ticked["trainOkBy"]), (True, "son@example.com"))
+        chosen = self.query(training_set)
+        self.assertEqual([v["versionId"] for v in chosen["versions"]], [second])
+        self.assertTrue(chosen["versions"][0]["sourceUrl"].startswith(f"/data/_games/c1-v1/{second[-12:]}/"))
+        self.assertTrue(self.query(tree_notes, "c1-v1")["notes"][second]["trainOk"])
+        self.assertIsNone(self.query(tree_notes, "c1-v1")["notes"][first]["trainOk"])
+
+        # Unticking clears the name with it, and an unknown version is a 404.
+        self.assertFalse(self.query(set_train_ok, second, False, email="son@example.com")["trainOk"])
+        self.assertEqual(self.query(training_set)["count"], 0)
+        with self.assertRaises(GamesProblem) as caught:
+            self.query(set_train_ok, "c1-v1@000000000000", True, email="son@example.com")
+        self.assertEqual(caught.exception.code, "version_not_found")
 
 
 if __name__ == "__main__":

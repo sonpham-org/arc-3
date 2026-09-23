@@ -145,3 +145,16 @@ CREATE TABLE IF NOT EXISTS arc3_game_idea_games (
 );
 
 CREATE INDEX IF NOT EXISTS arc3_game_idea_games_game_idx ON arc3_game_idea_games (game_id);
+
+-- A review is the comment. One free-text field is what people actually fill in, so the
+-- separate comments table that briefly existed on 20-Sep-2026 is gone again.
+ALTER TABLE arc3_game_feedback ADD COLUMN IF NOT EXISTS comment text;
+DROP TABLE IF EXISTS arc3_game_comments;
+
+-- "Good to train": a person ticked this exact version as fit for the training pipeline.
+-- It is deliberately per version, not per game, because the pipeline trains on exact bytes.
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok boolean;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_by text;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS arc3_game_versions_train_idx ON arc3_game_versions (train_ok) WHERE train_ok;

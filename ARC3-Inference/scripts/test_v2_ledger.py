@@ -34,7 +34,7 @@ print("1. Two-tier schema")
 print("=" * 72)
 keys = set(ta._empty_world_model())
 game, level = set(ta._LEDGER_GAME_KEYS), set(ta._LEDGER_LEVEL_KEYS)
-check("13 fields total", len(keys) == 13, str(sorted(keys)))
+check("12 fields total", len(keys) == 12, str(sorted(keys)))
 check("strategy_log is level-tier", "strategy_log" in level)
 check("tiers are disjoint and cover all fields", game | level == keys and not (game & level))
 check("failed_probes is level-tier", "failed_probes" in level)
@@ -64,11 +64,10 @@ print("=" * 72)
 print("3. Scraper: new labels + legacy aliases")
 print("=" * 72)
 note = ta._extract_scientist_note(
-    "Action model: SPACE toggles doors.\nFailed probes: clicked corners, nothing.\nHUD map: bottom strip is a timer."
+    "Action model: SPACE toggles doors.\nFailed probes: clicked corners, nothing."
 )
 check("legacy 'Action model:' folds into action_semantics", "SPACE toggles" in note.get("action_semantics", ""))
 check("Failed probes scraped", "corners" in note.get("failed_probes", ""))
-check("HUD map scraped", "timer" in note.get("hud_map", ""))
 
 print()
 print("=" * 72)

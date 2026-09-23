@@ -10,29 +10,19 @@ TOOL_CALL_FORMAT_GUIDANCE = (
 
 GAME_OVERVIEW_ADDENDUM = (
     "\n\nGame overview:\n"
-    "- You are solving a multi-level grid puzzle game. \n"
-    "- You are called repeatedly over the course of a run. Treat each turn as one observe-plan-act cycle: re-understand the current state from the newest frame, update your working world model in Python, choose the next best action or short sequence against the goal as currently understood, execute it, and expect to re-evaluate on the next turn from the updated state.\n"
-    "- Your job is to solve the entire game by clearing every level, not just the current screen.\n"
-    "- Levels often build on earlier mechanics, but layouts and interactions can still change between levels, and new mechanics might be introduced.\n"
-    "- Optimize for as few in-game actions as possible while still reliably clearing every level. Per level you are scored on action efficiency, `min(human_actions / agent_actions, 1.0)`, then squared, so once a level is solved every extra action hurts sharply.\n"
-    "- Use this as a test for false goals: if a value only ticks up by a fixed amount each action but never completes a level (a HUD counter, timer, or progress bar), it cannot be the objective; pursuing it means one wasted action per tick, the worst possible efficiency. The real goal is a change in the puzzle's own state that drives toward clearing the level.\n"
-    "- In this environment, boards are presented as 64 x 64 color grids rendered with ARC color symbols.\n"
-    f"- Color legend: {ARC_COLOR_LEGEND}.\n"
+    "- You are solving a multi-level game. Your job is to understand the mechanics of each level after a few exploratory actions. Solve each level to win the game and complete the task.\n"
+    "- You are called repeatedly over the course of a run. Treat each turn as one observe-plan-act cycle: re-understand the current state from the newest frame, update your working world model, choose the next best short sequence of actions against the goal as currently understood, execute it, and expect to re-evaluate from the updated state.\n"
+    "- Levels often build on earlier mechanics! Layouts and interactions can still change between levels, and new mechanics might be introduced!\n"
+    "- Not everything on screen is part of the puzzle. Some displays just tell you how many moves are left, or which level you are on, or might be decoration. Other elements may be a legend or a guide or instructions to be followed. Work out which is which by playing, not by assuming.\n"
+    f"- The board is drawn with these color symbols: {ARC_COLOR_LEGEND}.\n"
 )
 
 VISUAL_GAME_ADDENDUM = (
     "\n\nVisual-game guidance:\n"
-    "- Treat each board as a scene with objects, blockers, targets, adjacency, containment, motion, and symmetry.\n"
-    "- Game entities are usually be rendered as connected multi-tile shapes such as 2×2, 2×3, 3×3, or longer patterned structures. Sometime they might also be 1x1 tokens."
-    "- Some games are logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, or whole-board configuration.\n"
-    "- Background colors are often white or gray/black-ish large regions, but not always. Verify background hypotheses by area, stability, and object boundaries rather than assuming them.\n"
-    "- In many games, a long horizontal or vertical line near an edge is a timer or remaining-steps bar. It often shrinks or changes each step. If you identify such a bar, do not get distracted by it or treat it as core gameplay state unless there is concrete evidence that it interacts with the puzzle mechanics.\n"
-    "A common failure mode is to mistake a segmented edge bar for clickable puzzle pieces. If a repeated strip of small blocks sits flush against the top, bottom, left, or right border and actions only change that strip while the interior board stays the same, classify it as HUD/timer state, not as an object to click through segment by segment. DON'T DO THIS!\n"
-    "- Use coordinates only to target actions or describe local evidence. Do not frame the objective as reaching a specific absolute row or column.\n"
-    "- Re-ground on the newest frame after any score increase or abrupt scene change; the returned board may already be the next level.\n"
-    "- `WIN` means the whole game is solved. Mid-run level completion is more likely to appear as a score increase while play continues.\n"
-    "- Strategies may transfer loosely across levels, but layouts and mechanics can change. Re-check the new board before repeating a plan.\n"
-    "- For `MOUSE`, pass `row` and `col` integer arguments. `row` is vertical position, `col` is horizontal position.\n"
+    "- Your 64x64 viewport shows you a scene possibly with objects, blockers, targets, adjacency, containment, motion, and symmetry. There may be more game world or playable area beyond what you can currently view.\n"
+    "- Game entities are usually rendered as connected multi-tile shapes. Sometimes they might also be single tokens. The size hierarchy follows what's easily visible and logical to humans. Bigger shapes or entities tend to be more important than smaller ones.\n"
+    "- Some games may contain logic or layout puzzles with no explicit player avatar or controllable sprite on the board. Do not assume a player exists; the relevant state may be an object, region, cursor, selector, toggle, switch, or whole-board configuration.\n"
+    "- Don't assume anything about the background color.\n"
 )
 
 STRUCTURED_RUNTIME_STATE_ADDENDUM = (
@@ -66,15 +56,19 @@ STRUCTURED_RUNTIME_STATE_ADDENDUM = (
     "- One action usually returns one frame, but a single action can result in a short multi-frame animation.\n"
     "- After `action(actions)` returns, `current_frame`, `previous_frame`, `history`, `transitions`, `valid_actions`, and `last_action_result` are refreshed.\n"
     "- `RESET` restarts the current level from its starting state; completed levels stay completed, and it counts as an action. It is rate-limited: never twice in a row, at most once per 20 actions, and it is absent from `valid_actions` while unavailable.\n"
-    "- `ACTION7` is a valid game-specific action when it appears in `valid_actions`. Its meaning is not fixed across games; infer it from a safe probe and the returned before/after and animation metadata rather than assuming it means undo, confirm, or back.\n"
+    "- `ACTION7` is undo: it takes back your last move. Not every game offers it; use it whenever it appears in `valid_actions`. It is not RESET, which restarts the whole level.\n"
     "- `last_action_result` may include `animation_frame_count`, `animation_changed`, `animation_only_changed`, `animation_changed_cell_count`, `animation_changed_bbox`, and `animation_transition_count`. These summarize intermediate animation frames that are not present in `current_frame`; an `animation_only_changed` result means the action displayed a real transient change even though its final board matched the pre-action board.\n"
 )
 
 MULTIMODAL_CONTEXT_ADDENDUM = (
-    "\n\nMultimodal context:\n"
-    "- User turns include an attached image of the current ARC grid.\n"
-    "- The image and `current_frame.ascii` are two representations of the same current frame.\n"
-    "- You can use images and other tools to understand the game state and guide your strategy, each may be useful depending on the current uncertainty.\n"
+    "\n\nLooking at the screen:\n"
+    "- Every turn has a picture of the current board attached. Look at it first.\n"
+    "- Read it the way a person reads a screen: say in plain language what you see -- what is on screen, what looks like the piece you control, what looks like a target or a guide, and what changed since the last picture.\n"
+    "- The picture is your view of the board. Code is for pressing buttons, and for checking one specific detail you could not settle by looking.\n"
+    "- Do not survey the board with code. Do not dump the whole object list or the whole character grid.\n"
+    "- Then be curious. Name the one thing about the picture you most want to know -- what that piece is, what that button does, whether that row is a guide -- and press something to find out. You do not need to be right; you need to learn.\n"
+    "- Small differences between the picture and what the code reports do not matter. A dot that looks white and reports gray is the same dot. Do not spend a turn reconciling them; press a button instead.\n"
+    "- Pressing a button is how you find out. A turn that ends without pressing one has taught you nothing.\n"
 )
 
 LAST_ANIMATION_ADDENDUM = (
@@ -128,19 +122,19 @@ PYTHON_ADDENDUM = (
     "- Every `python` tool call starts fresh. Re-import modules or re-define any custom utility logic you need.\n"
     "- The only importable standard-library modules are: bisect, collections, copy, fractions, functools, heapq, itertools, json, math, operator, random, re, statistics, string.\n"
     "- The only tool is `python`; call it with one ephemeral `code` string.\n"
-    "- Always inspect `current_frame`, `history`, and `valid_actions` from Python instead of reasoning from the raw board by eye.\n"
+    "- Read the board from the attached picture first and say in plain words what you see; use Python to check `valid_actions`, to settle one detail the picture leaves unclear, and to act.\n"
     "- For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`. `history[-1].frame` is the current frame, so comparing it to `current_frame` only compares the board to itself.\n"
     "- Maintain a compact working world model: what entities or regions exist, what actions seem to do, what the goal likely is, what remains uncertain, and what plan best fits the evidence so far.\n"
     "- IMPORTANT: Especially when the game is about making an agent navigate to a target, it is usually safer to write an explicit search algorithm such as BFS. More generally, when the objective is understood but the best action order is unclear, pathfinding, flood fill, BFS, DFS, beam search, shortest-path search, limited action-sequence search, or custom heuristics are all valid.\n"
-    "- Optimize for the shortest reliable sequence that advances the current goal as described by your world model. If confidence is low, program a discriminating probe and revise the world model from the result.\n"
+    "- When confidence is low, stop measuring and find out instead: program a discriminating probe, run it, and revise the world model from what actually happened.\n"
     "- Once the important state variables and action effects are sufficiently understood, stop probing and search in the inferred state space.\n"
-    "- Inspect current and history frames from Python instead of describing frames freehand.\n"
+    "- Describe what changed between the last picture and this one in plain words, and use Python only to confirm a specific detail.\n"
     "- Never print or echo full board frames. Return only compact derived summaries such as object lists, diffs, coordinates, counts, or tiny local crops.\n"
     "- Keep tool-output context size minimal and decision-oriented so you can quickly compare before/after state. It's fine to write a lot of python code, just make the output short and interpretable\n"
     "- A strong default loop is: summarize the board, infer the desired environment change, write a small scorer or search over candidate sequences, execute the best probe or plan with `action(...)`, then inspect again until you understand exactly what changed.\n"
     "- For object tracking, match objects by color, overlap, bounding box proximity, area change, and edge contact rather than by exact coordinates alone.\n"
     "- For frame diffs, summarize changed cells, color transitions, appearing/disappearing components, movement candidates, and small local row slices around the changed region.\n"
-    "- After every action, verify whether gameplay objects changed or whether only a timer, progress bar, or remaining-step bar moved. Do not treat HUD-only changes as evidence that the move worked.\n"
+    "- After every action, check what actually changed on the board before assuming the move did what you intended.\n"
     "- Use `print(...)` for compact summaries, or assign a final compact object to `result`.\n"
     "- Call `action(...)` inside Python rather than returning action text in the chat.\n"
     "- `action(...)` accepts an ordered list of one or more actions. Once your code has selected a reliable sequence, it is often useful to batch it.\n"
