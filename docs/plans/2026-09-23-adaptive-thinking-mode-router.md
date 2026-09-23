@@ -181,3 +181,39 @@ treat them as tied on efficiency and separated on score.
 
 The last row is the one that matters for §0: **efficiency falls as the clock grows.** Any plan that
 buys actions must be scored against 358 actions/point, not 229.
+
+### 8.1 The same census restricted to the hard seven
+
+`bp35, g50t, lf52, ls20, sk48, tn36, wa30`. Score is the mean over those seven; actions and levels
+are their totals. "ratio" is hard-seven efficiency divided by the same run's all-25 efficiency.
+
+| harness | n | h7 score | h7 actions | h7 score/1k | h7 levels | ratio to all-25 |
+|---|---|---|---|---|---|---|
+| **compaction-v5-CR** | 2 | **4.23** | 1,006 | **4.20** | **9.0** | **1.09x** |
+| LA-CR | 2 | 3.69 | 990 | 3.73 | 8.5 | 0.72x |
+| LAB-v5 | 2 | 3.25 | 920 | 3.53 | 7.5 | 0.65x |
+| clean-return (7.36 base) | 3 | 3.01 | 953 | 3.16 | 7.3 | 0.72x |
+| LA-RF | 1 | 2.85 | 1,134 | 2.51 | 7.0 | 0.59x |
+| LA-v5 | 2 | 2.59 | 984 | 2.63 | 7.0 | 0.59x |
+| LAB-CR | 2 | 2.55 | 1,100 | 2.31 | 6.5 | 0.58x |
+| LB-CR | 2 | 1.38 | 922 | 1.50 | 5.0 | 0.38x |
+| clean-return @ **264 min** | 1 | **9.92** | 2,542 | 3.90 | **15.0** | 1.11x |
+
+Three things follow, and the third changes §0.
+
+1. **The overall ranking does not survive the restriction.** compaction-v5-CR is the *worst* harness
+   overall (12.66) and the *best* on the hard seven — most efficient, most levels. LA-CR still leads
+   among the arms that are also good overall, and LB-CR is last on both.
+2. **Hard games are normally less efficient**, 0.58–0.72x the all-25 rate for most arms. The two
+   exceptions are compaction v5 and the long clock, both above 1.0x.
+3. **The marginal action is worth *more* on the hard seven, not less.** clean-return 132 → 264 took
+   1,589 extra hard-seven actions and gained 6.91 hard-seven points: **230 actions per point**,
+   against 358 for the all-25 marginal rate in §0. Time helps the hard games about twice as much as
+   the easy ones (h7 score 3.01 → 9.92, a 3.3x lift, while all-25 went up only 1.75x).
+
+**So the router should be priced and scored on the hard seven.** Its payoff there is ~230 actions
+per point rather than 358, and the hard seven is the gate that arms are judged against anyway.
+
+Caveat: n is 1–3 runs per arm and a single hard game swinging one level moves the h7 mean by ~1.4
+points, so treat gaps under ~1 point as noise. The compaction-v5 result (n=2, both replicates
+9 levels) is the one worth a dedicated repeat.
