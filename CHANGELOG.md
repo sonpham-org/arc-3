@@ -279,6 +279,49 @@ Also fixes spec §3.1: `MechanicPoint` has `introducedOnLevel` on 214 of 297 ent
 level field in the schema" was wrong.
 
 ---
+## 20-Sep-2026 — Round 4 arm W: gameplay eval on the fenced seven (a424; a108 offline)
+
+`docs/trace-findings/2026-09-20-arc3-round4-arm-w-gameplay-eval.md` plus the harness under
+`docs/trace-findings/round4-arm-w-eval/`. Measurement only — no training, no corpus rebuild,
+no adapter modified.
+
+**a108 was offline throughout**, so gameplay ran on a424 against `Qwen3.8-27B-BF16` rather
+than a108's NVFP4. Base was re-run as its own arm and **no number here is comparable to round
+3's a108 result.**
+
+Matched n=1 sweep, seven fenced games, 90-min cap, arms differing only in `.model` (checked
+with the oracle's own `parity()`):
+
+| arm | levels | score | reasoning chars/turn | tool% |
+|---|---|---|---|---|
+| base | 3 | 7.778 | 2,456 | 100% |
+| round3 | 3 | 6.971 | 1,946 | 100% |
+| round4W | 1 | 2.778 | 2,429 | 100% |
+
+- **The spec's falsifier does not fire, because its antecedent is false.** It required arm W to
+  *shorten* deliberation; arm W matched base within 1% (2,429 vs 2,456) and sat well above
+  round 3's 1,946. **Deliberation was restored and clearance still fell.** Reading: deliberation
+  length was a symptom travelling with round 3's regression, not its mechanism.
+- **Magnitude is not established.** n=1. Round 3's own two passes on this box ran [3, 1] —
+  spread as large as the gap being measured — so arm W's single 1-level pass is not
+  distinguishable from a low draw. The *ordering* is what this run supports.
+- **The checkpoint ladder was never run.** Over-training remains an open, untested explanation
+  (round 2's gain was done by step 16, step 48 regressed, arm W ended at loss 0.0380). Highest
+  -value follow-up.
+- Round 3 did not obviously collapse here (3 levels, level with base) but its second pass was 1,
+  so this is under-powered and does **not** refute PR #59.
+- Pre-flight gates recorded: both adapters proven non-no-op on **vLLM 0.24.0** by greedy logprob
+  A/B (rounds 1-3 never tested this version; a silent no-op would have read as "round 4 is
+  neutral"); 4.26 tok/s per lane at 7 lanes; ~3.7 tok/s in-harness, flat across 4.9k-24k
+  prompts, so decode-bound; zero preemption.
+- **900s analyzer timeout truncates any turn wanting >~3,300 output tokens** at that rate; base
+  lost 26 of 49 turns. Raising it was considered and rejected with arithmetic.
+- **The run was stopped early on box stability, not on a result.** `gpu_memory_utilization:
+  0.85` — 66 GB of weights plus a 43.56 GiB KV cache on a 121 GB unified-memory box — held for
+  five passes, then produced `NVRM: NV_ERR_NO_MEMORY` and **two reboots** that destroyed arm W's
+  second pass twice. Next eval on a424 should drop utilization to ~0.75 and accept fewer lanes.
+  Three destroyed passes (one vLLM wedge, two reboots) are preserved as `DISCARDED_*` run dirs
+  and appear in no table.
 
 ## 19-Sep-2026 — ARC-3 LoRA round 4 spec: train on the Boss's reasoning, not his moves
 
