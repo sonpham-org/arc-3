@@ -35,43 +35,13 @@ function rememberSeen(versionId) {
 
 export function createFeedback({ player, api, getMe, onExit }) {
   const form = $("fbForm");
-  const ratings = {};
-  const flags = new Set();
-  let verdict = null;
   let current = null; // { version, versionId }
   let reviewed = 0;
   const skipped = new Set();
+  const seen = []; // this session's order, so "previous game" can step back
   let busy = false;
   let telemetryTimer = null;
 
-  // ── Form wiring ──
-  for (const group of form.querySelectorAll("[data-rating]")) {
-    const key = group.dataset.rating;
-    for (const button of group.querySelectorAll("button[data-value]")) {
-      button.addEventListener("click", () => {
-        const value = Number(button.dataset.value);
-        ratings[key] = ratings[key] === value ? null : value;
-        for (const b of group.querySelectorAll("button[data-value]")) {
-          b.classList.toggle("active", Number(b.dataset.value) === ratings[key]);
-        }
-      });
-    }
-  }
-  for (const button of form.querySelectorAll("[data-flag]")) {
-    button.addEventListener("click", () => {
-      const flag = button.dataset.flag;
-      if (flags.has(flag)) flags.delete(flag);
-      else flags.add(flag);
-      button.classList.toggle("active", flags.has(flag));
-      button.setAttribute("aria-pressed", flags.has(flag) ? "true" : "false");
-    });
-  }
-  for (const button of form.querySelectorAll("[data-verdict]")) {
-    button.addEventListener("click", () => {
-      verdict = verdict === button.dataset.verdict ? null : button.dataset.verdict;
-      for (const b of form.querySelectorAll("[data-verdict]")) b.classList.toggle("active", b.dataset.verdict === verdict);
-    });
-  }
   try {
     $("fbNick").value = localStorage.getItem(NICK_KEY) || "";
     const pool = localStorage.getItem(POOL_KEY);
@@ -95,16 +65,24 @@ export function createFeedback({ player, api, getMe, onExit }) {
     if (current) skipped.add(current.versionId);
     next();
   });
+  $("fbPrev").addEventListener("click", async () => {
+    // Back to the game before this one, without going home. The queue keeps its order.
+    if (busy || seen.length < 2) return;
+    busy = true;
+    try {
+      seen.pop();
+      const previous = seen[seen.length - 1];
+      skipped.delete(previous.versionId);
+      await load(previous, null, { remember: false });
+    } finally {
+      busy = false;
+      $("fbPrev").disabled = seen.length < 2;
+    }
+  });
   $("fbExit").addEventListener("click", () => exit());
 
   function resetForm() {
-    for (const key of Object.keys(ratings)) ratings[key] = null;
-    flags.clear();
-    verdict = null;
-    for (const b of form.querySelectorAll("button.active")) b.classList.remove("active");
-    for (const b of form.querySelectorAll("[data-flag]")) b.setAttribute("aria-pressed", "false");
-    for (const area of form.querySelectorAll("textarea")) area.value = "";
-    $("fbOutcome").value = "auto";
+    $("fbComment").value = "";
     $("fbWebsite").value = "";
     showError(null);
   }
@@ -143,19 +121,20 @@ export function createFeedback({ player, api, getMe, onExit }) {
     const minutes = Math.floor(t.seconds / 60);
     const seconds = String(t.seconds % 60).padStart(2, "0");
     $("fbTelemetry").textContent =
-      `levels ${t.levelsCompleted}/${t.levelsTotal ?? "?"} · ${t.actions} actions · ${t.resets} resets · ${minutes}:${seconds}` +
-      ($("fbOutcome").value === "auto" ? ` · ${outcomeFromState(t).replace("_", " ")}` : "");
+      `levels ${t.levelsCompleted}/${t.levelsTotal ?? "?"} · ${t.actions} actions · ${t.resets} resets · ${minutes}:${seconds} · ${outcomeFromState(t).replace("_", " ")}`;
   }
 
-  async function load(version, remaining) {
+  async function load(version, remaining, { remember = true } = {}) {
     resetForm();
     current = { version, versionId: version.versionId };
+    if (remember && (!seen.length || seen[seen.length - 1].versionId !== version.versionId)) seen.push(version);
     const blindLabel = version.gameId;
     $("fbGameLabel").textContent = blindLabel;
     $("fbQueueLabel").textContent =
       remaining != null ? ` · ${remaining} game${remaining === 1 ? "" : "s"} in this pool need${remaining === 1 ? "s" : ""} a review` : "";
     $("fbDone").hidden = true;
     form.hidden = false;
+    $("fbPrev").disabled = seen.length < 2;
     const loaded = await player.load(version, { blind: true });
     if (!loaded) return;
     // File the review under the bytes that actually ran (see games-api.js fetchSource).
@@ -190,29 +169,17 @@ export function createFeedback({ player, api, getMe, onExit }) {
 
   function collect() {
     const t = player.telemetry();
-    const outcome = $("fbOutcome").value === "auto" ? outcomeFromState(t) : $("fbOutcome").value;
-    const text = (id) => $(id).value.trim() || null;
     const payload = {
       game_id: current.version.gameId,
       version_id: current.versionId,
-      outcome,
+      comment: $("fbComment").value.trim() || null,
+      outcome: outcomeFromState(t),
       levels_completed: t.levelsCompleted,
       levels_total: t.levelsTotal ?? null,
       actions: t.actions,
       resets: t.resets,
       undos: t.undos,
       seconds: t.seconds,
-      fun: ratings.fun ?? null,
-      clarity: ratings.clarity ?? null,
-      difficulty: ratings.difficulty ?? null,
-      novelty: ratings.novelty ?? null,
-      flags: [...flags],
-      goal_guess: text("fbGoal"),
-      liked: text("fbLiked"),
-      disliked: text("fbDisliked"),
-      suggestion: text("fbSuggestion"),
-      bugs: text("fbBugs"),
-      verdict,
       website: $("fbWebsite").value,
       client: {
         viewport: `${window.innerWidth}x${window.innerHeight}`,
@@ -231,13 +198,8 @@ export function createFeedback({ player, api, getMe, onExit }) {
   async function submit() {
     if (!current || busy) return;
     const payload = collect();
-    const saidSomething =
-      ["fun", "clarity", "difficulty", "novelty"].some((k) => payload[k] != null) ||
-      payload.flags.length ||
-      ["goal_guess", "liked", "disliked", "suggestion", "bugs"].some((k) => payload[k]) ||
-      payload.verdict;
-    if (!saidSomething) {
-      showError("Rate it, tick a flag, or write something first — or press Skip.");
+    if (!payload.comment) {
+      showError("Write a comment first, or press Skip.");
       return;
     }
     busy = true;

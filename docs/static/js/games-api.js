@@ -117,6 +117,10 @@ export const submitFeedback = (team, payload) => postJson(`${team ? TEAM : PUBLI
 export const setFeedbackHidden = (feedbackId, hidden) =>
   postJson(`${TEAM}/feedback/${encodeURIComponent(feedbackId)}/hidden`, { hidden });
 // The ideas board (team-only: an idea names its mechanic).
+// The training tick is team-only, like change notes.
+export const setTrainOk = (versionId, good) =>
+  postJson(`${TEAM}/versions/${encodeURIComponent(versionId)}/train`, { good });
+
 export const listIdeas = (params) => getJson(`${TEAM}/ideas?${new URLSearchParams(params)}`);
 export const updateIdea = (ideaId, change) => postJson(`${TEAM}/ideas/${encodeURIComponent(ideaId)}`, change);
 

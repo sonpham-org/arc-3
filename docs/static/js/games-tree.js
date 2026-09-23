@@ -8,7 +8,7 @@
 // Everything user-written (change notes, reviews) goes into the page with textContent, never
 // innerHTML: public reviews are untrusted input read by the signed-in team.
 
-import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260919-ideas";
+import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260920-rail";
 
 export const COL_W = 156;
 export const NODE_W = 128;
@@ -266,11 +266,8 @@ function heroBlock(tree, ctx) {
   const play = el("button", "primary sm", "▶ Play");
   play.type = "button";
   play.addEventListener("click", () => ctx.onPlay(tree, head));
-  const review = el("button", "sm", "Review");
-  review.type = "button";
-  review.title = "Play the current version and leave feedback";
-  review.addEventListener("click", () => ctx.onReview(tree, head));
-  actions.append(play, review);
+  play.title = "Play it, then comment on the page";
+  actions.append(play);
   hero.appendChild(actions);
   return hero;
 }
@@ -389,7 +386,7 @@ function reviewCard(review, { team, onHide }) {
   return card;
 }
 
-export function openVersionDrawer({ tree, version, detail, notes, team, signInUrl, onPlay, onReview, onHide }) {
+export function openVersionDrawer({ tree, version, detail, notes, team, signInUrl, onPlay, onHide }) {
   const drawer = document.getElementById("versionDrawer");
   const body = drawer.querySelector(".drawer-body");
   const heading = drawer.querySelector(".drawer-title");
@@ -405,10 +402,7 @@ export function openVersionDrawer({ tree, version, detail, notes, team, signInUr
   const play = el("button", "primary", "▶ Play this version");
   play.type = "button";
   play.addEventListener("click", () => onPlay(tree, version, detail));
-  const review = el("button", null, "Review this version");
-  review.type = "button";
-  review.addEventListener("click", () => onReview(tree, version, detail));
-  actions.append(play, review);
+  actions.append(play);
   top.appendChild(actions);
   body.appendChild(top);
 

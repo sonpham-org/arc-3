@@ -179,9 +179,23 @@ consistent with the GPT-6 Astra result above: on this benchmark, the harness is 
 
 ---
 
-## 7. What to tell someone who asks how a two-person team is placing top-five
+## 7. What to tell someone who asks how a two-person team is placing in the gold band
 
-The honest version, and it holds up:
+**Standing, 21-Sep-2026:** `Son Pham & Mark Barney` — **rank 14 of 3,206**, score **7.36**,
+55 submissions, on the ARC-AGI-3 *public* leaderboard. Gold at this team count is the top 16,
+so we are two places inside it, having been out of it. Pulled with
+`kaggle competitions leaderboard -c arc-prize-2026-arc-agi-3 --download`, snapshot
+`2026-09-21T12:13:49Z`.
+
+Two things to say alongside the rank, every time:
+
+- **It is held by 0.14 points.** Ranks 11-16 run 7.39, 7.37, 7.37, **7.36**, 7.29, 7.22. That
+  spread is inside the seed noise this page documents in §8 — one re-roll moves us several
+  places in either direction, with no harness change at all.
+- **Medals are awarded on the private leaderboard** at the 02-Nov-2026 close. A public-board
+  band is a position today, not a medal.
+
+The honest version of how, and it holds up:
 
 1. **The benchmark rewards harness engineering more than model scale.** GPT-6 Astra scored
    62.7% and 99.9% on the same weights, with different harnesses. A small team that builds
