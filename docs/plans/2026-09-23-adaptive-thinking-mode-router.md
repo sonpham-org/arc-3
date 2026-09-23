@@ -217,3 +217,43 @@ per point rather than 358, and the hard seven is the gate that arms are judged a
 Caveat: n is 1–3 runs per arm and a single hard game swinging one level moves the h7 mean by ~1.4
 points, so treat gaps under ~1 point as noise. The compaction-v5 result (n=2, both replicates
 9 levels) is the one worth a dedicated repeat.
+
+### 8.2 Cost per point — actions and tokens, all-25 and hard-seven
+
+Score is the mean over the games in scope; actions and tokens are their totals, so "act/pt" and
+"ktok/pt" are what one point of mean score costs. `tokens` in `summary.txt` is **generated** tokens
+(25 games x ~180k = the header's total, and total/job-wallclock reproduces its tokens/sec).
+
+| harness | n | score | act/pt | ktok/pt | tok/act | h7 score | h7 act/pt | h7 ktok/pt | h7 tok/act |
+|---|---|---|---|---|---|---|---|---|---|
+| **LA-CR** | 2 | **18.63** | **193** | **123** | 638 | 3.69 | 268 | 177 | 658 |
+| LAB-v5 | 2 | 17.68 | 183 | 128 | 698 | 3.25 | 283 | 200 | 705 |
+| LA-RF | 1 | 14.90 | 236 | 157 | 663 | 2.85 | 398 | 230 | 578 |
+| LA-v5 | 2 | 14.47 | 224 | 157 | 698 | 2.59 | 381 | 244 | 641 |
+| clean-return (7.36 base) | 3 | 14.33 | 229 | 169 | 737 | 3.01 | 316 | 223 | 705 |
+| LB-CR | 2 | 13.28 | 255 | 175 | 685 | 1.38 | **666** | **477** | 716 |
+| LAB-CR | 2 | 13.23 | 249 | 175 | 703 | 2.55 | 432 | 254 | 589 |
+| **compaction-v5-CR** | 2 | 12.66 | 259 | 178 | 686 | **4.23** | **238** | **149** | 628 |
+| clean-return @ **264 min** | 1 | **25.07** | 284 | 180 | 632 | **9.92** | 256 | 127 | **496** |
+
+Marginal cost of the second 132 minutes (clean-return, 132 -> 264):
+
+| scope | points gained | extra actions | act/pt | extra tokens | ktok/pt |
+|---|---|---|---|---|---|
+| all-25 | +10.74 | +3,846 | 358 | +2,088k | **194k** |
+| hard-7 | +6.91 | +1,589 | 230 | +588k | **85k** |
+
+Readings:
+
+- **LA-CR is the cheapest harness per point overall** (193 actions / 123k tokens) and compaction-v5-CR
+  is the cheapest **on the hard seven** (238 / 149k vs LA-CR's 268 / 177k). LB-CR is the outlier in
+  the wrong direction: 666 actions and 477k tokens per hard-seven point, ~3.5x LA-CR.
+- **Tokens per action barely move across arms** (~630–740). The arms differ in how many *points* their
+  actions buy, not in what an action costs. So action-efficiency and token-efficiency rank the same
+  harnesses, and the prompt edits are moving decision quality, not verbosity.
+- **A hard-seven point is 2.3x cheaper in tokens at the margin** (85k vs 194k). Combined with §8.1,
+  the long clock and the hard seven are the same bet.
+- **The model already spends less per action late in a long game**: hard-seven tok/act falls to 496 at
+  264 minutes against 628–705 for every 132-minute arm. That is weak but real evidence that "settled"
+  turns exist and are *already* cheaper — the router's job is to find them earlier and deliberately,
+  not to invent a phenomenon that does not occur.
