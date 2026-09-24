@@ -38,6 +38,7 @@ source_sha256 cascade in both candidate.tgz and the selftest bundle's candidate/
 Usage:  python derive_arms.py execution|memory|symbolic|solver|selfcheck [--suite 132]
 """
 import argparse, ast, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, uuid
+from watchdog import add_watchdog
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -63,6 +64,14 @@ ARMS = {
                       ablations={"search", "loop", "priors", "transition", "coords"}, patch_candidate=False, feature_arm="baseline"),
     "selfcheck": dict(features=set(), execution_version="none", symbolic_version="none",
                       ablations={"search"}, patch_candidate=True, feature_arm="baseline"),
+    # v2 (24-Sep, "reuse the flag but have your own take"): same flags as the arm above each, plus patch_v2.py's
+    # per-game code store and one executable, history-replayed verification primitive (see patch_v2.py docstring).
+    "execution_v2": dict(features={"memory", "execution"}, execution_version="memory_lease_e2", symbolic_version="none",
+                         ablations={"search"}, patch_candidate="execution_v2", feature_arm="execution"),
+    "memory_v2":    dict(features={"memory"}, execution_version="none", symbolic_version="none",
+                         ablations={"search"}, patch_candidate="memory_v2", feature_arm="memory"),
+    "symbolic_v2":  dict(features={"memory", "symbolic"}, execution_version="none", symbolic_version="v2",
+                         ablations={"search"}, patch_candidate="symbolic_v2", feature_arm="symbolic"),
 }
 
 def sha_b(b: bytes) -> str: return hashlib.sha256(b).hexdigest()
@@ -131,9 +140,13 @@ def main():
     cand_dir = work / "candidate"; cand_dir.mkdir(parents=True)
     with tarfile.open(SRC / "candidate.tgz") as t:
         cand_names = t.getnames(); t.extractall(cand_dir)
-    if spec["patch_candidate"]:
+    if spec["patch_candidate"] is True:
         sys.path.insert(0, str(HERE)); import patch_selfcheck
         patch_selfcheck.apply(cand_dir / "src" / "ARC3-Inference")
+        candidate_bytes = repack(cand_dir, cand_names)
+    elif spec["patch_candidate"]:
+        sys.path.insert(0, str(HERE)); import patch_v2
+        patch_v2.apply(cand_dir / "src" / "ARC3-Inference", spec["patch_candidate"])
         candidate_bytes = repack(cand_dir, cand_names)
     else:
         candidate_bytes = (SRC / "candidate.tgz").read_bytes()
@@ -211,6 +224,10 @@ def main():
         else: rec["extra_environment"][envk] = "1" if feat == spec["feature_arm"] else "0"
     for abl, envk in ABLATION_ENV.items():
         rec["extra_environment"][envk] = "1" if abl in spec["ablations"] else "0"
+    if spec["patch_candidate"] is True:
+        rec["extra_environment"]["ARC3_PREDICTION_CHECK"] = "1"   # exported after the selftest matrix (see startup)
+    elif spec["patch_candidate"]:
+        rec["extra_environment"]["ARC3_V2_BATCH_GATE"] = "1"      # v2 arms: same placement, gates multi-action batches
     mem = "memory" in spec["features"]
     flag_updates = {"memory": mem, "execution": "execution" in spec["features"], "symbolic": "symbolic" in spec["features"],
                     "workspace": False, "reasoning_router": mem, "rule_preservation": mem}   # runtime_probe derives these from agent state
@@ -219,11 +236,17 @@ def main():
     rec["source_sha256"] = source_sha256
     rec["source_family"] = rec["source_family"].replace("clean_return_a_v1", f"clean_return_hard7_{args.arm}_v1")
     cfg["run_id"] = f"g4run-cv5cr-hard7-{args.arm}-{SUITE_MIN}-w7-20260924"
+    cand_note = ("PATCHED by patch_selfcheck.py (expect(check) before every action; host verifies the check on the real "
+                 "transition and a no-op counterfactual)" if spec["patch_candidate"] is True else
+                 f"PATCHED by patch_v2.py arm {spec['patch_candidate']} (per-game code store; "
+                 + {"execution_v2": "verify(predict) history replay, auto-checked actions, verified-model batch gate",
+                    "memory_v2": "rule(id, text, holds) evidence-linked rules replayed each snippet, first counterexample revokes",
+                    "symbolic_v2": "encode/step executable model, replay() fidelity, bounded plan() BFS, auto-checked actions"}[spec["patch_candidate"]]
+                 + ")" if spec["patch_candidate"] else "byte-identical to the 19-Sep arm")
     cfg["evidence"]["notes"] = [
         f"September24 user: five intensive-harness arms measured on the hard seven only, one wave, the whole {SUITE_MIN}-minute "
         f"clock per game ({GAME_S} s). This is the '{args.arm}' arm: features={sorted(spec['features']) or ['none']}, prompt "
-        f"ablations={sorted(spec['ablations'])}, candidate {'PATCHED by patch_selfcheck.py (expect(check) before every action; '
-        'host verifies the check on the real transition and a no-op counterfactual)' if spec['patch_candidate'] else 'byte-identical to the 19-Sep arm'}. "
+        f"ablations={sorted(spec['ablations'])}, candidate {cand_note}. "
         "Base: compaction_v5_clean_return_a (most hard-seven-efficient 132-minute arm in the 23-Sep census). Spot. One attempt.",
     ] + cfg["evidence"]["notes"][1:]
     cfg["config_id"] = contract.config_id(rec); contract.validate(cfg, for_launch=True)
@@ -289,6 +312,12 @@ def main():
         s = sub1(re.escape(f"echo '{old}  /opt/arc3/config-audit/{fn}'"), f"echo '{new}  /opt/arc3/config-audit/{fn}'", s)
     s = sub1(re.escape(f"echo '{old_selftest_sha}  /tmp/execution-selftest.tgz'"), f"echo '{selftest_sha}  /tmp/execution-selftest.tgz'", s)
     s = sub1(re.escape(f"echo '{old_release_sha}  /opt/arc3/execution-release-manifest.json'"), f"echo '{release_sha}  /opt/arc3/execution-release-manifest.json'", s)
+    if spec["patch_candidate"] is True:
+        # after EVERY bundled selftest (test_action_cap_modes.py also drives action() bare), right before gameplay
+        s = sub1(r"^capture_gameplay_metrics start$", "export ARC3_PREDICTION_CHECK=1" + NL + "capture_gameplay_metrics start", s, re.M)
+    elif spec["patch_candidate"]:
+        s = sub1(r"^capture_gameplay_metrics start$", "export ARC3_V2_BATCH_GATE=1" + NL + "capture_gameplay_metrics start", s, re.M)
+    s = add_watchdog(s)
     old_req = re.search(r"requestId=([0-9a-f-]{36})", s).group(1); new_req = str(uuid.uuid4())
     s = s.replace(old_req, new_req); (ARM / "DELETE_REQUEST_ID").write_text(new_req)
     leftovers = ["2061", 'ARC3_GAME_SUBSET=""']

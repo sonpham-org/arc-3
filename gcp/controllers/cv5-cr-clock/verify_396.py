@@ -18,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ARM = HERE / "arms" / os.environ.get("ARC3_ARM_NAME", "compaction_v5_clean_return_" + os.environ.get("ARC3_SUITE_MINUTES", "396"))
-SRC = Path(r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a")
+SRC = Path(os.environ.get("ARC3_SRC_ARM", r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a"))
 startup = (ARM / "startup.sh").read_text(encoding="utf-8")
 armcfg = json.loads((ARM / "ARM.json").read_text())
 fails, checks = [], 0
@@ -167,7 +167,13 @@ if "harness_arm" in armcfg:
         ok(not badi, "manifest implementation.candidate_source_sha256 match candidate.tgz")
         if armcfg["patched_candidate"]:
             ok(man["candidate_bundle_sha256"] == armcfg["candidate_sha256"], "manifest.candidate_bundle_sha256 == patched candidate.tgz")
-            ok("def expect(check)" in (tmpc / "src/ARC3-Inference/inference/agent/python_tool_sandbox.py").read_text(encoding="utf-8"), "patched sandbox carries expect()")
+            sbx = (tmpc / "src/ARC3-Inference/inference/agent/python_tool_sandbox.py").read_text(encoding="utf-8")
+            need = {True: ["def expect(check)"], "execution_v2": ["_CODE_STORES", "def verify(predict", "_gate_batch"],
+                    "memory_v2": ["_CODE_STORES", "def rule(id, text, holds)", "_replay_rules(True)"],
+                    "symbolic_v2": ["_CODE_STORES", "def replay(last", "def plan(goal", "_gate_batch"]}[armcfg["patched_candidate"]]
+            ok(all(k in sbx for k in need), f"patched sandbox carries {armcfg['patched_candidate']} primitives {need}")
+            if armcfg["patched_candidate"] is not True:
+                ok("store_key=str(state_path.parent)" in (tmpc / "src/ARC3-Inference/inference/agent/tool_agent.py").read_text(encoding="utf-8"), "tool_agent passes store_key")
         encj = lambda x: (json.dumps(x, sort_keys=True, indent=2) + chr(10)).encode()
         ok(cfg["recipe"]["source_sha256"] == hashlib.sha256(encj(man["candidate_files"])).hexdigest(), "CONFIG.source_sha256 == sha(enc(manifest.candidate_files)) (runtime_probe formula)")
         # EXPECTED_PROMPTS must equal a fresh render from THIS candidate under THIS env

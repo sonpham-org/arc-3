@@ -84,3 +84,41 @@ the no-teacher call.
    `live_half_swap_gate.py:41` (`<= budget // 2`) relaxed or it dies at the gate.
 2. LA-CR at 264 and hard-seven-only, for the three-way at length.
 3. Prediction-checked action batches as the first "intensive part" (the harness already has the field).
+
+## 24-Sep: what actually ran, and the v2 arms
+
+**hard7-264 collapsed and was redone.** `…-d85c029903` lost its vLLM engine at minute 31 (`RPC call to
+sample_tokens timed out` → EngineDeadError under 7 × ~94k contexts) and the harness spun against the dead
+server for hours at 0.48 / 5 levels. Relaunched as `g4run-cv5cr-hard7-264-w7-20260923-7c19c6eb63` with a
+watchdog in the startup (probe `/v1/models` every 60 s, restart the container after 3 misses, log
+`SERVER_RESTARTS`); the same watchdog is now in every derive. Details: `gcp/controllers/cv5-cr-clock/README.md`.
+
+**Five flag arms on the hard seven, 132 min, one wave** — launched 23/24-Sep:
+execution `…-ce7843057b`, memory `…-d5d8b2be9d`, symbolic `…-5aac84d4fc`, solver `…-92b391fd79`,
+selfcheck `…-e58ade7fe2` (third launch: the first two died in the bundled selftests, which call `action()`
+without `expect()`; the requirement is now switched on by `ARC3_PREDICTION_CHECK=1` exported after the
+last selftest). At minute ~75 the four survivors sat at 1.2–1.6 mean / 10–14 levels / 131–170 act per
+level, within noise of each other; the 132-minute cv5-CR base cleared 9.0 hard-seven levels in total.
+
+**LA-CR at 264** (queue item 2) — `g4run-lacr264-w7-20260923-8367f8ff09`, `la_clean_return_a`
+byte-for-byte, 4,122 s per game, 4 waves. Son: "be open-minded that LA-CR might not be better than CR" —
+at 132 it leads all-25 but trails both CR bases on the hard seven, so the 264 three-way (CR 25.07 / 81
+levels, cv5-CR, LA-CR) is genuinely open.
+
+**Items 1–3, own take (v2 arms).** Son: "reuse the flag but have your own take and build on these things."
+The flag arms give the model *declarative* memory (text rules, a JSON scalar spec, an `expected_next`
+check). The v2 arms keep the same flags and add, in the Python sandbox, a host-persistent per-game
+**code store** (`store`, `save(**fields)`; `save(code=src)` re-executes each snippet, so helpers survive
+context rotation) plus one executable primitive that is **replayed against the full recorded history**:
+
+| arm | builds on | primitive | verification |
+|---|---|---|---|
+| execution_v2 | memory+execution lease | `predict(before_frame, action) -> grid \| cells \| None`; `verify(predict)` replays it over every transition | every action auto-checked against `predict`; mismatch halts the batch; batches > 1 need fidelity ≥ 0.8 on ≥ 3 transitions |
+| memory_v2 | memory | `rule(id, text, holds)`: a predicate over one transition, stored with the model's text | replayed at every snippet start; the first counterexample **revokes** the rule and is printed — memory cannot keep what the history contradicts |
+| symbolic_v2 | memory+symbolic | `encode(frame)` / `step(state, action)` as plain Python; `replay()`; `plan(goal, max_depth)` bounded BFS from the current state | each action auto-checked against `step∘encode`; same batch gate from `replay()` |
+
+This is the ablation paper's result ("verification first, executable weakest") turned into a design: the
+executable model is optional and cheap (a few lines of Python), the verification is mandatory and host-run.
+Built by `patch_v2.py` (sandbox + host store + constant-only prompt edits), smoke-tested locally against a
+fake host, preflight 72/72 each. Launched 24-Sep on the hard seven, 132 min, one wave; run ids in the
+controller README once the VMs report.

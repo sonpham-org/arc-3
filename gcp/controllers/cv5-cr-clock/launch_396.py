@@ -66,7 +66,7 @@ def main():
     run_id = f"{armcfg['run_id_prefix']}-{time.strftime('%Y%m%d')}-{args.suffix}"
     name = f"{armcfg['instance_prefix']}-{args.suffix}"
     body["name"] = name
-    body["labels"].update({"arc3-matrix": f"cv5cr{armcfg['suite_minutes']}", "arc3-profile": f"compaction-v5-clean-return-{armcfg['suite_minutes']}",
+    body["labels"].update({"arc3-matrix": f"{armcfg.get('tag', 'cv5cr')}{armcfg['suite_minutes']}", "arc3-profile": armcfg['arm'].replace('_', '-'),
                            "config-id": cfg["config_id"][:20], "owner-task": "claude-ceiling-run"})
     # Spot. On-demand was tried first and refused: GPUS_PER_GPU_FAMILY has a limit of 0 in every
     # region checked, so this GPU family is preemptible-only on this project. A preemption kills the
@@ -90,7 +90,7 @@ def main():
         "arc3-hard-lifetime-seconds": str(armcfg["vm_lifetime_seconds"]),
         "arc3-selftest-object": armcfg["selftest_object"], "arc3-selftest-sha256": armcfg["selftest_sha256"],
         "arc3-release-manifest-object": armcfg["release_object"],
-        "arc3-parent-run-id": "g4run-compaction-v5-clean-return-a132-w7-20260919-693e7fd43c",
+        "arc3-parent-run-id": armcfg.get("parent_run_id", "g4run-compaction-v5-clean-return-a132-w7-20260919-693e7fd43c"),
         **({"arc3-bundle-object": armcfg["candidate_object"], "arc3-bundle-sha256": armcfg["candidate_sha256"]} if armcfg.get("candidate_changed") else {}),
         **({"arc3-feature-arm": armcfg["feature_arm"], "arc3-harness-arm": armcfg["harness_arm"],
             "arc3-execution-mode": str(int("execution" in armcfg["features"])),

@@ -21,7 +21,8 @@ import re, sys
 from pathlib import Path
 
 SANDBOX_HOOK = r'''
-        _prediction_check = {"fn": None, "verdicts": []}
+        # required=False (selftests, no ARC3_PREDICTION_CHECK) keeps action() byte-for-byte legacy when no check is registered.
+        _prediction_check = {"fn": None, "verdicts": [], "required": bool(initial.get("prediction_check_required"))}
 
         def expect(check):
             # Register the predicate the next action(...) must satisfy: check(before, actions, after, result) -> bool.
@@ -81,7 +82,7 @@ SANDBOX_ACTION_OLD = '''        def action(actions):
 
 SANDBOX_ACTION_NEW = '''        def action(actions):
             normalized_actions = _normalize_actions(actions)
-            if _prediction_check["fn"] is None:
+            if _prediction_check["fn"] is None and _prediction_check["required"]:
                 raise RuntimeError(
                     "Register a substantial prediction first: expect(lambda before, actions, after, result: ...) "
                     "must be called before action(...)."
@@ -95,17 +96,19 @@ SANDBOX_ACTION_NEW = '''        def action(actions):
                 raise RuntimeError("Invalid action response from sandbox host.")
             action_result = reply.get("action_result") or {}
             _refresh_state(reply.get("state") or {})
-            verdict = _judge_prediction(before_frame, normalized_actions, runtime_globals.get("current_frame"), action_result)
-            action_result = dict(action_result)
-            action_result["prediction_check"] = verdict
-            _prediction_check["verdicts"].append(verdict["status"])
-            _prediction_check["fn"] = None  # one registration per action; re-arm deliberately
+            verdict = None
+            if _prediction_check["fn"] is not None or _prediction_check["required"]:
+                verdict = _judge_prediction(before_frame, normalized_actions, runtime_globals.get("current_frame"), action_result)
+                action_result = dict(action_result)
+                action_result["prediction_check"] = verdict
+                _prediction_check["verdicts"].append(verdict["status"])
+                _prediction_check["fn"] = None  # one registration per action; re-arm deliberately
             action_results.append(action_result)
             if reply.get("interrupt_execution"):
                 raise _ActionSequenceInterrupted(
                     str(action_result.get("stop_detail") or "Action sequence stopped")
                 )
-            if verdict["status"] != "passed":
+            if verdict is not None and verdict["status"] != "passed":
                 # The host renders stdout in preference to action results, so say it where the model will read it.
                 print("[prediction check " + verdict["status"].upper() + "] " + verdict["detail"])
                 raise _ActionSequenceInterrupted(
@@ -144,10 +147,24 @@ def sub_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new)
 
 
+HOST_PAYLOAD_OLD = '''                "symbolic_enabled": symbolic_handler is not None,
+                "workspace_enabled": workspace_handler is not None,
+            },
+'''
+HOST_PAYLOAD_NEW = '''                "symbolic_enabled": symbolic_handler is not None,
+                "workspace_enabled": workspace_handler is not None,
+                # ARC3_PREDICTION_CHECK=1 is exported by the startup AFTER the selftest matrix, so the bundled
+                # integration tests (which call action() bare) still pass and gameplay gets the requirement.
+                "prediction_check_required": os.environ.get("ARC3_PREDICTION_CHECK") == "1",
+            },
+'''
+
+
 def apply(root: Path) -> dict:
     agent = root / "inference" / "agent"
     sb = agent / "python_tool_sandbox.py"
     s = sb.read_text(encoding="utf-8")
+    s = sub_once(s, HOST_PAYLOAD_OLD, HOST_PAYLOAD_NEW, "host initial payload")
     s = sub_once(s, SANDBOX_ACTION_OLD, SANDBOX_HOOK + SANDBOX_ACTION_NEW, "sandbox action()")
     s = sub_once(s, SANDBOX_GLOBALS_OLD, SANDBOX_GLOBALS_NEW, "sandbox globals")
     sb.write_text(s, encoding="utf-8", newline="\n")

@@ -14,6 +14,7 @@ clock, ARC3_GAME_SUBSET -> new config_id), selftest bundle (feature_contract + m
 ADAPTER.json (effective runner hash), startup.sh (exports, pins, sampler cap, subset).
 """
 import hashlib, io, json, os, re, shutil, sys, tarfile, uuid
+from watchdog import add_watchdog
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -152,6 +153,7 @@ for old, new, fn in ((old_probe_sha, probe_sha, "runtime_probe.py"), (old_cfg_sh
 s = sub1(re.escape(f"echo '{old_selftest_sha}  /tmp/execution-selftest.tgz'"), f"echo '{selftest_sha}  /tmp/execution-selftest.tgz'", s)
 s = sub1(re.escape(f"echo '{old_release_sha}  /opt/arc3/execution-release-manifest.json'"),
          f"echo '{release_sha}  /opt/arc3/execution-release-manifest.json'", s)
+s = add_watchdog(s)
 old_req = re.search(r"requestId=([0-9a-f-]{36})", s).group(1); new_req = str(uuid.uuid4())
 s = s.replace(old_req, new_req); (ARM / "DELETE_REQUEST_ID").write_text(new_req)
 for leftover in ("2061", "minutes=132", "sleep 14400", "max-seconds 14400", "132-minute", 'ARC3_GAME_SUBSET=""'):

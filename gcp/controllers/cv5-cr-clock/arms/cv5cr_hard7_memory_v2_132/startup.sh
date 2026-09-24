@@ -1,5 +1,5 @@
 #!/bin/bash
-# Search/scorer removal + 50% swap + compaction v5, HARD SEVEN ONLY, one wave, W7, 264 minutes, time-only guidance; arm=compaction_v5_clean_return_a.
+# compaction v5 clean-return, HARD SEVEN, one wave, arm=memory_v2, W7, 132 minutes, time-only guidance; arm=compaction_v5_clean_return_a.
 # Derived from captured baseline; not the exact champion.
 set -euo pipefail
 exec > >(tee /var/log/arc3-qwen38-startup.log) 2>&1
@@ -72,7 +72,7 @@ delete_self_or_shutdown() {
   if [ -n "$project_id" ] && [ -n "$token" ]; then
     http=$(curl -sS --max-time 30 -o /tmp/arc3-self-delete.json -w '%{http_code}' \
       -X DELETE -H "Authorization: Bearer $token" \
-      "https://compute.googleapis.com/compute/v1/projects/$project_id/zones/$ZONE/instances/$OWNED_VM_NAME?requestId=33b886f4-5884-4d0d-86e6-27c3fbbc4745" || true)
+      "https://compute.googleapis.com/compute/v1/projects/$project_id/zones/$ZONE/instances/$OWNED_VM_NAME?requestId=4001d4cc-452a-46ae-bde2-2afabecee864" || true)
     if [ "$http" = 200 ] || [ "$http" = 201 ] || [ "$http" = 404 ]; then
       timeout 10 gcloud storage cp /tmp/arc3-self-delete.json \
         "$BUCKET/$RUN_ID/SELF_DELETE_ACCEPTED.json" >/dev/null 2>&1 || true
@@ -120,9 +120,9 @@ case "$INFLUENCE_MODE" in
 esac
 echo "=== Experimental execution-memory study $(date -u +%FT%TZ) run=$RUN_ID instance=$OWNED_VM_NAME mode=$INFLUENCE_MODE ==="
 
-# Hard cost guard: 21600 seconds from VM startup, including setup.
+# Hard cost guard: 14400 seconds from VM startup, including setup.
 (
-  sleep 21600
+  sleep 14400
   echo "hard lifetime reached $(date -u +%FT%TZ)" | gcloud storage cp - \
     "$BUCKET/$RUN_ID/HARD_TIMEOUT" || true
   pkill -TERM -f v12_run.py 2>/dev/null || true
@@ -199,7 +199,7 @@ cd /opt/arc3
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/code.tgz
 tar xzf /tmp/code.tgz -C /opt/arc3
 gcloud storage cp "$(meta arc3-bundle-object)" /tmp/bundle.tgz
-echo 'd3df80ea6705d20dfd93a12f2a2976a2cc4f60011cd0547b35acf13878657d77  /tmp/bundle.tgz' | sha256sum -c -
+echo 'a8dc355d10072477e9004f83de98d993c5d58912526ebb1ffc1343c1e68970a3  /tmp/bundle.tgz' | sha256sum -c -
 tar xzf /tmp/bundle.tgz -C /opt/arc3/bundle
 # Activate only the immutable gameplay package carried by the audited bundle.
 # Keep the pinned deployment project's Makefile, lockfile, and deployment-only
@@ -207,7 +207,7 @@ tar xzf /tmp/bundle.tgz -C /opt/arc3/bundle
 cp -a /opt/arc3/bundle/src/ARC3-Inference/inference/. /opt/arc3/ARC3-Inference/inference/
 find /opt/arc3/ARC3-Inference/inference -type f -name '*.pyc' -delete
 gcloud storage cp "$RUNNER_OBJECT" /opt/arc3/v12_run.py
-echo '91ae78ccbf69a95df7f3bd5b15fe21af68b6b78e0569114394519806fa477f07  /opt/arc3/v12_run.py' | sha256sum -c -
+echo 'e318a29bca357c0ca0b14b82d61dbc397199c3a7490cd541c3d9783894d8d1e7  /opt/arc3/v12_run.py' | sha256sum -c -
 gcloud storage cp "$SCORE_OBSERVER_OBJECT" /opt/arc3/arc3_minute_score_observer.py
 python3 - <<'PYRUNLIMIT'
 from pathlib import Path
@@ -215,12 +215,12 @@ from pathlib import Path
 path = Path('/opt/arc3/v12_run.py')
 text = path.read_text(encoding='utf-8')
 old = 'soft_end = datetime.now() + timedelta(hours=11, minutes=20)'
-new = 'soft_end = datetime.now() + timedelta(minutes=264)'
+new = 'soft_end = datetime.now() + timedelta(minutes=132)'
 if text.count(old) != 1:
     raise RuntimeError('runner soft-deadline anchor drift')
 path.write_text(text.replace(old, new), encoding='utf-8')
 PYRUNLIMIT
-grep -F 'soft_end = datetime.now() + timedelta(minutes=264)' /opt/arc3/v12_run.py
+grep -F 'soft_end = datetime.now() + timedelta(minutes=132)' /opt/arc3/v12_run.py
 export PATH="${HOME:-/root}/.local/bin:$PATH"
 if [ -n "$GOLDEN_RUNTIME_IMAGE" ]; then
   test -x /root/.local/bin/uv
@@ -238,10 +238,10 @@ gcloud storage cp "$(meta arc3-runtime-assets-object)" /tmp/execution-assets.tgz
 echo 'cacb4c3540c05272ea84c64f1979eaba16b313f70c0e2013ab69e350a7ff78aa  /tmp/execution-assets.tgz' | sha256sum -c -
 tar xzf /tmp/execution-assets.tgz -C /opt/arc3/execution-assets
 gcloud storage cp "$(meta arc3-selftest-object)" /tmp/execution-selftest.tgz
-echo '36816b51c39cae11a4edda9c11b02b583be5289fd339b13fb348f1f7086dfc3b  /tmp/execution-selftest.tgz' | sha256sum -c -
+echo 'b9b728f51150c9a8c16cfc0a5b94aaa1310fd8373593b7dd2ca6ee1e013f8c8d  /tmp/execution-selftest.tgz' | sha256sum -c -
 tar xzf /tmp/execution-selftest.tgz -C /opt/arc3/execution-selftest
 gcloud storage cp "$(meta arc3-release-manifest-object)" /opt/arc3/execution-release-manifest.json
-echo 'f90bf7e387070090d9fd038fdc274f7c28d95116ca9cd038c8e9d49790e04f03  /opt/arc3/execution-release-manifest.json' | sha256sum -c -
+echo 'd24c053d3b02cdc833c59b93e83b1c68397789ae331581b96ab50993b5d74a1f  /opt/arc3/execution-release-manifest.json' | sha256sum -c -
 cmp -s /opt/arc3/execution-selftest/release-manifest.json /opt/arc3/execution-release-manifest.json
 /opt/arc3/pysrv/bin/python - <<'PYPACKAGEEARLY'
 import hashlib, json
@@ -701,14 +701,14 @@ export ARC3_BUDGET_GUIDANCE=time_only
 unset ARC3_REASONING_POLICY
 unset ARC3_COMMON_THEMES_PATH ARC3_COMMON_THEMES_INJECTION_LOG
 export ARC3_EXECUTION_MODE=0
-export ARC3_PERSISTENT_GAME_MODEL=0
+export ARC3_PERSISTENT_GAME_MODEL=1
 export ARC3_EXECUTION_CONFIRMATIONS=2
 export ARC3_EXECUTION_LEASE_ACTIONS=3
 export ARC3_SYMBOLIC_SEARCH=0
 export ARC3_PROGRAMMATIC_WORKSPACE=0
 export ARC3_BENCHMARK_CONCURRENCY=7
-export ARC3_MAX_RUNTIME_S_PER_GAME=15840
-export ARC3_MAX_RUN_RUNTIME_MINUTES=264
+export ARC3_MAX_RUNTIME_S_PER_GAME=7920
+export ARC3_MAX_RUN_RUNTIME_MINUTES=132
 export ARC3_REEXPLORE_STRICT="" ARC3_GAME_SUBSET="bp35,g50t,lf52,ls20,sk48,tn36,wa30" ARC3_STATE_GRAPH="" ARC3_FRAME_MODE=full
 
 export ARC3_HISTORY_MODE=full_context
@@ -716,7 +716,7 @@ export ARC3_HISTORY_MODE=full_context
 echo '9819c16bb12a0480647f2aab593596d20140d813a43600ea187a3230b4d00b83  /opt/arc3/execution-selftest/linux_selftest_matrix.py' | sha256sum -c -
 PYTHONPATH=/opt/arc3/execution-selftest/candidate/src/ARC3-Inference \
   ./.venv/bin/python -B /opt/arc3/execution-selftest/linux_selftest_matrix.py \
-  --live --arm baseline --model "$SERVED_MODEL_NAME" --context 102985 \
+  --live --arm memory --model "$SERVED_MODEL_NAME" --context 102985 \
   --output /opt/arc3/execution-selftest.json \
   2>&1 | tee /opt/arc3/execution-selftest.log
 
@@ -773,7 +773,7 @@ assert "ARC3_SAME_CONTEXT_LEVEL_REFLECTION_ENABLED" not in os.environ
 assert os.environ["ARC3_ACTION_CAP"] == "14"
 assert os.environ["ARC3_ACTION_CAP_MODE"] == "return"
 assert os.environ["ARC3_CONTEXT_COMPACTION"] == "1"
-assert os.environ['ARC3_PERSISTENT_GAME_MODEL'] == '0'
+assert os.environ['ARC3_PERSISTENT_GAME_MODEL'] == '1'
 assert os.environ['ARC3_EXECUTION_MODE'] == '0'
 assert os.environ['ARC3_SYMBOLIC_SEARCH'] == '0'
 assert os.environ['ARC3_PROGRAMMATIC_WORKSPACE'] == '0'
@@ -782,12 +782,12 @@ assert os.environ['ARC3_EXECUTION_LEASE_ACTIONS'] == '3'
 assert os.environ['ARC3_HISTORY_MODE'] == 'full_context'
 assert os.environ['LOCAL_ANALYZER_CONTEXT_WINDOW'] == '102985'
 assert os.environ['ARC3_BENCHMARK_CONCURRENCY'] == '7'
-assert os.environ['ARC3_MAX_RUNTIME_S_PER_GAME'] == '15840'
-assert os.environ['ARC3_MAX_RUN_RUNTIME_MINUTES'] == '264'
+assert os.environ['ARC3_MAX_RUNTIME_S_PER_GAME'] == '7920'
+assert os.environ['ARC3_MAX_RUN_RUNTIME_MINUTES'] == '132'
 assert os.environ["ARC3_POST_LEVEL_UNCAPPED_TURNS"] == "0"
 assert tool_agent._PERSISTENT_HISTORY_ASSISTANT_TURNS == 30
 agent = tool_agent.ToolAgent()
-assert (agent._execution_mode is not None) == False
+assert (agent._execution_mode is not None) == True
 assert agent._full_context_tokens is not None
 assert agent._context_budget_tokens == 94281
 assert "Lossless replay memory:" not in agent._system_prompt
@@ -813,8 +813,8 @@ import sys, tempfile
 sys.path.insert(0, "/opt/arc3/execution-selftest")
 from feature_contract import assert_contract
 with tempfile.TemporaryDirectory() as tmp:
-    assert_contract(agent, Path(tmp) / "state.json", 'baseline')
-print("verified feature arm baseline; no curator; 264-minute suite, hard seven only")
+    assert_contract(agent, Path(tmp) / "state.json", 'memory')
+print("verified feature arm memory (memory_v2); no curator; 132-minute suite, hard seven only")
 PYCHAMPION
 mkdir -p /opt/arc3/work/score-observer
 nice -n 19 ionice -c3 /opt/arc3/pysrv/bin/python /opt/arc3/arc3_minute_score_observer.py \
@@ -866,7 +866,7 @@ gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/astra-execution/full
 echo 'ad50b27a77af132f134fa1849d93a6c4adf1359c466acadd4c5fd7086d3040a1  /opt/arc3/vllm_metrics_sampler.py' | sha256sum -c -
 /opt/arc3/pysrv/bin/python -B /opt/arc3/vllm_metrics_sampler.py sample \
   --url http://127.0.0.1:1234/metrics --output /opt/arc3/work/vllm-metrics.jsonl \
-  --interval-seconds 30 --max-seconds 18000 > /opt/arc3/work/vllm-metrics-sampler.log 2>&1 &
+  --interval-seconds 30 --max-seconds 14400 > /opt/arc3/work/vllm-metrics-sampler.log 2>&1 &
 METRICS_SAMPLER_PID=$!
 /opt/arc3/pysrv/bin/python - <<'PYMETRICSREADY'
 import json, time
@@ -887,22 +887,23 @@ kill -0 "$METRICS_SAMPLER_PID"
 # Keep enough of the fixed four-hour VM lifetime for the full suite and teardown.
 test "$(cut -d. -f1 /proc/uptime)" -lt 6360
 mkdir -p /opt/arc3/config-audit
-gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/91658372c310c31a71661101c3576738d763066ac8e93ab260c535c8fbc1d8f0/CONFIG_FLAGS.json' /opt/arc3/config-audit/CONFIG_FLAGS.json
-echo '91658372c310c31a71661101c3576738d763066ac8e93ab260c535c8fbc1d8f0  /opt/arc3/config-audit/CONFIG_FLAGS.json' | sha256sum -c -
-gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/2333fe9dd22c0c0ec9182a34da561c39f24fdfa3236c9813dae54d08bf47db00/ADAPTER.json' /opt/arc3/config-audit/ADAPTER.json
-echo '2333fe9dd22c0c0ec9182a34da561c39f24fdfa3236c9813dae54d08bf47db00  /opt/arc3/config-audit/ADAPTER.json' | sha256sum -c -
+gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/be84d2dbcc64573ef5edabac506fd59769960692e3c1b7a186d8c467396e9427/CONFIG_FLAGS.json' /opt/arc3/config-audit/CONFIG_FLAGS.json
+echo 'be84d2dbcc64573ef5edabac506fd59769960692e3c1b7a186d8c467396e9427  /opt/arc3/config-audit/CONFIG_FLAGS.json' | sha256sum -c -
+gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/8af59a67a16f02db99be9f29c0dfc64dd1a434213f550fcadc5d03e0cb660720/ADAPTER.json' /opt/arc3/config-audit/ADAPTER.json
+echo '8af59a67a16f02db99be9f29c0dfc64dd1a434213f550fcadc5d03e0cb660720  /opt/arc3/config-audit/ADAPTER.json' | sha256sum -c -
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/64d537c9b113fa23f8092aecc167e6dce443349825d64fc6c1c6a328a369fad3/contract.py' /opt/arc3/config-audit/contract.py
 echo '64d537c9b113fa23f8092aecc167e6dce443349825d64fc6c1c6a328a369fad3  /opt/arc3/config-audit/contract.py' | sha256sum -c -
-gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/276bd2448a3aaf10d38e1902b11009624b142dbfebd692eb483de0bfbbb61421/runtime_probe.py' /opt/arc3/config-audit/runtime_probe.py
-echo '276bd2448a3aaf10d38e1902b11009624b142dbfebd692eb483de0bfbbb61421  /opt/arc3/config-audit/runtime_probe.py' | sha256sum -c -
+gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/7bbe2e43cf2b1e3bd2e8d18c83025360d5f010fbab77ad9f88d4e28eb6b53058/runtime_probe.py' /opt/arc3/config-audit/runtime_probe.py
+echo '7bbe2e43cf2b1e3bd2e8d18c83025360d5f010fbab77ad9f88d4e28eb6b53058  /opt/arc3/config-audit/runtime_probe.py' | sha256sum -c -
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/d24188eab47927ba495247a78f2d0126a1036c976091e8e9fea70812dcabd631/prompt_probe.py' /opt/arc3/config-audit/prompt_probe.py
 echo 'd24188eab47927ba495247a78f2d0126a1036c976091e8e9fea70812dcabd631  /opt/arc3/config-audit/prompt_probe.py' | sha256sum -c -
-gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/45369cb0c5bb34f228ef8564f19b40338c095238075fccd54a8ba23e3513d1ca/EXPECTED_PROMPTS.json' /opt/arc3/config-audit/EXPECTED_PROMPTS.json
-echo '45369cb0c5bb34f228ef8564f19b40338c095238075fccd54a8ba23e3513d1ca  /opt/arc3/config-audit/EXPECTED_PROMPTS.json' | sha256sum -c -
+gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/2ff6ba7e2e6e171b888993d1279f3742ffede0aa95cd54a7cdcc6a854de50714/EXPECTED_PROMPTS.json' /opt/arc3/config-audit/EXPECTED_PROMPTS.json
+echo '2ff6ba7e2e6e171b888993d1279f3742ffede0aa95cd54a7cdcc6a854de50714  /opt/arc3/config-audit/EXPECTED_PROMPTS.json' | sha256sum -c -
 ARC3_HALF_CONTEXT_SWAP=0 ./.venv/bin/python -B /opt/arc3/execution-selftest/test_action_cap_modes.py > /opt/arc3/action-cap-selftest.log 2>&1
 ./.venv/bin/python -B /opt/arc3/execution-selftest/test_compaction_mode.py > /opt/arc3/feature-selftest.log 2>&1
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/3796093bc39f0a0ec5436ae312a150d87c6262ea06a8bdaf5d25e5a7ed7c69b4/time_guidance_probe.py' /opt/arc3/config-audit/time_guidance_probe.py
 echo '3796093bc39f0a0ec5436ae312a150d87c6262ea06a8bdaf5d25e5a7ed7c69b4  /opt/arc3/config-audit/time_guidance_probe.py' | sha256sum -c -
+export ARC3_V2_BATCH_GATE=1
 # vLLM watchdog: the 264-class hard-seven run lost its engine at minute 31 and spun for hours.
 # Probe every 60 s; on 3 consecutive misses snapshot the log, restart with the same start_server/wait_server.
 (

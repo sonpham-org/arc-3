@@ -72,7 +72,7 @@ delete_self_or_shutdown() {
   if [ -n "$project_id" ] && [ -n "$token" ]; then
     http=$(curl -sS --max-time 30 -o /tmp/arc3-self-delete.json -w '%{http_code}' \
       -X DELETE -H "Authorization: Bearer $token" \
-      "https://compute.googleapis.com/compute/v1/projects/$project_id/zones/$ZONE/instances/$OWNED_VM_NAME?requestId=b77bd416-b84d-46f5-8d25-9d560110235f" || true)
+      "https://compute.googleapis.com/compute/v1/projects/$project_id/zones/$ZONE/instances/$OWNED_VM_NAME?requestId=2b4eadc5-8520-43b9-b2ea-54eb5c93f6f1" || true)
     if [ "$http" = 200 ] || [ "$http" = 201 ] || [ "$http" = 404 ]; then
       timeout 10 gcloud storage cp /tmp/arc3-self-delete.json \
         "$BUCKET/$RUN_ID/SELF_DELETE_ACCEPTED.json" >/dev/null 2>&1 || true
@@ -98,6 +98,7 @@ teardown() {
   pkill -TERM -f "nvfp4_cross_game_curator.py" 2>/dev/null || true
   pkill -TERM -f "cross_game_theme_influence_sidecar.py" 2>/dev/null || true
   pkill -TERM -f "llama-server" 2>/dev/null || true
+  [ -n "${WATCHDOG_PID:-}" ] && kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
   docker stop -t 20 flashnext 2>/dev/null || true
   pkill -TERM -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
   delete_self_or_shutdown
@@ -198,7 +199,7 @@ cd /opt/arc3
 gcloud storage cp "$BUCKET/code/arc3-code-tufa0.tgz" /tmp/code.tgz
 tar xzf /tmp/code.tgz -C /opt/arc3
 gcloud storage cp "$(meta arc3-bundle-object)" /tmp/bundle.tgz
-echo '7dc32e7fe1fe2c5d3ba7c0322f9e24118e2d9c7834c024415c3c063a928fe7a4  /tmp/bundle.tgz' | sha256sum -c -
+echo '59a4db8f5ae85ce32fe19d357f04519b39ee6569ad5083705ad1188341a4f663  /tmp/bundle.tgz' | sha256sum -c -
 tar xzf /tmp/bundle.tgz -C /opt/arc3/bundle
 # Activate only the immutable gameplay package carried by the audited bundle.
 # Keep the pinned deployment project's Makefile, lockfile, and deployment-only
@@ -237,10 +238,10 @@ gcloud storage cp "$(meta arc3-runtime-assets-object)" /tmp/execution-assets.tgz
 echo 'cacb4c3540c05272ea84c64f1979eaba16b313f70c0e2013ab69e350a7ff78aa  /tmp/execution-assets.tgz' | sha256sum -c -
 tar xzf /tmp/execution-assets.tgz -C /opt/arc3/execution-assets
 gcloud storage cp "$(meta arc3-selftest-object)" /tmp/execution-selftest.tgz
-echo '96e4e4afba86c93a6617ea20beb3ee96e3003c57ecda22ff4f8b480e32a6ce57  /tmp/execution-selftest.tgz' | sha256sum -c -
+echo '02150b87aa9bd32012fbb898ced5dca5635e964cb95e0ce1de3b6fd15d5eea7b  /tmp/execution-selftest.tgz' | sha256sum -c -
 tar xzf /tmp/execution-selftest.tgz -C /opt/arc3/execution-selftest
 gcloud storage cp "$(meta arc3-release-manifest-object)" /opt/arc3/execution-release-manifest.json
-echo 'f58d111c44a5e2d19a8f79e2417386264e4d87b436f1d9b7946836c345647daf  /opt/arc3/execution-release-manifest.json' | sha256sum -c -
+echo '04466c26fb17fb73f478629818d0f0ed9be54677a95718bd230c30a5e1bfa40b  /opt/arc3/execution-release-manifest.json' | sha256sum -c -
 cmp -s /opt/arc3/execution-selftest/release-manifest.json /opt/arc3/execution-release-manifest.json
 /opt/arc3/pysrv/bin/python - <<'PYPACKAGEEARLY'
 import hashlib, json
@@ -886,8 +887,8 @@ kill -0 "$METRICS_SAMPLER_PID"
 # Keep enough of the fixed four-hour VM lifetime for the full suite and teardown.
 test "$(cut -d. -f1 /proc/uptime)" -lt 6360
 mkdir -p /opt/arc3/config-audit
-gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/ad8bc0e22362a96c8c702cc1181bef5ddac4ced77a10c1124f93e2d1aaba1ab2/CONFIG_FLAGS.json' /opt/arc3/config-audit/CONFIG_FLAGS.json
-echo 'ad8bc0e22362a96c8c702cc1181bef5ddac4ced77a10c1124f93e2d1aaba1ab2  /opt/arc3/config-audit/CONFIG_FLAGS.json' | sha256sum -c -
+gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/d58ebb0c2bfbc65dccf7303f78ab982db7b835908253572432904a9bfb475c61/CONFIG_FLAGS.json' /opt/arc3/config-audit/CONFIG_FLAGS.json
+echo 'd58ebb0c2bfbc65dccf7303f78ab982db7b835908253572432904a9bfb475c61  /opt/arc3/config-audit/CONFIG_FLAGS.json' | sha256sum -c -
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/6ddd00d8f8414b89c6bad7e1fb6380829e811f1858d66c39507d673ef14891c2/ADAPTER.json' /opt/arc3/config-audit/ADAPTER.json
 echo '6ddd00d8f8414b89c6bad7e1fb6380829e811f1858d66c39507d673ef14891c2  /opt/arc3/config-audit/ADAPTER.json' | sha256sum -c -
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/64d537c9b113fa23f8092aecc167e6dce443349825d64fc6c1c6a328a369fad3/contract.py' /opt/arc3/config-audit/contract.py
@@ -902,6 +903,32 @@ ARC3_HALF_CONTEXT_SWAP=0 ./.venv/bin/python -B /opt/arc3/execution-selftest/test
 ./.venv/bin/python -B /opt/arc3/execution-selftest/test_compaction_mode.py > /opt/arc3/feature-selftest.log 2>&1
 gcloud storage cp 'gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132/3796093bc39f0a0ec5436ae312a150d87c6262ea06a8bdaf5d25e5a7ed7c69b4/time_guidance_probe.py' /opt/arc3/config-audit/time_guidance_probe.py
 echo '3796093bc39f0a0ec5436ae312a150d87c6262ea06a8bdaf5d25e5a7ed7c69b4  /opt/arc3/config-audit/time_guidance_probe.py' | sha256sum -c -
+export ARC3_PREDICTION_CHECK=1
+# vLLM watchdog: the 264-class hard-seven run lost its engine at minute 31 and spun for hours.
+# Probe every 60 s; on 3 consecutive misses snapshot the log, restart with the same start_server/wait_server.
+(
+  fails=0; restarts=0
+  while true; do
+    sleep 60
+    if curl -s -m 8 http://127.0.0.1:1234/v1/models >/dev/null 2>&1; then fails=0; continue; fi
+    fails=$((fails+1))
+    if [ "$fails" -lt 3 ]; then continue; fi
+    restarts=$((restarts+1))
+    echo "watchdog: server unreachable x$fails at $(date -u +%FT%TZ); restart #$restarts"
+    cp /opt/arc3/vllm.log "/opt/arc3/vllm-crash-$restarts.log" 2>/dev/null || true
+    timeout 30 gcloud storage cp "/opt/arc3/vllm-crash-$restarts.log" "$BUCKET/$RUN_ID/vllm-crash-$restarts.log" >/dev/null 2>&1 || true
+    start_server "$KV_DTYPE_USED" || true
+    if wait_server; then
+      echo "watchdog: server back at $(date -u +%FT%TZ)"
+      fails=0
+    else
+      echo "watchdog: restart #$restarts did not come up"
+    fi
+    echo "$restarts $(date -u +%FT%TZ)" | timeout 15 gcloud storage cp - "$BUCKET/$RUN_ID/SERVER_RESTARTS" >/dev/null 2>&1 || true
+    if [ "$restarts" -ge 5 ]; then echo "watchdog: giving up after 5 restarts"; break; fi
+  done
+) &
+WATCHDOG_PID=$!
 capture_gameplay_metrics start
 set +e
 ./.venv/bin/python /opt/arc3/config-audit/runtime_probe.py 2>&1 | tee /opt/arc3/v12.log

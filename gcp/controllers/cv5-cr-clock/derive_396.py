@@ -12,6 +12,7 @@ Re-pins the runner and runtime_probe (both outside the candidate bundle) and re-
 CONFIG_FLAGS through the arm's own contract.py.
 """
 import hashlib, json, os, re, sys, uuid
+from watchdog import add_watchdog
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -22,8 +23,13 @@ SUITE_MIN = int(os.environ.get("ARC3_SUITE_MINUTES", "396"))
 assert SUITE_MIN % 132 == 0, "suite must be a whole multiple of the 132-minute class"
 MULT = SUITE_MIN // 132
 GAME_S, VM_LIFE = 2061 * MULT, {1: 14400, 2: 21600, 3: 28800}[MULT]
-SRC = Path(r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a")
-ARM = HERE / "arms" / f"compaction_v5_clean_return_{SUITE_MIN}"
+# Generalised 24-Sep: ARC3_SRC_ARM points at any 132-minute arm of this family (same startup skeleton and
+# pinned runner); ARC3_ARM_TAG names the run/instance prefixes. Defaults reproduce the cv5-CR derivation.
+SRC = Path(os.environ.get("ARC3_SRC_ARM", r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a"))
+TAG = os.environ.get("ARC3_ARM_TAG", "cv5cr")
+LABEL = SRC.name[:-2] if SRC.name.endswith("_a") else SRC.name
+ARM_NAME = f"{LABEL}_{SUITE_MIN}"
+ARM = HERE / "arms" / ARM_NAME
 ARM.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(SRC))
 import contract  # noqa: E402
@@ -66,8 +72,8 @@ cfg["recipe"]["limits"].update({"game_seconds": GAME_S, "suite_gameplay_minutes"
                                 "vm_lifetime_seconds": VM_LIFE})
 cfg["recipe"]["extra_environment"].update({"ARC3_MAX_RUNTIME_S_PER_GAME": str(GAME_S),
                                            "ARC3_MAX_RUN_RUNTIME_MINUTES": str(SUITE_MIN)})
-cfg["run_id"] = f"g4run-compaction-v5-clean-return-{SUITE_MIN}-w7-20260923"
-cfg["evidence"]["notes"] = [
+cfg["run_id"] = f"g4run-{TAG}{SUITE_MIN}-w7-20260924"
+cfg["evidence"]["notes"] = ([
     "September23 user: 'It is possible compaction-v5-CR is better. Can you take a look and rerun the "
     "entire thing in 3x. Maybe its ceiling is actually higher here.' The 23-Sep hard-seven census is the "
     "reason: compaction-v5-CR is the WORST arm on all 25 games (12.66 mean) but the BEST on the hard "
@@ -81,7 +87,12 @@ cfg["evidence"]["notes"] = [
     f"{VM_LIFE}-second VM. Model, prompts, bundle, cap, compaction, 7 lanes, context and sampling are "
     "byte-identical. ON-DEMAND, not Spot: four of the five 264-minute Spot runs were preempted before "
     "finishing. One scored attempt across 25 games; no automatic replacement. No Kaggle action.",
-] + cfg["evidence"]["notes"][1:]
+] if TAG == "cv5cr" else [
+    "September24 user: 'Let's do a LA-CR at 264 then, also be open-minded that la-cr might not be better than cr.' "
+    f"Clock lift of the {SRC.name} 132-minute arm: {GAME_S} s per game, {SUITE_MIN}-minute suite, {VM_LIFE}-second VM, "
+    "7 lanes, 4 waves. Model, prompts, bundle, cap, swap, context and sampling byte-identical to the source arm. "
+    "Compare against g4run-clean-return264 (25.07, 81 levels) and g4run-cv5cr264. Spot, one attempt, vLLM watchdog.",
+]) + cfg["evidence"]["notes"][1:]
 cfg["config_id"] = contract.config_id(cfg["recipe"])
 contract.validate(cfg, for_launch=True)
 cfg_bytes = (json.dumps(cfg, indent=2) + "\n").encode()
@@ -159,7 +170,7 @@ print("release ", release_sha[:16], "(was", old_release_sha[:16] + ")")
 # ---------------------------------------------------------------- startup.sh
 s = (SRC / "startup.sh").read_text(encoding="utf-8")
 s = sub1(r"^# Search/scorer removal \+ 50% swap, W7, 132 minutes",
-         f"# Search/scorer removal + 50% swap + compaction v5, W7, {SUITE_MIN} minutes ({MULT}x ceiling run)", s, re.M)
+         f"# {LABEL} clock lift, W7, {SUITE_MIN} minutes ({MULT}x ceiling run)", s, re.M)
 s = sub1(r"# Hard cost guard: 14400 seconds", f"# Hard cost guard: {VM_LIFE} seconds", s)
 s = sub1(r"^  sleep 14400$", f"  sleep {VM_LIFE}", s, re.M)
 # The metrics sampler refuses any duration above its own MAX_SECONDS = 5*3600 and exits before
@@ -196,6 +207,7 @@ s = sub1(re.escape(f"echo '{old_cfg_sha}  /opt/arc3/config-audit/CONFIG_FLAGS.js
          f"echo '{cfg_sha}  /opt/arc3/config-audit/CONFIG_FLAGS.json'", s)
 # The Spot-recreation guard refuses every boot after the first; on-demand cannot be recreated,
 # so it stays exactly as written. Fresh self-delete request id for this VM.
+s = add_watchdog(s)
 old_req = re.search(r"requestId=([0-9a-f-]{36})", s).group(1)
 new_req = str(uuid.uuid4())
 s = s.replace(old_req, new_req)
@@ -205,9 +217,9 @@ for leftover in ("2061", "minutes=132", "sleep 14400", "max-seconds 14400", "132
 (ARM / "startup.sh").write_text(s, encoding="utf-8", newline="\n")
 
 (ARM / "ARM.json").write_text(json.dumps({
-    "arm": f"compaction_v5_clean_return_{SUITE_MIN}", "lanes": 7, "game_seconds": GAME_S,
+    "arm": ARM_NAME, "lanes": 7, "game_seconds": GAME_S,
     "suite_minutes": SUITE_MIN, "vm_lifetime_seconds": VM_LIFE, "provisioning": "SPOT",
-    "source_arm": "compaction_v5_clean_return_a (19-Sep, 132 min)",
+    "source_arm": f"{SRC.name} ({SRC.parent.parent.name}, 132 min)",
     "runner_object": f"{RUNNER_DIR}/{runner_sha}/runner.py", "runner_sha256": runner_sha,
     "probe_object": f"{BUCKET_CODE}/{probe_sha}/runtime_probe.py", "probe_sha256": probe_sha,
     "config_object": f"{BUCKET_CODE}/{cfg_sha}/CONFIG_FLAGS.json", "config_sha256": cfg_sha,
@@ -215,7 +227,7 @@ for leftover in ("2061", "minutes=132", "sleep 14400", "max-seconds 14400", "132
     "adapter_object": f"{BUCKET_CODE}/{adapter_sha}/ADAPTER.json", "adapter_sha256": adapter_sha,
     "release_object": f"{BUCKET_CODE}/{release_sha}/release.json", "release_sha256": release_sha,
     "config_id": cfg["config_id"],
-    "run_id_prefix": f"g4run-cv5cr{SUITE_MIN}-w7", "instance_prefix": f"arc3-g4-cv5cr{SUITE_MIN}",
+    "run_id_prefix": f"g4run-{TAG}{SUITE_MIN}-w7", "instance_prefix": f"arc3-g4-{TAG}{SUITE_MIN}", "tag": TAG,
 }, indent=2) + "\n")
 print("config_id", cfg["config_id"]); print("runner", runner_sha[:16]); print("probe", probe_sha[:16])
 print("config", cfg_sha[:16]); print("startup lines", len(s.splitlines()))

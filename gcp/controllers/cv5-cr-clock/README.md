@@ -33,3 +33,40 @@ the agent implies memory for execution/symbolic, and `contract.validate` forbids
 contradicts a flag -- so implied features are OMITTED from `extra_environment`. `verify_396.py` checks
 all of it, including that `EXPECTED_PROMPTS.json` equals a fresh local render of the arm's own
 candidate under the arm's env (the renderer reproduces the shipped attestation byte-for-byte).
+
+## 24-Sep additions
+
+- **vLLM watchdog** (`watchdog.py`, wired into all three derives): the first hard7-264 run
+  (`…-d85c029903`) lost its engine at minute 31 (`RPC call to sample_tokens timed out` → EngineDeadError)
+  and the harness spun for hours at a frozen 0.48. Every startup now probes `/v1/models` each 60 s; after
+  3 misses it snapshots `vllm.log` to `vllm-crash-N.log`, restarts the container with the startup's own
+  `start_server`/`wait_server`, and records `SERVER_RESTARTS` in the run bucket. Teardown kills it.
+- **selfcheck gate**: the bundled selftests (`linux_selftest_matrix.py`, `test_action_cap_modes.py`) drive
+  `action()` bare, so the `expect()` requirement is read from `ARC3_PREDICTION_CHECK=1`, which the startup
+  exports only immediately before `capture_gameplay_metrics start` — after every selftest. Two launches
+  died before that placement was right (`…-ff95ec12d4` at the matrix, `…-770663a914` at the action-cap
+  test).
+- **Generalised clock lift**: `derive_396.py` / `verify_396.py` take `ARC3_SRC_ARM=<path to any 132-min
+  arm of this family>` and `ARC3_ARM_TAG=<prefix>`; used for LA-CR at 264
+  (`ARC3_SRC_ARM=…\la-clean-return132-20260921\arms\la_clean_return_a ARC3_ARM_TAG=lacr`).
+- **v2 arms** (`patch_v2.py`; `derive_arms.py execution_v2|memory_v2|symbolic_v2`): same flags as the arm
+  above each, plus a host-persistent **per-game code store** (`store`, `save(**fields)`; `save(code=src)`
+  runs now and at the start of every later snippet, keyed by the game's runtime dir in
+  `python_tool_sandbox._CODE_STORES`) and one executable, history-replayed primitive:
+
+  | arm | primitive | gate |
+  |---|---|---|
+  | execution_v2 | `verify(predict)`: replays `predict(before_frame, action) -> grid \| cells \| None` over every recorded transition; with a saved `predict` each action is auto-checked and a mismatch halts the batch | batches > 1 need fidelity ≥ 0.8 on ≥ 3 transitions |
+  | memory_v2 | `rule(id, text, holds)`: predicate source over one transition, replayed over the whole history at every snippet start; first `False` revokes the rule and names the counterexample; `rules()`, `drop(id)` | none (rules cannot survive contradiction) |
+  | symbolic_v2 | `encode(frame)`/`step(state, action)` as plain Python; `replay()` fidelity; `plan(goal, max_depth, actions)` bounded BFS from the current state; actions auto-checked against the model | same as execution_v2, from `replay()` |
+
+  The batch gate is enabled by `ARC3_V2_BATCH_GATE=1`, exported at the same post-selftest point as the
+  selfcheck flag. Smoke-tested locally against a fake host (`smoke_v2.py`: store persistence,
+  verify/replay fidelity, plan, mismatch halt, gate cut).
+
+Run ids (24-Sep): hard7-264 v2 `g4run-cv5cr-hard7-264-w7-20260923-7c19c6eb63`; LA-CR 264
+`g4run-lacr264-w7-20260923-8367f8ff09`; flag arms execution `…-ce7843057b`, memory `…-d5d8b2be9d`,
+symbolic `…-5aac84d4fc`, solver `…-92b391fd79`, selfcheck `…-e58ade7fe2` (3rd launch); v2 arms
+execution_v2 `g4run-cv5cr-hard7-execution_v2-132-w7-20260924-2d16389920`, memory_v2
+`…-memory_v2-132-w7-20260924-002d497d5a` (both europe-west1-b: us-central1's Spot quota is 8 RTX PRO 6000
+GPUs per region and 8 VMs were live), symbolic_v2 relaunched after quota/backendError refusals.
