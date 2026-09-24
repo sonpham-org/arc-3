@@ -1,0 +1,1 @@
+stage 4 (20 real Ghost Twin plays, offline): true rewinds 88, detected 72 (49 with a real ghost); a copy of an earlier run found after 26 of them (median 8.0 actions); that object is the real ghost in 22 of 26; ghost's next move predicted exactly 239/257; clock chosen {'moves': 19, 'actions': 7}

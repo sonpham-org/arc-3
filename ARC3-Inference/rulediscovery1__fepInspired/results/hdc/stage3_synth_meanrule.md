@@ -1,0 +1,1 @@
+stage 3 (synthetic, 200 episodes; decoys 2 random walkers + 1 stationary; plus a lag-1 follower): ghost right 197 / wrong 3 / undecided 0; follower right 172 / wrong 28 / undecided 0; decoys falsely explained 1 of 600; actions after the rewind until the ghost is found: median 8.0, max 9
