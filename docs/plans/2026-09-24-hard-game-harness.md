@@ -140,4 +140,8 @@ levels on tn36 / g50t / wa30 / bp35 ≥ the best single-arm result on each, and 
 
 solver 9.13 / 17 / 3,440 · exec 8.32 / 19 / 2,857 · symbolic 8.29 / 14 / 3,247 · selfcheck 7.70 / 16 /
 2,712 · memory_v2 6.70 / 14 / 2,549 · memory 5.46 / 12 / 3,692 · hard7-264 (base, 264 min) 4.96 / 15 /
-7,235 · execution_v2 4.47 / 11 / 3,578 · baseline control and symbolic_v2 running (24-Sep).
+7,235 · execution_v2 4.47 / 11 / 3,578 · **baseline control (same harness, no arm) 6.40 / 15 / 4,132** ·
+symbolic_v2 5.93 / 15 / 3,074 (wa30 15.8/4, g50t 9.2, ls20 8.9/3) · *same harness on the 4-wave 25-game
+schedule 4.23 / 9 / 1,006*. So the one-wave schedule is worth +2.2 on its own; solver, exec, symbolic and
+selfcheck add +1.3 to +2.7 on top of the control, memory alone, execution_v2 and both v2 executable-model
+arms do not beat it.
