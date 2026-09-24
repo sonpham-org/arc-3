@@ -39,7 +39,7 @@ def main():
     startup = (ARM / "startup.sh").read_text(encoding="utf-8")
     delete_request_id = (ARM / "DELETE_REQUEST_ID").read_text().strip()
     assert delete_request_id in startup
-    assert f"cap-compact132/{cfg_sha}/CONFIG_FLAGS.json" in startup
+    assert armcfg["config_object"].split("/code/")[1] in startup and f"/{cfg_sha}/CONFIG_FLAGS.json" in startup
     assert cfg_sha == armcfg["config_sha256"] and cfg["config_id"] == armcfg["config_id"]
     for local, key in (("selftest.tgz", "selftest_sha256"), ("release.json", "release_sha256")):
         assert sha(ARM / local) == armcfg[key], local

@@ -69,4 +69,4 @@ Run ids (24-Sep): hard7-264 v2 `g4run-cv5cr-hard7-264-w7-20260923-7c19c6eb63`; L
 symbolic `…-5aac84d4fc`, solver `…-92b391fd79`, selfcheck `…-e58ade7fe2` (3rd launch); v2 arms
 execution_v2 `g4run-cv5cr-hard7-execution_v2-132-w7-20260924-2d16389920`, memory_v2
 `…-memory_v2-132-w7-20260924-002d497d5a` (both europe-west1-b: us-central1's Spot quota is 8 RTX PRO 6000
-GPUs per region and 8 VMs were live), symbolic_v2 relaunched after quota/backendError refusals.
+GPUs per region and 8 VMs were live), symbolic_v2 `…-symbolic_v2-132-w7-20260924-cd5dccf7c5` (europe-west1-b, second launch after quota/backendError refusals).

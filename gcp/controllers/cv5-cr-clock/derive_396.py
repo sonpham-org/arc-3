@@ -35,7 +35,11 @@ sys.path.insert(0, str(SRC))
 import contract  # noqa: E402
 
 PREGAME_UPTIME_MAX = 6360            # unchanged: the golden image keeps pre-game short
-BUCKET_CODE = "gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132"
+# the source arm names the object directory its startup pins (cap-compact132 for the 19-Sep family,
+# cap-compact-lock for the 17-Sep clean-return arms); derived objects go to the same directory
+BUCKET_CODE = "gs://cellens-ai-artifacts/arc3-duck/code/" + re.search(
+    r"gs://cellens-ai-artifacts/arc3-duck/code/([a-z0-9-]+)/[0-9a-f]{64}/runtime_probe\.py",
+    (SRC / "startup.sh").read_text(encoding="utf-8")).group(1)
 RUNNER_DIR = "gs://cellens-ai-artifacts/arc3-duck/code/astra-execution/feature-ablation-132-v1"
 BASE_RUNNER_SHA = "b3604c7731dde84089cfc20bbf1366378eb0791c5deb88c9e24271ac5b9f53bb"
 
