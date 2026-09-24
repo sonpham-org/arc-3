@@ -64,6 +64,11 @@ ARMS = {
                       ablations={"search", "loop", "priors", "transition", "coords"}, patch_candidate=False, feature_arm="baseline"),
     "selfcheck": dict(features=set(), execution_version="none", symbolic_version="none",
                       ablations={"search"}, patch_candidate=True, feature_arm="baseline"),
+    # control (25-Sep): the base harness itself on the hard-seven one-wave schedule, so the schedule effect
+    # and the arm effect can be separated. NOTE: the 19-Sep base has ARC3_PROMPT_ABLATE_SEARCH=1 already
+    # (search/scorer removal is part of clean-return), so "no ablation beyond the base" is ablations={"search"}.
+    "baseline":  dict(features=set(), execution_version="none", symbolic_version="none",
+                      ablations={"search"}, patch_candidate=False, feature_arm="baseline"),
     # v2 (24-Sep, "reuse the flag but have your own take"): same flags as the arm above each, plus patch_v2.py's
     # per-game code store and one executable, history-replayed verification primitive (see patch_v2.py docstring).
     "execution_v2": dict(features={"memory", "execution"}, execution_version="memory_lease_e2", symbolic_version="none",
