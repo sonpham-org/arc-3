@@ -47,9 +47,13 @@ def main():
     assert sha(ARM / "ADAPTER.json") == armcfg["adapter_sha256"] and armcfg["adapter_sha256"] in startup
 
     if not args.dry_run:
-        for key, local in (("config_object", "CONFIG_FLAGS.json"), ("runner_object", "runner.py"),
-                           ("probe_object", "runtime_probe.py"), ("selftest_object", "selftest.tgz"), ("adapter_object", "ADAPTER.json"),
-                           ("release_object", "release.json")):
+        uploads = [("config_object", "CONFIG_FLAGS.json"), ("runner_object", "runner.py"), ("probe_object", "runtime_probe.py"),
+                   ("selftest_object", "selftest.tgz"), ("adapter_object", "ADAPTER.json"), ("release_object", "release.json")]
+        for key, local in (("prompt_probe_object", "prompt_probe.py"), ("expected_prompts_object", "EXPECTED_PROMPTS.json"),
+                           ("candidate_object", "candidate.tgz")):
+            if key in armcfg and (key != "candidate_object" or armcfg.get("candidate_changed")):
+                uploads.append((key, local))
+        for key, local in uploads:
             obj = armcfg[key]
             assert sha(ARM / local) == armcfg[key.replace("_object", "_sha256")], local
             if subprocess.run([GCLOUD, "storage", "ls", obj], capture_output=True, env=ENV,
@@ -87,6 +91,13 @@ def main():
         "arc3-selftest-object": armcfg["selftest_object"], "arc3-selftest-sha256": armcfg["selftest_sha256"],
         "arc3-release-manifest-object": armcfg["release_object"],
         "arc3-parent-run-id": "g4run-compaction-v5-clean-return-a132-w7-20260919-693e7fd43c",
+        **({"arc3-bundle-object": armcfg["candidate_object"], "arc3-bundle-sha256": armcfg["candidate_sha256"]} if armcfg.get("candidate_changed") else {}),
+        **({"arc3-feature-arm": armcfg["feature_arm"], "arc3-harness-arm": armcfg["harness_arm"],
+            "arc3-execution-mode": str(int("execution" in armcfg["features"])),
+            "arc3-symbolic-search": str(int("symbolic" in armcfg["features"])),
+            "arc3-programmatic-workspace": str(int("workspace" in armcfg["features"])),
+            "arc3-prompt-ablation": "+".join(armcfg["ablations"]),
+            "arc3-game-subset": armcfg.get("subset", "")} if "harness_arm" in armcfg else {}),
         "arc3-repeat-of-run": "",
         "startup-script": startup,
     })

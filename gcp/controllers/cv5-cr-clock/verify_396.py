@@ -87,7 +87,7 @@ try:
         sys.modules.pop(mod, None)
     import feature_contract as fc
     man = json.loads((tmp / "release-manifest.json").read_text())
-    env = fc.environment("baseline")
+    env = fc.environment(armcfg.get("feature_arm", "baseline"))
     ok(man["environment"] == env, "release-manifest.environment == feature_contract.environment()")
     ok(str(fc.GAME_SECONDS) == str(armcfg["game_seconds"]), f"feature_contract.GAME_SECONDS == {armcfg['game_seconds']}")
     ok(str(fc.SUITE_MINUTES) == str(suite), f"feature_contract.SUITE_MINUTES == {suite}")
@@ -129,6 +129,75 @@ ok(f'ARC3_GAME_SUBSET="{subset}"' in startup, f"startup exports ARC3_GAME_SUBSET
 ok(cfg["recipe"]["extra_environment"].get("ARC3_GAME_SUBSET", "") == subset, "CONFIG extra_environment subset matches")
 if games != 25:
     ok(armcfg["game_seconds"] == armcfg["suite_minutes"] * 60, "one wave: game_seconds == suite_minutes*60")
+
+# 6c --------------------------------------------------------------- harness arm (features, ablations, prompts, candidate)
+if "harness_arm" in armcfg:
+    print("6c. harness arm:", armcfg["harness_arm"])
+    import subprocess, io
+    FEATURE_ENV = {"memory": "ARC3_PERSISTENT_GAME_MODEL", "execution": "ARC3_EXECUTION_MODE",
+                   "symbolic": "ARC3_SYMBOLIC_SEARCH", "workspace": "ARC3_PROGRAMMATIC_WORKSPACE"}
+    ABLATION_ENV = {a: "ARC3_PROMPT_ABLATE_" + a.upper() for a in ("view", "loop", "search", "coords", "priors", "transition")}
+    xenv = cfg["recipe"]["extra_environment"]
+    for feat, envk in FEATURE_ENV.items():
+        want = "1" if feat == armcfg["feature_arm"] else "0"   # single-switch env; memory is implied for execution/symbolic
+        implied = feat in armcfg["features"] and feat != armcfg["feature_arm"]
+        ok(f"export {envk}={want}" in startup and (envk not in xenv if implied else xenv.get(envk) == want),
+           f"{envk}={want} exported" + (" and omitted from CONFIG (implied)" if implied else " and in CONFIG"))
+    for abl, envk in ABLATION_ENV.items():
+        want = "1" if abl in armcfg["ablations"] else "0"
+        ok(xenv.get(envk) == want and f"export {envk}={want}" in startup, f"{envk}={want} in CONFIG and startup")
+    fa = armcfg["feature_arm"]
+    ok(f"--live --arm {fa} --model" in startup and f"'{fa}')" in startup, f"selftest --arm {fa} and assert_contract('{fa}')")
+    ok(f"sum(flags.values()) == {len(armcfg['ablations'])}" in (ARM / "prompt_probe.py").read_text(), f"prompt_probe expects {len(armcfg['ablations'])} ablation flag(s)")
+    mem = "memory" in armcfg["features"]
+    ok(("assert probe['memory_write']" in (ARM / "runtime_probe.py").read_text()) == mem, "runtime_probe memory_write assertion matches memory flag")
+    ok(cfg["recipe"]["flags"]["memory"] == mem and cfg["recipe"]["flags"]["reasoning_router"] == mem and cfg["recipe"]["flags"]["rule_preservation"] == mem, "CONFIG flags memory/reasoning_router/rule_preservation consistent")
+    ok(cfg["recipe"]["flags"]["execution"] == ("execution" in armcfg["features"]) and cfg["recipe"]["flags"]["symbolic"] == ("symbolic" in armcfg["features"]), "CONFIG execution/symbolic flags match arm")
+    ok(f"test \"$(meta arc3-execution-mode)\" = {int('execution' in armcfg['features'])}" in startup, "startup metadata gate arc3-execution-mode")
+    ok(f"test \"$(meta arc3-symbolic-search)\" = {int('symbolic' in armcfg['features'])}" in startup, "startup metadata gate arc3-symbolic-search")
+    # candidate bundle vs manifest vs CONFIG.source_sha256
+    ok(sha_f(ARM / "candidate.tgz") == armcfg["candidate_sha256"] and f"echo '{armcfg['candidate_sha256']}  /tmp/bundle.tgz'" in startup, "candidate.tgz sha pinned in startup")
+    man = json.loads((ARM / "release.json").read_text())
+    tmpc = Path(tempfile.mkdtemp())
+    try:
+        with tarfile.open(ARM / "candidate.tgz") as t: t.extractall(tmpc)
+        bad = [n for n, d in man["candidate_files"].items() if hashlib.sha256((tmpc / n).read_bytes()).hexdigest() != d]
+        ok(not bad, f"manifest candidate_files match candidate.tgz contents ({len(man['candidate_files'])} files)")
+        badi = [n for n, d in man["implementation"]["candidate_source_sha256"].items() if hashlib.sha256((tmpc / n).read_bytes()).hexdigest() != d]
+        ok(not badi, "manifest implementation.candidate_source_sha256 match candidate.tgz")
+        if armcfg["patched_candidate"]:
+            ok(man["candidate_bundle_sha256"] == armcfg["candidate_sha256"], "manifest.candidate_bundle_sha256 == patched candidate.tgz")
+            ok("def expect(check)" in (tmpc / "src/ARC3-Inference/inference/agent/python_tool_sandbox.py").read_text(encoding="utf-8"), "patched sandbox carries expect()")
+        encj = lambda x: (json.dumps(x, sort_keys=True, indent=2) + chr(10)).encode()
+        ok(cfg["recipe"]["source_sha256"] == hashlib.sha256(encj(man["candidate_files"])).hexdigest(), "CONFIG.source_sha256 == sha(enc(manifest.candidate_files)) (runtime_probe formula)")
+        # EXPECTED_PROMPTS must equal a fresh render from THIS candidate under THIS env
+        code = r"""
+import sys, os, json, ast
+sys.path.insert(0, sys.argv[1])
+from inference.agent import tool_agent as ta, prompt_ablation as pa
+a = ta.ToolAgent()
+out = {'system': a._system_prompt, 'tool': ta._python_tool_description(),
+       'first_user': a._build_user_prompt(0, valid_actions=['MOUSE','RIGHT']), 'user': a._build_user_prompt(1, valid_actions=['MOUSE','RIGHT'])}
+tree = ast.parse(open(ta.__file__, encoding='utf-8').read())
+exprs = [n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'followup_prompt' for t in n.targets) and isinstance(n.value, ast.JoinedStr)]
+scope = dict(vars(ta), followup_prefix='You have not acted yet. Investigate first. ')
+out['retry'] = pa.transform(eval(compile(ast.Expression(exprs[0]), 'r', 'eval'), scope), 'retry')
+print("@@P@@" + json.dumps(out))
+"""
+        renv = dict(os.environ); renv.update(xenv)
+        renv.update({"LOCAL_ANALYZER_MODEL_ID": cfg["recipe"]["model"]["id"], "INFERENCE_ANALYZER_MODEL": cfg["recipe"]["model"]["id"], "LOCAL_ANALYZER_PROVIDER": "vllm",
+                     "OPENAI_PROVIDER": "vllm", "LOCAL_ANALYZER_BASE_URL": "http://127.0.0.1:1234/v1", "OPENAI_BASE_URL": "http://127.0.0.1:1234/v1", "ARC3_ROLLING_HALF_CHECKPOINT": "0"})
+        pr = subprocess.run([sys.executable, "-c", code, str(tmpc / "src/ARC3-Inference")], capture_output=True, text=True, env=renv, timeout=300)
+        lines = [l for l in pr.stdout.splitlines() if l.startswith("@@P@@")]
+        fresh = json.loads(lines[-1][5:]) if lines else None
+        expected = json.loads((ARM / "EXPECTED_PROMPTS.json").read_text(encoding="utf-8-sig"))
+        ok(fresh is not None and fresh == expected, "EXPECTED_PROMPTS.json == fresh local render of this candidate under the arm env")
+        if fresh and fresh != expected:
+            print("     differing surfaces:", [k for k in expected if fresh.get(k) != expected[k]])
+    finally:
+        shutil.rmtree(tmpc, ignore_errors=True)
+    for key, local in (("prompt_probe_sha256", "prompt_probe.py"), ("expected_prompts_sha256", "EXPECTED_PROMPTS.json")):
+        ok(sha_f(ARM / local) == armcfg[key] and armcfg[key] in startup, f"{local} sha matches ARM.json and is pinned in startup")
 
 # 7 ---------------------------------------------------------------- sampler bounds
 print("7. metrics sampler bounds (its own MAX_SECONDS = 5*3600, interval in {30,60})")
