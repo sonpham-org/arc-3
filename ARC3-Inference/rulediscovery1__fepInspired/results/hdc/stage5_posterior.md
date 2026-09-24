@@ -1,0 +1,1 @@
+stage 5 (20 Ghost Twin plays, 707 ghost steps): counts alone 1.004 nats/step, posterior with the tape rule 0.948; on the 257 steps where the tape rule had decided: counts 0.559 vs posterior 0.405; tape rule's final posterior weight > 0.5 in 3 of 19 plays (price 6.5 nats)
