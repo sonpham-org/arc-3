@@ -170,8 +170,11 @@ if "harness_arm" in armcfg:
             sbx = (tmpc / "src/ARC3-Inference/inference/agent/python_tool_sandbox.py").read_text(encoding="utf-8")
             need = {True: ["def expect(check)"], "execution_v2": ["_CODE_STORES", "def verify(predict", "_gate_batch"],
                     "memory_v2": ["_CODE_STORES", "def rule(id, text, holds)", "_replay_rules(True)"],
-                    "symbolic_v2": ["_CODE_STORES", "def replay(last", "def plan(goal", "_gate_batch"]}[armcfg["patched_candidate"]]
+                    "symbolic_v2": ["_CODE_STORES", "def check_model(last", "def plan(goal", "_gate_batch"]}[armcfg["patched_candidate"]]
             ok(all(k in sbx for k in need), f"patched sandbox carries {armcfg['patched_candidate']} primitives {need}")
+            # the VM runtime probe derives feature flags from sandbox globals: these names must not exist unless the flag is on
+            for nm, flag in (("replay", "replay"), ("load_helper", "saved_python_helpers"), ("vision", "toolkit")):
+                ok((f'runtime_globals["{nm}"]' not in sbx) or cfg["recipe"]["flags"].get(flag), f"sandbox does not define probe-sensitive global {nm}()")
             if armcfg["patched_candidate"] is not True:
                 ok("store_key=str(state_path.parent)" in (tmpc / "src/ARC3-Inference/inference/agent/tool_agent.py").read_text(encoding="utf-8"), "tool_agent passes store_key")
         encj = lambda x: (json.dumps(x, sort_keys=True, indent=2) + chr(10)).encode()

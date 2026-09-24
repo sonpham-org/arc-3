@@ -1,4 +1,5 @@
-"""v2 arms for items 1-3: reuse the feature flags, but give the model executable, host-checked tools.
+"""v2 arms for items 1-3 (NOTE: the runtime probe derives feature flags from sandbox globals -- `replay`, `vision`,
+`workspace`, `load_helper` must never be defined here; symbolic_v2's scorer is therefore check_model()): reuse the feature flags, but give the model executable, host-checked tools.
 
 Son, 24-Sep: "For item 1 to 3 you can reuse the flag but you should have your own take and build on these things."
 
@@ -432,7 +433,7 @@ ARM_CODE = {
     ),
     "symbolic_v2": dict(
         defs=r'''
-        def replay(last=None, show=3):
+        def check_model(last=None, show=3):
             # Score the executable model encode(frame) -> state, step(state, action) -> state | None over the history.
             encode = runtime_globals.get("encode")
             step = runtime_globals.get("step")
@@ -460,7 +461,7 @@ ARM_CODE = {
                     misses.append({"step": t.after_frame.step, "action": t.action, "predicted": str(predicted)[:160], "actual": str(actual)[:160]})
             report = {"ok": True, "transitions": len(ts), "exact": exact, "wrong": wrong, "unknown": unknown,
                       "fidelity": round(exact / max(1, exact + wrong), 3), "misses": misses[:int(show)]}
-            save(replay=report)
+            save(fidelity=report)
             return report
 
         def plan(goal, max_depth=12, actions=None, max_nodes=20000):
@@ -510,12 +511,12 @@ ARM_CODE = {
                 frontier = nxt
             return {"found": False, "expanded": expanded, "depth": depth, "error": "no goal state within max_depth"}
 
-        runtime_globals["replay"] = replay
+        runtime_globals["check_model"] = check_model
         runtime_globals["plan"] = plan
 ''',
         action=r'''
         def action(actions):
-            normalized_actions = _gate_batch(_normalize_actions(actions), "replay", "encode/step")
+            normalized_actions = _gate_batch(_normalize_actions(actions), "fidelity", "encode/step")
             encode = runtime_globals.get("encode")
             step = runtime_globals.get("step")
             before_frame = runtime_globals.get("current_frame")
@@ -549,7 +550,7 @@ ARM_CODE = {
             if checked is False:
                 print("[model mismatch] " + _action_label(normalized_actions[0]) + ": " + detail)
                 raise _ActionSequenceInterrupted(
-                    "encode/step disagreed with the real transition; batch halted. Fix the model, save(code=...), replay()."
+                    "encode/step disagreed with the real transition; batch halted. Fix the model, save(code=...), check_model()."
                 )
             return action_result
 ''',
@@ -559,15 +560,15 @@ ARM_CODE = {
         tool=(
             " An executable world model is enabled: define `encode(frame) -> state` (a small JSON-able summary) and "
             "`step(state, action) -> state | None` in Python and persist them with `save(code=src)` (`store` / `save` survive "
-            "across snippets; saved code re-executes each snippet). `replay()` scores the model over every recorded "
+            "across snippets; saved code re-executes each snippet). `check_model()` scores the model over every recorded "
             "transition and returns fidelity with the first misses; `plan(goal, max_depth=12, actions=None)` is a bounded "
             "BFS over the model from the current state returning the shortest action labels. Each action is auto-checked "
-            "against the model and a mismatch halts the batch; batches longer than one action need replay fidelity >= 0.8 "
+            "against the model and a mismatch halts the batch; batches longer than one action need check_model() fidelity >= 0.8 "
             "on >= 3 transitions. `symbolic_search` remains available for scalar specs."
         ),
         bullet=(
             "- Prefer an executable model to a described one: encode the few quantities that matter, write step() for the "
-            "mechanics you have seen, save it, replay() it, and only plan() with it once replay agrees with the history. When "
+            "mechanics you have seen, save it, check_model() it, and only plan() with it once it agrees with the history. When "
             "an action contradicts the model, the miss tells you which mechanic is wrong -- fix that before exploring further.\\n"
         ),
     ),
