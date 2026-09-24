@@ -26,14 +26,17 @@ VM_LIFE = {1: 14400, 2: 21600, 3: 28800}[MULT]
 SAMPLER_MAX = min(VM_LIFE, 18000)            # vllm_metrics_sampler MAX_SECONDS = 5*3600
 HARD7 = ["bp35", "g50t", "lf52", "ls20", "sk48", "tn36", "wa30"]
 SUBSET = ",".join(HARD7)
-ARM_NAME = f"compaction_v5_clean_return_hard7_{SUITE_MIN}"
-SRC = Path(r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a")
+# Generalised 25-Sep: ARC3_SRC_ARM = any 132-minute arm of this family, ARC3_ARM_TAG = run/instance prefix.
+SRC = Path(os.environ.get("ARC3_SRC_ARM", r"D:\codex-work\compaction-v5-clean-return132-20260919\arms\compaction_v5_clean_return_a"))
+TAG = os.environ.get("ARC3_ARM_TAG", "cv5cr")
+LABEL = SRC.name[:-2] if SRC.name.endswith("_a") else SRC.name
+ARM_NAME = f"{LABEL}_hard7_{SUITE_MIN}"
 ARM = HERE / "arms" / ARM_NAME
 ARM.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(SRC))
 import contract  # noqa: E402
 
-BUCKET_CODE = "gs://cellens-ai-artifacts/arc3-duck/code/cap-compact132"
+BUCKET_CODE = "gs://cellens-ai-artifacts/arc3-duck/code/" + re.search(r"gs://cellens-ai-artifacts/arc3-duck/code/([a-z0-9-]+)/[0-9a-f]{64}/runtime_probe\.py", (SRC / "startup.sh").read_text(encoding="utf-8")).group(1)
 RUNNER_DIR = "gs://cellens-ai-artifacts/arc3-duck/code/astra-execution/feature-ablation-132-v1"
 BASE_RUNNER_SHA = "b3604c7731dde84089cfc20bbf1366378eb0791c5deb88c9e24271ac5b9f53bb"
 NL = chr(10)
@@ -73,7 +76,7 @@ cfg["recipe"]["limits"].update({"game_seconds": GAME_S, "suite_gameplay_minutes"
 cfg["recipe"]["extra_environment"].update({"ARC3_MAX_RUNTIME_S_PER_GAME": str(GAME_S),
                                            "ARC3_MAX_RUN_RUNTIME_MINUTES": str(SUITE_MIN),
                                            "ARC3_GAME_SUBSET": SUBSET})
-cfg["run_id"] = f"g4run-cv5cr-hard7-{SUITE_MIN}-w7-20260923"
+cfg["run_id"] = f"g4run-{TAG}-hard7-{SUITE_MIN}-w7-20260925"
 cfg["evidence"]["notes"] = [
     "September23 user: 'Do only 1 wave but give the hard 7 games all the time. I really want to see how a "
     "harness tackles really hard games by giving it all the time it needs.' One wave of the seven hard games "
@@ -132,7 +135,7 @@ shutil.rmtree(work)
 # ---------------------------------------------------------------- startup.sh
 s = (SRC / "startup.sh").read_text(encoding="utf-8")
 s = sub1(r"^# Search/scorer removal \+ 50% swap, W7, 132 minutes",
-         f"# Search/scorer removal + 50% swap + compaction v5, HARD SEVEN ONLY, one wave, W7, {SUITE_MIN} minutes", s, re.M)
+         f"# {LABEL}, HARD SEVEN ONLY, one wave, W7, {SUITE_MIN} minutes", s, re.M)
 s = sub1(r"# Hard cost guard: 14400 seconds", f"# Hard cost guard: {VM_LIFE} seconds", s)
 s = sub1(r"^  sleep 14400$", f"  sleep {VM_LIFE}", s, re.M)
 s = sub1(r"--interval-seconds 30 --max-seconds 14400", f"--interval-seconds 30 --max-seconds {SAMPLER_MAX}", s)
@@ -156,7 +159,7 @@ s = sub1(re.escape(f"echo '{old_release_sha}  /opt/arc3/execution-release-manife
 s = add_watchdog(s)
 old_req = re.search(r"requestId=([0-9a-f-]{36})", s).group(1); new_req = str(uuid.uuid4())
 s = s.replace(old_req, new_req); (ARM / "DELETE_REQUEST_ID").write_text(new_req)
-for leftover in ("2061", "minutes=132", "sleep 14400", "max-seconds 14400", "132-minute", 'ARC3_GAME_SUBSET=""'):
+for leftover in ["2061", 'ARC3_GAME_SUBSET=""'] + (["minutes=132", "sleep 14400", "max-seconds 14400", "132-minute"] if SUITE_MIN != 132 else []):
     assert leftover not in s, leftover
 (ARM / "startup.sh").write_text(s, encoding="utf-8", newline=NL)
 
@@ -171,7 +174,7 @@ for leftover in ("2061", "minutes=132", "sleep 14400", "max-seconds 14400", "132
     "adapter_object": f"{BUCKET_CODE}/{adapter_sha}/ADAPTER.json", "adapter_sha256": adapter_sha,
     "release_object": f"{BUCKET_CODE}/{release_sha}/release.json", "release_sha256": release_sha,
     "config_id": cfg["config_id"],
-    "run_id_prefix": f"g4run-cv5cr-hard7-{SUITE_MIN}-w7", "instance_prefix": f"arc3-g4-cv5h7-{SUITE_MIN}",
+    "run_id_prefix": f"g4run-{TAG}-hard7-{SUITE_MIN}-w7", "instance_prefix": f"arc3-g4-{TAG[:5]}h7-{SUITE_MIN}", "tag": TAG,
 }, indent=2) + NL)
 print(f"arm {ARM_NAME}: games={len(HARD7)} game_s={GAME_S} suite={SUITE_MIN} vm={VM_LIFE}")
 print("config_id", cfg["config_id"][:16], "runner", runner_sha[:12], "probe", probe_sha[:12],

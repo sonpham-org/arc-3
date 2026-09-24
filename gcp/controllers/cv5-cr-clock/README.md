@@ -70,3 +70,14 @@ symbolic `…-5aac84d4fc`, solver `…-92b391fd79`, selfcheck `…-e58ade7fe2` (
 execution_v2 `g4run-cv5cr-hard7-execution_v2-132-w7-20260924-2d16389920`, memory_v2
 `…-memory_v2-132-w7-20260924-002d497d5a` (both europe-west1-b: us-central1's Spot quota is 8 RTX PRO 6000
 GPUs per region and 8 VMs were live), symbolic_v2 `…-symbolic_v2-132-w7-20260924-cd5dccf7c5` (europe-west1-b, second launch after quota/backendError refusals).
+
+## 25-Sep: three bases on the hard seven, and replicates
+
+`derive_hard7.py` now takes `ARC3_SRC_ARM` / `ARC3_ARM_TAG` like `derive_396.py` and accepts
+`ARC3_SUITE_MINUTES=132`. Launched 25-Sep 02:50-03:05 UTC, all us-central1-b Spot:
+CR hard-7 `g4run-cr-hard7-132-w7-20260924-f891a5f749` (clean_return_repeat132), LA-CR hard-7
+`g4run-lacr-hard7-132-w7-20260924-b145353fd8` (la_clean_return_a), and replicate #2 of the cv5-CR arms:
+baseline `…-2d74687abe`, solver `…-cfff61d568`, execution `…-51409afc9f`, symbolic `…-7494b2c061`,
+selfcheck `…-5e78468d87`. Replicate #1 finals (7-game mean / levels): solver 9.13/17, exec 8.32/19,
+symbolic 8.29/14, selfcheck 7.70/16, memory_v2 6.70/14, baseline 6.40/15, symbolic_v2 5.93/15, memory
+5.46/12, hard7-264 4.96/15, execution_v2 4.47/11. CR264 replicate `g4run-cr264-w7-20260924-969f751ea3`.
