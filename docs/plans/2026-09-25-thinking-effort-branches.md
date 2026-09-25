@@ -20,69 +20,70 @@ checkpoints; wave 2 (8 VMs) is running the remaining 478. Sixteen checkpoints (g
 turn 57) are unreplayable: a recorded snippet hit the 30 s sandbox timeout after N actions and a replay under different
 load runs a different N. Everything else replayed exactly: 667 of 695 prefixes byte-equal to the recording.
 
-## Wave-1 results (695 branches, 102 checkpoints, all 11 levels)
+## Results (both waves: 1,173 branches, 167 checkpoints, all 11 levels)
+
+Wave 2 (8 VMs, 07:00 to 10:45 UTC) finished the remaining 478 branches. 1,135 of 1,173 prefixes replayed byte-equal;
+the 38 non-exact ones are the checkpoints past a timeout-truncated snippet (excluded). Token calibration: 0.334
+completion tokens per generated character on the 162 xhigh controls.
 
 | effort | n | solved within 2x | action ratio (median, solved) | token ratio (median, solved) | tokens per branch |
 |---|---|---|---|---|---|
-| xhigh control | 99 | 70% | 1.00 | 1.08 | 59.2k |
-| high | 193 | 64% | 1.00 | 1.00 | 57.7k |
-| medium | 183 | 69% | 0.97 | 0.99 | 52.2k |
-| low | 192 | 58% | 1.02 | 0.99 | 54.2k |
+| xhigh control | 162 | 72% | 1.00 | 1.00 | 45.2k |
+| high | 323 | 68% | 1.00 | 1.01 | 42.6k |
+| medium | 323 | 71% | 1.00 | 1.00 | 39.9k |
+| low | 327 | 67% | 1.00 | 0.91 | 39.7k |
 
-Ratios are branch / recording for the remainder of the level. Token calibration: 0.332 completion tokens per generated
-character, measured on the xhigh controls and applied to the recording's remaining thinking + text + code characters.
+By position in the level (first / middle / last third of its turns): solved, median action ratio, tokens per branch.
 
-By position in the level (first / middle / last third of the level's turns):
-
-| effort | early: solved, actions, tokens/branch | middle: solved, actions, tokens/branch | late: solved |
+| effort | early | middle | late |
 |---|---|---|---|
-| xhigh | 72%, 1.00, 71.1k | 63%, 0.98, 36.5k | 2/2 |
-| high | 64%, 1.00, 67.3k | 61%, 1.00, 39.3k | 4/4 |
-| medium | 67%, 0.97, 63.6k | 71%, 0.96, 27.7k | 4/4 |
-| low | 56%, 1.10, 66.9k | 61%, 1.00, 29.8k | 4/5 |
+| xhigh | 71%, 1.00, 71.4k | 66%, 1.00, 38.6k | 80%, 1.00, 10.5k |
+| high | 65%, 1.00, 67.1k | 62%, 1.00, 37.0k | 82%, 1.00, 10.0k |
+| medium | 66%, 0.98, 65.5k | 74%, 1.00, 32.1k | 75%, 1.00, 9.0k |
+| low | 56%, 1.10, 66.5k | 66%, 1.00, 30.8k | 86%, 1.00, 8.0k |
 
 Per level (solve rate by effort; median action ratio of solved branches):
 
 | game | level | turns | recorded actions | human | xhigh | high | medium | low |
 |---|---|---|---|---|---|---|---|---|
-| bp35 | 1 | 16 | 41 | 21 | 10/10 (0.96) | 16/20 (0.83) | 20/20 (0.88) | 14/20 (1.05) |
-| g50t | 1 | 18 | 37 | 78 | 6/11 (1.21) | 14/22 (1.42) | 11/22 (1.13) | 10/22 (1.42) |
-| g50t | 2 | 10 | 31 | 175 | 6/6 (1.00) | 11/12 (1.00) | 12/12 (1.00) | 12/12 (1.00) |
-| g50t | 3 | 40 | 195 | 179 | 7/10 (1.28) | 9/17 (1.04) | 11/17 (1.05) | 12/18 (1.09) |
-| lf52 | 1 | 11 | 13 | 32 | 5/7 (1.00) | 11/12 (0.92) | 11/12 (0.92) | 8/12 (1.05) |
+| bp35 | 1 | 16 | 41 | 21 | 17/17 (0.92) | 27/34 (0.94) | 33/34 (0.87) | 27/34 (1.00) |
+| g50t | 1 | 18 | 37 | 78 | 11/18 (1.00) | 25/36 (1.24) | 23/36 (1.00) | 23/36 (1.05) |
+| g50t | 2 | 10 | 31 | 175 | 10/10 (1.00) | 19/20 (1.00) | 20/20 (1.00) | 20/20 (1.00) |
+| g50t | 3 | 40 | 195 | 179 | 8/11 (1.25) | 11/21 (1.05) | 14/21 (1.05) | 15/22 (1.08) |
+| lf52 | 1 | 11 | 13 | 32 | 9/12 (1.14) | 18/22 (1.00) | 19/22 (1.00) | 14/22 (1.00) |
 | lf52 | 2 | 151 | 707 | 81 | 7/7 (0.59) | 7/14 (0.37) | 8/13 (0.19) | 9/14 (0.37) |
-| ls20 | 1 | 10 | 31 | 22 | 4/6 (0.79) | 9/12 (1.06) | 8/12 (0.83) | 8/12 (0.81) |
-| ls20 | 2 | 26 | 231 | 123 | 6/13 (0.98) | 16/26 (0.98) | 16/26 (0.95) | 14/26 (1.01) |
-| sk48 | 1 | 35 | 133 | 61 | 0/8 | 2/16 (0.63) | 1/12 (0.65) | 2/15 (0.99) |
-| wa30 | 1 | 23 | 50 | 71 | 14/14 (1.13) | 25/28 (1.02) | 22/26 (0.98) | 19/28 (1.16) |
-| wa30 | 2 | 35 | 281 | 119 | 4/7 (0.46) | 4/14 (0.51) | 6/11 (0.99) | 4/13 (0.94) |
+| ls20 | 1 | 10 | 31 | 22 | 6/10 (0.81) | 14/20 (1.00) | 14/20 (0.90) | 15/20 (1.00) |
+| ls20 | 2 | 26 | 231 | 123 | 14/25 (0.99) | 34/52 (1.00) | 33/52 (1.00) | 32/51 (1.00) |
+| sk48 | 1 | 35 | 133 | 61 | 5/16 (1.05) | 11/32 (0.88) | 13/32 (0.88) | 13/33 (0.98) |
+| wa30 | 1 | 23 | 50 | 71 | 23/23 (1.03) | 43/46 (1.00) | 40/45 (1.00) | 37/46 (1.00) |
+| wa30 | 2 | 35 | 281 | 119 | 6/13 (0.47) | 11/26 (0.69) | 12/28 (0.98) | 14/29 (0.90) |
 
-Charts: `docs/static/branch-replay/branch_ratio_wave1.png` (ratio vs checkpoint position, per effort) and
-`branch_ratio_wave1_per_level.png`.
+Charts: `docs/static/branch-replay/branch_ratio_final.png` (ratio vs checkpoint position, per effort) and
+`branch_ratio_final_per_level.png`. Raw tables: `gcp/controllers/branch-replay/RESULTS_final.md`.
 
 ## Reading
 
-1. **The recording is 70% reproducible.** A fresh xhigh sample from the same state clears the level within the 2x caps
-   at 70% of checkpoints. sk48 L1 is 0 of 8: the recorded solve was a fluke. That 30% is the noise floor for every
-   comparison below; nothing else in the table is bigger than it.
-2. **high and medium are not worse than xhigh.** Solve rates 64% and 69% against 70%; median action ratio 1.00 and 0.97;
-   tokens per branch 3% and 12% lower. Low is worse: 58% solved, 10% more actions early in a level.
-3. **The effort knob barely changes token volume.** The Qwen3.8 template implements medium as "no thinking sentence" and
-   low as "keep it brief"; per-branch tokens move by at most 12% overall, 24% in the middle third of a level. The
-   spread between two samples at the same checkpoint and effort is far larger than that. This is the main finding for
-   the LoRA idea: there is little to route between, because the settings do not produce distinct behaviours on this
-   model. A router would be choosing between near-identical distributions.
-4. **Where cheaper branches win, it is the recording that lost.** lf52 L2 (707 recorded actions against a human 81) is
-   beaten by every effort at 0.2 to 0.6 of the recorded actions; wa30 L2 likewise at 0.5. g50t L1 and wa30 L1 go the
-   other way: every effort, including the xhigh control, needs more actions than the recording. Efficiency is a
-   property of the sample, not of the effort setting.
-5. **Oracle switch value is sampling variance.** At 68 of 98 checkpoints some cheaper branch solved with no more actions
-   than the recording; picking those would cut remaining-level tokens by 34%. But the xhigh control alone would give a
-   comparable "saving" by resampling, so this is best-of-n, not routing.
+1. **The recording is 72% reproducible.** A fresh xhigh sample from the same state clears the level within the 2x caps
+   at 72% of checkpoints (early 71%, middle 66%, late 80%). sk48 L1 is 5 of 16. That is the noise floor for every
+   comparison below, and nothing between the effort settings is bigger than it.
+2. **high, medium and low all match xhigh on actions once the level is under way.** Median action ratio is 1.00 for
+   every setting in the middle and last thirds; the recording's own remaining path is reproduced. Solve rates 68%,
+   71%, 67% against 72%. The only place a setting loses is low in the first third of a level (56% solved, 10% more
+   actions): brief thinking hurts while the mechanics are still being discovered, not afterwards.
+3. **Tokens move little with the knob.** Per-branch tokens: xhigh 45.2k, high 42.6k, medium 39.9k, low 39.7k, i.e. at most
+   12% overall and 24% in the last third. The Qwen3.8 template implements medium as "no thinking sentence" and low as
+   "keep it brief"; the model's thinking length barely responds. The sample-to-sample spread at one checkpoint is far
+   larger. This is the main obstacle for the routing-LoRA idea: there is little distinct behaviour to route between.
+4. **Where cheaper branches win big, the recording had lost.** lf52 L2 (707 recorded actions vs a human 81) is beaten
+   by every effort at 0.2 to 0.6 of the recorded actions, and by the xhigh control at 0.59; wa30 L2 likewise. g50t L1 and
+   L3 go the other way for every setting including the control. Efficiency is a property of the sample, not the setting.
+5. **The oracle switch value (39% of remaining-level tokens at 127 of 164 checkpoints) is best-of-n, not routing.**
+   Resampling at xhigh yields the same kind of saving.
 
-What a switch policy could still exploit: the middle third, where medium solves as often as xhigh (71% vs 63%) at
-0.96 of the actions and 24% fewer tokens. That is one bin of one recording and inside the noise floor; wave 2 adds the
-remaining mid- and late-level checkpoints and will say whether it holds.
+What survives as a usable rule: after the first third of a level, dropping to medium (or even low) costs nothing in
+actions or solve rate and saves 15 to 25% of the tokens for that remainder; in the first third, keep xhigh. On this
+recording the whole-level saving of such a rule is about 10 to 12%, inside one run's sampling variance. Worth encoding
+as a fixed schedule rather than a learned router.
 
 ## Sibling results from the same night
 
