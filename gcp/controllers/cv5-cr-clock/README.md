@@ -100,3 +100,14 @@ Games: bp35, g50t, lf52, ls20, sk48, tn36, wa30. Mean is over the seven. Source:
 | execution_v2 | `…-2d16389920` | 0.8 / 1 / 281 | 18.5 / 3 / 329 | 9.2 / 4 / 470 | 0.5 / 1 / 285 | 2.2 / 1 / 123 | 0.0 / 0 / 1315 | 0.0 / 1 / 775 | **4.47** | 11 | 3578 |
 
 Replicate #2 of baseline/solver/execution/symbolic/selfcheck and the CR / LA-CR hard-seven arms (x2) launched 25-Sep 02:50-03:12 UTC; ids above.
+
+## 25-Sep: replicate #2 finals, solver on all 25 / at 264, medium thinking
+
+Hard seven, one wave, 132 min (7-game mean; run #1 / run #2): symbolic 8.29 / 6.46, solver 9.13 / 4.73,
+LA-CR base 9.04 / 4.55, CR base 4.75 / 8.43, selfcheck 7.70 / 4.94, exec 8.32 / 4.03, cv5-CR base 6.40 / (#2 pending).
+The field sits at 6.2–7.4 with ±2 per run; only symbolic has both runs above the field.
+`derive_arms.py` gained `--all25` (25 games, 4 waves) and `--effort low|medium|high|xhigh` (Qwen3.8
+chat-template `reasoning_effort`, default xhigh). Solver on all 25 at 132: `g4run-cv5cr-all25-solver-132-w7-20260924-46cfc490f5`
+= 12.82 / 52 levels (same as the cv5-CR base; LA-CR 18.6). Solver at 264 per hard game:
+`g4run-cv5cr-hard7-solver-264-w7-20260924-ffdda82394`. cv5-CR with medium thinking on all 25 x2:
+`g4run-cv5cr-all25-baseline-132-effortmedium-w7-20260924-5d764adf5b`, `…-69794c6c30`.

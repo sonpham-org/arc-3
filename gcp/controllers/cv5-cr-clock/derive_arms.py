@@ -123,10 +123,16 @@ print("@@PROMPTS@@" + json.dumps(out))
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("arm", choices=sorted(ARMS)); ap.add_argument("--suite", type=int, default=132)
+    ap.add_argument("--all25", action="store_true", help="all 25 games on the normal 4-wave schedule instead of the hard seven in one wave")
+    ap.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh"], help="Qwen3.8 chat-template reasoning_effort (template default xhigh)")
     args = ap.parse_args()
     spec = ARMS[args.arm]; SUITE_MIN = args.suite; assert SUITE_MIN % 132 == 0
-    MULT = SUITE_MIN // 132; GAME_S = SUITE_MIN * 60; VM_LIFE = {1: 14400, 2: 21600, 3: 28800}[MULT]; SAMPLER_MAX = min(VM_LIFE, 18000)
-    ARM_NAME = f"cv5cr_hard7_{args.arm}_{SUITE_MIN}"
+    MULT = SUITE_MIN // 132; VM_LIFE = {1: 14400, 2: 21600, 3: 28800}[MULT]; SAMPLER_MAX = min(VM_LIFE, 18000)
+    ALL25 = bool(args.all25)
+    GAME_S = 2061 * MULT if ALL25 else SUITE_MIN * 60          # 4 waves of ~34 min x MULT, or one wave with the whole clock
+    GAMES = 25 if ALL25 else len(HARD7); SUBSET_ = "" if ALL25 else SUBSET; SCOPE = "all25" if ALL25 else "hard7"
+    EFFORT = args.effort
+    ARM_NAME = f"cv5cr_{SCOPE}_{args.arm}_{SUITE_MIN}" + (f"_effort_{EFFORT}" if EFFORT else "")
     ARM = HERE / "arms" / ARM_NAME; ARM.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(SRC)); import contract  # noqa
 
@@ -193,10 +199,12 @@ def main():
     # -------------------------------------------------- runner.py
     r = (ARM / "runner.py").read_text(encoding="utf-8")
     r = sub1(r"assert bm\.solver\.max_runtime_s_per_game == 2061\.0", f"assert bm.solver.max_runtime_s_per_game == {GAME_S}.0", r)
-    r = sub1(r'"Experimental runtime lock: 7 workers, 2061 seconds/game, "', f'"Experimental runtime lock: 7 workers, {GAME_S} seconds/game, hard-seven {args.arm} arm, "', r)
-    r = sub1(r'assert len\(game_ids\) == 25, f"experiment requires 25 games, got \{len\(game_ids\)\}"',
-             f'assert len(game_ids) == {len(HARD7)}, f"hard-seven experiment requires {len(HARD7)} games, got {{len(game_ids)}}"', r)
-    r = sub1(r"# 4 waves at 2061 seconds/game fit the 132-minute suite.*", f"# One wave: 7 lanes x 7 hard games, {GAME_S} s each = the whole {SUITE_MIN}-minute suite per game.", r)
+    r = sub1(r'"Experimental runtime lock: 7 workers, 2061 seconds/game, "', f'"Experimental runtime lock: 7 workers, {GAME_S} seconds/game, {SCOPE} {args.arm} arm, "', r)
+    if not ALL25:
+        r = sub1(r'assert len\(game_ids\) == 25, f"experiment requires 25 games, got \{len\(game_ids\)\}"',
+                 f'assert len(game_ids) == {len(HARD7)}, f"hard-seven experiment requires {len(HARD7)} games, got {{len(game_ids)}}"', r)
+    r = sub1(r"# 4 waves at 2061 seconds/game fit the 132-minute suite.*",
+             f"# 4 waves at {GAME_S} seconds/game fit the {SUITE_MIN}-minute suite." if ALL25 else f"# One wave: 7 lanes x 7 hard games, {GAME_S} s each = the whole {SUITE_MIN}-minute suite per game.", r)
     (ARM / "runner.py").write_text(r, encoding="utf-8", newline=NL); runner_sha = sha_b((ARM / "runner.py").read_bytes())
 
     # -------------------------------------------------- runtime_probe.py
@@ -218,8 +226,8 @@ def main():
 
     # -------------------------------------------------- CONFIG_FLAGS.json
     cfg = json.loads((SRC / "CONFIG_FLAGS.json").read_text(encoding="utf-8-sig")); rec = cfg["recipe"]
-    rec["limits"].update({"game_seconds": GAME_S, "suite_gameplay_minutes": SUITE_MIN, "vm_lifetime_seconds": VM_LIFE, "games": len(HARD7)})
-    rec["extra_environment"].update({"ARC3_MAX_RUNTIME_S_PER_GAME": str(GAME_S), "ARC3_MAX_RUN_RUNTIME_MINUTES": str(SUITE_MIN), "ARC3_GAME_SUBSET": SUBSET})
+    rec["limits"].update({"game_seconds": GAME_S, "suite_gameplay_minutes": SUITE_MIN, "vm_lifetime_seconds": VM_LIFE, "games": GAMES})
+    rec["extra_environment"].update({"ARC3_MAX_RUNTIME_S_PER_GAME": str(GAME_S), "ARC3_MAX_RUN_RUNTIME_MINUTES": str(SUITE_MIN), "ARC3_GAME_SUBSET": SUBSET_})
     for feat, envk in FEATURE_ENV.items():
         # contract.validate: an env override present in extra_environment must equal str(int(flags[feat])).
         # The single-switch env sets only the arm's own flag, so a feature that is IMPLIED (memory under
@@ -233,14 +241,15 @@ def main():
         rec["extra_environment"]["ARC3_PREDICTION_CHECK"] = "1"   # exported after the selftest matrix (see startup)
     elif spec["patch_candidate"]:
         rec["extra_environment"]["ARC3_V2_BATCH_GATE"] = "1"      # v2 arms: same placement, gates multi-action batches
+    if EFFORT: rec["extra_environment"]["ARC3_SERVING_REASONING_EFFORT"] = EFFORT   # recorded so config_id changes; applied via chat-template kwargs
     mem = "memory" in spec["features"]
     flag_updates = {"memory": mem, "execution": "execution" in spec["features"], "symbolic": "symbolic" in spec["features"],
                     "workspace": False, "reasoning_router": mem, "rule_preservation": mem}   # runtime_probe derives these from agent state
     rec["flags"].update(flag_updates); cfg["requested_flags"].update(flag_updates)
     rec["execution_version"] = spec["execution_version"]; rec["symbolic_version"] = spec["symbolic_version"]
     rec["source_sha256"] = source_sha256
-    rec["source_family"] = rec["source_family"].replace("clean_return_a_v1", f"clean_return_hard7_{args.arm}_v1")
-    cfg["run_id"] = f"g4run-cv5cr-hard7-{args.arm}-{SUITE_MIN}-w7-20260924"
+    rec["source_family"] = rec["source_family"].replace("clean_return_a_v1", f"clean_return_{SCOPE}_{args.arm}_v1")
+    cfg["run_id"] = f"g4run-cv5cr-{SCOPE}-{args.arm}-{SUITE_MIN}" + (f"-effort{EFFORT}" if EFFORT else "") + "-w7-20260925"
     cand_note = ("PATCHED by patch_selfcheck.py (expect(check) before every action; host verifies the check on the real "
                  "transition and a no-op counterfactual)" if spec["patch_candidate"] is True else
                  f"PATCHED by patch_v2.py arm {spec['patch_candidate']} (per-game code store; "
@@ -249,8 +258,9 @@ def main():
                     "symbolic_v2": "encode/step executable model, replay() fidelity, bounded plan() BFS, auto-checked actions"}[spec["patch_candidate"]]
                  + ")" if spec["patch_candidate"] else "byte-identical to the 19-Sep arm")
     cfg["evidence"]["notes"] = [
-        f"September24 user: five intensive-harness arms measured on the hard seven only, one wave, the whole {SUITE_MIN}-minute "
-        f"clock per game ({GAME_S} s). This is the '{args.arm}' arm: features={sorted(spec['features']) or ['none']}, prompt "
+        (f"September25 user: '{args.arm}' arm on all 25 games, the normal 4-wave schedule, {GAME_S} s per game, {SUITE_MIN}-minute suite. " if ALL25 else
+         f"September24 user: five intensive-harness arms measured on the hard seven only, one wave, the whole {SUITE_MIN}-minute "
+         f"clock per game ({GAME_S} s). ") + f"This is the '{args.arm}' arm: features={sorted(spec['features']) or ['none']}, prompt "
         f"ablations={sorted(spec['ablations'])}, candidate {cand_note}. "
         "Base: compaction_v5_clean_return_a (most hard-seven-efficient 132-minute arm in the 23-Sep census). Spot. One attempt.",
     ] + cfg["evidence"]["notes"][1:]
@@ -280,7 +290,7 @@ def main():
 
     # -------------------------------------------------- startup.sh
     s = (SRC / "startup.sh").read_text(encoding="utf-8")
-    s = sub1(r"^# Search/scorer removal \+ 50% swap, W7, 132 minutes", f"# compaction v5 clean-return, HARD SEVEN, one wave, arm={args.arm}, W7, {SUITE_MIN} minutes", s, re.M)
+    s = sub1(r"^# Search/scorer removal \+ 50% swap, W7, 132 minutes", f"# compaction v5 clean-return, {'ALL 25, 4 waves' if ALL25 else 'HARD SEVEN, one wave'}, arm={args.arm}, W7, {SUITE_MIN} minutes", s, re.M)
     s = sub1(r"# Hard cost guard: 14400 seconds", f"# Hard cost guard: {VM_LIFE} seconds", s)
     s = sub1(r"^  sleep 14400$", f"  sleep {VM_LIFE}", s, re.M)
     s = sub1(r"--interval-seconds 30 --max-seconds 14400", f"--interval-seconds 30 --max-seconds {SAMPLER_MAX}", s)
@@ -290,7 +300,7 @@ def main():
     s = sub1(r"echo '" + old_candidate_sha + r"  /tmp/bundle\.tgz'", f"echo '{candidate_sha}  /tmp/bundle.tgz'", s)
     s = sub1(r"export ARC3_MAX_RUNTIME_S_PER_GAME=2061", f"export ARC3_MAX_RUNTIME_S_PER_GAME={GAME_S}", s)
     s = sub1(r"export ARC3_MAX_RUN_RUNTIME_MINUTES=132", f"export ARC3_MAX_RUN_RUNTIME_MINUTES={SUITE_MIN}", s)
-    s = sub1(r'ARC3_GAME_SUBSET=""', f'ARC3_GAME_SUBSET="{SUBSET}"', s)
+    if not ALL25: s = sub1(r'ARC3_GAME_SUBSET=""', f'ARC3_GAME_SUBSET="{SUBSET}"', s)
     for feat, envk in FEATURE_ENV.items():
         v = "1" if feat == spec["feature_arm"] else "0"
         s = sub1(rf"export {envk}=0", f"export {envk}={v}", s)
@@ -322,10 +332,13 @@ def main():
         s = sub1(r"^capture_gameplay_metrics start$", "export ARC3_PREDICTION_CHECK=1" + NL + "capture_gameplay_metrics start", s, re.M)
     elif spec["patch_candidate"]:
         s = sub1(r"^capture_gameplay_metrics start$", "export ARC3_V2_BATCH_GATE=1" + NL + "capture_gameplay_metrics start", s, re.M)
+    if EFFORT:
+        s = sub1(r'"preserve_thinking": true\}', '"preserve_thinking": true, "reasoning_effort": "' + EFFORT + '"}', s)
     s = add_watchdog(s)
     old_req = re.search(r"requestId=([0-9a-f-]{36})", s).group(1); new_req = str(uuid.uuid4())
     s = s.replace(old_req, new_req); (ARM / "DELETE_REQUEST_ID").write_text(new_req)
-    leftovers = ["2061", 'ARC3_GAME_SUBSET=""']
+    leftovers = ["2061"] + ([] if ALL25 else ['ARC3_GAME_SUBSET=""'])
+    if ALL25 and MULT == 1: leftovers = []   # 2061 s per game is exactly the base clock
     if spec["feature_arm"] != "baseline": leftovers += ["--arm baseline", "'baseline')"]
     if SUITE_MIN != 132: leftovers += ["minutes=132", "132-minute"]
     if VM_LIFE != 14400: leftovers += ["sleep 14400", "max-seconds 14400"]
@@ -337,7 +350,7 @@ def main():
     arm_json = {
         "arm": ARM_NAME, "harness_arm": args.arm, "feature_arm": spec["feature_arm"], "features": sorted(spec["features"]),
         "ablations": sorted(spec["ablations"]), "patched_candidate": spec["patch_candidate"], "changed_prompt_surfaces": changed_surfaces,
-        "lanes": 7, "games": len(HARD7), "subset": SUBSET, "game_seconds": GAME_S, "suite_minutes": SUITE_MIN, "vm_lifetime_seconds": VM_LIFE,
+        "lanes": 7, "games": GAMES, "subset": SUBSET_, "game_seconds": GAME_S, "suite_minutes": SUITE_MIN, "vm_lifetime_seconds": VM_LIFE,
         "provisioning": "SPOT", "source_arm": "compaction_v5_clean_return_a (19-Sep, 132 min)",
         "runner_object": f"{RUNNER_DIR}/{runner_sha}/runner.py", "runner_sha256": runner_sha,
         "probe_object": f"{BUCKET_CODE}/{probe_sha}/runtime_probe.py", "probe_sha256": probe_sha,
@@ -349,7 +362,7 @@ def main():
         "release_object": f"{BUCKET_CODE}/{release_sha}/release.json", "release_sha256": release_sha,
         "candidate_object": f"{BUCKET_CODE}/{candidate_sha}/candidate.tgz", "candidate_sha256": candidate_sha,
         "candidate_changed": candidate_sha != old_candidate_sha, "source_sha256": source_sha256, "config_id": cfg["config_id"],
-        "run_id_prefix": f"g4run-cv5cr-hard7-{args.arm}-{SUITE_MIN}-w7", "instance_prefix": f"arc3-g4-h7{args.arm[:4]}-{SUITE_MIN}",
+        "run_id_prefix": f"g4run-cv5cr-{SCOPE}-{args.arm}-{SUITE_MIN}" + (f"-effort{EFFORT}" if EFFORT else "") + "-w7", "instance_prefix": f"arc3-g4-{'a25' if ALL25 else 'h7'}{args.arm[:4]}{(EFFORT or '')[:3]}-{SUITE_MIN}",
     }
     (ARM / "ARM.json").write_text(json.dumps(arm_json, indent=2) + NL)
     print(f"{ARM_NAME}: features={sorted(spec['features']) or '-'} ablations={sorted(spec['ablations'])} candidate_changed={arm_json['candidate_changed']} "
