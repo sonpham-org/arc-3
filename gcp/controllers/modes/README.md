@@ -28,7 +28,10 @@ side by side: this directory only *reads* the 19-Sep `compaction_v5_clean_return
 | act (shared solver prompt, no mode text) | `…-567d7e9bad` | **10.06** | 17 | 3,639 | best hard-seven run of the program; g50t 35.7/4 |
 | router (probe 6 turns per level → verify → batch after 3 passed checks) | `…-e249080d39` | 5.90 | 15 | 4,110 | rule fired as designed (per-game P/V/B counts in the transcripts' TURN MODE blocks) |
 | verify (expect() required before every action) | `…-17c592245b` | 4.97 | 11 | 3,611 | |
-| probe / batch | preempted at ~min 60; relaunched `…-f69238c5d1` / `…-ff958134a3` | — | — | — | |
+| probe (relaunch) | `…-f69238c5d1` | 4.83 | 10 | | |
+| batch (relaunch) | `…-ff958134a3` | 6.16 | 12 | | |
+| act, replicate #2 (25-Sep) | `g4run-modes-hard7-act-132-w7-20260925-43772c5cb5` | 6.42 | 14 | 3,686 | ls20 4 levels; the 10.06 does not repeat: act sits with solver (9.13/4.73), LA-CR (9.04/4.55), CR (8.43/4.75) inside the replicate spread |
+| act on all 25, 132 min x2 | `g4run-modes-all25-act-132-w7-20260924-0fd7afe3dd` / `…-4204d91f17` | 17.47 / 14.69 (hard-7 subset 3.55 / 1.89) | 63 / 55 | | above the cv5-CR base (14.56) but below LA-CR (18.0 / 19.2) |
 
 The silent mode wins: the per-turn channel works mechanically (paragraph in, paragraph stripped, gates
 enforced), but the obligations we sent (mandatory expect(), single-step probing, the router schedule)

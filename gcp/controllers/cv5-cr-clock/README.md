@@ -111,3 +111,20 @@ chat-template `reasoning_effort`, default xhigh). Solver on all 25 at 132: `g4ru
 = 12.82 / 52 levels (same as the cv5-CR base; LA-CR 18.6). Solver at 264 per hard game:
 `g4run-cv5cr-hard7-solver-264-w7-20260924-ffdda82394`. cv5-CR with medium thinking on all 25 x2:
 `g4run-cv5cr-all25-baseline-132-effortmedium-w7-20260924-5d764adf5b`, `…-69794c6c30`.
+
+## 25-Sep finals: thinking-effort ladder, baseline #2, solver at 264
+
+| run | mean (25) | hard-7 subset | levels |
+|---|---|---|---|
+| cv5-CR base 132 (19-Sep, reference) | 14.56 | 4.93 | 58 |
+| cv5 medium thinking `…-5d764adf5b` / `…-69794c6c30` | 8.97 / 8.31 | 3.75 / 2.15 | |
+| cv5 high thinking (served template, milder sentence) `…-efforthigh-…-5a2a560f32` / `…-4f3ecf36cb` | 13.70 / 13.52 | 1.48 / 2.38 | 52 / 50 |
+| LA-CR high (serving-variants `effort_high`) `…-43f09d9403` / `…-222698fd16` | 10.85 / 15.14 | 2.74 / 3.16 | |
+| LA-CR xhigh (21-Sep a/b, reference) | 18.01 / 19.24 | 3.53 / 3.85 | |
+
+Every reduction of thinking effort loses: medium costs about 6 points, high 1 to 8. xhigh (the template default)
+stays. Hard seven one wave: cv5-CR baseline control #2 `g4run-cv5cr-hard7-baseline-132-w7-20260924-755fe2ab48` = 6.49
+(tn36 4 levels) beside #1's 6.40. Solver at 264 per game `…-ffdda82394` = **9.86 / 19 levels** (tn36 36.5 with 6 levels,
+g50t 12.95) against 4.96 for the cv5-CR base at 264: the solver prompt benefits from the doubled clock where the base
+does not. The minute-score observer under-reported both this run (2.76 at min 253) and act #2 (1.80 at min 124 vs a
+final 6.42): treat observer curves as lower bounds late in a run.
