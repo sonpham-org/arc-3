@@ -1,22 +1,25 @@
 <!--
 Author: Claude Opus 5.5
 Date: 25-September-2026
-PURPOSE: Where Gemini 3.8 Flash fails, and fails worse with its memory kept (Provider Adapter).
-Part 1 lines Gemini's six runs per game up against our own Flash-Next runs, read from the ARC3
-Railway database. Part 2 is ls20 (Locksmith), all six Gemini runs, traced from the replay frames
-(lives, step meter, resets, per-life move strings) and the model's reasoning.
-SRP/DRY check: Pass. ls20 mechanics are cited to arc-explainer/shared/arc3Games/ls20.ts and to
-2026-09-15-ls20-lives-and-the-filtered-reset.md, not restated. The memory-kept win on g50t is
+PURPOSE: Where Gemini 3.8 Flash fails, including where it fails worse with its memory kept
+(Provider Adapter). Part 1 lines Gemini's six runs per game up against our own Flash-Next runs,
+read from the ARC3 Railway database. Parts 2-4 read every Gemini run on ls20 (Locksmith), bp35
+(Buoyant Pontoons) and lf52 (Leapfrog) from the replay frames and the model's reasoning. Part 5 is
+tr87, briefly. Part 6 is what the failures have in common.
+Updated 25-Sep-2026 (Claude Opus 5.5): added bp35, lf52 and part 6; re-read and corrected part 1.
+SRP/DRY check: Pass. Mechanics are cited to arc-explainer/shared/arc3Games/{ls20,bp35,lf52}.ts and
+to 2026-09-15-ls20-lives-and-the-filtered-reset.md, not restated. The memory-kept win on g50t is
 2026-09-25-gemini38-slippery7-kept-memory.md.
 -->
 
-# Gemini 3.8 Flash: where it loses, and ls20 in detail
+# Gemini 3.8 Flash: where it loses
 
 **Sources.** Gemini: the 150 public replays behind https://arcprize.org/results/google-gemini-3-8-flash
-(recorded 10-Sep-2026). Ours: `arc3_game_scores` joined to `arc3_runs` in the ARC3 Railway
-Postgres, read-only, every run whose model id contains `Flash-Next` (373–399 runs per game,
-14-Aug to 25-Sep-2026). Our runs are time-capped per game and play far fewer actions than
-Gemini's, so this compares outcomes, not equal effort.
+(recorded 10-Sep-2026), 25 games × high/medium/low × plain ("Standard") and memory-kept
+("Provider Adapter"). Ours: `arc3_game_scores` joined to `arc3_runs` in the ARC3 Railway Postgres,
+read-only, every run whose model id contains `Flash-Next` (373–399 runs per game, 14-Aug to
+25-Sep-2026). Our runs are time-capped per game and take fewer actions than Gemini's (median 81 on
+bp35, 137 on lf52, 207 on ls20), so this compares outcomes, not equal effort.
 
 ## 1. Our typical run against Gemini's six
 
@@ -35,72 +38,138 @@ Levels cleared. "Ours" is the median over all our Flash-Next runs of that game.
 | re86 | 4 (6) | 4, 2, 2 | 8, 6, 8 |
 | g50t | 1 (4) | 0, 0, 0 | 6, 2, 1 |
 
-(Games not listed: Gemini's memory-kept runs are ahead of our typical run on all of them.)
+On the fifteen games not listed, Gemini's memory-kept median is ahead of our median.
 
-Our typical run is level with or ahead of Gemini's memory-kept runs on tr87, bp35, lf52 and
-vc33 (one of its three vc33 runs cleared nothing in 35 actions). On ls20 Gemini's memory-kept
-runs clear one more level than our typical run, but that is still only two of seven, and its
-plain high run scores twice its memory-kept high run there. Against its plain runs we are also
-ahead on tu93, ft09, sb26, re86 and g50t.
+Our typical run is level with or ahead of Gemini's memory-kept runs on tr87, bp35, lf52 and vc33
+(one of its three vc33 runs cleared nothing in 35 actions). On ls20 its memory-kept runs clear one
+more level than our median, but that is two of seven, and its plain high run scored about twice
+its memory-kept high run there. Against its plain runs we are also ahead on tu93, ft09, sb26, re86
+and g50t.
 
-## 2. ls20, all six Gemini runs
+## 2. ls20 (Locksmith), all six runs
 
 | run | levels | actions | lives lost | resets on purpose | game overs | actions on level 2 |
 |---|---|---|---|---|---|---|
 | plain high | 2 | 271 | 1 | 4 | 0 | 103 |
 | plain medium | 1 | 207 | 3 | 0 | 0 | — |
-| plain low | 1 | 650 | 12 | 0 | 4 | stuck |
+| plain low | 1 | 650 | 12 | 0 | 4 | not cleared |
 | memory kept high | 2 | 629 | 13 | 0 | 4 | 241 |
 | memory kept medium | 2 | 642 | 17 | 0 | 5 | 252 |
-| memory kept low | 1 | 641 | 20 | 0 | 6 | stuck |
+| memory kept low | 1 | 641 | 20 | 0 | 6 | not cleared |
 
-Lives and the step meter are read from the frames: the three pips at the right of row 61 and
-the meter cells in the same row. No run cleared the third level.
+Lives and the step meter are read from the frames: the three pips at the right of row 61 and the
+meter cells in the same row. No run cleared the third level.
 
-**What goes wrong.**
-
-1. **It spends every life and never resets on purpose.** Five of the six runs ride each life
-   until the meter runs out, lose all three, get a game over, and start the level again. The one
-   run that reset on purpose (plain, high) did it with the meter nearly empty and all three lives
-   left, four times. It lost one life in the whole run and cleared level 2 in under half the
-   actions of the memory-kept high run. That run's per-turn notes carry the meter count every
-   turn ("4 steps remaining"). This is the Boss's own ls20 note from 15-Sep: agents do badly
-   because they don't use reset to keep their lives.
+1. **It spends every life and never resets on purpose.** Five of the six runs ride each life until
+   the meter runs out, lose all three, get a game over, and start the level again. The one run that
+   reset on purpose (plain high) did it four times, with the meter nearly empty and lives in hand.
+   It lost one life in the whole run and cleared level 2 in under half the actions of the
+   memory-kept high run. Its per-turn notes carry the meter count every turn ("4 steps
+   remaining"). This matches the Boss's ls20 note of 15-Sep: agents do badly because they don't use
+   reset to keep their lives.
 2. **It replays the same failed route, life after life.** Memory-kept low walked the same route,
    about 22 moves each time (to the rotation tile, bounce on it, meter empty), roughly fifteen
    times in a row on level 2. Memory-kept medium opened level 3 with the same move string five
-   times. Each time the reasoning after a death says the timer ran out and it must be quicker,
-   and then it does the same thing again.
+   times. After each death the reasoning says the timer ran out and it must be quicker, then it
+   does the same thing again.
 3. **Its plans don't fit the meter.** From level 2 a move costs two meter units, so a life is 21
-   moves. The memory-kept high run works this out on level 3 ("21 actions per charge") and plans
-   a 21-move route, but it spends the lives finding out the route is wrong instead of testing
-   pieces of it. Memory-kept low used a refill ring in only 5 of 27 lives.
-4. **Level 3's launch pad is never understood, and the level map drifts.** Across its lives on
-   level 3 the high run calls the pad a "sweeper", an "elevator drop" to avoid, and a
-   "crusher/piston trap". The door moves in its head from the bottom right, to "Door 1" at the
-   top left, to "8 up and 1 left". By its last life it believes the shape tile flips the key
+   moves. The memory-kept high run works this out on level 3 ("21 actions per charge") and plans a
+   21-move route, then spends its lives finding out the route is wrong instead of testing pieces
+   of it. Memory-kept low used a refill ring in only 5 of its 27 lives.
+4. **Level 3's launch pad is never understood, and the map drifts.** Across its lives on level 3
+   the memory-kept high run calls the pad a "sweeper", an "elevator drop" to avoid, and a
+   "crusher/piston trap". The door moves in its head from the bottom right, to "Door 1" at the top
+   left, to "8 up and 1 left". By its last life it believes the shape tile flips the key
    differently depending on which side you step onto it from.
 5. **It blames its earlier self.** After a death it writes "the previous agent messed up the key
-   rotation" and "a prior assistant got stuck", then re-derives the plan. Kept memory is kept,
-   but the model does not trust it, so it doesn't build up.
+   rotation" and "a prior assistant got stuck", then re-derives the plan.
 
-Its reading of the key tile is not the problem. It describes the rotation tile as alternating
-vertical and horizontal flips; for the level 2 key that gives the same three shapes as three
-quarter turns, and it counts the three presses correctly.
+Its reading of the rotation tile is not the problem. It describes it as alternating vertical and
+horizontal flips; for the level 2 key that gives the same three shapes as three quarter turns, and
+it counts the three presses correctly.
 
-## 3. tr87, briefly
+## 3. bp35 (Buoyant Pontoons), all six runs
 
-tr87 is held out: read here, never trained on. Gemini's memory-kept high run treats the
-dictionary wall like an old ARC transformation task. It numbers "Rules 1–6" and "sub-boxes",
-turns every 5×5 glyph into rows of 1s and 0s, and on level 2 decides "all the rules are rotated
-270 degrees". It builds a catalogue of cycle orders (P0, P1, "P_plus") that it loses track of
-after its context is compacted. Our prompt's two goal-panel lines ("find the goal panel first";
-"make the board match the example") took Toggle Runes from nothing to about three levels a pass
-on 24-Sep.
+| run | levels | actions | deaths (game overs) |
+|---|---|---|---|
+| plain high / medium / low | 0 / 0 / 0 | 105 each | 1 each |
+| memory kept high | 1 | 334 | 13 |
+| memory kept medium | 1 | 257 | 30 |
+| memory kept low | 1 | 277 | 11 |
 
-## 4. What it says
+The plain runs never clear level 1: each ends at 105 actions after one death. The memory-kept
+runs clear level 1 and then die on level 2 over and over; medium died 30 times in about 240
+actions. Level 2 is where the spikes arrive (purple blocks with a yellow-and-white stripe; being
+carried into one kills you).
 
-Kept memory fixes forgetting. It does not fix a bad plan, and on ls20 it helps a bad plan
-survive: the model keeps its route and its confidence, burns lives on it, and reads its own
-earlier attempts as someone else's mistakes. The plain high run did best because it looked at
-the meter every turn and reset before the meter ran out.
+1. **It never identifies the spike as the killer.** Memory-kept high and medium never use the word
+   "spike" in any turn. Memory-kept low first says "spike" after 134 turns. Instead they explain
+   the deaths as physics: the "creature" is pulled up "with fatal velocity" and "crashes into a
+   ceiling", so a death means "slamming into an indestructible ceiling". The frames show a row of spikes just above the open space the ball slides into.
+2. **Because the cause is wrong, the check is wrong.** Just before one death the memory-kept medium
+   run checks the rows above the block, sees open water, and concludes "no ceiling nearby … a
+   completely safe move". The spike row sits just beyond the water it checked. It breaks the block
+   and slides up into the spikes.
+3. **It repeats the fatal click.** About half of memory-kept medium's thirty deaths come within two
+   or three actions of a restart, almost all by clicking the same block straight above the start.
+   One of those turns says it clicks there because the summary of its earlier turns ("the
+   compaction summary/hint") said to.
+4. **It invents a story instead of reading the pieces.** Across one run: a creature with a tongue,
+   then a harpoon, then "chicks in cages" to rescue, then a turtle and a jellyfish, with the goal
+   moving from the chicks to "Screen 2" to an amber object at the top.
+5. **The scrolling view confuses its coordinates.** The medium run notices the view moving early
+   on, but keeps mixing screen rows with map rows; after about twenty deaths it is still working
+   out that "those rows we were seeing weren't the absolute coordinates".
+
+None of the six runs reached level 4, where the pull first has to be flipped.
+
+## 4. lf52 (Leapfrog), all six runs
+
+Every run clears level 1 (peg solitaire) at a perfect score in about ten actions, then spends the
+rest of the game, about 400 actions, on level 2 without clearing it. Level 2 adds a rail cart that
+the arrow keys move; the solve is to hop a peg onto the empty cart and ride it to the other room.
+
+1. **No run ever puts a peg on the cart.** Across all six runs and about 2,400 level-2 turns, the
+   idea that a peg rides the cart comes up in a handful of turns and is dropped each time. The
+   closest are memory-kept medium ("the cart is supposed to manipulate these pegs … the color on
+   the cart itself reflects what it's carrying") and memory-kept low ("clicking the block tried to
+   move it into the cart … the cart should dock"). Neither is acted on.
+2. **Two ways to fail, depending on which half it latches onto.**
+   - *Pegs only.* Memory-kept high makes 312 clicks and about 80 arrow presses on level 2. It calls
+     the board a "circuit-themed peg solitaire" and a "PICO-8 breadboard" (in about three quarters
+     of its level-2 turns), keeps hopping pegs on the top board into dead ends, and keeps clicking
+     the restart button and the "lightbulb". It never works out that the arrows move the cart.
+   - *Cart only.* Plain high finds by turn 46 that the arrows move the cart and then drives it
+     around the track for hundreds of moves as "a cart carrying ore" to "storage slots". Plain
+     medium and low also spend most of their level-2 moves on the arrows, several arrow presses
+     for every click.
+3. **Each half works; it never joins them.** Bubba found the same pattern in Opus 5's lf52 replay
+   today (the cart became "the ball" and the pegs "decoys"): when a level adds a mechanic, the
+   model either ignores it or drops the one that won the previous level, instead of asking how
+   the two combine.
+
+## 5. tr87 (Toggle Runes), briefly
+
+tr87 is held out: read here, never trained on. Gemini's memory-kept high run treats the dictionary
+wall like an old ARC transformation task. It numbers "Rules 1–6" and "sub-boxes", turns every 5×5
+glyph into rows of 1s and 0s, and on level 2 decides "all the rules are rotated 270 degrees". It
+builds a catalogue of cycle orders (P0, P1, "P_plus") that it loses track of after its context is
+compacted. Our prompt's two goal-panel lines ("find the goal panel first"; "make the board match
+the example") took tr87 from nothing to about three levels a pass in the 24-Sep practice runs.
+
+## 6. What the failures have in common
+
+- **A wrong cause survives.** On bp35 speed kills, not spikes. On lf52 the cart is cargo, not a
+  ferry. On ls20 it blames the timer but never shortens the route or resets to save a life. Once the explanation is wrong, more
+  thinking and more memory make the run more consistent, not more correct.
+- **Failure teaches nothing.** On ls20 and bp35 it dies, writes a post-mortem, and does the same
+  thing next life; on lf52 it circles level 2 for four hundred actions. Kept memory keeps the plan,
+  and the plan was the problem.
+- **It narrates, it doesn't test.** On these three games it rarely spends one cheap action to check
+  a single idea (break a different block after dying under the striped row, put one peg on the
+  cart, reset with lives in hand). It plans long sequences and finds out at the end that they fail.
+- **It distrusts its own notes.** The memory-kept runs compact their history about every seven
+  turns overall, and about every three on bp35. The model then reads its own earlier conclusions as
+  "the previous agent" and either overrules them or follows them blindly (bp35's fatal click).
+- **It reads the board as numbers.** More than half its memory-kept turns reason in row and column
+  ranges. On bp35, the one scrolling game it got far enough into, that is where it loses its place.
