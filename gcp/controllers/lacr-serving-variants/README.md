@@ -30,3 +30,18 @@ for the hybrid GDN/attention model (plain serving: 89.5% hit rate), so every tur
 ~6k tok/s. The pool was also smaller than expected: 8.58 GiB = 304k tokens = 4.95x of 61,440 (7 lanes need 430k).
 Two independent blockers; MTP on Flash-Next is closed on this build. It would need a vLLM with prefix caching under
 spec decode for hybrid models, and even then only ~4 lanes at 60k.
+
+## 25-Sep, scored MTP runs with the capacity gate relaxed (`gcp/controllers/lacr-mtp64k/derive_c60k_mtp.py`, `ARC3_GATE_RELAX=1`)
+
+The cached-prefix check was dropped from the gate (zero-preemptions only) to get scored numbers despite the two blockers above.
+Both runs used the k3/b6144 rung, 132 minutes, all 25 games, fp8 KV:
+
+| arm | lanes x context | game clock | pool | mean | levels | actions | vs 7-lane vLLM standard |
+|---|---|---|---|---|---|---|---|
+| `lacr_mtp3_c32k_a` (`g4run-lacr-mtp3-c32k-a132-w7-20260925-ae0916e207`) | 7 x 32,768 | 1131 s | 244k tokens | **5.53** | - | - | -12.5 |
+| `lacr_mtp3_c52k_w5_a` (`g4run-lacr-mtp3-c52k-a132-w5-20260925-80d2bc45e1`) | 5 x 53,248 | 1584 s | 284k tokens | **13.96** | 55 | 3,197 | -4 |
+
+Aggregate decode ran 305-345 tok/s with 5 lanes (vs ~310 for 7 plain lanes), so MTP does buy per-lane speed, but with
+the prefix cache off every turn re-prefills and the smaller context costs levels. Neither beats the plain 7 x 103k profile
+(~18). MTP on this vLLM build stays closed; the SGLang line (`sglang-flashnext-20260925/`, hierarchical host cache) is
+where the throughput work moved.
