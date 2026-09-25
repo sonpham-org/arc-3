@@ -100,10 +100,13 @@ MTP=( --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagl
       --speculative-accept-threshold-single 1.0 --speculative-accept-threshold-acc 1.0 )
 HIC=( --enable-hierarchical-cache --hicache-size 64 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
 slots() { python /out/bench_slots.py --base-url http://127.0.0.1:8001/v1 --model pennyroyal --games $2 --turns 8 --start-tokens $3 --grow 2000 --gen 1500 --sandbox 3 --out /out/slots_$1.json --label "$1" 2>&1 | tee /out/slots_$1.log; }
-# 100k sweep, 5 slots: resident reference, then 4 parked extras (hierarchical cache, MTP lossless, mem 0.98)
-if serve s5_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 5 --cuda-graph-max-bs 5 --max-mamba-cache-size 48; then
-  slots s5_g5_100k 5 100000; slots s5_g9_100k 9 100000; slots s5_g9_80k 9 80000; slots s5_g7_100k 7 100000
-else echo "s5: serve failed"; fi
+# Hierarchical-cache overhead A/B at 7 x 39k: VM #1 measured 627 resident without hicache; hicache servers today read 460-520 at 39-60k
+if serve s7_nohic "${MTP[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
+  slots ab_nohic_g7_39k_warm 7 39000; slots ab_nohic_g7_39k 7 39000; slots ab_nohic_g7_60k 7 60000; slots ab_nohic_g11_39k 11 39000
+else echo "nohic: serve failed"; fi
+if serve s7_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
+  slots ab_hic_g7_39k_warm 7 39000; slots ab_hic_g7_39k 7 39000; slots ab_hic_g7_60k 7 60000; slots ab_hic_g11_39k 11 39000
+else echo "hic: serve failed"; fi
 pkill -f "sglang.launch_server" 2>/dev/null
 echo "=== all configs done $(date -u +%T)"
 INSIDE

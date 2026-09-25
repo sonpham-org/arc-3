@@ -36,6 +36,8 @@ docker pull -q nvidia/cuda:13.0.3-devel-ubuntu24.04
 cat > /opt/arc3/sgl/inside.sh <<'INSIDE'
 #!/bin/bash
 set -uo pipefail
+# GPU_CHECK: docker GPU passthrough is flaky on fresh Spot boots (NVML "Unknown Error", no CUDA device in the container)
+nvidia-smi -L >/dev/null 2>&1 || { echo "NO GPU IN CONTAINER"; nvidia-smi 2>&1 | head -n 3; exit 42; }
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq && apt-get install -y -qq python3.12 python3.12-venv python3.12-dev git build-essential gcc-13 g++-13 curl ninja-build cmake pkg-config >/dev/null
 curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
@@ -70,8 +72,8 @@ export SGLANG_SM120_LOWM_FP8_WEIGHT=1 SGLANG_SM120_LM_HEAD_FP8=1
 serve() {  # $1 = label, rest = extra args; retries once at mem-fraction 0.95 if the server dies (0.98 OOMed at graph capture)
   local label="$1"; shift
   serve_once "$label" "$@" && return 0
-  [ "${MEMFRAC:-0.965}" = "0.95" ] && return 1
-  echo "serve[$label] failed at mem-fraction ${MEMFRAC:-0.965}; retrying at 0.95"
+  [ "${MEMFRAC:-0.95}" = "0.95" ] && return 1
+  echo "serve[$label] failed at mem-fraction ${MEMFRAC:-0.95}; retrying at 0.95"
   MEMFRAC=0.95 serve_once "${label}_m95" "$@"
 }
 serve_once() {
@@ -81,7 +83,7 @@ serve_once() {
   echo "gpu memory before serve[$label]: ${used:-?} MiB"
   local args=( -m sglang.launch_server --model-path /model --load-format safetensors --served-model-name pennyroyal
     --host 0.0.0.0 --port 8001 --tp 1 --dtype bfloat16 --quantization modelopt_fp4
-    --mem-fraction-static ${MEMFRAC:-0.965} --context-length 131072 --kv-cache-dtype ${KVD:-fp8_e4m3} --page-size 64 --max-running-requests 8 --chunked-prefill-size 4096
+    --mem-fraction-static ${MEMFRAC:-0.95} --context-length 131072 --kv-cache-dtype ${KVD:-fp8_e4m3} --page-size 64 --max-running-requests 8 --chunked-prefill-size 4096
     --cuda-graph-max-bs 8 --mamba-ssm-dtype bfloat16 --max-mamba-cache-size 48 --mamba-radix-cache-strategy extra_buffer --mamba-track-interval 64
     --linear-attn-decode-backend $LINEAR --linear-attn-prefill-backend $LINEAR
     --ple-offload-embedding --trust-remote-code --chat-template /model/chat_template.jinja
@@ -106,9 +108,14 @@ pkill -f "sglang.launch_server" 2>/dev/null
 echo "=== all configs done $(date -u +%T)"
 INSIDE
 chmod +x /opt/arc3/sgl/inside.sh
-docker run --rm --gpus all --ipc=host --network=host --ulimit memlock=-1 \
-  -v /opt/arc3/sgl:/sgl -v "$MODEL_DIR:/model:ro" -v $OUT:/out \
-  nvidia/cuda:13.0.3-devel-ubuntu24.04 bash /sgl/inside.sh
+for attempt in 1 2 3 4; do
+  nvidia-smi -L || { echo "host nvidia-smi failed (attempt $attempt)"; sleep 30; sudo systemctl restart docker; sleep 15; }
+  docker run --rm --gpus all --ipc=host --network=host --ulimit memlock=-1 \
+    -v /opt/arc3/sgl:/sgl -v "$MODEL_DIR:/model:ro" -v $OUT:/out \
+    nvidia/cuda:13.0.3-devel-ubuntu24.04 bash /sgl/inside.sh; rc=$?
+  [ "$rc" -ne 42 ] && break
+  echo "container saw no GPU (attempt $attempt); restarting docker and retrying"; sudo systemctl restart docker; sleep 20
+done
 echo "=== container exited $(date -u +%FT%TZ)"
 trap - ERR
 finish DONE

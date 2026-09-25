@@ -98,12 +98,17 @@ bench() { python /out/bench_shape.py --base-url http://127.0.0.1:8001/v1 --model
 MTP=( --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4
       --speculative-draft-model-quantization unquant --speculative-token-map /sgl/hot_tokens_64k.pt "${GDN_MODE[@]}"
       --speculative-accept-threshold-single 1.0 --speculative-accept-threshold-acc 1.0 )
-HIC=( --enable-hierarchical-cache --hicache-size 64 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
+HIC=( --enable-hierarchical-cache --hicache-size 96 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
 slots() { python /out/bench_slots.py --base-url http://127.0.0.1:8001/v1 --model pennyroyal --games $2 --turns 8 --start-tokens $3 --grow 2000 --gen 1500 --sandbox 3 --out /out/slots_$1.json --label "$1" 2>&1 | tee /out/slots_$1.log; }
-# 100k sweep, 5 slots: resident reference, then 4 parked extras (hierarchical cache, MTP lossless, mem 0.98)
+# 22 games in flight at 100k over 5 and then 7 slots (Son 25-Sep: "Consider 5, 22 or 7, 22 100k too"); host pool 96 GB (128 + its 40 GB mamba component exceeded the 176 GB host)
+free -g | head -2
 if serve s5_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 5 --cuda-graph-max-bs 5 --max-mamba-cache-size 48; then
-  slots s5_g5_100k 5 100000; slots s5_g9_100k 9 100000; slots s5_g9_80k 9 80000; slots s5_g7_100k 7 100000
+  slots s5_g22_100k 22 100000; slots s5_g22_80k 22 80000
 else echo "s5: serve failed"; fi
+if serve s7_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
+  slots s7_g22_100k 22 100000; slots s7_g22_80k 22 80000
+else echo "s7: serve failed"; fi
+
 pkill -f "sglang.launch_server" 2>/dev/null
 echo "=== all configs done $(date -u +%T)"
 INSIDE

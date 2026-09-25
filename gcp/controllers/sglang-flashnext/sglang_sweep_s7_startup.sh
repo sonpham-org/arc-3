@@ -100,10 +100,15 @@ MTP=( --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagl
       --speculative-accept-threshold-single 1.0 --speculative-accept-threshold-acc 1.0 )
 HIC=( --enable-hierarchical-cache --hicache-size 64 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
 slots() { python /out/bench_slots.py --base-url http://127.0.0.1:8001/v1 --model pennyroyal --games $2 --turns 8 --start-tokens $3 --grow 2000 --gen 1500 --sandbox 3 --out /out/slots_$1.json --label "$1" 2>&1 | tee /out/slots_$1.log; }
-# 100k sweep, 5 slots: resident reference, then 4 parked extras (hierarchical cache, MTP lossless, mem 0.98)
-if serve s5_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 5 --cuda-graph-max-bs 5 --max-mamba-cache-size 48; then
-  slots s5_g5_100k 5 100000; slots s5_g9_100k 9 100000; slots s5_g9_80k 9 80000; slots s5_g7_100k 7 100000
-else echo "s5: serve failed"; fi
+# Parking sweep #3: slots 5/6/7 x start context 60k/80k/100k, games = slots+4 (hierarchical cache, MTP lossless, mem 0.98)
+if serve s7_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
+  slots s7_g11_60k 11 60000; slots s7_g11_80k 11 80000; slots s7_g11_100k 11 100000; slots s7_g7_60k 7 60000; slots s7_g7_80k 7 80000
+else echo "s7: serve failed"; fi
+# fp8 weight copies off (0005/0006 env switches) at the 7-slot 60k point
+export SGLANG_SM120_LOWM_FP8_WEIGHT=0 SGLANG_SM120_LM_HEAD_FP8=0
+if serve s7_hic_nofp8 "${MTP[@]}" "${HIC[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
+  slots s7nofp8_g11_60k 11 60000
+else echo "s7 nofp8: serve failed"; fi
 pkill -f "sglang.launch_server" 2>/dev/null
 echo "=== all configs done $(date -u +%T)"
 INSIDE
