@@ -54,7 +54,7 @@
     for(const [group,keys] of Object.entries(settingsGroups)) {
       const details=element('details');details.open=true;details.append(element('summary',group));const fields=element('div',undefined,'group-body');details.append(fields);
       for(const key of keys) {
-        const spec=preset.schema.properties[key],row=element('div',undefined,'field'),label=element('label',labels[key]||key.replaceAll('_',' '));label.htmlFor='setting-'+key;
+        const spec=preset.schema.properties[key],row=element('div',undefined,'field field-inline'),label=element('label',labels[key]||key.replaceAll('_',' '));label.htmlFor='setting-'+key;
         let input;
         if(spec.enum){input=element('select');spec.enum.forEach(value=>input.add(new Option(value.replaceAll('_',' '),value)));}
         else{input=element('input');input.type=spec.type==='boolean'?'checkbox':'number';input.step=spec.type==='number'?'any':'1';if(spec.minimum!==undefined)input.min=spec.minimum;if(spec.maximum!==undefined)input.max=spec.maximum;}
@@ -71,7 +71,7 @@
     }
     $('systemPrompt').value=settings.system_prompt;$('userPrompt').value=settings.user_prompt;$('compactionPrompt').value=settings.compaction_prompt;
     for(const key of ['compaction','context_window'])$('setting-'+key).disabled=!!state.tree;
-    const base=document.querySelector('.config-base');base.querySelector('strong').textContent=state.tree?'Committed tree · CR-cv5 base':'Root · CR-cv5 defaults';base.querySelector('small').textContent=state.tree?'Compaction and context locked; branch settings editable':'Editable until the first action commits this tree';base.querySelector('.chip').textContent=state.tree?'core locked':'uncommitted';
+    const base=document.querySelector('.config-base');base.querySelector('strong').textContent=state.tree?'Committed tree · Compaction base':'Root · Compaction defaults';base.querySelector('small').textContent=state.tree?'Compaction and context locked; branch settings editable':'Editable until the first action commits this tree';base.querySelector('.chip').textContent=state.tree?'core locked':'uncommitted';
     $('systemCount').textContent=settings.system_prompt.length+' chars';$('userCount').textContent=settings.user_prompt.length+' chars';
   }
   function settings() {
@@ -93,7 +93,7 @@
     try {
       const [frame,trees]=await Promise.all([api('/games/'+game.id+'/preview'),api('/trees?game_id='+encodeURIComponent(game.id))]);
       if(generation!==state.generation)return;
-      drawGrid($('gameCanvas'),frame);$('treeSelect').replaceChildren(new Option('New tree · CR-cv5 root',''));
+      drawGrid($('gameCanvas'),frame);$('treeSelect').replaceChildren(new Option('New tree · Compaction root',''));
       trees.items.forEach(tree=>$('treeSelect').add(new Option(new Date(tree.createdAt).toLocaleString()+' · '+tree.id.slice(0,6),tree.id)));
       $('treeSelect').disabled=false;$('gameTreeState').textContent=trees.items.length+' saved trees';
       renderActions(frame);$('nodeTitle').textContent='Blank root · '+game.title;$('nodeStatus').textContent='Preview · no saved actions';
