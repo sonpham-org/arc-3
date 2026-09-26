@@ -27,6 +27,7 @@ COPY railway/Caddyfile /etc/caddy/Caddyfile
 COPY railway/entrypoint.sh /entrypoint.sh
 COPY railway/catalog_server.py /catalog_server.py
 COPY railway/debugger_relay.py /debugger_relay.py
+COPY railway/harness_relay.py /harness_relay.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/games_schema.sql /games_schema.sql
 COPY railway/games_store.py /games_store.py

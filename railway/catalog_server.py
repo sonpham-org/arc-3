@@ -29,6 +29,7 @@ from publication_store import (
 )
 from model_backfill import backfill_catalog_models
 from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
+from harness_relay import relay as relay_harness
 from games_store import GamesApi
 
 
@@ -335,6 +336,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
         self.send_relay_response(response.status, response.content_type, response.body)
 
     def do_GET(self) -> None:  # noqa: N802
+        if relay_harness(self, "GET"):
+            return
         if self.handle_games("GET"):
             return
         path = urlparse(self.path).path
@@ -544,6 +547,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 shutil.rmtree(stage_root, ignore_errors=True)
 
     def do_POST(self) -> None:  # noqa: N802
+        if relay_harness(self, "POST"):
+            return
         if self.handle_games("POST"):
             return
         path = urlparse(self.path).path
