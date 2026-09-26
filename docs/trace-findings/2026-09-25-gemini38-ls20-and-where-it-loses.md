@@ -5,7 +5,7 @@ PURPOSE: Where Gemini 3.8 Flash fails, including where it fails worse with its m
 (Provider Adapter). Part 1 lines Gemini's six runs per game up against our own Flash-Next runs,
 read from the ARC3 Railway database. Parts 2-4 read every Gemini run on ls20 (Locksmith), bp35
 (Buoyant Pontoons) and lf52 (Leapfrog) from the replay frames and the model's reasoning. Part 5 is
-tr87, briefly. Part 6 is what the failures have in common.
+tr87 and vc33. Part 6 is what the failures have in common.
 Updated 25-Sep-2026 (Claude Opus 5.5): added bp35, lf52 and part 6; re-read and corrected part 1.
 SRP/DRY check: Pass. Mechanics are cited to arc-explainer/shared/arc3Games/{ls20,bp35,lf52}.ts and
 to 2026-09-15-ls20-lives-and-the-filtered-reset.md, not restated. The memory-kept win on g50t is
@@ -148,14 +148,43 @@ the arrow keys move; the solve is to hop a peg onto the empty cart and ride it t
    model either ignores it or drops the one that won the previous level, instead of asking how
    the two combine.
 
-## 5. tr87 (Toggle Runes), briefly
+## 5. tr87 (Toggle Runes), all six runs
 
-tr87 is held out: read here, never trained on. Gemini's memory-kept high run treats the dictionary
-wall like an old ARC transformation task. It numbers "Rules 1–6" and "sub-boxes", turns every 5×5
-glyph into rows of 1s and 0s, and on level 2 decides "all the rules are rotated 270 degrees". It
-builds a catalogue of cycle orders (P0, P1, "P_plus") that it loses track of after its context is
-compacted. Our prompt's two goal-panel lines ("find the goal panel first"; "make the board match
-the example") took tr87 from nothing to about three levels a pass in the 24-Sep practice runs.
+tr87 is held out: read here, never trained on. The plain runs never clear level 1 (each stops at
+270 actions, mostly cycling one glyph with Up). All three memory-kept runs clear level 1 and then
+spend about 300 actions on level 2 without clearing it.
+
+1. **It chases the tilt.** Every glyph gets a random quarter turn when the level loads, and the
+   tilt means nothing. Gemini treats it as the rule: rotation, flips or tilt come up in 30 to 43
+   percent of memory-kept turns, and the high run decides on level 2 that "all the rules are
+   rotated 270 degrees". It treats the dictionary wall like an old ARC transformation task,
+   numbering "Rules 1–6" and "sub-boxes" and turning each glyph into rows of 1s and 0s.
+2. **It never sees level 2's one new idea.** On level 2 a dictionary entry can turn one glyph into
+   two or three, so the answer row is longer than the phrase. No run says so in more than four
+   turns; they keep matching glyph for glyph.
+3. **It loses the thread.** The high run builds a catalogue of cycle orders (P0, P1, "P_plus") that
+   it loses after compaction, calls the board a "Sudoku puzzle" late on, and ends by reading the
+   move-budget strip as if it were a clue.
+
+Our prompt's two goal-panel lines ("find the goal panel first"; "make the board match the
+example") took tr87 from nothing to about three levels a pass in the 24-Sep practice runs.
+
+## 5b. vc33 (Volume Control), all six runs
+
+Five of the six runs clear levels 1–3 fast (six to thirty clicks a level). Level 4 adds gates in the
+walls: a gate turns orange only when the liquid on both sides is exactly level with it, and
+clicking it sends the riders across. Only the memory-kept high run got past it, and that run went
+on to win all seven levels. The other four spent about 300 clicks on level 4 and never cleared it.
+
+1. **It never finds the gate's condition.** The stuck runs talk about gates, locks or valves in 14
+   to 42 percent of level-4 turns. The plain high run even calls it a canal lock, which is close.
+   But none of them sets both sides level on purpose; they pump one pair back and forth
+   ("I will click Button 5 … the next logical step") and reset about a dozen times.
+2. **The story drifts off the screen.** The memory-kept low run starts level 4 with "beams and
+   sections" and ends talking about "a data anomaly" in rows of zeros. The winning run passes
+   through its own drift too ("optimize some kind of broadcast matrix") but gets there.
+3. **One run never starts.** The memory-kept medium run spent its 35 actions on level 1 unsure
+   whether a click takes column-then-row or row-then-column, and the run stopped there with nothing.
 
 ## 6. What the failures have in common
 
