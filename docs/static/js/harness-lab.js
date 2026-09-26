@@ -177,21 +177,48 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     $('frameStatus').textContent=frame?frame.state+' · '+frame.levelsCompleted+'/'+frame.winLevels+' levels':'Choose a game';
   }
   let hitNodes=[];
+  function treePositions(nodes) {
+    const byId=new Map(nodes.map(n=>[n.id,n])),children=new Map(),positions=new Map();
+    const order=(a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||a.id.localeCompare(b.id);
+    for(const node of nodes){const list=children.get(node.parentId)||[];list.push(node);children.set(node.parentId,list);}
+    for(const list of children.values())list.sort(order);
+    let lastLane=-1;
+    const roots=nodes.filter(n=>!byId.has(n.parentId)).sort(order),stack=roots.slice().reverse().map(node=>({node,lane:null}));
+    while(stack.length){const {node,lane}=stack.pop();if(positions.has(node.id))continue;
+      const actualLane=lane??++lastLane,isGate=node.id!=='root'&&node.kind==='turn-boundary';
+      positions.set(node.id,{x:42+node.legalActionCount*66,y:62+actualLane*84+(isGate?28:0)});
+      const descendants=children.get(node.id)||[];
+      for(let i=descendants.length-1;i>=0;i--)stack.push({node:descendants[i],lane:i===0?actualLane:null});
+    }
+    return {positions,lanes:lastLane+1};
+  }
   function drawTree() {
-    const viewport=$('treeViewport'),canvas=$('treeCanvas'),scale=34,rows=new Map();let row=0;
-    const nodes=[...state.nodes.values()].sort((a,b)=>a.legalActionCount-b.legalActionCount);
-    const seenParents=new Set();for(const node of nodes){rows.set(node.id,!seenParents.has(node.parentId)?(rows.get(node.parentId)??row++):row++);seenParents.add(node.parentId);}
-    const width=Math.max(viewport.clientWidth,100+nodes.reduce((maximum,n)=>Math.max(maximum,n.legalActionCount),0)*scale),height=Math.max(240,row*44+80);
+    const viewport=$('treeViewport'),canvas=$('treeCanvas'),nodes=[...state.nodes.values()];
+    const {positions,lanes}=treePositions(nodes);
+    const width=Math.max(viewport.clientWidth,100+nodes.reduce((m,n)=>Math.max(m,n.legalActionCount),0)*66),height=Math.max(240,lanes*84+80);
     $('treeExtent').style.width=width+'px';$('treeExtent').style.height=height+'px';
     const dpr=devicePixelRatio||1;canvas.width=viewport.clientWidth*dpr;canvas.height=viewport.clientHeight*dpr;canvas.style.width=viewport.clientWidth+'px';canvas.style.height=viewport.clientHeight+'px';
     canvas.style.transform=`translate(${viewport.scrollLeft}px,${viewport.scrollTop}px)`;
-    const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.translate(-viewport.scrollLeft,-viewport.scrollTop);ctx.font='11px system-ui';hitNodes=[];
-    ctx.strokeStyle='#e5e7eb';ctx.fillStyle='#6b7280';for(let x=Math.floor(viewport.scrollLeft/scale)*scale;x<viewport.scrollLeft+viewport.clientWidth;x+=scale){ctx.beginPath();ctx.moveTo(x+36,0);ctx.lineTo(x+36,height);ctx.stroke();ctx.fillText(String(Math.round(x/scale)),x+32,20+viewport.scrollTop);}
-    if(!nodes.length){ctx.fillStyle='#64748b';ctx.fillText('Blank root · choose your settings, then play',28,90);}
-    for(const node of nodes){const x=36+node.legalActionCount*scale,y=60+rows.get(node.id)*44,p=state.nodes.get(node.parentId);
-      if(p){ctx.strokeStyle='#aab8d0';ctx.beginPath();ctx.moveTo(36+p.legalActionCount*scale,60+rows.get(p.id)*44);ctx.lineTo(x,y);ctx.stroke();}
-      if(x<viewport.scrollLeft-15||x>viewport.scrollLeft+viewport.clientWidth+15||y<viewport.scrollTop-15||y>viewport.scrollTop+viewport.clientHeight+15)continue;
-      const ny=y+(node.kind==='turn-boundary'?15:0);ctx.fillStyle=node.id===state.node?.id?'#2563eb':node.kind==='action'?'#dbeafe':'#fff2d8';ctx.strokeStyle='#ad762f';ctx.beginPath();if(node.kind==='action'){ctx.arc(x,ny,6,0,Math.PI*2);}else{ctx.moveTo(x,ny-7);ctx.lineTo(x+7,ny);ctx.lineTo(x,ny+7);ctx.lineTo(x-7,ny);ctx.closePath();}ctx.fill();ctx.stroke();hitNodes.push({x,y:ny,id:node.id});
+    const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.translate(-viewport.scrollLeft,-viewport.scrollTop);ctx.font='10px system-ui';hitNodes=[];
+    ctx.strokeStyle='#e5e7eb';ctx.fillStyle='#6b7280';
+    for(let action=Math.max(0,Math.floor((viewport.scrollLeft-42)/66));42+action*66<viewport.scrollLeft+viewport.clientWidth;action++){
+      const x=42+action*66;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();ctx.fillText(String(action),x-3,20+viewport.scrollTop);
+    }
+    if(!nodes.length){ctx.fillStyle='#64748b';ctx.fillText('Root · 0 actions · choose your settings, then play',28,90);}
+    // Edges and hit targets use exactly the same coordinates, including turn gates.
+    ctx.strokeStyle='#8b9db8';ctx.lineWidth=1.5;
+    for(const node of nodes){const point=positions.get(node.id),parent=positions.get(node.parentId);if(!parent)continue;
+      if(Math.max(point.x,parent.x)<viewport.scrollLeft||Math.min(point.x,parent.x)>viewport.scrollLeft+viewport.clientWidth||Math.max(point.y,parent.y)<viewport.scrollTop||Math.min(point.y,parent.y)>viewport.scrollTop+viewport.clientHeight)continue;
+      ctx.beginPath();ctx.moveTo(parent.x,parent.y);
+      if(parent.x===point.x)ctx.lineTo(point.x,point.y);else{const mid=(parent.x+point.x)/2;ctx.bezierCurveTo(mid,parent.y,mid,point.y,point.x,point.y);}ctx.stroke();
+    }
+    for(const node of nodes){const {x,y}=positions.get(node.id);if(x<viewport.scrollLeft-30||x>viewport.scrollLeft+viewport.clientWidth+30||y<viewport.scrollTop-30||y>viewport.scrollTop+viewport.clientHeight+30)continue;
+      const selected=node.id===state.node?.id,gate=node.id!=='root'&&node.kind==='turn-boundary';
+      ctx.fillStyle=selected?'#2563eb':gate?'#fff2d8':'#e7f0ff';ctx.strokeStyle=gate?'#ad762f':'#6389c3';ctx.beginPath();
+      if(gate){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.arc(x,y,11,0,Math.PI*2);
+      ctx.fill();ctx.stroke();ctx.fillStyle=selected?'#fff':'#24456b';ctx.textAlign='center';
+      if(!gate)ctx.fillText(String(node.legalActionCount),x,y+3);
+      ctx.fillStyle='#526277';ctx.fillText(node.id==='root'?'Root':gate?'Turn':'Action',x,y+(gate?20:-16));ctx.textAlign='left';hitNodes.push({x,y,id:node.id});
     }
     $('runCount').textContent=nodes.length+' loaded nodes';
   }
