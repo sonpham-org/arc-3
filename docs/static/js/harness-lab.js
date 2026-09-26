@@ -1,14 +1,43 @@
+import { actionLabel, projectTree } from "./harness-tree.js?v=20260926-reasoning1";
 import { renderDecision } from "./decision.js?v=20260926-harness";
 (() => {
   const $ = id => document.getElementById(id);
   const state = {game:null, tree:null, node:null, nodes:new Map(), preset:null, busy:false, generation:0, run:null, runSequence:0, runner:null};
   let nodeRequest=0, latestRunNode=null, liveTranscript="", liveTruncated=false;
   const traceCache=new Map();
+  let selectedReasoning=null;
+  async function hydrateNodes(items,tree,generation){
+    for(let i=0;i<items.length;i+=4){
+      const records=await Promise.all(items.slice(i,i+4).map(n=>traceCache.get(n.id)||api('/trees/'+tree+'/nodes/'+n.id)));
+      if(tree!==state.tree||generation!==state.generation)return false;
+      for(const n of records){traceCache.set(n.id,n);if(traceCache.size>256)traceCache.delete(traceCache.keys().next().value);state.nodes.set(n.id,{...state.nodes.get(n.id),...n});}
+    }
+    return true;
+  }
+  async function inspectReasoning(reason){
+    $('followTrace').checked=false;showRail();
+    await selectNode(reason.resumeId);
+    const request=nodeRequest,tree=state.tree,generation=state.generation;
+    selectedReasoning=reason.id;drawTree();renderTraceNavigation();
+    $('nodeTitle').textContent='Reasoning turn';$('nodeKind').textContent='Reasoning turn';
+    $('nodeNote').textContent='Branching here starts alternative reasoning from this turn’s input state. Edit prompts/settings, then start a new run.';
+    $('traceReview').replaceChildren(element('p','Loading this reasoning turn…','empty'));
+    const page=await api('/runs/'+reason.runId+'/nodes?after='+Math.max(0,reason.sequence-1));
+    if(request!==nodeRequest||tree!==state.tree)return;
+    const end=page.items.findIndex(n=>n.kind==='turn-boundary');
+    const turn=page.items.slice(0,end<0?undefined:end+1);
+    if(!await hydrateNodes(turn,tree,generation)||request!==nodeRequest)return;
+    const input=state.node,raw=turn.map(n=>traceCache.get(n.id)?.transcript||'').join('');
+    renderTrace({...input,id:reason.id,displayTitle:'Reasoning turn',transcript:raw.slice(-300000)});
+    $('traceScope').textContent='Reasoning from action state '+input.legalActionCount+' · '+(end<0?'saved portion; turn may continue':'through the completed turn')+(raw.length>300000?' · latest 300,000 characters':'');
+    drawTree();
+  }
+
   function showRail(trace=true){$('tracePanel').hidden=!trace;$('promptsPanel').hidden=trace;$('traceTab').setAttribute('aria-pressed',String(trace));$('promptRailTab').setAttribute('aria-pressed',String(!trace));}
-  function resetTrace(){++nodeRequest;latestRunNode=null;liveTranscript='';liveTruncated=false;traceCache.clear();$('traceReview').replaceChildren(element('p','Select a saved node or start a run.','empty'));$('traceScope').textContent='Trace updates when actions and turn boundaries are saved.';$('traceRunStatus').textContent='No active run';renderTraceNavigation();}
+  function resetTrace(){++nodeRequest;selectedReasoning=null;latestRunNode=null;liveTranscript='';liveTruncated=false;traceCache.clear();$('traceReview').replaceChildren(element('p','Select a saved node or start a run.','empty'));$('traceScope').textContent='Trace updates when actions and turn boundaries are saved.';$('traceRunStatus').textContent='No active run';renderTraceNavigation();}
   function renderTraceNavigation(){
-    const nodes=[...state.nodes.values()];$('traceNodeSelect').replaceChildren(...nodes.map(n=>new Option((n.id==='root'?'Root':'Action '+n.legalActionCount+' · '+(n.kind==='turn-boundary'?'turn boundary':'action'))+(n.createdAt?' · '+new Date(n.createdAt).toLocaleTimeString():''),n.id)));
-    $('traceNodeSelect').value=state.node?.id||'';const i=nodes.findIndex(n=>n.id===state.node?.id);$('tracePrevious').disabled=i<=0;$('traceNext').disabled=i<0||i===nodes.length-1;
+    const nodes=projectTree([...state.nodes.values()]);$('traceNodeSelect').replaceChildren(...nodes.map(n=>new Option((n.id==='root'?'Root':n.kind==='reasoning'?'Reasoning turn from action '+n.legalActionCount:actionLabel(n)+' · action '+n.legalActionCount)+(n.createdAt?' · '+new Date(n.createdAt).toLocaleTimeString():''),n.id)));
+    $('traceNodeSelect').value=selectedReasoning||state.node?.id||'';const i=nodes.findIndex(n=>n.id===(selectedReasoning||state.node?.id));$('tracePrevious').disabled=i<=0;$('traceNext').disabled=i<0||i===nodes.length-1;
   }
   function renderTrace(node){
     const live=$('followTrace').checked&&node.id===latestRunNode;
@@ -20,10 +49,10 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     if(!raw){$('traceReview').replaceChildren(element('p',node.id==='root'?'Root has no model trace yet.':'No new transcript text was saved at this node. Use the arrows to inspect neighboring saved nodes.','empty'));return;}
     const panel=$('traceReview'),atEnd=panel.scrollHeight-panel.scrollTop-panel.clientHeight<60,scroll=panel.scrollTop;
     const expanded=[...panel.querySelectorAll('details')].map(d=>d.open);
-    renderDecision(panel,{metaText:node.levelsCompleted+' levels completed',title:'Action '+node.legalActionCount+' · '+(node.kind==='turn-boundary'?'turn boundary':'saved action'),score:node.levelsCompleted,level:node.levelsCompleted+1,toolCallCount:sections.filter(s=>s.label.startsWith('TOOL CALL')).length,localContext:{sections}},{showFrames:false});
+    renderDecision(panel,{metaText:node.levelsCompleted+' levels completed',title:node.displayTitle||('Action '+node.legalActionCount+' · '+(node.kind==='turn-boundary'?'completed turn checkpoint':actionLabel(node))),score:node.levelsCompleted,level:node.levelsCompleted+1,toolCallCount:sections.filter(s=>s.label.startsWith('TOOL CALL')).length,localContext:{sections}},{showFrames:false});
     if(live){panel.querySelectorAll('details').forEach((d,i)=>{if(i<expanded.length)d.open=expanded[i];});panel.scrollTop=atEnd?panel.scrollHeight:scroll;}else panel.scrollTop=0;
   }
-  async function inspectNode(id){$('followTrace').checked=false;showRail();await selectNode(id);}
+  async function inspectNode(id){if(id.startsWith('reasoning:')){const reason=projectTree([...state.nodes.values()]).find(n=>n.id===id);if(reason)return inspectReasoning(reason);return;}$('followTrace').checked=false;showRail();await selectNode(id);}
   const palette=['#ffffff','#cccccc','#999999','#666666','#333333','#000000','#e53aa3','#ff7bcc','#f93c31','#1e93ff','#88d8f1','#ffdc00','#ff851b','#921231','#4fcc30','#a356d6'];
   const notice = message => { $('toast').textContent=message; $('toast').classList.add('show'); setTimeout(()=>$('toast').classList.remove('show'),6000); };
   async function api(path,body) {
@@ -62,7 +91,7 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
         newRecords.push(...records);
       }
       for(const node of newRecords){traceCache.set(node.id,node);if(traceCache.size>256)traceCache.delete(traceCache.keys().next().value);liveTranscript+=node.transcript||'';if(liveTranscript.length>300000){liveTranscript=liveTranscript.slice(-300000);liveTruncated=true;}}
-      for(const node of page.items){state.nodes.set(node.id,node);state.runSequence=Math.max(state.runSequence,node.sequence);}
+      for(const node of page.items){state.nodes.set(node.id,{...node,action:traceCache.get(node.id)?.action});state.runSequence=Math.max(state.runSequence,node.sequence);}
       drawTree();$('gameTreeState').textContent='Run '+run.status;
       $('traceRunStatus').textContent=run.status;renderTraceNavigation();
       if(page.items.length){latestRunNode=page.items.at(-1).id;if($('followTrace').checked)await selectNode(latestRunNode);}
@@ -141,11 +170,11 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     const tree=state.tree,generation=state.generation,request=++nodeRequest;
     const node=traceCache.get(id)||await api('/trees/'+tree+'/nodes/'+id);
     if(tree!==state.tree||generation!==state.generation||request!==nodeRequest)return;
-    state.node=node;state.nodes.set(id,node);drawGrid($('gameCanvas'),node.frame);fillSettings(node.settings);renderActions(node.frame);drawTree();
-    $('nodeTitle').textContent=id==='root'?'Root · '+state.game.title:'Action '+node.legalActionCount;
-    $('nodeStatus').textContent=node.state+' · level '+(node.levelsCompleted+1);$('nodeKind').textContent=node.kind==='turn-boundary'?'Between-turn gate':'Action';
+    selectedReasoning=null;state.node=node;state.nodes.set(id,node);drawGrid($('gameCanvas'),node.frame);fillSettings(node.settings);renderActions(node.frame);drawTree();
+    $('nodeTitle').textContent=id==='root'?'Root · '+state.game.title:actionLabel(node)+' · action '+node.legalActionCount;
+    $('nodeStatus').textContent=node.state+' · level '+(node.levelsCompleted+1);$('nodeKind').textContent=node.kind==='turn-boundary'?'Completed turn checkpoint':'Action';
     $('nodeLegal').textContent=node.legalActionCount;$('nodeNote').textContent='This saved state can start another branch. Compaction and context remain fixed.';
-    $('branchFromNode').disabled=false;$('branchFromNode').textContent='Play from this node';
+    $('branchFromNode').disabled=false;$('branchFromNode').textContent='New reasoning branch';
     renderTraceNavigation();renderTrace(node);
     $('loadChildren').disabled=false;
   }
@@ -153,9 +182,9 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     const tree=state.tree,generation=state.generation,parent=state.nodes.get(id),after=parent?.nextChildren||'';
     const page=await api('/trees/'+tree+'/nodes?parent_id='+id+'&after='+after);
     if(tree!==state.tree||generation!==state.generation)return;
-    page.items.forEach(node=>state.nodes.set(node.id,node));if(parent)parent.nextChildren=page.next;
+    page.items.forEach(node=>state.nodes.set(node.id,{...state.nodes.get(node.id),...node}));await hydrateNodes(page.items,tree,generation);if(tree!==state.tree||generation!==state.generation)return;if(parent)parent.nextChildren=page.next;
     $('nodeChildren').textContent=page.items.length+(page.next?' + more':'')+' children';
-    $('childNodes').replaceChildren();for(const node of page.items){const button=element('button','Action '+node.legalActionCount+' · '+node.kind,'secondary');button.addEventListener('click',()=>inspectNode(node.id).then(()=>expandNode(node.id)).catch(e=>notice(e.message)));$('childNodes').append(button);}drawTree();renderTraceNavigation();
+    $('childNodes').replaceChildren();for(const node of page.items){const button=element('button',node.kind==='turn-boundary'?'Completed turn · after action '+node.legalActionCount:actionLabel(state.nodes.get(node.id))+' · action '+node.legalActionCount,'secondary');button.addEventListener('click',()=>inspectNode(node.id).then(()=>expandNode(node.id)).catch(e=>notice(e.message)));$('childNodes').append(button);}drawTree();renderTraceNavigation();
   }
   async function performAction(action,x,y) {
     if(state.busy||!state.game)return;state.busy=true;renderActions(state.frame);
@@ -185,27 +214,27 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     let lastLane=-1;
     const roots=nodes.filter(n=>!byId.has(n.parentId)).sort(order),stack=roots.slice().reverse().map(node=>({node,lane:null}));
     while(stack.length){const {node,lane}=stack.pop();if(positions.has(node.id))continue;
-      const actualLane=lane??++lastLane,isGate=node.id!=='root'&&node.kind==='turn-boundary';
-      positions.set(node.id,{x:42+node.legalActionCount*66,y:62+actualLane*84+(isGate?28:0)});
+      const actualLane=lane??++lastLane,isGate=node.id!=='root'&&node.kind==='reasoning';
+      positions.set(node.id,{x:42+node.legalActionCount*110+(isGate?55:0),y:62+actualLane*84});
       const descendants=children.get(node.id)||[];
       for(let i=descendants.length-1;i>=0;i--)stack.push({node:descendants[i],lane:i===0?actualLane:null});
     }
     return {positions,lanes:lastLane+1};
   }
   function drawTree() {
-    const viewport=$('treeViewport'),canvas=$('treeCanvas'),nodes=[...state.nodes.values()];
+    const viewport=$('treeViewport'),canvas=$('treeCanvas'),nodes=projectTree([...state.nodes.values()]);
     const {positions,lanes}=treePositions(nodes);
-    const width=Math.max(viewport.clientWidth,100+nodes.reduce((m,n)=>Math.max(m,n.legalActionCount),0)*66),height=Math.max(240,lanes*84+80);
+    const width=Math.max(viewport.clientWidth,100+nodes.reduce((m,n)=>Math.max(m,n.legalActionCount),0)*110+55),height=Math.max(240,lanes*84+80);
     $('treeExtent').style.width=width+'px';$('treeExtent').style.height=height+'px';
     const dpr=devicePixelRatio||1;canvas.width=viewport.clientWidth*dpr;canvas.height=viewport.clientHeight*dpr;canvas.style.width=viewport.clientWidth+'px';canvas.style.height=viewport.clientHeight+'px';
     canvas.style.transform=`translate(${viewport.scrollLeft}px,${viewport.scrollTop}px)`;
     const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.translate(-viewport.scrollLeft,-viewport.scrollTop);ctx.font='10px system-ui';hitNodes=[];
     ctx.strokeStyle='#e5e7eb';ctx.fillStyle='#6b7280';
-    for(let action=Math.max(0,Math.floor((viewport.scrollLeft-42)/66));42+action*66<viewport.scrollLeft+viewport.clientWidth;action++){
-      const x=42+action*66;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();ctx.fillText(String(action),x-3,20+viewport.scrollTop);
+    for(let action=Math.max(0,Math.floor((viewport.scrollLeft-42)/110));42+action*110<viewport.scrollLeft+viewport.clientWidth;action++){
+      const x=42+action*110;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();ctx.fillText(String(action),x-3,20+viewport.scrollTop);
     }
     if(!nodes.length){ctx.fillStyle='#64748b';ctx.fillText('Root · 0 actions · choose your settings, then play',28,90);}
-    // Edges and hit targets use exactly the same coordinates, including turn gates.
+    // Edges and hit targets share coordinates, including reasoning nodes.
     ctx.strokeStyle='#8b9db8';ctx.lineWidth=1.5;
     for(const node of nodes){const point=positions.get(node.id),parent=positions.get(node.parentId);if(!parent)continue;
       if(Math.max(point.x,parent.x)<viewport.scrollLeft||Math.min(point.x,parent.x)>viewport.scrollLeft+viewport.clientWidth||Math.max(point.y,parent.y)<viewport.scrollTop||Math.min(point.y,parent.y)>viewport.scrollTop+viewport.clientHeight)continue;
@@ -213,12 +242,12 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
       if(parent.x===point.x)ctx.lineTo(point.x,point.y);else{const mid=(parent.x+point.x)/2;ctx.bezierCurveTo(mid,parent.y,mid,point.y,point.x,point.y);}ctx.stroke();
     }
     for(const node of nodes){const {x,y}=positions.get(node.id);if(x<viewport.scrollLeft-30||x>viewport.scrollLeft+viewport.clientWidth+30||y<viewport.scrollTop-30||y>viewport.scrollTop+viewport.clientHeight+30)continue;
-      const selected=node.id===state.node?.id,gate=node.id!=='root'&&node.kind==='turn-boundary';
+      const selected=selectedReasoning?node.id===selectedReasoning:node.id===state.node?.id,gate=node.kind==='reasoning';
       ctx.fillStyle=selected?'#2563eb':gate?'#fff2d8':'#e7f0ff';ctx.strokeStyle=gate?'#ad762f':'#6389c3';ctx.beginPath();
-      if(gate){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.arc(x,y,11,0,Math.PI*2);
+      if(gate){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.roundRect(x-20,y-13,40,26,6);
       ctx.fill();ctx.stroke();ctx.fillStyle=selected?'#fff':'#24456b';ctx.textAlign='center';
-      if(!gate)ctx.fillText(String(node.legalActionCount),x,y+3);
-      ctx.fillStyle='#526277';ctx.fillText(node.id==='root'?'Root':gate?'Turn':'Action',x,y+(gate?20:-16));ctx.textAlign='left';hitNodes.push({x,y,id:node.id});
+      if(!gate)ctx.fillText(actionLabel(node),x,y+3);
+      ctx.fillStyle='#526277';ctx.fillText(node.id==='root'?'Root':gate?'Reasoning turn':(node.action?.id===6?'Click '+node.action.data?.x+','+node.action.data?.y:''),x,y+(gate?20:-16));ctx.textAlign='left';hitNodes.push({x,y,id:node.id,node});
     }
     $('runCount').textContent=nodes.length+' loaded nodes';
   }
@@ -236,17 +265,17 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
   $('promptRailTab').addEventListener('click',()=>showRail(false));
   $('followTrace').addEventListener('change',()=>{if($('followTrace').checked&&latestRunNode)selectNode(latestRunNode).catch(e=>notice(e.message));else if(state.node)renderTrace(state.node);});
   $('traceNodeSelect').addEventListener('change',e=>inspectNode(e.target.value).catch(e=>notice(e.message)));
-  for(const [id,direction] of [['tracePrevious',-1],['traceNext',1]])$(id).addEventListener('click',()=>{const nodes=[...state.nodes.keys()],next=nodes[nodes.indexOf(state.node?.id)+direction];if(next)inspectNode(next).catch(e=>notice(e.message));});
+  for(const [id,direction] of [['tracePrevious',-1],['traceNext',1]])$(id).addEventListener('click',()=>{const nodes=projectTree([...state.nodes.values()]).map(n=>n.id),next=nodes[nodes.indexOf(selectedReasoning||state.node?.id)+direction];if(next)inspectNode(next).catch(e=>notice(e.message));});
   $('treeSelect').addEventListener('change',event=>selectTree(event.target.value).catch(e=>notice(e.message)));
   $('startRun').addEventListener('click',()=>state.run?api('/runs/'+state.run+'/cancel',{}).then(()=>notice('Cancellation requested')).catch(e=>notice(e.message)):startRun());
   $('pixelSmoothing').addEventListener('change',event=>$('gameCanvas').style.imageRendering=event.target.checked?'pixelated':'auto');
   $('canvasScale').addEventListener('change',event=>{$('gameCanvas').style.width=event.target.selectedIndex===0?'min(100%,510px)':($('gameCanvas').width*event.target.selectedIndex)+'px';});
   $('gameCanvas').addEventListener('mousemove',event=>{if(!$('gridCoordinates').checked)return;const rect=event.target.getBoundingClientRect();$('frameStatus').textContent='x '+Math.floor((event.clientX-rect.left)*event.target.width/rect.width)+' · y '+Math.floor((event.clientY-rect.top)*event.target.height/rect.height);});
   $('loadChildren').addEventListener('click',()=>expandNode(state.node.id).catch(e=>notice(e.message)));
-  $('branchFromNode').addEventListener('click',()=>{$('treeCard').open=false;$('gameCanvas').focus();});
+  $('branchFromNode').addEventListener('click',()=>{if(state.run){notice('Cancel the active run before starting another branch in this tab.');return;}startRun();});
   $('gameCanvas').addEventListener('click',event=>{if(!state.frame?.availableActions.includes(6))return;const rect=event.target.getBoundingClientRect();performAction(6,Math.floor((event.clientX-rect.left)*event.target.width/rect.width),Math.floor((event.clientY-rect.top)*event.target.height/rect.height));});
   $('treeViewport').addEventListener('scroll',()=>requestAnimationFrame(drawTree));
-  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<12&&Math.abs(n.y-y)<12);if(hit)inspectNode(hit.id).then(()=>expandNode(hit.id)).catch(e=>notice(e.message));});
+  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<(n.node.kind==='reasoning'?12:22)&&Math.abs(n.y-y)<15);if(hit)(hit.node.kind==='reasoning'?inspectReasoning(hit.node):inspectNode(hit.id).then(()=>expandNode(hit.id))).catch(e=>notice(e.message));});
   new ResizeObserver(()=>requestAnimationFrame(drawTree)).observe($('treeViewport'));
   const tabs=[...document.querySelectorAll('.settings-tab')];function activateTab(tab){tabs.forEach(t=>{t.setAttribute('aria-selected',String(t===tab));t.tabIndex=t===tab?0:-1;$(t.getAttribute('aria-controls')).hidden=t!==tab;});}
   tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>activateTab(tab));tab.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length;activateTab(tabs[next]);tabs[next].focus();});});
