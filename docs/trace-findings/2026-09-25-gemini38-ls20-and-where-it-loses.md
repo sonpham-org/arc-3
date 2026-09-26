@@ -5,7 +5,8 @@ PURPOSE: Where Gemini 3.8 Flash fails, including where it fails worse with its m
 (Provider Adapter). Part 1 lines Gemini's six runs per game up against our own Flash-Next runs,
 read from the ARC3 Railway database. Parts 2-4 read every Gemini run on ls20 (Locksmith), bp35
 (Buoyant Pontoons) and lf52 (Leapfrog) from the replay frames and the model's reasoning. Part 5 is
-tr87 and vc33. Part 6 is what the failures have in common.
+tr87 and vc33. Part 6 is what the failures have in common. Part 7 is our own Kaggle harness on
+the same five games.
 Updated 25-Sep-2026 (Claude Opus 5.5): added bp35, lf52 and part 6; re-read and corrected part 1.
 SRP/DRY check: Pass. Mechanics are cited to arc-explainer/shared/arc3Games/{ls20,bp35,lf52}.ts and
 to 2026-09-15-ls20-lives-and-the-filtered-reset.md, not restated. The memory-kept win on g50t is
@@ -202,3 +203,51 @@ on to win all seven levels. The other four spent about 300 clicks on level 4 and
   "the previous agent" and either overrules them or follows them blindly (bp35's fatal click).
 - **It reads the board as numbers.** More than half its memory-kept turns reason in row and column
   ranges. On bp35, the one scrolling game it got far enough into, that is where it loses its place.
+
+## 7. Our harness on the same five games
+
+**Source.** The Kaggle transcripts on the Mini (`~/bubba-workspace/arc3-kaggle/`): the scored
+7.36 notebook's pass (`best-7.36`, which only reached bp35 of these five) and the two all-25-game
+streamer-prompt passes of 24-Sep (`streamer25/results/armE25` and `armE25_rep2`). Flash-Next,
+Kaggle's clock (about 32 minutes per game). The website's traces sit behind the Google login and
+were not read. Levels cleared per pass:
+
+| game | ours (streamer pass 1, pass 2) | Gemini best of six |
+|---|---|---|
+| bp35 | 2, 1 (scored pass: 1) | 1 |
+| lf52 | 1, 2 | 1 |
+| ls20 | 1, 1 | 2 |
+| tr87 | 3, 4 | 1 |
+| vc33 | 3, 3 | 7 |
+
+**It does not see the board; it computes it.** 88 percent of our model's turns work in row and
+column ranges, and a turn averages about 4,600 characters of thinking with about thirteen
+"hmm / wait / actually / alternatively" in it. It rebuilds the map every turn from text dumps
+("the downsampled map (each printed char = 2 px)", "index for col 31 = 31-12 = 19 → 'B'? Let me
+index"). On bp35 the first camera scroll (turn 3) reads to it as green blocks multiplying, "falling
+sand", a "cellular automaton" or Tetris, before it works out on a later turn that the screen is the
+world shifted. The prompt tells it the picture is its view and the text tools are only for one
+detail; it uses the text tools every turn anyway (every turn has a Python call, and most of those
+calls read the board).
+
+**It still invents stories.** bp35 is a boat, water and plugs, then "soda cans" and "ghosts". ls20
+is a block that has to reach "the plus" or enter "the box". Same habit as Gemini.
+
+**Where it beats Gemini: it tests one idea and keeps what works.**
+- lf52: in pass 2 it put a peg on the cart as an experiment ("the green rides the marker"), drove
+  it across and cleared level 2. No Gemini run did.
+- tr87: by level 2 it concluded "rotation didn't matter … the check must be class-based" and saw
+  that "one symbol expands to a sequence! Like a grammar", the two ideas Gemini never reached.
+- vc33: on level 4 it saw the gate turn orange exactly when both sides were level ("S1=S2=54"),
+  the condition four Gemini runs never found, but didn't work out that clicking the gate moves the
+  rider, and ran out of time.
+- bp35: in pass 2 it named the striped row a deadly "ghost band" before touching it.
+
+**Where it loses:** the clock and the arithmetic. Several turns end with "time is short" or a few
+hundred seconds left mid-plan, after long stretches of coordinate bookkeeping. On ls20 it never
+ties the key in the bottom-left box to the door, and it ran a life out on purpose (pressing into a
+wall) rather than using RESET.
+
+**So:** Gemini loses because a wrong explanation survives; ours loses because it spends its clock
+re-deriving the board from numbers. Ours is the better experimenter on these games. What it lacks
+is a stable picture of the board.
