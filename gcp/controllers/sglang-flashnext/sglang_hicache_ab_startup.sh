@@ -113,7 +113,7 @@ INSIDE
 chmod +x /opt/arc3/sgl/inside.sh
 for attempt in 1 2 3 4; do
   nvidia-smi -L || { echo "host nvidia-smi failed (attempt $attempt)"; sleep 30; sudo systemctl restart docker; sleep 15; }
-  docker run --rm --gpus all --ipc=host --network=host --ulimit memlock=-1 \
+  docker run --rm --privileged --gpus all --ipc=host --network=host --ulimit memlock=-1 \
     -v /opt/arc3/sgl:/sgl -v "$MODEL_DIR:/model:ro" -v $OUT:/out \
     nvidia/cuda:13.0.3-devel-ubuntu24.04 bash /sgl/inside.sh; rc=$?
   [ "$rc" -ne 42 ] && break

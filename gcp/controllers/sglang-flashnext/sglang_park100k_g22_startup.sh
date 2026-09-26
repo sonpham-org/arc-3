@@ -98,9 +98,9 @@ bench() { python /out/bench_shape.py --base-url http://127.0.0.1:8001/v1 --model
 MTP=( --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4
       --speculative-draft-model-quantization unquant --speculative-token-map /sgl/hot_tokens_64k.pt "${GDN_MODE[@]}"
       --speculative-accept-threshold-single 1.0 --speculative-accept-threshold-acc 1.0 )
-HIC=( --enable-hierarchical-cache --hicache-size 96 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
+HIC=( --enable-hierarchical-cache --hicache-size 72 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
 slots() { python /out/bench_slots.py --base-url http://127.0.0.1:8001/v1 --model pennyroyal --games $2 --turns 8 --start-tokens $3 --grow 2000 --gen 1500 --sandbox 3 --out /out/slots_$1.json --label "$1" 2>&1 | tee /out/slots_$1.log; }
-# 22 games in flight at 100k over 5 and then 7 slots (Son 25-Sep: "Consider 5, 22 or 7, 22 100k too"); host pool 96 GB (128 + its 40 GB mamba component exceeded the 176 GB host)
+# 22 games in flight at 100k over 5 and then 7 slots (Son 25-Sep: "Consider 5, 22 or 7, 22 100k too"); host pool 72 GB (96 GB + 32 GB mamba component was OOM-killed on the 176 GB host; 64 GB was fine)
 free -g | head -2
 if serve s5_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 5 --cuda-graph-max-bs 5 --max-mamba-cache-size 48; then
   slots s5_g22_100k 22 100000; slots s5_g22_80k 22 80000

@@ -98,12 +98,15 @@ bench() { python /out/bench_shape.py --base-url http://127.0.0.1:8001/v1 --model
 MTP=( --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4
       --speculative-draft-model-quantization unquant --speculative-token-map /sgl/hot_tokens_64k.pt "${GDN_MODE[@]}"
       --speculative-accept-threshold-single 1.0 --speculative-accept-threshold-acc 1.0 )
-HIC=( --enable-hierarchical-cache --hicache-size 72 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
+HIC=( --enable-hierarchical-cache --hicache-size 64 --hicache-write-policy write_through --hicache-io-backend kernel --hicache-mem-layout page_first )
 slots() { python /out/bench_slots.py --base-url http://127.0.0.1:8001/v1 --model pennyroyal --games $2 --turns 8 --start-tokens $3 --grow 2000 --gen 1500 --sandbox 3 --out /out/slots_$1.json --label "$1" 2>&1 | tee /out/slots_$1.log; }
-# 7 slots with 28 and 22 games in flight (Son 25-Sep: "go 7 slots 22 games and 7 slots 28 games"); host pool 72 GB (96 GB + 32 GB mamba component was OOM-killed on the 176 GB host; 64 GB was fine)
-free -g | head -2
+# Warm repeats at 100k: the A/B VM showed a fresh server's first runs are JIT-depressed (39k: 445 cold vs 621/755 warm);
+# every config here runs twice on the same server and the second number is the one to read.
+if serve s5_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 5 --cuda-graph-max-bs 5 --max-mamba-cache-size 48; then
+  slots w_s5_g9_100k_1 9 100000; slots w_s5_g9_100k_2 9 100000; slots w_s5_g13_100k_1 13 100000; slots w_s5_g13_100k_2 13 100000; slots w_s5_g9_80k_2 9 80000
+else echo "s5: serve failed"; fi
 if serve s7_hic "${MTP[@]}" "${HIC[@]}" --max-running-requests 7 --cuda-graph-max-bs 7 --max-mamba-cache-size 48; then
-  slots s7_g28_100k 28 100000; slots s7_g28_80k 28 80000; slots s7_g22_80k_b 22 80000; slots s7_g22_100k_b 22 100000
+  slots w_s7_g11_100k_1 11 100000; slots w_s7_g11_100k_2 11 100000; slots w_s7_g11_80k_1 11 80000; slots w_s7_g11_80k_2 11 80000; slots w_s7_g15_100k_2 15 100000
 else echo "s7: serve failed"; fi
 pkill -f "sglang.launch_server" 2>/dev/null
 echo "=== all configs done $(date -u +%T)"
@@ -111,7 +114,7 @@ INSIDE
 chmod +x /opt/arc3/sgl/inside.sh
 for attempt in 1 2 3 4; do
   nvidia-smi -L || { echo "host nvidia-smi failed (attempt $attempt)"; sleep 30; sudo systemctl restart docker; sleep 15; }
-  docker run --rm --gpus all --ipc=host --network=host --ulimit memlock=-1 \
+  docker run --rm --privileged --gpus all --ipc=host --network=host --ulimit memlock=-1 \
     -v /opt/arc3/sgl:/sgl -v "$MODEL_DIR:/model:ro" -v $OUT:/out \
     nvidia/cuda:13.0.3-devel-ubuntu24.04 bash /sgl/inside.sh; rc=$?
   [ "$rc" -ne 42 ] && break
