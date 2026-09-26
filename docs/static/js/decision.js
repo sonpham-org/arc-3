@@ -28,7 +28,7 @@ function typeClass(label) {
   return "";
 }
 
-export function renderDecision(root, step, { currentClick, previousStep, mode = "review" } = {}) {
+export function renderDecision(root, step, { currentClick, previousStep, mode = "review", showFrames = true } = {}) {
   root.innerHTML = "";
   if (!step) {
     root.innerHTML = '<div class="empty">No analyzer turn for this frame.</div>';
@@ -40,7 +40,7 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
     root.appendChild(renderLiteral(step));
     return;
   }
-  root.appendChild(renderAbsorbedFrames(step));
+  if (showFrames) root.appendChild(renderAbsorbedFrames(step));
 
   const sections = (step.localContext?.sections || []).filter((s) => !NOISE.test(s.label || ""));
   if (!sections.length) {

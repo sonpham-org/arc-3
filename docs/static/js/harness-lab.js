@@ -1,6 +1,24 @@
+import { renderDecision } from "./decision.js?v=20260926-harness";
 (() => {
   const $ = id => document.getElementById(id);
   const state = {game:null, tree:null, node:null, nodes:new Map(), preset:null, busy:false, generation:0, run:null, runSequence:0, runner:null};
+  let nodeRequest=0, latestRunNode=null;
+  function showRail(trace=true){$('tracePanel').hidden=!trace;$('promptsPanel').hidden=trace;$('traceTab').setAttribute('aria-pressed',String(trace));$('promptRailTab').setAttribute('aria-pressed',String(!trace));}
+  function resetTrace(){++nodeRequest;latestRunNode=null;$('traceReview').replaceChildren(element('p','Select a saved node or start a run.','empty'));$('traceScope').textContent='Trace updates when actions and turn boundaries are saved.';$('traceRunStatus').textContent='No active run';renderTraceNavigation();}
+  function renderTraceNavigation(){
+    const nodes=[...state.nodes.values()];$('traceNodeSelect').replaceChildren(...nodes.map(n=>new Option((n.id==='root'?'Root':'Action '+n.legalActionCount+' · '+(n.kind==='turn-boundary'?'turn boundary':'action'))+(n.createdAt?' · '+new Date(n.createdAt).toLocaleTimeString():''),n.id)));
+    $('traceNodeSelect').value=state.node?.id||'';const i=nodes.findIndex(n=>n.id===state.node?.id);$('tracePrevious').disabled=i<=0;$('traceNext').disabled=i<0||i===nodes.length-1;
+  }
+  function renderTrace(node){
+    const raw=node.transcript||'',sections=[];
+    const markers=[...raw.matchAll(/^\[(SYSTEM PROMPT|USER PROMPT|THINKING|ASSISTANT|OUTPUT|ACTION_RESPONSE|ANALYZER STATUS|MODEL CONTEXT|MODEL RESPONSE META|PROMPT LOG SNAPSHOT|TOOL CALL:[^\]\r\n]*|TOOL RESULT:[^\]\r\n]*|ERROR[^\]\r\n]*)\][ \t]*\r?$/gm)];
+    if(markers.length){if(markers[0].index>0)sections.push({label:'CONTINUED TRANSCRIPT',content:raw.slice(0,markers[0].index)});markers.forEach((m,i)=>sections.push({label:m[1],content:raw.slice(m.index+m[0].length,markers[i+1]?.index??raw.length).replace(/^\r?\n/,'')}));}
+    else if(raw)sections.push({label:'TRANSCRIPT',content:raw});
+    $('traceScope').textContent='Saved transcript since the previous node. Responses appear at saved actions/turn boundaries; this is not token streaming.';
+    if(!raw){$('traceReview').replaceChildren(element('p',node.id==='root'?'Root has no model trace yet.':'No new transcript text was saved at this node. Use the arrows to inspect neighboring saved nodes.','empty'));return;}
+    renderDecision($('traceReview'),{title:'Action '+node.legalActionCount+' · '+(node.kind==='turn-boundary'?'turn boundary':'saved action'),score:node.levelsCompleted,level:node.levelsCompleted+1,toolCallCount:sections.filter(s=>s.label.startsWith('TOOL CALL')).length,localContext:{sections}},{showFrames:false});
+  }
+  async function inspectNode(id){$('followTrace').checked=false;showRail();await selectNode(id);}
   const palette=['#ffffff','#cccccc','#999999','#666666','#333333','#000000','#e53aa3','#ff7bcc','#f93c31','#1e93ff','#88d8f1','#ffdc00','#ff851b','#921231','#4fcc30','#a356d6'];
   const notice = message => { $('toast').textContent=message; $('toast').classList.add('show'); setTimeout(()=>$('toast').classList.remove('show'),6000); };
   async function api(path,body) {
@@ -22,7 +40,7 @@
       const config=settings();
       if(!state.tree){const tree=await api('/trees',{game_id:state.game.id,settings:config,request_id:crypto.randomUUID()});state.tree=tree.id;$('treeSelect').add(new Option('Current tree · '+tree.id.slice(0,6),tree.id));$('treeSelect').value=tree.id;await selectNode('root');}
       const result=await api('/trees/'+state.tree+'/runs',{parent_id:state.node.id,settings:config,request_id:crypto.randomUUID()});
-      state.run=result.id;state.runSequence=0;$('startRun').textContent='Cancel run';notice(result.message||'Run queued. The RTX VM wakes if it is stopped.');pollRun();
+      state.run=result.id;state.runSequence=0;latestRunNode=null;$('followTrace').checked=true;showRail();$('traceRunStatus').textContent='Queued · waiting for saved trace';$('startRun').textContent='Cancel run';notice(result.message||'Run queued. The RTX VM wakes if it is stopped.');pollRun();
     }catch(error){notice(error.message)}finally{state.busy=false}
   }
   async function pollRun(){
@@ -33,7 +51,8 @@
       if(runId!==state.run||treeId!==state.tree)return;
       for(const node of page.items){state.nodes.set(node.id,node);state.runSequence=Math.max(state.runSequence,node.sequence);}
       drawTree();$('gameTreeState').textContent='Run '+run.status;
-      if(page.items.length)await selectNode(page.items.at(-1).id);
+      $('traceRunStatus').textContent=run.status;renderTraceNavigation();
+      if(page.items.length){latestRunNode=page.items.at(-1).id;if($('followTrace').checked)await selectNode(latestRunNode);}
       if(['failed','cancelled','completed'].includes(run.status)&&page.items.length<100){state.run=null;$('startRun').textContent='＋ New run';if(run.error)notice(run.error);return;}
     }catch(error){notice(error.message)}
     setTimeout(pollRun,2000);
@@ -84,7 +103,7 @@
   }
   async function selectGame(game) {
     if(state.busy)return;
-    const generation=++state.generation;state.game=game;state.tree=null;state.node=null;state.nodes.clear();
+    const generation=++state.generation;state.game=game;state.tree=null;state.node=null;state.nodes.clear();resetTrace();
     state.run=null;state.runSequence=0;$('startRun').textContent='＋ New run';$('startRun').disabled=!state.runner?.provisioned;
     document.querySelectorAll('.game-tile').forEach(tile=>tile.setAttribute('aria-pressed',String(tile.dataset.gameId===game.id)));
     $('traceHeading').textContent=game.title;$('treeHeading').textContent='Run tree · '+game.title;
@@ -103,18 +122,18 @@
   async function selectTree(treeId) {
     if(state.busy)return;
     if(!treeId)return selectGame(state.game);
-    ++state.generation;state.tree=treeId;state.nodes.clear();await selectNode('root');await expandNode('root');
+    ++state.generation;state.run=null;state.runSequence=0;$('startRun').textContent='＋ New run';state.tree=treeId;state.nodes.clear();resetTrace();await selectNode('root');await expandNode('root');
   }
   async function selectNode(id) {
-    const tree=state.tree,generation=state.generation;
+    const tree=state.tree,generation=state.generation,request=++nodeRequest;
     const node=await api('/trees/'+tree+'/nodes/'+id);
-    if(tree!==state.tree||generation!==state.generation)return;
+    if(tree!==state.tree||generation!==state.generation||request!==nodeRequest)return;
     state.node=node;state.nodes.set(id,node);drawGrid($('gameCanvas'),node.frame);fillSettings(node.settings);renderActions(node.frame);drawTree();
     $('nodeTitle').textContent=id==='root'?'Root · '+state.game.title:'Action '+node.legalActionCount;
     $('nodeStatus').textContent=node.state+' · level '+(node.levelsCompleted+1);$('nodeKind').textContent=node.kind==='turn-boundary'?'Between-turn gate':'Action';
     $('nodeLegal').textContent=node.legalActionCount;$('nodeNote').textContent='This saved state can start another branch. Compaction and context remain fixed.';
     $('branchFromNode').disabled=false;$('branchFromNode').textContent='Play from this node';
-    $('nodeTrace').textContent=node.transcript||JSON.stringify(node.action||{kind:'Initial game state'},null,2);
+    renderTraceNavigation();renderTrace(node);
     $('loadChildren').disabled=false;
   }
   async function expandNode(id) {
@@ -123,7 +142,7 @@
     if(tree!==state.tree||generation!==state.generation)return;
     page.items.forEach(node=>state.nodes.set(node.id,node));if(parent)parent.nextChildren=page.next;
     $('nodeChildren').textContent=page.items.length+(page.next?' + more':'')+' children';
-    $('childNodes').replaceChildren();for(const node of page.items){const button=element('button','Action '+node.legalActionCount+' · '+node.kind,'secondary');button.addEventListener('click',()=>selectNode(node.id).then(()=>expandNode(node.id)).catch(e=>notice(e.message)));$('childNodes').append(button);}drawTree();
+    $('childNodes').replaceChildren();for(const node of page.items){const button=element('button','Action '+node.legalActionCount+' · '+node.kind,'secondary');button.addEventListener('click',()=>inspectNode(node.id).then(()=>expandNode(node.id)).catch(e=>notice(e.message)));$('childNodes').append(button);}drawTree();
   }
   async function performAction(action,x,y) {
     if(state.busy||!state.game)return;state.busy=true;renderActions(state.frame);
@@ -173,6 +192,11 @@
     await refreshRunner();
   }
   async function refreshRunner(){const runner=await api('/runner');state.runner=runner;const gpu=runner.provisioningModel==='SPOT'?'Spot RTX':'RTX';document.querySelector('.runner-state').textContent=runner.status==='quota-pending'?gpu+' · awaiting GPU quota':runner.status==='not-provisioned'?gpu+' · provisioning pending':gpu+' · '+runner.status;document.querySelector('.runner-state').title=runner.reason||'Three run slots; shutdown after 30 idle minutes';$('startRun').title=runner.provisioned?'Run with the selected settings':runner.reason||'Runner provisioning pending';$('startRun').disabled=!runner.provisioned||!state.game;setTimeout(()=>refreshRunner().catch(()=>{}),15000);}
+  $('traceTab').addEventListener('click',()=>showRail());
+  $('promptRailTab').addEventListener('click',()=>showRail(false));
+  $('followTrace').addEventListener('change',()=>{if($('followTrace').checked&&latestRunNode)selectNode(latestRunNode).catch(e=>notice(e.message));});
+  $('traceNodeSelect').addEventListener('change',e=>inspectNode(e.target.value).catch(e=>notice(e.message)));
+  for(const [id,direction] of [['tracePrevious',-1],['traceNext',1]])$(id).addEventListener('click',()=>{const nodes=[...state.nodes.keys()],next=nodes[nodes.indexOf(state.node?.id)+direction];if(next)inspectNode(next).catch(e=>notice(e.message));});
   $('treeSelect').addEventListener('change',event=>selectTree(event.target.value).catch(e=>notice(e.message)));
   $('startRun').addEventListener('click',()=>state.run?api('/runs/'+state.run+'/cancel',{}).then(()=>notice('Cancellation requested')).catch(e=>notice(e.message)):startRun());
   $('pixelSmoothing').addEventListener('change',event=>$('gameCanvas').style.imageRendering=event.target.checked?'pixelated':'auto');
@@ -182,7 +206,7 @@
   $('branchFromNode').addEventListener('click',()=>{$('treeCard').open=false;$('gameCanvas').focus();});
   $('gameCanvas').addEventListener('click',event=>{if(!state.frame?.availableActions.includes(6))return;const rect=event.target.getBoundingClientRect();performAction(6,Math.floor((event.clientX-rect.left)*event.target.width/rect.width),Math.floor((event.clientY-rect.top)*event.target.height/rect.height));});
   $('treeViewport').addEventListener('scroll',()=>requestAnimationFrame(drawTree));
-  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<12&&Math.abs(n.y-y)<12);if(hit)selectNode(hit.id).then(()=>expandNode(hit.id)).catch(e=>notice(e.message));});
+  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<12&&Math.abs(n.y-y)<12);if(hit)inspectNode(hit.id).then(()=>expandNode(hit.id)).catch(e=>notice(e.message));});
   new ResizeObserver(()=>requestAnimationFrame(drawTree)).observe($('treeViewport'));
   const tabs=[...document.querySelectorAll('.settings-tab')];function activateTab(tab){tabs.forEach(t=>{t.setAttribute('aria-selected',String(t===tab));t.tabIndex=t===tab?0:-1;$(t.getAttribute('aria-controls')).hidden=t!==tab;});}
   tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>activateTab(tab));tab.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length;activateTab(tabs[next]);tabs[next].focus();});});
