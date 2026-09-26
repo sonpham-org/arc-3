@@ -197,7 +197,7 @@ function renderHead(step, currentClick) {
   }
   const meta = document.createElement("div");
   meta.className = "meta";
-  meta.textContent = bits.join(" · ");
+  meta.textContent = step.metaText ?? bits.join(" · ");
   head.appendChild(meta);
 
   return head;
