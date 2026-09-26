@@ -3,7 +3,7 @@ export function actionLabel(node) {
   const action=node.action;
   if(!action)return node.id==='root'?'Root':'…';
   const id=Number(String(action.id).replace(/^ACTION/i,''));
-  const name={0:'Reset',1:'↑',2:'↓',3:'←',4:'→',5:'A5',6:'Click',7:'A7'}[id]||String(action.id);
+  const name={0:'Reset',1:'UP',2:'DOWN',3:'LEFT',4:'RIGHT',5:'A5',6:'Click',7:'A7'}[id]||String(action.id);
   return name;
 }
 export function projectTree(records) {

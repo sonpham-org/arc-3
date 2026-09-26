@@ -1,4 +1,4 @@
-import { actionLabel, projectTree } from "./harness-tree.js?v=20260926-reasoning1";
+import { actionLabel, projectTree } from "./harness-tree.js?v=20260926-compact2";
 import { renderDecision } from "./decision.js?v=20260926-harness";
 (() => {
   const $ = id => document.getElementById(id);
@@ -30,7 +30,7 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     const input=state.node,raw=turn.map(n=>traceCache.get(n.id)?.transcript||'').join('');
     renderTrace({...input,id:reason.id,displayTitle:'Reasoning turn',transcript:raw.slice(-300000)});
     $('traceScope').textContent='Reasoning from action state '+input.legalActionCount+' · '+(end<0?'saved portion; turn may continue':'through the completed turn')+(raw.length>300000?' · latest 300,000 characters':'');
-    drawTree();
+    drawTree();renderTraceNavigation();
   }
 
   function showRail(trace=true){$('tracePanel').hidden=!trace;$('promptsPanel').hidden=trace;$('traceTab').setAttribute('aria-pressed',String(trace));$('promptRailTab').setAttribute('aria-pressed',String(!trace));}
@@ -198,7 +198,7 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
   function renderActions(frame) {
     state.frame=frame;
     const box=$('gameActions');box.replaceChildren();
-    const names={0:'Reset',1:'↑',2:'↓',3:'←',4:'→',5:'Action 5',6:'Click grid',7:'Action 7'};
+    const names={0:'Reset',1:'UP',2:'DOWN',3:'LEFT',4:'RIGHT',5:'Action 5',6:'Click grid',7:'Action 7'};
     for(const action of [0,...new Set(frame?.availableActions||[])]) {
       const button=element('button',names[action],'secondary');button.disabled=state.busy||!frame||action===6;
       button.addEventListener('click',()=>performAction(action));box.append(button);
@@ -208,6 +208,10 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
   let hitNodes=[];
   function treePositions(nodes) {
     const byId=new Map(nodes.map(n=>[n.id,n])),children=new Map(),positions=new Map();
+    // Keep action columns aligned across branches; reserve a slot only at reasoning turns.
+    const reasoningColumns=[...new Set(nodes.filter(n=>n.kind==='reasoning').map(n=>n.legalActionCount))].sort((a,b)=>a-b);
+    function columnX(action){let lo=0,hi=reasoningColumns.length;while(lo<hi){const mid=(lo+hi)>>1;if(reasoningColumns[mid]<action)lo=mid+1;else hi=mid;}return 42+action*70+lo*56;}
+    const columns=[...new Set([0,...nodes.filter(n=>n.kind!=='reasoning').map(n=>n.legalActionCount)])].sort((a,b)=>a-b).map(action=>({action,x:columnX(action)}));
     const order=(a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||a.id.localeCompare(b.id);
     for(const node of nodes){const list=children.get(node.parentId)||[];list.push(node);children.set(node.parentId,list);}
     for(const list of children.values())list.sort(order);
@@ -215,23 +219,23 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     const roots=nodes.filter(n=>!byId.has(n.parentId)).sort(order),stack=roots.slice().reverse().map(node=>({node,lane:null}));
     while(stack.length){const {node,lane}=stack.pop();if(positions.has(node.id))continue;
       const actualLane=lane??++lastLane,isGate=node.id!=='root'&&node.kind==='reasoning';
-      positions.set(node.id,{x:42+node.legalActionCount*110+(isGate?55:0),y:62+actualLane*84});
+      positions.set(node.id,{x:columnX(node.legalActionCount)+(isGate?63:0),y:62+actualLane*84});
       const descendants=children.get(node.id)||[];
       for(let i=descendants.length-1;i>=0;i--)stack.push({node:descendants[i],lane:i===0?actualLane:null});
     }
-    return {positions,lanes:lastLane+1};
+    return {positions,columns,lanes:lastLane+1};
   }
   function drawTree() {
     const viewport=$('treeViewport'),canvas=$('treeCanvas'),nodes=projectTree([...state.nodes.values()]);
-    const {positions,lanes}=treePositions(nodes);
-    const width=Math.max(viewport.clientWidth,100+nodes.reduce((m,n)=>Math.max(m,n.legalActionCount),0)*110+55),height=Math.max(240,lanes*84+80);
+    const {positions,columns,lanes}=treePositions(nodes);
+    const width=Math.max(viewport.clientWidth,70+[...positions.values()].reduce((m,p)=>Math.max(m,p.x),0)),height=Math.max(240,lanes*84+80);
     $('treeExtent').style.width=width+'px';$('treeExtent').style.height=height+'px';
     const dpr=devicePixelRatio||1;canvas.width=viewport.clientWidth*dpr;canvas.height=viewport.clientHeight*dpr;canvas.style.width=viewport.clientWidth+'px';canvas.style.height=viewport.clientHeight+'px';
     canvas.style.transform=`translate(${viewport.scrollLeft}px,${viewport.scrollTop}px)`;
     const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.translate(-viewport.scrollLeft,-viewport.scrollTop);ctx.font='10px system-ui';hitNodes=[];
     ctx.strokeStyle='#e5e7eb';ctx.fillStyle='#6b7280';
-    for(let action=Math.max(0,Math.floor((viewport.scrollLeft-42)/110));42+action*110<viewport.scrollLeft+viewport.clientWidth;action++){
-      const x=42+action*110;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();ctx.fillText(String(action),x-3,20+viewport.scrollTop);
+    for(const {action,x} of columns){
+      if(x<viewport.scrollLeft||x>viewport.scrollLeft+viewport.clientWidth)continue;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();ctx.fillText(String(action),x-3,20+viewport.scrollTop);
     }
     if(!nodes.length){ctx.fillStyle='#64748b';ctx.fillText('Root · 0 actions · choose your settings, then play',28,90);}
     // Edges and hit targets share coordinates, including reasoning nodes.
@@ -244,9 +248,9 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
     for(const node of nodes){const {x,y}=positions.get(node.id);if(x<viewport.scrollLeft-30||x>viewport.scrollLeft+viewport.clientWidth+30||y<viewport.scrollTop-30||y>viewport.scrollTop+viewport.clientHeight+30)continue;
       const selected=selectedReasoning?node.id===selectedReasoning:node.id===state.node?.id,gate=node.kind==='reasoning';
       ctx.fillStyle=selected?'#2563eb':gate?'#fff2d8':'#e7f0ff';ctx.strokeStyle=gate?'#ad762f':'#6389c3';ctx.beginPath();
-      if(gate){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.roundRect(x-20,y-13,40,26,6);
+      if(gate){ctx.moveTo(x,y-8);ctx.lineTo(x+8,y);ctx.lineTo(x,y+8);ctx.lineTo(x-8,y);ctx.closePath();}else ctx.roundRect(x-27,y-13,54,26,6);
       ctx.fill();ctx.stroke();ctx.fillStyle=selected?'#fff':'#24456b';ctx.textAlign='center';
-      if(!gate)ctx.fillText(actionLabel(node),x,y+3);
+      if(!gate){ctx.font='600 11px system-ui';ctx.fillText(actionLabel(node),x,y+4);ctx.font='10px system-ui';}
       ctx.fillStyle='#526277';ctx.fillText(node.id==='root'?'Root':gate?'Reasoning turn':(node.action?.id===6?'Click '+node.action.data?.x+','+node.action.data?.y:''),x,y+(gate?20:-16));ctx.textAlign='left';hitNodes.push({x,y,id:node.id,node});
     }
     $('runCount').textContent=nodes.length+' loaded nodes';
@@ -275,7 +279,7 @@ import { renderDecision } from "./decision.js?v=20260926-harness";
   $('branchFromNode').addEventListener('click',()=>{if(state.run){notice('Cancel the active run before starting another branch in this tab.');return;}startRun();});
   $('gameCanvas').addEventListener('click',event=>{if(!state.frame?.availableActions.includes(6))return;const rect=event.target.getBoundingClientRect();performAction(6,Math.floor((event.clientX-rect.left)*event.target.width/rect.width),Math.floor((event.clientY-rect.top)*event.target.height/rect.height));});
   $('treeViewport').addEventListener('scroll',()=>requestAnimationFrame(drawTree));
-  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<(n.node.kind==='reasoning'?12:22)&&Math.abs(n.y-y)<15);if(hit)(hit.node.kind==='reasoning'?inspectReasoning(hit.node):inspectNode(hit.id).then(()=>expandNode(hit.id))).catch(e=>notice(e.message));});
+  $('treeCanvas').addEventListener('click',event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left+$('treeViewport').scrollLeft,y=event.clientY-rect.top+$('treeViewport').scrollTop;const hit=hitNodes.find(n=>Math.abs(n.x-x)<(n.node.kind==='reasoning'?12:29)&&Math.abs(n.y-y)<15);if(hit)(hit.node.kind==='reasoning'?inspectReasoning(hit.node):inspectNode(hit.id).then(()=>expandNode(hit.id))).catch(e=>notice(e.message));});
   new ResizeObserver(()=>requestAnimationFrame(drawTree)).observe($('treeViewport'));
   const tabs=[...document.querySelectorAll('.settings-tab')];function activateTab(tab){tabs.forEach(t=>{t.setAttribute('aria-selected',String(t===tab));t.tabIndex=t===tab?0:-1;$(t.getAttribute('aria-controls')).hidden=t!==tab;});}
   tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>activateTab(tab));tab.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length;activateTab(tabs[next]);tabs[next].focus();});});
