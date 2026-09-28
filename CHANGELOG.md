@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.27-gf01-wk01] — main
+*Author: GPT-6 Astra | 2026-09-27*
+
+### Added
+- Custom games `gf01` and `wk01`, with byte-identical canonical sources from Ronen's `arc-agi-3/environment_files`, actual RESET thumbnails, and preserved UTF-8 catalog entries. Graft tests permanent geometric joins; Workshop tests shared-machine scheduling against visible recipe and pickup constraints.
+- Both exact-source seed vet reports pass. Real-engine winning routes use 82 and 97 actions respectively; meaningful random gates measure 0/180,000 and 0/360,000 clears. Version-database registration is a separate authenticated publisher step.
+
 ## [2026.09.27-ce01] — main
 *Author: GPT-6 Astra | 2026-09-27*
 
