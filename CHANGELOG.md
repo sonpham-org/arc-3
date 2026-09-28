@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.27-new-game-titles] — main
+*Author: Claude Opus 5 | 2026-09-27*
+
+### Fixed
+- The five new custom games carried their ids as their titles in `docs/static/games/manifest.json`, so the catalog showed "ce01" instead of "Crease". Set the real titles (Crease, Graft, Workshop, Span, Unbolt) and tagged each with `gpt` and `human-tuned` so the static fallback shows who drove them. All 937 entries preserved; the manifest was read and written with `encoding="utf-8", ensure_ascii=False`.
+- Not fixed here: these five still do not appear in the database-backed "Additional games" listing, and the GPT-driven / Human-tuned labels on that page come from version records, not the static manifest. That needs `scripts/publish_game_versions.py publish` run with `ARC3_PUBLISH_TOKEN` (or the Railway CLI linked to `arc3-viewer`), which this machine does not have.
+
 ## [2026.09.27-ce01-clarity-sp01-ub01] — main
 *Author: GPT-6 Astra | 2026-09-27*
 
