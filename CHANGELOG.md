@@ -15,6 +15,15 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-switchyard] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Added
+- Add Switchyard (`yd01`), a click-controlled rail yard: couple and release wagons, set turnouts, deliver cargo to matching platforms, then return the locomotive to its shed. A five-click lesson precedes two substantial shunting orders. ACTION7 undoes the last change; arrow keys are unused.
+- Exact-source verification: 168-action sequential WIN, minimum 15 changed pixels, maximum 12 animation frames, 6,670 site fuzz actions, and 0/180,000 strict substantive random clears across three useful-control policies. The deliberately easy tutorial separately cleared 182/1,000 random attempts. Publish its actual RESET thumbnail.
+- Parent browser review completed the entire sequence with ordinary clicks: Level 3/3, WIN, Step 168. The review allowed each action animation to finish before the next input.
+- Static catalog publication provides the game link. Version-database registration remains pending the existing publisher credential requirement.
+
 ## [2026.09.28-workshop-clarity] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
