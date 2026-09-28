@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-unbolt-expansion] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Changed
+- Expand Unbolt from three to six levels. Add a movable green trestle, different glass/tray widths, support chains, two-glass exchanges, overhead clearance, and a final three-glass arrangement. Animate lifting and handoffs. Equal-width glass carriers are interchangeable. Preserve the existing title, tags and opening lesson.
+- Strengthen older random-clearable layouts through visible storage and clearance dependencies. Retain their failures and valid alternate routes in the development evidence; no seed shopping or move limit was used. Final strict gate: 0/600,000 at horizon180, plus 0/1,680 fixed cycles, with real score/parity controls.
+- Real API and complete browser play both reach WIN350 across six levels. Exact-source seed vet passes with 54,758 fuzz actions, maximum9frames and no silent actions or early deaths. The unchanged RESET frame still matches the catalog thumbnail.
+
 ## [2026.09.28-switchyard] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
