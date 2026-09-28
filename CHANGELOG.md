@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-physical-machines] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Added
+- Ironkeep: a connected six-room fortress with directional shield defence, guards and crates on latching plates, a hook upgrade, drawbridges, two cogs and persistent checkpoints. Hook contact, object arrival and gate opening animate in order. Real API and full browser play both reach WIN in 88 actions; a separate exploration route wins in 105. Strict useful-action gate: 0/180,000 plus 0/56 cycles. Exact-source seed vet passes 4,959 fuzz actions, maximum 14 frames; its small tutorial sampling warning is retained.
+- Crankhouse: click to place and reuse gears, then crank clockwise or counterclockwise. Transfer power after parking the cart on an island; wind the final gate in reverse before hauling forward. Real API and full browser play both reach WIN in 96 actions. Strict gate: 0/180,000 plus 0/68 cycles. Extended seed vet passes 2,830 fuzz actions; its tutorial sample and 24-frame completion animation warnings are retained. Neither game requires real-time timing.
+
 ## [2026.09.28-unbolt-expansion] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
