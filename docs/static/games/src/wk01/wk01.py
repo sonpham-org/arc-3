@@ -1,6 +1,6 @@
 # Author: GPT-6 Astra
-# Date: 2026-09-28 10:10
-# PURPOSE: Workshop v2 makes deterministic scheduling physical: product tabs show
+# Date: 2026-09-28 14:44
+# PURPOSE: Workshop v3 makes deterministic scheduling physical: product tabs show
 # enlarged recipes, reservations occupy matching machines, and explicit clock
 # ticks animate processing. The immutable rules are shared with verification.
 # SRP/DRY check: Pass — reuses v1 scheduling and ARC adapter; physical interpolation
@@ -14,7 +14,7 @@ import numpy as np
 from arcengine import ARCBaseGame, Camera, GameState, Level, RenderableUserDisplay
 
 WHITE, SILVER, GRAY, MID, DARK, BLACK = 0, 1, 2, 3, 4, 5
-RED, BLUE, GREEN, ORANGE, SKY = 8, 9, 14, 12, 10
+RED, BLUE, GREEN, ORANGE, SKY, BRICK = 8, 9, 14, 12, 10, 13
 PRODUCT_COLORS = (BLUE, GREEN, ORANGE, SILVER)
 TUTORIAL_LEVELS = 3
 ORDERS = (
@@ -148,37 +148,50 @@ def product_icon(frame, row, x, y, color, scale=1):
 
 
 def machine_icon(frame, machine, x, y, color=WHITE, phase=None, product=None):
-    """A ten-by-eight physical machine, reused on the recipe and its lane."""
+    """The same physical machine appears on its recipe and timetable lane."""
     if machine == 0:
-        rect(frame, x, y + 5, 11, 2, color)
+        rect(frame, x, y + 5, 11, 2, ORANGE)
         rect(frame, x + 1, y + 7, 2, 1, GRAY)
         rect(frame, x + 8, y + 7, 2, 1, GRAY)
+        # Individual teeth and the dark axle distinguish the blade from a box.
+        rect(frame, x + 3, y + 1, 5, 3, SILVER)
+        rect(frame, x + 4, y, 3, 5, SILVER)
+        for tooth_x, tooth_y in ((3, 0), (7, 0), (2, 2), (8, 2)):
+            rect(frame, x + tooth_x, y + tooth_y, 1, 1, color)
+        rect(frame, x + 5, y + 2, 1, 1, BLACK)
         if product is not None:
-            rect(frame, x + 2, y + 3, 8, 2, PRODUCT_COLORS[product])
-        rect(frame, x + 3, y + 1, 5, 3, color)
-        rect(frame, x + 4, y, 3, 5, color)
-        rect(frame, x + 5, y + 2, 1, 1, DARK)
+            separation = 1 if phase is not None and phase >= 7 else 0
+            rect(frame, x + 1, y + 4, 4, 1, PRODUCT_COLORS[product])
+            rect(frame, x + 5 + separation, y + 4, 4, 1, PRODUCT_COLORS[product])
         if phase is not None:
-            rect(frame, x + 3 + phase % 4, y + 4, 1, 1, ORANGE)
+            rect(frame, x + 4 + phase % 3, y + 1, 1, 1, GRAY)
     elif machine == 1:
-        rect(frame, x, y, 11, 2, color)
-        rect(frame, x, y, 2, 8, color)
-        rect(frame, x + 9, y, 2, 8, color)
-        rect(frame, x, y + 7, 11, 1, color)
+        rect(frame, x, y, 11, 2, GRAY)
+        rect(frame, x, y, 2, 8, GRAY)
+        rect(frame, x + 9, y, 2, 8, GRAY)
+        rect(frame, x, y, 11, 1, SILVER)
+        rect(frame, x, y + 1, 1, 6, SILVER)
+        rect(frame, x, y + 7, 11, 1, SILVER)
         if product is not None:
-            rect(frame, x + 3, y + 6, 5, 1, PRODUCT_COLORS[product])
+            rect(frame, x + 3, y + 5, 5, 2, PRODUCT_COLORS[product])
         depth = 2 if phase is None else 2 + min(3, phase % 8, 7 - phase % 8)
-        rect(frame, x + 5, y + 1, 1, depth, color)
+        rect(frame, x + 5, y + 1, 1, depth, SILVER)
         rect(frame, x + 3, y + depth, 5, 1, color)
     else:
-        rect(frame, x + 1, y + 1, 9, 7, color)
-        rect(frame, x + 7, y, 2, 2, GRAY)
-        rect(frame, x + 3, y + 3, 5, 4, DARK)
+        rect(frame, x + 1, y + 1, 9, 7, BRICK)
+        rect(frame, x + 2, y + 1, 7, 1, ORANGE)
+        rect(frame, x + 7, y, 2, 2, BRICK)
+        rect(frame, x + 7, y, 2, 1, GRAY)
+        rect(frame, x + 2, y + 4, 1, 1, ORANGE)
+        rect(frame, x + 8, y + 6, 1, 1, ORANGE)
+        rect(frame, x + 3, y + 3, 5, 4, BLACK)
+        rect(frame, x + 4, y + 2, 3, 1, BLACK)
+        rect(frame, x + 3, y + 7, 5, 1, GRAY)
         if product is not None:
             rect(frame, x + 4, y + 4, 3, 2, PRODUCT_COLORS[product])
         if phase is not None:
             for flame in range(3):
-                rect(frame, x + 3 + flame * 2, y + 7 - (phase + flame) % 2, 1, 1, ORANGE)
+                rect(frame, x + 3 + flame * 2, y + 6 - (phase + flame) % 2, 1, 1, ORANGE)
 
 
 DIGITS = ("111101101101111", "010110010010111", "111001111100111",

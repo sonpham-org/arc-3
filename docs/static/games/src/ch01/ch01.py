@@ -1,8 +1,9 @@
 # Author: GPT-6 Astra
-# Date: 2026-09-28 17:20
+# Date: 2026-09-28 20:48
 # PURPOSE: Crankhouse's deterministic physical gear contacts, bridge state and ARC
 # action adapter. The same transition drives real play, smoke solutions and blind
-# policies; NumPy draws circular wheels and bounded mechanical animation.
+# policies; NumPy draws recessed steel gears above rear shafts, distinct winches,
+# a loaded cart and bounded mechanical motion on the native 64-pixel canvas.
 # SRP/DRY check: Pass — inspected gearbox/cam games and existing ARC adapters;
 # none provides visible equal-radius gear meshing. Physics is defined once here.
 """Click a wheel, then an axle. ACTION5 cranks clockwise; ACTION7 reverses."""
@@ -14,7 +15,7 @@ import numpy as np
 from arcengine import ARCBaseGame, Camera, GameState, Level, RenderableUserDisplay
 
 RADIUS, TRAVEL = 5, 4
-WHITE, SILVER, GRAY, DARK, BLACK = 0, 1, 2, 4, 5
+WHITE, SILVER, GRAY, MID, DARK, BLACK = 0, 1, 2, 3, 4, 5
 RED, BLUE, SKY, YELLOW, ORANGE, GREEN = 8, 9, 10, 11, 12, 14
 PIER_PEGS = ((7, 16), (17, 16), (27, 16), (37, 16), (47, 16),
              (17, 26), (27, 26), (37, 26), (7, 26), (7, 36),
@@ -183,7 +184,7 @@ def line(frame, start, end, color, thick=1):
         rect(frame, x, y, thick, thick, color)
 
 
-def wheel(frame, center, angle, color=WHITE, radius=RADIUS):
+def wheel(frame, center, angle, color=SILVER, radius=RADIUS):
     """Actual tooth profile around the same pitch circle used by contacts()."""
     cx, cy = center
     for y in range(max(0, int(cy-radius-2)), min(64, int(cy+radius+3))):
@@ -192,9 +193,11 @@ def wheel(frame, center, angle, color=WHITE, radius=RADIUS):
             bearing = atan2(y-cy, x-cx)-angle
             outer = radius + .85*cos(8*bearing)
             if distance <= outer:
-                frame[y, x] = color if distance >= radius*.43 else DARK
-    line(frame, (cx, cy), (cx+radius*.68*cos(angle), cy+radius*.68*sin(angle)), ORANGE)
-    rect(frame, cx, cy, 1, 1, SILVER)
+                frame[y, x] = color if distance >= radius*.60 else DARK
+    for spoke in (angle, angle+pi/2, angle+pi, angle+3*pi/2):
+        line(frame, (cx, cy), (cx+radius*.68*cos(spoke), cy+radius*.68*sin(spoke)), GRAY)
+    line(frame, (cx, cy), (cx+radius*.68*cos(angle), cy+radius*.68*sin(angle)), WHITE)
+    rect(frame, cx, cy, 1, 1, DARK)
 
 
 def tooth_phases(level, mask):
@@ -227,6 +230,40 @@ def arc_button(frame, center, clockwise, lit=False):
     rect(frame, x, y-1 if clockwise else y+1, 1, 2, ORANGE)
 
 
+def machine_wheels(frame, level, state, before, fraction):
+    """Opaque working wheels sit in front of the rear shafts and supports."""
+    phases = tooth_phases(level, state.mask)
+    outputs = {peg for peg, _, _ in level["outputs"]}
+    for index, (x, y) in enumerate(level["pegs"]):
+        if not state.mask & (1 << index):
+            rect(frame, x-1, y-1, 3, 3, MID)
+            rect(frame, x, y, 1, 1, SILVER)
+            continue
+        steps = (state.angles[index]-before.angles[index]+12) % 24-12
+        angle = (before.angles[index]+steps*fraction)*pi/12
+        wheel(frame, (x, y), angle+phases[index], ORANGE if index == 0 else SILVER)
+        if index in outputs:
+            # Flanges and a rotating winding mark identify a coaxial winch.
+            rect(frame, x-2, y-2, 1, 5, ORANGE)
+            rect(frame, x+2, y-2, 1, 5, ORANGE)
+            rect(frame, x-1, y-1, 3, 3, DARK)
+            line(frame, (x, y), (x+cos(angle), y+sin(angle)), WHITE)
+        elif index in level["fixed"]:
+            rect(frame, x-1, y-1, 3, 3, MID)
+            rect(frame, x, y, 1, 1, WHITE)
+        else:
+            rect(frame, x-1, y-1, 3, 3, BLACK)
+            rect(frame, x, y, 1, 1, SILVER)
+    # A real crank arm and dark hand grip stand apart from the toothed rim.
+    x, y = level["pegs"][0]
+    steps = (state.angles[0]-before.angles[0]+12) % 24-12
+    angle = (before.angles[0]+steps*fraction)*pi/12
+    handle = (x+3*cos(angle), y+3*sin(angle))
+    line(frame, (x, y), handle, WHITE)
+    rect(frame, handle[0]-1, handle[1]-1, 3, 3, BLACK)
+    rect(frame, handle[0], handle[1], 1, 1, ORANGE)
+
+
 class CrankhouseDisplay(RenderableUserDisplay):
     def __init__(self, game):
         self.game = game
@@ -241,33 +278,16 @@ class CrankhouseDisplay(RenderableUserDisplay):
         frame[:, :] = SKY
         rect(frame, 0, 0, 64, 33, DARK)
         rect(frame, 1, 11, 62, 31, DARK)
-        line(frame, (1, 41), (62, 41), GRAY)
+        line(frame, (1, 42), (62, 42), MID)
         for sx, sy, width, height in level["stone"]:
             rect(frame, sx-width/2, sy-height/2, width, height, GRAY)
-            line(frame, (sx-width/2, sy), (sx+width/2-1, sy), SILVER)
+            line(frame, (sx-width/2, sy), (sx+width/2-1, sy), MID)
         # Shelf stock is drawn as real wheels; a held wheel sits above the machine.
-        rect(frame, 27, 10, 35, 1, SILVER)
+        rect(frame, 27, 10, 35, 1, MID)
         for index in range(rack_count(level, state)):
             wheel(frame, (30+index*6, 6), 0, SILVER, 2.5)
         if state.held:
             wheel(frame, (24, 6), 0, YELLOW, 2.5)
-        phases = tooth_phases(level, state.mask)
-        for index, (x, y) in enumerate(level["pegs"]):
-            if state.mask & (1 << index):
-                steps = (state.angles[index]-before.angles[index]+12) % 24-12
-                angle = (before.angles[index]+steps*fraction)*pi/12
-                wheel(frame, (x, y), angle+phases[index], ORANGE if index == 0 else WHITE)
-                if index in level["fixed"]:
-                    rect(frame, x-1, y-1, 3, 3, GRAY)
-            else:
-                rect(frame, x-1, y-1, 3, 3, SILVER)
-                rect(frame, x, y, 1, 1, BLACK)
-        # A hand crank is visibly attached to the input shaft.
-        ix, iy = level["pegs"][0]
-        a = (before.angles[0]+((state.angles[0]-before.angles[0]+12) % 24-12)*fraction)*pi/12
-        handle = (ix+3*cos(a), iy+3*sin(a))
-        line(frame, (ix, iy), handle, BLACK)
-        rect(frame, handle[0]-1, handle[1]-1, 3, 3, ORANGE)
         arc_button(frame, (6, 6), False)
         arc_button(frame, (16, 6), True)
         rect(frame, bank, 56, 44-bank, 8, BLUE)
@@ -287,20 +307,24 @@ class CrankhouseDisplay(RenderableUserDisplay):
         for index, (peg, _, kind) in enumerate(level["outputs"]):
             value = before.progress[index]+(state.progress[index]-before.progress[index])*fraction
             gx, gy = level["pegs"][peg]
-            line(frame, (gx, gy+6), (gx, 34), SILVER)
+            # Rear shafts leave the actual output axle. Working wheels are
+            # rendered above them so crossing a shaft never hides an axle.
+            lane = 45 if kind == "haul" else 43
+            line(frame, (gx, gy+6), (gx, lane), MID)
             if kind == "gate":
                 gate_x = level.get("gate_x", 53)
                 top = 43-value*2
-                rect(frame, gate_x-5, 39, 1, 17, DARK)
-                rect(frame, gate_x+5, 39, 1, 17, DARK)
+                rect(frame, gate_x-5, 39, 1, 17, MID)
+                rect(frame, gate_x+5, 39, 1, 17, MID)
                 for bar in range(4):
                     rect(frame, gate_x-4+bar*2, top, 1, 12, BLACK)
                 line(frame, (gate_x-5, top), (gate_x+5, top), ORANGE)
                 # A visible pawl swings into the raised gate's notch at the end.
                 pawl = min(1, max(0, (value-3)*2))
-                line(frame, (gate_x+6, 36), (gate_x+6-3*pawl, 39), GREEN if state.caught[index] else ORANGE, 2)
-                line(frame, (gx, 34), (gate_x, 34), SILVER)
-                line(frame, (gate_x, 34), (gate_x, top), SILVER)
+                caught = state.caught[index] and value >= TRAVEL
+                line(frame, (gate_x+6, 36), (gate_x+6-3*pawl, 39), GREEN if caught else ORANGE, 2)
+                line(frame, (gx, 34), (gate_x, 34), MID)
+                line(frame, (gate_x, 34), (gate_x, top), DARK)
             elif kind == "bridge":
                 right = len(bridge_outputs) == 2 and index == bridge_outputs[-1]
                 hinge = (44, 55) if right else (bank, 55)
@@ -317,45 +341,49 @@ class CrankhouseDisplay(RenderableUserDisplay):
                     bx = hinge[0]+(end[0]-hinge[0])*distance
                     by = hinge[1]+(end[1]-hinge[1])*distance
                     line(frame, (bx, by-4), (bx, by), ORANGE)
-                line(frame, (gx, 34), (hinge[0], 34), SILVER)
-                line(frame, (hinge[0], 34), end, SILVER)
-                rect(frame, gx-2, 32, 5, 5, SILVER)
-                rect(frame, gx-1, 33, 3, 3, BLACK)
+                line(frame, (gx, lane), (hinge[0], lane), MID)
+                line(frame, (hinge[0], lane), end, DARK)
                 if powered and not level.get("continuous_bridges"):
                     # The caught pawl is attached to this drum, not a detached status lamp.
                     line(frame, (gx+3, 30), (gx+1, 34), GREEN if state.caught[index] else ORANGE)
-                line(frame, (hinge[0], 34), (hinge[0], 55), GRAY)
+                line(frame, (hinge[0], lane), (hinge[0], 55), GRAY)
                 # The counterweight rises as the bridge lowers; losing drive lets it fall.
                 weight_x = 3 if not right else 59
-                line(frame, (gx, 34), (weight_x+1, 34), SILVER)
-                line(frame, (weight_x+1, 34), (weight_x+1, 53-value*2), SILVER)
+                line(frame, (gx, lane), (weight_x+1, lane), MID)
+                line(frame, (weight_x+1, lane), (weight_x+1, 53-value*2), DARK)
                 rect(frame, weight_x, 51-value*2, 4, 4, DARK)
+                rect(frame, weight_x+1, 52-value*2, 2, 2, GRAY)
             else:
                 # The lower haul drum pulls the cart along the road; no input timer moves it.
                 cart_position = before.cart+(state.cart-before.cart)*fraction
-                rect(frame, gx-3, 40, 7, 4, ORANGE)
-                rect(frame, gx-1, 40, 3, 4, BLACK)
-                line(frame, (gx, gy+5), (gx, 43), SILVER)
-                line(frame, (gx, 43), (55, 43), GRAY)
-                line(frame, (55, 43), (55, 50), GRAY)
-                line(frame, (55, 50), (cart_position*2+6, 50), GRAY)
+                line(frame, (gx, lane), (55, lane), MID)
+                line(frame, (55, lane), (55, 51), DARK)
+                line(frame, (55, 51), (cart_position*2+6, 51), DARK)
+        machine_wheels(frame, level, state, before, fraction)
         # Receiving shed and open doorway make the far bank an explicit destination.
-        rect(frame, 58, 47, 6, 8, ORANGE)
-        rect(frame, 59, 49, 4, 6, DARK)
-        line(frame, (56, 47), (61, 43), WHITE)
-        line(frame, (61, 43), (63, 47), WHITE)
+        rect(frame, 57, 45, 7, 10, ORANGE)
+        rect(frame, 58, 46, 6, 9, DARK)
+        line(frame, (55, 46), (60, 42), RED)
+        line(frame, (60, 42), (63, 45), RED)
+        line(frame, (58, 55), (63, 55), ORANGE)
         crossing = (max(0, animation["index"]-8)/12 if animation else 1) if state.done else 0
         cart_x = (before.cart+(state.cart-before.cart)*fraction)*2 if powered else 8+42*min(1, crossing)
         drop = 10*fraction if not state.alive and state.feedback == "water" else 0
-        rect(frame, cart_x, 49+drop, 7, 4, RED)
-        rect(frame, cart_x+1, 47+drop, 4, 2, WHITE)
+        rect(frame, cart_x, 49+drop, 7, 1, DARK)
+        rect(frame, cart_x, 50+drop, 7, 3, RED)
+        rect(frame, cart_x+1, 45+drop, 4, 4, ORANGE)
+        line(frame, (cart_x+1, 45+drop), (cart_x+4, 48+drop), DARK)
         rect(frame, cart_x, 53+drop, 2, 2, BLACK)
         rect(frame, cart_x+5, 53+drop, 2, 2, BLACK)
+        rect(frame, cart_x, 53+drop, 1, 1, SILVER)
+        rect(frame, cart_x+5, 53+drop, 1, 1, SILVER)
         if not state.alive and state.feedback == "gate":
             line(frame, (cart_x+7, 47), (cart_x+9, 52), YELLOW, 2)
             line(frame, (cart_x+7, 52), (cart_x+10, 47), YELLOW)
         if state.feedback not in ("ready", "turn"):
             x, y = state.pointer
+            # Keep edge-click feedback visible without changing the hit point.
+            x, y = max(4, min(59, x)), max(4, min(63, y))
             color = YELLOW if state.feedback in ("picked", "placed", "returned") else RED
             line(frame, (x-3-state.pulse, y-4), (x+3+state.pulse, y-4), color)
         return frame

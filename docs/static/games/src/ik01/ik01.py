@@ -1,8 +1,9 @@
 # Author: GPT-6 Astra
-# Date: 2026-09-28 13:28
+# Date: 2026-09-28 14:40
 # PURPOSE: Ironkeep is a deterministic connected fortress. Shielded encounters,
 # hooked objects, latching gates and persistent checkpoints share one transition
-# function with the real-engine tests. Rendering uses numpy and arcengine only.
+# function with the real-engine tests. Version 2 gives armor, tools and fortress
+# objects distinct material silhouettes. Rendering uses numpy and arcengine only.
 # SRP/DRY check: Pass — reuses the engine and Span's checkpoint lifecycle; no
 # existing environment implements this fortress's shield and hook interactions.
 """Explore, block, pull and return with both gate cogs."""
@@ -219,6 +220,23 @@ def outline(frame, x, y, width, height, color):
     rect(frame, x + width - 1, y, 1, height, color)
 
 
+def armored_figure(frame, x, y, cloth, stride=0):
+    """Feet occupy the rule tile; the helmet rises above its floor footprint."""
+    # The two-toned helmet, dark visor and separate boots remain recognizable
+    # when enlarged by the site without expanding collision or plate geometry.
+    shape(frame, x, y - 2, ("011110", "111111", "111111", "011110",
+                           "111111", "111111", "011110", "110011"), BLACK)
+    rect(frame, x + 1, y - 2, 4, 1, PALE)
+    rect(frame, x + 1, y - 1, 4, 1, WHITE)
+    rect(frame, x + 1, y, 1, 1, PALE)
+    rect(frame, x + 4, y, 1, 1, PALE)
+    rect(frame, x + 1, y + 2, 4, 2, cloth)
+    rect(frame, x, y + 2, 1, 2, PALE)
+    rect(frame, x + 5, y + 2, 1, 2, GRAY)
+    rect(frame, x + 2, y + 4, 2, 1, GRAY)
+    rect(frame, x + (1 if stride else 4), y + 5, 1, 1, GRAY)
+
+
 class FortressDisplay(RenderableUserDisplay):
     def __init__(self, game):
         self.game = game
@@ -242,11 +260,11 @@ class FortressDisplay(RenderableUserDisplay):
                     continue
                 if tile == "#":
                     rect(frame, left, top, 6, 6, DARK)
-                    rect(frame, left + 1, top + 1, 4, 1, GRAY)
-                    rect(frame, left + 1 + (y % 2) * 2, top + 3, 1, 2, MID)
+                    rect(frame, left, top, 6, 1, GRAY)
+                    rect(frame, left, top + 1, 5, 3, MID)
+                    rect(frame, left + 2 + (y % 2) * 2, top + 4, 1, 2, MID)
                 else:
                     rect(frame, left, top, 6, 6, MID)
-                    rect(frame, left, top + 5, 6, 1, DARK)
         for index, (plate, gate) in enumerate(zip(PLATES, GATES)):
             plate_xy, gate_xy = screen(plate), screen(gate)
             newly_latched = game.animation is not None and bool((state.latches & ~old.latches) & (1 << index))
@@ -287,15 +305,19 @@ class FortressDisplay(RenderableUserDisplay):
         for index, position in enumerate(COGS):
             if not state.cogs & (1 << index):
                 left, top = screen(position)
+                rect(frame, left, top, 6, 6, DARK)
                 shape(frame, left + 1, top + 1, ("01110", "11011", "10101", "11011", "01110"), GOLD)
         if not state.hook:
             left, top = screen(HOOK_CHEST)
             rect(frame, left, top + 1, 6, 4, ORANGE)
             outline(frame, left, top + 1, 6, 4, MAROON)
-            shape(frame, left + 2, top, ("11", "01", "11"), WHITE)
+            rect(frame, left + 1, top + 2, 1, 2, GOLD)
+            shape(frame, left + 2, top - 1, ("011", "001", "101", "111"), WHITE)
         exit_xy = screen(EXIT)
+        rect(frame, exit_xy[0], exit_xy[1] - 2, 6, 8, BLACK)
+        rect(frame, exit_xy[0], exit_xy[1] - 2, 6, 1, GRAY)
         for step in range(3):
-            rect(frame, exit_xy[0] + step, exit_xy[1] + step * 2, 6 - step, 1, WHITE)
+            rect(frame, exit_xy[0] + step, exit_xy[1] + step * 2, 6 - step, 1, PALE)
         for index, position in enumerate(state.crates):
             previous = old.crates[index]
             # The outward cast reaches the ring halfway through the action;
@@ -305,6 +327,8 @@ class FortressDisplay(RenderableUserDisplay):
             left, top = screen(moving)
             rect(frame, left, top, 6, 5, ORANGE)
             outline(frame, left, top, 6, 5, MAROON)
+            rect(frame, left + 1, top + 1, 1, 3, GOLD)
+            rect(frame, left + 4, top + 1, 1, 3, MAROON)
             outline(frame, left + 2, top + 1, 3, 3, WHITE)
         for index, guard in enumerate(state.guards):
             previous = old.guards[index]
@@ -315,24 +339,28 @@ class FortressDisplay(RenderableUserDisplay):
                 outline(frame, mark[0], mark[1], 6, 6, RED)
                 rect(frame, mark[0] + 2, mark[1] + 2, 2, 2, ORANGE)
             if guard.stun:
-                rect(frame, left, top + 3, 6, 2, GRAY)
-                rect(frame, left + 2, top + 2, 3, 1, WHITE)
+                rect(frame, left, top + 3, 6, 3, BLACK)
+                rect(frame, left + 2, top + 3, 3, 2, MAROON)
+                rect(frame, left, top + 2, 2, 2, PALE)
                 rect(frame, left + (game.pulse % 2) * 4, top, 1, 1, GOLD)
                 if game.animation and not previous.stun and amount < 0.6:
                     outline(frame, left - 1, top - 1, 8, 8, WHITE if game.animation['frame'] % 2 else GOLD)
             else:
-                shape(frame, left + 1, top, ("1111", "1001", "1111", "0110", "1111", "1001"), PALE)
-                rect(frame, left + 2, top + 3, 2, 2, MAROON)
+                armored_figure(frame, left, top, MAROON)
+                rect(frame, left + 5, top - 1, 1, 4, PALE)
         position = tuple(old.player[axis] + (state.player[axis] - old.player[axis]) * amount for axis in (0, 1))
         left, top = screen(position)
-        shape(frame, left + 1, top, ("1111", "1001", "0110", "1111", "0110", "1001"), GREEN)
-        rect(frame, left + 1, top, 4, 2, WHITE)
-        rect(frame, left + 2 + game.pulse % 2, top + 1, 1, 1, DARK)
+        armored_figure(frame, left, top, GREEN, game.pulse)
         direction = DIRECTIONS[state.facing]
         shield = (left + 2 + direction[0] * 3, top + 2 + direction[1] * 3)
         if state.equipped == 0:
             color = WHITE if game.action_kind == 5 and game.animation else SKY
-            rect(frame, shield[0], shield[1], 1 if direction[0] else 4, 4 if direction[0] else 1, color)
+            if direction[0]:
+                rect(frame, shield[0], shield[1] - 1, 2, 4, BLUE)
+                rect(frame, shield[0], shield[1] - 1, 1, 3, color)
+            else:
+                rect(frame, shield[0], shield[1], 4, 2, BLUE)
+                rect(frame, shield[0], shield[1], 4, 1, color)
         else:
             rect(frame, shield[0], shield[1], 2, 2, ORANGE)
         if game.animation and game.animation["frame"] < 10 and game.action_kind == 5 and old.equipped == 1:
@@ -357,8 +385,9 @@ class FortressDisplay(RenderableUserDisplay):
 
     def header(self, frame, state):
         rect(frame, 0, 0, 64, 10, BLACK)
-        shape(frame, 5, 1, ("11111", "10001", "10001", "10001", "01110", "00100"), SKY)
-        shape(frame, 21, 1, ("0011", "0001", "0001", "1001", "1111", "0110"), ORANGE if state.hook else MID)
+        shape(frame, 5, 1, ("11111", "11111", "11111", "11111", "01110", "00100"), BLUE)
+        shape(frame, 5, 1, ("11111", "10100", "10100", "10100", "01100", "00100"), SKY)
+        shape(frame, 20, 1, ("00011", "00001", "00001", "10001", "11011", "01110"), PALE if state.hook else MID)
         outline(frame, state.equipped * 16, 0, 16, 9,
                 GRAY if self.game.action_kind == 6 and self.game.pulse % 2 else WHITE)
         for heart in range(3):

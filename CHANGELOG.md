@@ -15,6 +15,20 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-readable-objects] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Changed
+- Ironkeep: quiet stone floors, recognizable armored people, directional shield,
+  ringed crates and recessed exit stairs. Puzzle rules and WIN88 stay unchanged.
+- Workshop: distinct steel saw, column press and brick kiln, with workpiece
+  processing visible during clock actions. All seven schedules remain unchanged.
+- Crankhouse: gears drawn ahead of structural shafts, separate winches/cables,
+  clearer cart/door, and correctly timed gate-pawl motion. Keep edge-click feedback
+  inside the frame. All three exact sources pass smoke, strict substantive random
+  gates (0/180,000,0/360,000,0/180,000 respectively) and the current site vet.
+  Retain animation/tutorial sample advisories in the source-bound reports.
+
 ## [2026.09.28-physical-machines] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
