@@ -40,7 +40,8 @@ What I found (read-only):
 - **The model label is static harness metadata.** Pruned and unpruned (J' 7×103k) runs carry the
   identical resource string "RadixArk/Qwen3.8-Flash-Next-NVFP4 · RadixArk NVFP4 routed experts; served by
   SGLang (sglang-flashnext-sm120 patches …)". Nothing in the run data says which experts were cut.
-- **sonpham-org/arc-3, all 55 remote branches:** no pruning code, doc or commit. The only REAP mention is
+- **sonpham-org/arc-3, all 55 remote branches:** no MoE-pruning code, doc or commit found (filename scan,
+  commit-message grep, and content grep; content hits for "prune" are search-tree pruning in solver code). The only REAP mention is
   in `HARNESS-NOTES.md` on `docs/deepseek-v41-ceiling-run`: a GLM-5.3-Flash REAP50 3-bit GGUF fit probe on
   llama.cpp that was closed ("unless a vLLM-servable pruned checkpoint appears").
 - **Son's Kaggle notebook** (`arc3-flash-next-clean-return-sglang`): no pruning. It is the J' SGLang arm.
@@ -144,8 +145,12 @@ top-k reduction on Qwen3-Next-family models in long-context agentic or vision se
     user prompt, thinking, tool call, tool result). Flagged "input not exact" (reconstructed from prior-step
     transcripts), which is fine for saliency statistics. This is the best corpus: it is exactly what the model
     sees and writes.
-  - Local Kaggle outputs (bubba-workspace/arc3-kaggle, several hundred game-plays of event logs) are mostly
-    board/action state, not token text — useful to pick *which* games/turns, not as calibration text by itself.
+  - Local Kaggle outputs (bubba-workspace/arc3-kaggle) hold, per game-play, a "latest model call snapshot"
+    under `output/prompts/*.log`: the full message list the served Flash-Next saw on its last call (system
+    prompt, tools, user prompt, and dozens of the model's own `[REASONING]` + `[ASSISTANT]` turns with tool
+    calls). 332 snapshots, 71 MB; **312 after dropping held-out games**. That is a calibration corpus we already
+    own, on the exact Kaggle harness, with no dependency on Son's store. (The `*_events.jsonl` /
+    `*_viewer_data.json` files next to them are board/action state only.)
   - **Held-out games must be filtered out before any calibration or tuning:** vc33, ar25, sb26, re86, su15,
     tr87, tu93, as66. Locally they are a small slice (a couple of plays each, tr87 nine); the bulk (tn36,
     sk48, g50t, bp35, ls20, lf52, wa30, …) remains. On Son's suite runs the held-out games are in every
@@ -158,7 +163,8 @@ top-k reduction on Qwen3-Next-family models in long-context agentic or vision se
    Kaggle run; needs the pruned NVFP4 checkpoint uploaded as a Kaggle dataset first (none exists yet).
    Blocker: the kept-expert manifest must be known and fixed so Kaggle runs the same model Son tested.
 2. **ARC-trace-calibrated REAP manifest vs Son's manifest, same 16×103k shape.** Run REAP saliency over
-   several thousand non-held-out step transcripts (text; include image turns if the harness sends them),
+   the 312 non-held-out local Kaggle snapshots (plus Son's step transcripts if he wants more; include image
+   turns if the harness sends them),
    protect super experts, keep 384. Compare on the hard seven and all-25. Payoff: medium-high if Son's
    manifest came from generic or coding data; it may also allow a deeper cut safely. Cost: the saliency pass
    needs the full BF16 or NVFP4 model resident with router/expert hooks — an 8-GPU or big-GPU GCP job (Son),
