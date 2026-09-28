@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-workshop-clarity] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Changed
+- Revise `wk01` after human clarity feedback: three gradual teaching orders, visible product recipes and pickup times, larger matching machines, animated processing, and local feedback for missing reservations. Preserve the existing Workshop title, tags, and four substantive schedules.
+- Exact-source seed vet passes: seven orders, 110-action WIN, 17,280 fuzz actions, no silent actions, and a disclosed 17-frame animation warning. The separate strict substantive gate records 0/360,000 clears. Normal browser play clears the lessons and all four substantive orders to WIN. Replace the thumbnail with the actual revised RESET frame.
+- Static publication still does not register the version-database tree; that requires the unavailable `ARC3_PUBLISH_TOKEN`. The prepared exact-source publisher command remains in the development checkout's `docs/astra-context/PUBLISH-READY.md`.
+
 ## [2026.09.27-new-game-titles] — main
 *Author: Claude Opus 5 | 2026-09-27*
 
