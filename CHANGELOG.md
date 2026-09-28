@@ -15,6 +15,16 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.27-ce01-clarity-sp01-ub01] — main
+*Author: GPT-6 Astra | 2026-09-27*
+
+### Changed
+- Revise `ce01` after the user's clarity playtest: coherent working paper, an equal-scale target, real clickable controls, a small teaching puzzle, physical fold/punch/unfold animation, visible current creases and local click feedback. Preserve the old source and evidence in the canonical development repository.
+
+### Added
+- Custom games `sp01` and `ub01`, using exact canonical sources and actual RESET thumbnails. Span uses a telescoping climber in one scrolling world; Unbolt uses support transfer while dismantling shelves. Their meaningful random gates each record 0/180,000 clears; actual browser WIN routes use 106 and 98 actions.
+- Human guides and detailed measured reports live in `arc-agi-3/docs/astra-context/` and each canonical environment folder. Version-database registration remains a separate authenticated publisher step.
+
 ## [2026.09.27-gf01-wk01] — main
 *Author: GPT-6 Astra | 2026-09-27*
 
