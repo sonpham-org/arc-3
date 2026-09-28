@@ -15,6 +15,23 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.28-canal-and-cable] — main
+*Author: GPT-6 Astra | 2026-09-28*
+
+### Added
+- Lockkeeper (`lq01`): two short gate/valve lessons followed by a two-boat
+  passing-berth puzzle. Isolate the parked boat's water, pass the deep barge,
+  then save the reserve for the mast boat's high dock. Unsafe equalization is
+  refused without changing water or connections. Normal browser replay WIN36;
+  strict substantive gate0/120,000 and fixed cycles0/16.
+- Tether (`te01`): a cable-powered rover, finite reach around posts, exposed
+  cutters and a rolling cover that must be pushed into place before lifting
+  the cable. Three stages, normal browser WIN97, strict useful-policy gate
+  0/300,000 episodes. Both sources pass exact-source site vet and publisher
+  dry-runs; preserve Tether's tutorial sample-count warning.
+- Add both custom catalog entries and actual RESET thumbnails. Preserve all
+  existing manifest records and UTF-8 descriptions.
+
 ## [2026.09.28-readable-objects] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
