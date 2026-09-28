@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.09.27-ce01] — main
+*Author: GPT-6 Astra | 2026-09-27*
+
+### Added
+- Publish `ce01` as a Custom game: layered paper folds, irreversible punches and physical unfolding, with six deterministic puzzles and distinct grayscale/cyan workbench art. Canonical source is Ronen's `arc-agi-3/environment_files/ce/00000001/ce01.py`.
+- Include its actual RESET thumbnail and UTF-8 manifest entry. Exact-source site vet passes; Python and browser routes both reach WIN in 82 actions. Meaningful random gates record 0/450,000 clears. Version-database registration uses the authenticated publisher separately.
+
 Newest first. Versioning is date-based; this work is pre-1.0 and the schema is pinned at
 `0.2` — `run_ended` took that number in `7dcaa62`, and the per-game `boundary_reason` redesign
 that had reserved it no longer has a number reserved.
