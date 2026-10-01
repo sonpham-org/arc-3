@@ -15,11 +15,44 @@ SRP/DRY check: Pass - one report; numbers come from the tool and the cached site
   arc3-kaggle/site-run-summaries/, not retyped from memory. Game names from skills/arc3-games.
 -->
 
-# ARC-3: today's runs against everything before the new harness (1-Oct-2026)
+# ARC-3: what actually changed this week, and what each change did (1-Oct-2026)
 
-All runs here are Flash-Next (pruned), all 25 public games, one pass, the same 132-minute clock. "The
-hard seven" in this report always means the **Flash-Next bottom seven**: Skewer Kebabs, Buoyant
-Pontoons, Locksmith, Ghost Twin, Leapfrog, Warehouse Associates, Toggle Navigator.
+**Rewritten 1-Oct evening after the Boss's review: the first version sorted runs by harness and buried
+the point. This page sorts them by what was done to the model. The detailed tables below are kept for
+reference only.**
+
+## The short version
+
+Three kinds of thing changed between last weekend's runs and today's. Scores are the mean over the 25
+public games on Son's cloud suite; one run swings about three points either way.
+
+**1. How much of the model is cut away.**
+
+| Cut | What it is | Score with everything else equal |
+|---|---|---|
+| Light cut | a quarter of the experts removed, same number from every layer | 38 |
+| Deeper cut | a third removed, same number from every layer | 39 |
+| Deeper cut, uneven | a third removed, but the early layers keep more | 44, against 44 for the even deeper cut on the same setup |
+
+Cutting deeper did not make the model play better or worse. That is the goal of a cut: same play, less
+memory, so more games fit on the card at once.
+
+**2. How the model is run.** Same light cut, before and after: 25 became 40. This is the big jump of the
+week, and it happened before the deeper cut existed. What changed in between: the model plays a little
+looser (less rigid word choice), a turn that stalls is cut off and restarted, and the small helper that
+guesses words ahead was retrained for the cut model.
+
+**3. What the model is told and given.** On the deeper cut: 39 became 44 with the stalled-turn restart
+set to one minute, and 44 became 49 with Daniel's tool bundle (a tool that shows what changed between
+two frames, helper functions it can keep, longer tool output, stronger advice to carry lessons to the
+next level). The game queue and the limits on moves per turn made no visible difference.
+
+## What it means
+
+- The deeper cuts are safe, and they are what makes room. They are not where this week's points came from.
+- The points came from how the model is run (25 to 40) and from Daniel's tools (44 to 49).
+- The hard seven moved the least. Only the runs with Daniel's tools did clearly better there.
+- Each of these is one or two runs. The 25-to-40 jump is far bigger than the swing; the others are not.
 
 ## 1. Headline
 
