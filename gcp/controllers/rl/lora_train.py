@@ -180,7 +180,7 @@ def run_table_on_cpu(model) -> list[str]:
 
 
 def load_model(model_dir: str, n_gpus: int, gpu_gib: int, rank: int, alpha: int, adapter: str = "",
-               attn: str = "", fast: bool = True, offload: bool = True, nvfp4: str = ""):
+               attn: str = "", fast: bool = True, offload: bool = True, nvfp4: str = "", seed: int = 0):
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForImageTextToText
     if nvfp4:
@@ -197,6 +197,9 @@ def load_model(model_dir: str, n_gpus: int, gpu_gib: int, rank: int, alpha: int,
     model.config.use_cache = False
     for p in model.parameters():
         p.requires_grad_(False)
+    # The LoRA init is random: seed it here, so every process (one copy or each of --dp N) starts from the same
+    # adapter whatever ran before it (2-Oct: a two-copy run started from a different init than a one-copy run).
+    torch.manual_seed(seed)
     if adapter:
         # Not PeftModel.from_pretrained: on a model whose device map includes the CPU it re-dispatches everything
         # with "auto" over all visible GPUs, moving the CPU-pinned n-gram table to a GPU (2-Oct resume test: "cuda:3
@@ -455,7 +458,7 @@ def mode_train(args) -> int:
           + (f"; resuming at step {step}: epoch {ep0}, {done0} records done" if ck else ""), flush=True)
     model = load_model(args.model, args.gpus // world, args.gpu_gib, args.rank, args.alpha,
                        str(out / ck["dir"]) if ck else args.init_adapter,
-                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4)
+                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4, seed=args.seed)
     params = [p for p in model.parameters() if p.requires_grad]
     if world > 1:
         _broadcast_params(params)

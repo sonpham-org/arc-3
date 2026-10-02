@@ -82,14 +82,21 @@ def adapter(out: Path) -> dict:
 
 
 def same_adapter(a: dict, b: dict) -> tuple[bool, str]:
-    """Each tensor within 1% of its own largest weight: a lost optimizer state or a shifted record moves the
-    young lora_B tensors by tens of percent; reduction-order noise stays far below 1%."""
+    """Whole-adapter relative differences, lora_A and lora_B apart. A different start (an adapter not loaded, another
+    random init) moves lora_A by ~140% (2-Oct: a two-copy run from another init: 1.42); a correct run moves it by
+    well under 1%. lora_B starts at zero and Adam's first steps are about lr * sign(gradient), so kernel noise can
+    flip a few near-zero entries: it gets a looser bound. Single tensors are not compared for the same reason."""
     if a.keys() != b.keys():
         return False, f"different tensors ({len(a)} vs {len(b)})"
-    worst = max((float((a[k].float() - b[k].float()).abs().max()) / max(1e-12, float(a[k].float().abs().max())), k)
-                for k in a)
-    moved = sum(float(a[k].float().abs().max()) > 0 for k in a if "lora_B" in k)
-    return worst[0] <= 1e-2 and moved > 0, f"worst relative diff {worst[0]:.2e} in {worst[1]}; {moved} lora_B tensors trained"
+    diff = {}
+    for kind in ("lora_A", "lora_B"):
+        ks = [k for k in a if kind in k]
+        num = sum(float((a[k].float() - b[k].float()).pow(2).sum()) for k in ks) ** 0.5
+        den = sum(float(a[k].float().pow(2).sum()) for k in ks) ** 0.5
+        diff[kind] = num / max(den, 1e-12)
+    trained = sum(float(a[k].float().abs().max()) > 0 for k in a if "lora_B" in k)
+    ok = diff["lora_A"] <= 1e-2 and diff["lora_B"] <= 0.1 and trained > 0
+    return ok, f"lora_A differs {diff['lora_A']:.2%}, lora_B {diff['lora_B']:.2%}; {trained} lora_B tensors trained"
 
 
 def part_one(env: dict, root: Path) -> None:
