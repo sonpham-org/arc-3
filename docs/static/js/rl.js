@@ -1,8 +1,9 @@
 // RL page (docs/rl.html): Daniel's no-border notebook learning from its own wins, round by round. Ported from the
-// arc3-rl-live web.app page; chrome from theme.css, data marks from the Cellens ramp (darker stops on light).
+// arc3-rl-live web.app page; chrome from theme.css and rl-shell.css, model colours from model-colors.js (blue).
+
+import { modelColor } from "./model-colors.js?v=20261002-blue";
 
 const NS = "http://www.w3.org/2000/svg";
-const RAMP = ["#000000","#170100","#300200","#470200","#5F0300","#780400","#8B1700","#9D2D00","#B14400","#C45A00","#D87200","#EB8800","#FA9D04","#FBAF21","#FCC03A","#FDD256","#FEE371","#FFF08C","#FFF4AC","#FFF9CE","#FFFDED"];
 const GPU_GIB = 95;
 let DATA = null;
 
@@ -21,13 +22,6 @@ function sv(tag, attrs, ...kids) {
   for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) e.setAttribute(k, v);
   for (const k of kids.flat()) if (k !== null && k !== undefined) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
   return e;
-}
-const hexrgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-function ramp(t) {
-  t = Math.max(0, Math.min(1, t));
-  const x = t * (RAMP.length - 1), i = Math.min(RAMP.length - 2, Math.floor(x)), f = x - i;
-  const a = hexrgb(RAMP[i]), b = hexrgb(RAMP[i + 1]);
-  return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(",")})`;
 }
 const fmtK = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n));
 const fmtInt = n => Math.round(n).toLocaleString("en-US");
@@ -273,10 +267,6 @@ function renderGames(d) {
 }
 
 /* ------------------------------------------------------------------ models */
-// later rounds brighter on the dark theme, darker on the light one, so every round reads on its background
-const MODEL_STOPS = { dark: [0.45, 0.66, 0.8, 0.9, 0.97], light: [0.56, 0.32, 0.2, 0.12, 0.06] };
-const isLight = () => document.documentElement.getAttribute("data-theme") === "light";
-const modelColor = i => { const s = MODEL_STOPS[isLight() ? "light" : "dark"]; return ramp(s[Math.min(i, s.length - 1)]); };
 
 /* ------------------------------------------------------------------ before vs after, round by round */
 function verdict(base, last) {

@@ -51,11 +51,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   and its backend are untouched and still reachable by URL.
 - `railway/entrypoint.sh`: four new exact skip-auth routes (`^/review\.html$`, the review
   publication and export, the RL dashboard publication).
-- **RL page restyled** (Son: the first, dark RL page was beautiful, the site-matched one more coherent;
-  then "just as flashy but using light theme" for the banner): on the light theme a bright sunrise
-  banner (warm glows that drift, a shimmering flame headline, frosted glass stat cards) over paper with
-  lifted white cards; on the dark theme the first page's ember look. Inter and JetBrains Mono as on the
-  first page; the site tabs and theme toggle are unchanged. Motion stops under prefers-reduced-motion.
+- **RL, Trace review and Tree restyled as one set, in blue** (Son: the first, dark RL page was beautiful,
+  the site-matched one more coherent; "just as flashy but using light theme", "a little more flat up
+  top", then "the same restyle for Trace review and Tree" and "blue theme instead of orange", light mode):
+  a bright blue banner (eyebrow, big headline with a blue gradient word, white stat cards with a blue
+  edge) over light paper with lifted white cards; Inter and JetBrains Mono. Shared in
+  `docs/static/css/rl-shell.css`; model colours (before training a slate blue, each round a stronger
+  blue) in `docs/static/js/model-colors.js` for the RL charts and the tree. The site tabs and theme
+  toggle are unchanged; the dark theme is the site's navy lit in blue. Game boards keep the game palette.
   Fixed: an unknown finish time read "497495 h ago"; the loop's side labels were clipped.
 
 ### Notes

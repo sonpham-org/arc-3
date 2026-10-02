@@ -2,12 +2,9 @@
 // paths between them, with how raters judged each path. Server: GET /api/v1/review/tree?game= (railway/rl_review.py).
 
 import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261002-tree";
+import { modelColor } from "./model-colors.js?v=20261002-blue";
 
 const NS = "http://www.w3.org/2000/svg";
-const RAMP = ["#000000", "#170100", "#300200", "#470200", "#5F0300", "#780400", "#8B1700", "#9D2D00", "#B14400", "#C45A00",
-  "#D87200", "#EB8800", "#FA9D04", "#FBAF21", "#FCC03A", "#FDD256", "#FEE371", "#FFF08C", "#FFF4AC", "#FFF9CE", "#FFFDED"];
-// later rounds brighter on dark, darker on light: each model reads on its background (Cellens ramp)
-const STOPS = { dark: [0.45, 0.66, 0.8, 0.9, 0.97], light: [0.56, 0.32, 0.2, 0.12, 0.06] };
 const $ = id => document.getElementById(id);
 const state = { games: [], game: null, tree: null, sel: null, models: [], contents: {} };
 
@@ -17,18 +14,8 @@ function sv(tag, attrs, ...kids) {
   for (const kid of kids.flat()) if (kid !== null && kid !== undefined) e.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   return e;
 }
-function ramp(t) {
-  t = Math.max(0, Math.min(1, t));
-  const x = t * (RAMP.length - 1), i = Math.min(RAMP.length - 2, Math.floor(x)), f = x - i;
-  const a = [1, 3, 5].map(k => parseInt(RAMP[i].slice(k, k + 2), 16)), b = [1, 3, 5].map(k => parseInt(RAMP[i + 1].slice(k, k + 2), 16));
-  return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(",")})`;
-}
-const light = () => document.documentElement.getAttribute("data-theme") === "light";
 const modelRank = m => (m === "base" ? 0 : /^r\d+$/.test(m) ? 1 + parseInt(m.slice(1), 10) : 50);
-function color(model) {
-  const s = STOPS[light() ? "light" : "dark"], i = Math.max(0, state.models.indexOf(model));
-  return ramp(s[Math.min(i, s.length - 1)]);
-}
+const color = model => modelColor(Math.max(0, state.models.indexOf(model)));
 const label = m => (m === "base" ? "Before training" : /^r\d+$/.test(m) ? `After round ${m.slice(1)}` : m);
 
 async function api(path) {
