@@ -51,6 +51,12 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   and its backend are untouched and still reachable by URL.
 - `railway/entrypoint.sh`: four new exact skip-auth routes (`^/review\.html$`, the review
   publication and export, the RL dashboard publication).
+- **RL page restyled** (Son: the first, dark RL page was beautiful, the site-matched one more coherent;
+  then "just as flashy but using light theme" for the banner): on the light theme a bright sunrise
+  banner (warm glows that drift, a shimmering flame headline, frosted glass stat cards) over paper with
+  lifted white cards; on the dark theme the first page's ember look. Inter and JetBrains Mono as on the
+  first page; the site tabs and theme toggle are unchanged. Motion stops under prefers-reduced-motion.
+  Fixed: an unknown finish time read "497495 h ago"; the loop's side labels were clipped.
 
 ### Notes
 - Needs an image deploy (shell, API and schema change); tables are created at server start.
