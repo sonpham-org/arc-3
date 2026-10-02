@@ -29,6 +29,7 @@ import math
 import os
 import random
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -274,6 +275,30 @@ def _allreduce_grads(params, world: int) -> None:
         off += n
 
 
+def _broadcast_params(params) -> None:
+    """Copy 0's adapter to every copy. The LoRA init is random, and averaged gradients keep copies identical only if
+    they start identical."""
+    import torch.distributed as dist
+    flat = torch.cat([p.detach().float().reshape(-1).cpu() for p in params])
+    dist.broadcast(flat, src=0)
+    off = 0
+    with torch.no_grad():
+        for p in params:
+            n = p.numel()
+            p.copy_(flat[off:off + n].view_as(p).to(device=p.device, dtype=p.dtype))
+            off += n
+
+
+def _copies_agree(params) -> tuple[float, float]:
+    """(min, max) over the copies of the sum of every adapter weight: equal when the copies are in step."""
+    import torch.distributed as dist
+    s = torch.tensor([sum(float(p.detach().double().sum()) for p in params)], dtype=torch.float64)
+    lo, hi = s.clone(), s.clone()
+    dist.all_reduce(lo, op=dist.ReduceOp.MIN)
+    dist.all_reduce(hi, op=dist.ReduceOp.MAX)
+    return lo.item(), hi.item()
+
+
 def spawn_dp(args) -> int:
     """--dp N: N copies of the model, each on gpus/N cards, each training every N-th record; their gradients are
     averaged at every optimizer step, so it is the same training on the same records, about N times sooner. The
@@ -291,9 +316,106 @@ def spawn_dp(args) -> int:
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(str(g) for g in range(r * per, (r + 1) * per)),
                    ARC3_DP_RANK=str(r), ARC3_DP_WORLD=str(args.dp), ARC3_DP_INIT=f"tcp://127.0.0.1:{port}")
         procs.append(subprocess.Popen([sys.executable, str(Path(__file__).resolve())] + sys.argv[1:], env=env))
-    codes = [p.wait() for p in procs]
+    codes = [None] * len(procs)
+    while any(c is None for c in codes):
+        time.sleep(5)
+        codes = [p.poll() for p in procs]
+        if any(c not in (None, 0) for c in codes):     # a failed copy leaves the others waiting in a collective
+            for p in procs:
+                if p.poll() is None:
+                    p.terminate()
+            codes = [p.wait() for p in procs]
     print(f"dp copies exited {codes}", flush=True)
-    return max(codes)
+    return 0 if all(c == 0 for c in codes) else 1
+
+
+# ------------------------------------------------------------------------------------------------ checkpoints
+# Spot VMs stop without warning; a round is hours of records. With --ckpt-every, copy 0 keeps the adapter, the
+# optimizer and the position in --out; rerunning the same command into the same --out resumes there.
+CKPT = "ckpt.json"
+
+
+def order_sig(recs: list[dict]) -> str:
+    """Fingerprint of the training order: a checkpoint resumes only the run that wrote it."""
+    h = hashlib.sha256()
+    for r in recs:
+        h.update(hashlib.sha256(json.dumps(r, sort_keys=True).encode()).digest())
+    return h.hexdigest()[:16]
+
+
+def save_ckpt(model, opt, out: Path, state: dict) -> None:
+    """Adapter + optimizer in out/ckpt-<step>/, then ckpt.json replaced atomically after a sync: a stop at any moment
+    leaves the previous checkpoint or this one, never half of one."""
+    t0 = time.time()
+    sync = getattr(os, "sync", lambda: None)
+    d = out / f"ckpt-{state['step']:05d}"
+    tmp = out / f".tmp-{d.name}"
+    shutil.rmtree(tmp, ignore_errors=True)
+    model.save_pretrained(tmp)
+    torch.save(opt.state_dict(), tmp / "optim.pt")
+    shutil.rmtree(d, ignore_errors=True)
+    tmp.rename(d)
+    sync()
+    (out / f"{CKPT}.tmp").write_text(json.dumps(dict(state, dir=d.name, at=round(time.time()))))
+    os.replace(out / f"{CKPT}.tmp", out / CKPT)
+    sync()
+    for old in out.glob("ckpt-*"):
+        if old.name != d.name:
+            shutil.rmtree(old, ignore_errors=True)
+    print(f"checkpoint {d.name}: epoch {state['epoch']}, {state['done']} records done ({time.time() - t0:.0f} s)",
+          flush=True)
+
+
+def load_ckpt(out: Path, sig: str) -> dict | None:
+    p = out / CKPT
+    if not p.exists():
+        return None
+    st = json.loads(p.read_text())
+    if st.get("order") != sig:
+        raise SystemExit(f"{p} belongs to other records (or another order): use a new --out, or delete it to start over")
+    if not (out / st["dir"] / "optim.pt").exists():
+        raise SystemExit(f"{p} names {st['dir']}, which is incomplete")
+    return st
+
+
+def clear_ckpt(out: Path) -> None:
+    (out / CKPT).unlink(missing_ok=True)
+    for d in list(out.glob("ckpt-*")) + list(out.glob(".tmp-ckpt-*")):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def prepare_out(args) -> None:
+    """Once per run (not per copy), before training. A rerun into the same --out either resumes its checkpoint,
+    keeping the log rows of the records trained before it (rows after it are trained again), or starts over,
+    keeping the earlier log under a dated name."""
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    log = out / "train_log.jsonl"
+    if args.ckpt_every and (out / CKPT).exists():
+        st = json.loads((out / CKPT).read_text())
+        lines = [l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()] if log.exists() else []
+        keep, rows, total = [], 0, 0
+        for line in lines:
+            row = json.loads(line)
+            if "loss" in row or "skip" in row:          # one row per record: trained, too long, or out of memory
+                total += 1
+                if rows >= st["rows"]:
+                    continue
+                rows += 1
+            elif rows >= st["rows"] and total > rows:
+                continue
+            keep.append(line)
+        keep.append(json.dumps({"resume": {k: st[k] for k in ("epoch", "done", "step")}, "rows_kept": rows,
+                                "rows_dropped": total - rows, "at": round(time.time())}))
+        tmp = out / "train_log.jsonl.tmp"
+        tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        os.replace(tmp, log)
+        print(f"resuming {out}: step {st['step']}, epoch {st['epoch']}, {st['done']} records done; log keeps {rows} "
+              f"record rows, drops {total - rows}", flush=True)
+    elif log.exists() and log.stat().st_size:
+        old = out / time.strftime("train_log.%Y%m%dT%H%M%S.jsonl", time.gmtime(log.stat().st_mtime))
+        log.rename(old)
+        print(f"no checkpoint in {out}: starting over; the earlier log is now {old.name}", flush=True)
 
 
 def mode_train(args) -> int:
@@ -310,23 +432,34 @@ def mode_train(args) -> int:
                                          for i, r in enumerate(recs)), key=lambda t: (-t[0], t[1]))]
     if args.limit:
         recs = recs[:args.limit]
-    # each copy takes every world-th record; the lists are padded to one length so every copy reaches every
-    # optimizer step (a None slot trains nothing and still joins the step's gradient average)
-    mine = recs[rank::world]
-    slots = mine + [None] * (math.ceil(len(recs) / world) - len(mine))
-    accum = max(1, args.accum // world)              # records per copy per step: the global batch stays --accum
-    total_steps = max(1, math.ceil(len(slots) / accum) * args.epochs)
-    print(f"{len(recs)} records" + (f" (copy {rank} of {world}: {len(mine)})" if world > 1 else ""), flush=True)
-    model = load_model(args.model, args.gpus // world, args.gpu_gib, args.rank, args.alpha, args.init_adapter,
-                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4)
-    params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
-    dev = next(model.parameters()).device
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    sig = order_sig(recs)
+    ck = load_ckpt(out, sig) if args.ckpt_every else None
+    ep0, done0, step = (ck["epoch"], ck["done"], ck["step"]) if ck else (0, 0, 0)
+    accum = max(1, args.accum // world)              # records per copy per step: the global batch stays --accum
+    total_steps = max(1, math.ceil(math.ceil(len(recs) / world) / accum) * args.epochs)
+    print(f"{len(recs)} records" + (f" (copy {rank} of {world})" if world > 1 else "")
+          + (f"; resuming at step {step}: epoch {ep0}, {done0} records done" if ck else ""), flush=True)
+    model = load_model(args.model, args.gpus // world, args.gpu_gib, args.rank, args.alpha,
+                       str(out / ck["dir"]) if ck else args.init_adapter,
+                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4)
+    params = [p for p in model.parameters() if p.requires_grad]
+    if world > 1:
+        _broadcast_params(params)
+    opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
+    if ck:
+        opt.load_state_dict(torch.load(out / ck["dir"] / "optim.pt", map_location="cpu"))
+    dev = next(model.parameters()).device
     log = (out / "train_log.jsonl").open("a", encoding="utf-8")
-    step = 0
-    for ep in range(args.epochs):
+    stopped = False
+    for ep in range(ep0, args.epochs):
+        skip = done0 if ep == ep0 else 0
+        todo = recs[skip:]
+        # each copy takes every world-th record; the lists are padded to one length so every copy reaches every
+        # optimizer step (a None slot trains nothing and still joins the step's gradient average)
+        mine = todo[rank::world]
+        slots = mine + [None] * (math.ceil(len(todo) / world) - len(mine))
         for i, rec in enumerate(slots):
             t0 = time.time()
             loss = b = None
@@ -368,22 +501,40 @@ def mode_train(args) -> int:
                 opt.step()
                 opt.zero_grad(set_to_none=True)
                 step += 1
+                if world > 1 and step - (ck["step"] if ck else 0) <= 2:
+                    lo, hi = _copies_agree(params)
+                    if lo != hi:
+                        raise RuntimeError(f"data-parallel copies differ after step {step}: {lo!r} vs {hi!r}")
+                done = min(len(recs), skip + (i + 1) * world)
+                nxt = (ep, done) if done < len(recs) else (ep + 1, 0)
+                if args.ckpt_every and rank == 0 and step % args.ckpt_every == 0 and nxt[0] < args.epochs:
+                    save_ckpt(model, opt, out, {"order": sig, "epoch": nxt[0], "done": nxt[1], "step": step,
+                                                "rows": nxt[0] * len(recs) + nxt[1], "records": len(recs),
+                                                "world": world})
+                stopped = bool(args.stop_after and step >= args.stop_after)
             if rec is not None:
                 log.write(json.dumps({"epoch": ep, "step": step, "game": rec["meta"].get("game"), "loss": loss.item(),
                                       "tokens": b["input_ids"].shape[1], "n_loss": b["n_loss"], "w": w,
                                       "sec": round(time.time() - t0, 1), "rank": rank,
                                       "mem_gib": [round(torch.cuda.max_memory_allocated(k) / 2**30, 1)
                                                   for k in range(torch.cuda.device_count())]}) + "\n")
-                log.flush()
+            log.flush()
+            if stopped:
+                break
+        if stopped:
+            break
     if world > 1:
         dist.barrier()
-    if rank == 0:
+    if stopped:
+        print(f"stopped after step {step} (--stop-after); rerun into {out} to resume", flush=True)
+    elif rank == 0:
         model.save_pretrained(out)
         sha = adapter_sha(out)
         (out / "ADAPTER.json").write_text(json.dumps({"sha": sha, "rank": args.rank, "alpha": args.alpha,
                                                       "lr": args.lr, "records": len(recs), "steps": step, "dp": world,
                                                       "target_regex": TARGET_REGEX, "model": args.model}, indent=1))
         print("saved adapter", sha, flush=True)
+        clear_ckpt(out)
     if world > 1:
         dist.destroy_process_group()
     return 0
@@ -533,6 +684,9 @@ def main() -> int:
     ap.add_argument("--dp", type=int, default=1, help="train: copies of the model on gpus/dp cards each "
                     "(every dp-th record each, gradients averaged per step)")
     ap.add_argument("--longest", action="store_true", help="train: longest records first (memory tests)")
+    ap.add_argument("--ckpt-every", type=int, default=0, help="train: keep a resumable checkpoint in --out every N "
+                    "optimizer steps; the same command rerun into the same --out resumes there (Spot VMs; 0 = off)")
+    ap.add_argument("--stop-after", type=int, default=0, help="train: stop after N optimizer steps (resume tests)")
     ap.add_argument("--attn", default="", help="attn_implementation (e.g. flex_attention); default = model default")
     ap.add_argument("--fast", type=int, default=1, help="1 = fast_qsa.py long-sequence path (0 = reference code)")
     ap.add_argument("--offload", type=int, default=1, help="1 = decoder-layer inputs wait in host RAM")
@@ -543,8 +697,10 @@ def main() -> int:
     ap.add_argument("--ladder", default="", help="check: then time forward/backward at these lengths, e.g. 30000,60000")
     ap.add_argument("--ladder-records", default="", help="check: records glob for the ladder (default --records)")
     args = ap.parse_args()
-    if args.mode == "train" and args.dp > 1 and "ARC3_DP_RANK" not in os.environ:
-        return spawn_dp(args)
+    if args.mode == "train" and "ARC3_DP_RANK" not in os.environ:
+        prepare_out(args)
+        if args.dp > 1:
+            return spawn_dp(args)
     return mode_train(args) if args.mode == "train" else mode_check(args)
 
 

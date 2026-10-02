@@ -66,17 +66,28 @@ def fetch_records(glob_uri: str, dest: Path) -> str:
 
 
 class LogMirror:
-    """Copy the running job's log to GCS every `every` seconds (progress is visible while the job runs)."""
+    """Copy the running job's logs to GCS every `every` seconds (progress is visible while the job runs): job.log
+    and the trainer's train_log.jsonl, each with a <file>.mtime.json sidecar (train_log.jsonl gains a line when a
+    record finishes, so its mtime dates the latest record for the live page)."""
 
-    def __init__(self, log: Path, uri: str, every: float = 60.0):
-        self.log, self.uri, self.every = log, uri, every
+    def __init__(self, out: Path, uri: str, every: float = 60.0, names=("job.log", "train_log.jsonl")):
+        self.out, self.uri, self.every, self.names = out, uri.rstrip("/"), every, names
+        self.seen: dict[str, float] = {}
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
         while not self.stop.wait(self.every):
-            if self.log.exists():
-                subprocess.run(["gcloud", "storage", "cp", str(self.log), self.uri], capture_output=True)
+            for n in self.names:
+                f = self.out / n
+                if not f.exists() or self.seen.get(n) == f.stat().st_mtime:
+                    continue
+                mtime = f.stat().st_mtime
+                subprocess.run(["gcloud", "storage", "cp", str(f), f"{self.uri}/{n}"], capture_output=True)
+                side = json.dumps({"file": n, "mtime": int(mtime), "at": int(time.time())})
+                subprocess.run(["gcloud", "storage", "cp", "-", f"{self.uri}/{n}.mtime.json"], input=side, text=True,
+                               capture_output=True)
+                self.seen[n] = mtime
 
     def __enter__(self):
         self.thread.start()
@@ -90,7 +101,7 @@ def run_job(job_id: str, job: dict, a) -> int:
     out = Path(a.work) / "out" / job_id
     out.mkdir(parents=True, exist_ok=True)
     log = out / "job.log"
-    with LogMirror(log, f"{ROOT}/{a.service}/out/{job_id}/job.log"):
+    with LogMirror(out, f"{ROOT}/{a.service}/out/{job_id}"):
         return _run_job(job_id, job, a, out, log)
 
 
