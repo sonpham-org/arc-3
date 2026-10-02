@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from trace_review_index import FENCED, index_run  # noqa: E402
 
 RUNS = "gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs"
+FINAL_STATUS = {"won", "gave_up", "lost", "game_over", "timeout", "finished", "error", "cancelled", "failed"}
 API = "https://storage.googleapis.com/storage/v1"
 GCLOUD_PY = Path(r"C:\Users\celle\AppData\Local\Google\Cloud SDK\google-cloud-sdk\lib\gcloud.py")
 
@@ -49,7 +50,8 @@ def gcs_get(url: str, token: str) -> bytes:
 
 
 def download_run(run: str, dest: Path, games: set[str] | None) -> list[str]:
-    """The run's per-play event logs (non-held-out games) into dest/artifacts/. Re-downloads only changed files."""
+    """The run's per-play event logs and viewer files (non-held-out games) into dest/artifacts/. Re-downloads only
+    changed files."""
     token = gcs_token()
     bucket, prefix = RUNS[len("gs://"):].split("/", 1)
     pre = f"{prefix}/{run}/working/artifacts/"
@@ -57,7 +59,7 @@ def download_run(run: str, dest: Path, games: set[str] | None) -> list[str]:
     while True:
         body = json.loads(gcs_get(f"{API}/b/{bucket}/o?prefix={quote(pre)}&fields=items(name,size,md5Hash),nextPageToken"
                                   + (f"&pageToken={quote(page)}" if page else ""), token))
-        names += [i for i in body.get("items", []) if i["name"].endswith("_events.jsonl")]
+        names += [i for i in body.get("items", []) if i["name"].endswith(("_events.jsonl", "_viewer_data.json"))]
         page = body.get("nextPageToken")
         if not page:
             break
@@ -107,8 +109,14 @@ def put(site: str, token: str, bundle: dict) -> dict:
 def publish_run(args, run: str, model: str, token: str | None) -> None:
     cache = Path(args.cache) / run
     games = set(args.games.split(",")) if args.games else None
-    files = download_run(run, cache, games)
-    nodes, paths, contents = index_run(cache, run, model, include_fenced=False)
+    files = [f for f in download_run(run, cache, games) if f.endswith("_events.jsonl")]
+    finished = {}
+    for v in (cache / "artifacts").glob("*_viewer_data.json"):
+        m = re.match(r"([a-z0-9]{4})-[0-9a-f]+_p(\d+)_viewer_data\.json$", v.name)
+        if m:
+            status = str(json.loads(v.read_text(encoding="utf-8")).get("status") or "").lower()
+            finished[f"{m.group(1)}_p{m.group(2)}"] = status in FINAL_STATUS
+    nodes, paths, contents = index_run(cache, run, model, include_fenced=False, finished=finished)
     by_game: dict[str, dict] = {}
     for n in nodes.values():
         by_game.setdefault(n["game"], {"nodes": [], "paths": []})["nodes"].append(

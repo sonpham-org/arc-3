@@ -305,8 +305,9 @@ async function loadNext() {
     window.scrollTo({ top: 0 });
   } catch (e) {
     showError(e);
+  } finally {
+    refreshWho();   // also when the pool is empty: the team panel is where raters get invited
   }
-  refreshWho();
 }
 
 async function submit() {

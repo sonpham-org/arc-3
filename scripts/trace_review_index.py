@@ -123,7 +123,9 @@ def path_content(level, start, acts, turns):
     return {"level": level, "start": rows(start), "turns": out_turns}
 
 
-def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool):
+def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool, finished: dict | None = None):
+    """finished: {play: bool}; a play still running has an unfinished last level, which is left out until
+    the play ends (it would read as "did not clear" while it is still being played)."""
     plays = sorted(run_dir.glob("artifacts/*_events.jsonl"))
     nodes, paths = {}, []
     contents = {}
@@ -138,8 +140,10 @@ def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool):
         if initial is None:
             continue
         earlier = []
-        for level, start, acts, cleared in segments(initial, actions):
-            if not acts:
+        segs = segments(initial, actions)
+        running = finished is not None and not finished.get(f"{game}_p{ps}", False)
+        for k, (level, start, acts, cleared) in enumerate(segs):
+            if not acts or (running and not cleared and k == len(segs) - 1):
                 continue
             nid = f"{game}:L{level}:{board_hash(start)}"
             pid = f"{run_id}:{game}_p{ps}:L{level}"
