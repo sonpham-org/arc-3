@@ -255,6 +255,40 @@ continuation. The returned Python tool call is shown for diagnosis; it does not
 execute against or alter the archived game. See
 `ARC3-Inference/debugger/README.md` for the gateway and deployment contract.
 
+### Thumbs up / thumbs down on the model's reasoning
+
+In the Run inspector, every section the model itself produced on a turn (`THINKING`,
+`ASSISTANT`, each `TOOL CALL`) carries a thumbs-up and a thumbs-down in its header. Press one
+and a note box opens under the header asking why it was right or why it was wrong; the note
+saves when you leave the box, press **Save note**, or hit Cmd/Ctrl+Enter. Press the lit thumb
+again to take the mark back. Other reviewers' marks and reasons show under the note.
+
+These marks are labels for supervised fine-tuning and RL, so each one is stored with the
+**exact text it judged** and that text's SHA-256, alongside where it was (run, game, step,
+section). A run can be re-exported in place; when the words at a position change, the old mark
+stays with the old words and stops showing there. It is never re-aimed at different text. One
+reviewer has one mark per section, and the reviewer is the signed-in Google account.
+
+Marks live in Railway Postgres (`arc3_trace_feedback` in `railway/catalog_schema.sql`); the
+routes and who may call them are documented at the top of `railway/trace_feedback.py`. To pull
+every mark as JSON lines for a training run:
+
+```bash
+curl -H "Authorization: Bearer $ARC3_PUBLISH_TOKEN"   https://arc3.sonpham.net/api/v1/traces/feedback-export
+```
+
+Each line is `{"run", "gameId", "gameIndex", "stepIndex", "turn", "sectionIndex",
+"sectionLabel", "vote": "up"|"down", "value": 1|-1, "reason", "reviewer", "contentSha256",
+"content", "createdAt", "updatedAt"}`. Filters: `?run=`, `?vote=up|down`, `?reviewer=`,
+`?since=<ISO time>`, and `?content=0` to leave the text out. Signed in, the same lines are at
+`/api/v1/traces/feedback?format=jsonl`. The export is the mark and the judged text only; join
+the prompt and board for that step from the run's own viewer files by run, game and step.
+
+The thumbs appear only in the Run inspector's review view. The harness lab reuses the same
+panel but its nodes are not published run turns, so it shows none. Tests:
+`python3.13 -m unittest scripts.test_trace_feedback` (set `ARC3_TEST_DATABASE_URL` to a
+disposable Postgres for the round trip).
+
 ### The metric, and why we don't trust single runs
 
 Score is the ARC-AGI-3 score (level depth is weighted, so depth beats efficiency).

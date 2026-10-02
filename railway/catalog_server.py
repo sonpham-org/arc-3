@@ -31,6 +31,7 @@ from model_backfill import backfill_catalog_models
 from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
 from harness_relay import relay as relay_harness
 from games_store import GamesApi
+from trace_feedback import TraceFeedbackApi
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -266,6 +267,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
     max_debugger_body_bytes = 16 * 1024 * 1024
     debugger_relay: DebuggerRelay
     games_api: GamesApi | None = None
+    trace_feedback_api: TraceFeedbackApi | None = None
 
     def handle_games(self, method: str) -> bool:
         """Route /api/v1/games/* and /api/v1/public/games/* to games_store. True if handled."""
@@ -287,6 +289,21 @@ class CatalogHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(response.body)
+        return True
+
+    def handle_trace_feedback(self, method: str) -> bool:
+        """Route /api/v1/traces/* to trace_feedback. True if handled."""
+
+        path = urlparse(self.path).path
+        if self.trace_feedback_api is None or not TraceFeedbackApi.owns(path):
+            return False
+        try:
+            response = self.trace_feedback_api.handle(method, self.path, self.headers, self.rfile.read)
+        except Exception as exc:  # Full detail to Railway logs; the client gets a small error.
+            print(f"trace feedback request failed for {method} {path}: {exc}", flush=True)
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "trace_feedback_unavailable"})
+            return True
+        self.send_relay_response(response.status, response.content_type, response.body)
         return True
 
     def send_json(self, status: HTTPStatus | int, payload: str | dict) -> None:
@@ -339,6 +356,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if relay_harness(self, "GET"):
             return
         if self.handle_games("GET"):
+            return
+        if self.handle_trace_feedback("GET"):
             return
         path = urlparse(self.path).path
         try:
@@ -551,6 +570,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             return
         if self.handle_games("POST"):
             return
+        if self.handle_trace_feedback("POST"):
+            return
         path = urlparse(self.path).path
         try:
             if path.startswith(PUBLIC_PREFIX):
@@ -597,6 +618,7 @@ def main() -> int:
         CatalogHandler.publish_token,
         args.static_manifest,
     )
+    CatalogHandler.trace_feedback_api = TraceFeedbackApi(connect, CatalogHandler.publish_token)
     CatalogHandler.max_upload_bytes = int(
         os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))
     )

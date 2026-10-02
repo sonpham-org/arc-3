@@ -7,6 +7,7 @@
 
 import { annotateCoordRefs, MODE } from "./coords.js";
 import { paintThumb } from "./board.js?v=20260815-frames";
+import { createVotes } from "./trace-votes.js?v=20261001-votes";
 
 const NOISE = /^(MODEL CONTEXT|MODEL RESPONSE META|PROMPT LOG SNAPSHOT|ACTION_RESPONSE)$/i;
 const IS_CODE = /^TOOL CALL/i;
@@ -28,7 +29,10 @@ function typeClass(label) {
   return "";
 }
 
-export function renderDecision(root, step, { currentClick, previousStep, mode = "review", showFrames = true } = {}) {
+// `feedback` names the turn being shown ({ run, gameIndex, gameId, stepIndex, turn }). With it,
+// each section of model output gets thumbs up / thumbs down; without it (the harness lab, whose
+// nodes are not published run turns) there is nothing stable to attach a mark to, so no thumbs.
+export function renderDecision(root, step, { currentClick, previousStep, mode = "review", showFrames = true, feedback = null } = {}) {
   root.innerHTML = "";
   if (!step) {
     root.innerHTML = '<div class="empty">No analyzer turn for this frame.</div>';
@@ -42,6 +46,9 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
   }
   if (showFrames) root.appendChild(renderAbsorbedFrames(step));
 
+  // A mark is filed under the section's place in the stored transcript, noise included.
+  const position = new Map((step.localContext?.sections || []).map((s, index) => [s, index]));
+  const votes = feedback ? createVotes(feedback) : null;
   const sections = (step.localContext?.sections || []).filter((s) => !NOISE.test(s.label || ""));
   if (!sections.length) {
     root.insertAdjacentHTML("beforeend", '<div class="empty">No transcript for this turn.</div>');
@@ -69,10 +76,15 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
       continue;
     }
     if (IS_CODE.test(section.label)) call += 1;
-    root.appendChild(renderSection(section, { open: true, call: IS_CODE.test(section.label) ? call : 0 }));
+    const details = renderSection(section, { open: true, call: IS_CODE.test(section.label) ? call : 0 });
+    if (votes && literalDirection(section.label) === "output") {
+      votes.attach(details, { sectionIndex: position.get(section), label: section.label, content: section.content || "" });
+    }
+    root.appendChild(details);
   }
 
   root.appendChild(renderRaw(step));
+  votes?.load();
 }
 
 function renderLiteral(step) {

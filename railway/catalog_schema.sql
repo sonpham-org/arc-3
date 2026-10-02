@@ -90,6 +90,33 @@ CREATE TABLE IF NOT EXISTS arc3_publications (
 CREATE INDEX IF NOT EXISTS arc3_publications_run_idx
 ON arc3_publications (run_id, published_at DESC);
 
+-- Thumbs up / thumbs down on one section of the model's own output (THINKING, ASSISTANT, a
+-- TOOL CALL), with the reviewer's reason. These are training labels, so each row keeps the
+-- exact text it judged: a run can be re-exported in place, and a mark must never be re-aimed
+-- at different words. No foreign key to arc3_runs for the same reason -- a label outlives the
+-- copy of the run it was made on. See railway/trace_feedback.py.
+CREATE TABLE IF NOT EXISTS arc3_trace_feedback (
+    feedback_id bigserial PRIMARY KEY,
+    run_id text NOT NULL CHECK (run_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$'),
+    game_index integer NOT NULL CHECK (game_index >= 0),
+    game_id text,
+    step_index integer NOT NULL CHECK (step_index >= 0),
+    turn integer CHECK (turn >= 0),
+    section_index integer NOT NULL CHECK (section_index >= 0),
+    section_label text NOT NULL,
+    content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    content text NOT NULL,
+    vote text NOT NULL CHECK (vote IN ('up', 'down')),
+    reason text,
+    reviewer text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (run_id, game_index, step_index, section_index, content_sha256, reviewer)
+);
+
+CREATE INDEX IF NOT EXISTS arc3_trace_feedback_updated_idx
+ON arc3_trace_feedback (updated_at, feedback_id);
+
 CREATE OR REPLACE FUNCTION arc3_refresh_catalog_snapshot()
 RETURNS void
 LANGUAGE sql

@@ -8,7 +8,7 @@ fetchRunsIndex().then((payload) => {
 }).catch(() => {});
 import { initBoard, setPalette, showBoard, setClicks, clearPins, colorAt, redraw, view, setDiff, clearDiff } from "./board.js?v=20260815-frames";
 import { initCoordRefs, showTooltip } from "./coords.js";
-import { renderDecision } from "./decision.js?v=20260817-literal";
+import { renderDecision } from "./decision.js?v=20261001-votes";
 import { EventLog } from "./log.js?v=20260907-turn-groups";
 import { renderOverview } from "./overview.js";
 import { Scrubber } from "./scrubber.js";
@@ -308,6 +308,13 @@ async function selectFrame(index) {
     currentClick: frame.click,
     previousStep: previous,
     mode: decisionMode,
+    feedback: {
+      run: state.run,
+      gameIndex: state.gameIndex,
+      gameId: state.game.game_id,
+      stepIndex: step.stepIndex,
+      turn,
+    },
   });
 }
 

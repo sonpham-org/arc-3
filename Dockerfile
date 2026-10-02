@@ -31,6 +31,7 @@ COPY railway/harness_relay.py /harness_relay.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/games_schema.sql /games_schema.sql
 COPY railway/games_store.py /games_store.py
+COPY railway/trace_feedback.py /trace_feedback.py
 COPY railway/publication_store.py /publication_store.py
 COPY railway/model_backfill.py /model_backfill.py
 COPY scripts/run_catalog.py /run_catalog.py
@@ -49,6 +50,10 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -q "DebuggerRelay" /catalog_server.py \
     && grep -q "GamesApi" /catalog_server.py \
     && grep -q "arc3_game_feedback" /games_schema.sql \
+    && grep -q "TraceFeedbackApi" /catalog_server.py \
+    && grep -q "arc3_trace_feedback" /catalog_schema.sql \
+    && grep -qF -- '--skip-auth-route="^/api/v1/traces/feedback-export$"' /entrypoint.sh \
+    && grep -q "trace-votes.js" /srv/static/js/decision.js \
     && grep -qF -- '--skip-auth-route="^/api/v1/public/"' /entrypoint.sh \
     && grep -q "ARC DEBUGGER" /srv/arc-debugger.html \
     && chmod 0755 /entrypoint.sh

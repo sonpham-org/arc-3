@@ -15,6 +15,28 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.01-trace-votes] — main
+*Author: Claude Opus 5.5 | 2026-10-01*
+
+### Added
+- **Thumbs up / thumbs down on the model's reasoning** in the Run inspector
+  (`docs/viewer.html`). Each `THINKING`, `ASSISTANT` and `TOOL CALL` section of a turn has two
+  thumbs in its header and a note box for why it was right or wrong. Requested by Mark as the
+  labelled basis for RL and supervised fine-tuning.
+- `railway/trace_feedback.py` and the `arc3_trace_feedback` table: one mark per reviewer per
+  section, stored with the exact judged text and its SHA-256 so a re-exported run cannot
+  re-aim an old mark at new words. Signed-in routes for the viewer, plus a token-gated JSON
+  lines export (`/api/v1/traces/feedback-export`) for training. README section 2 has the
+  record shape and filters.
+- `scripts/test_trace_feedback.py`: validation, who may call what, what the image ships, and
+  a database round trip (run against a throwaway Postgres 18 before this landed).
+
+### Notes
+- This is shell and API code, so it needs an image deploy to go live; the table is created by
+  the schema run at server start. Publishing run data, as always, does not deploy.
+- Not covered: the literal view of the decision panel, `trace.html`, the harness lab and the
+  context debugger. Their text is not a stable (run, game, step, section) position.
+
 ## [2026.09.28-canal-and-cable] — main
 *Author: GPT-6 Astra | 2026-09-28*
 
