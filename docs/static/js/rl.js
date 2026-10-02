@@ -40,6 +40,7 @@ function dur(min) {
 }
 const durc = min => { min = Math.max(0, Math.round(min)); return min < 60 ? min + "m" : Math.floor(min / 60) + "h" + (min % 60 ? " " + (min % 60) + "m" : ""); };
 function ago(iso) {
+  if (!iso) return "time unknown";
   const s = (Date.now() - new Date(iso)) / 1000;
   return s < 90 ? "just now" : dur(s / 60) + " ago";
 }
@@ -107,7 +108,8 @@ function renderHero(d) {
 function renderLoop(d) {
   const { st, note } = states(d), stages = d.stages, n = stages.length;
   const W = 560, H = 470, cx = 280, cy = 235, R = 150;
-  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "loop", role: "img", "aria-label": "The loop: " + stages.map(s => s.label).join(", ") });
+  // 50 px of margin each side: the side labels ("before-runs playing") reach past the ring
+  const svg = sv("svg", { viewBox: `-50 0 ${W + 100} ${H}`, class: "loop", role: "img", "aria-label": "The loop: " + stages.map(s => s.label).join(", ") });
   svg.append(sv("defs", {}, sv("filter", { id: "glow", x: "-30%", y: "-30%", width: "160%", height: "160%" },
     sv("feGaussianBlur", { stdDeviation: "3.5", result: "b" }), sv("feMerge", {}, sv("feMergeNode", { in: "b" }), sv("feMergeNode", { in: "SourceGraphic" })))));
   svg.append(sv("circle", { cx, cy, r: R + 0.5, fill: "none", stroke: C("--rl-ring"), "stroke-width": 26 }));
@@ -227,7 +229,7 @@ function renderNow(d) {
   card.replaceChildren(
     el("h3", {}, "Just trained"),
     el("div", { class: "g" }, r.game),
-    el("div", { class: "muted", style: "font-size:13px" }, `record ${t.records.length} of ${t.total}, finished ${clock(r.end)} (${ago(r.end)})`),
+    el("div", { class: "muted", style: "font-size:13px" }, `record ${t.records.length} of ${t.total}` + (r.end ? `, finished ${clock(r.end)} (${ago(r.end)})` : "")),
     el("dl", { class: "kv" },
       el("dt", {}, "game history read"), el("dd", {}, fmtInt(r.tokens) + " tokens"),
       el("dt", {}, "winning turns trained"), el("dd", {}, `${fmtInt(r.trained)} (${share.toFixed(0)}%)`),
