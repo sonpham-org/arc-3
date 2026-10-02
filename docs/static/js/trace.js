@@ -1,4 +1,5 @@
 import { fetchGameStep, fetchRunOverview, fetchRunsIndex, fetchRunTimeline } from "./api.js";
+import { createVotes } from "./trace-votes.js?v=20261002-votes";
 import { paintThumb, setPalette } from "./board.js?v=20260815-frames";
 
 const KIND_LABEL = {
@@ -326,6 +327,26 @@ function groupAdjacentSections(sections) {
     return groups;
   }, []);
 }
+// What a reviewer may mark: the model's own output, the same rule the Run inspector uses.
+const VOTABLE = /^(THINKING|ASSISTANT|OUTPUT|TOOL CALL)/i;
+function installVoteRows(target) {
+  if (!target?.sections.length) return;
+  const anchor = el.detail.querySelector(".focus-panel, .io-grid"); if (!anchor) return;
+  const box = document.createElement("section"); box.className = "vote-rows";
+  box.innerHTML = "<h3>Was this reasoning right?</h3>";
+  const votes = createVotes(target.identity);
+  target.sections.forEach(({ section, sectionIndex }) => {
+    const row = document.createElement("div"); row.className = "vote-row";
+    const head = document.createElement("div"); head.className = "vote-row-head";
+    const name = document.createElement("span"); name.className = "vote-row-name"; name.textContent = section.label || "SECTION";
+    const peek = document.createElement("span"); peek.className = "vote-row-peek"; peek.textContent = String(section.content || "").trim().replace(/\s+/g, " ").slice(0, 160);
+    head.append(name, peek); row.appendChild(head); box.appendChild(row);
+    votes.attach(row, { head, sectionIndex, label: section.label || "SECTION", content: section.content || "" });
+  });
+  if (!box.querySelector(".vote")) return;
+  anchor.insertAdjacentElement("afterend", box);
+  votes.load();
+}
 function scrubTextHtml(text) {
   let offset = 0;
   return String(text || "").split("\n").map((line) => {
@@ -396,6 +417,7 @@ async function renderDetail(event, selectedPhase = null, selectedSegmentIndex = 
   el.detail.innerHTML = '<div class="detail-loading">Loading captured tokens…</div>';
   const duration = Math.max(0, (new Date(event.end).getTime() - new Date(event.start).getTime()) / 1000);
   let input = ""; let output = ""; let focus = ""; let provenance = "Exact timestamped record"; let exact = true; let link = "";
+  let voteTarget = null;
   if (event.detail?.type === "inline_call") {
     input = event.detail.input || ""; output = event.detail.output || ""; focus = selectedPhase === "input" ? input : output;
   } else if (event.detail?.type === "curator_call") {
@@ -416,6 +438,14 @@ async function renderDetail(event, selectedPhase = null, selectedSegmentIndex = 
     const selectedGroup = phaseGroups[selectedSegmentIndex] || phaseGroups.find((group) => group.phase === selectedPhase);
     focus = selectedPhase ? formatSections(selectedGroup?.phase === selectedPhase ? selectedGroup.sections : generated.filter((section) => sectionPhase(section) === selectedPhase)) : "";
     link = `<a class="detail-link" href="./viewer.html#run=${encodeURIComponent(state.run)}&game=${event.gameIndex}">Open this game in the frame viewer →</a>`;
+    // Thumbs for the model's own output in this span: the selected phase's sections, or all of
+    // the turn's output when no phase is selected. Filed under the same place the Run inspector
+    // uses (the section's index in this step's transcript), so the two pages share marks.
+    const chosen = !selectedPhase ? generated : selectedGroup?.phase === selectedPhase ? selectedGroup.sections : generated.filter((section) => sectionPhase(section) === selectedPhase);
+    voteTarget = {
+      identity: { run: state.run, gameIndex: event.detail.gameIndex, gameId: event.gameId ?? null, stepIndex: event.detail.stepIndex, turn: step.analysisStep ?? null },
+      sections: chosen.filter((section) => VOTABLE.test(section.label || "")).map((section) => ({ section, sectionIndex: localSections.indexOf(section) })).filter((item) => item.sectionIndex >= 0),
+    };
   }
   if (request !== state.detailRequest) return;
   const usage = event.usage || {};
@@ -426,6 +456,7 @@ async function renderDetail(event, selectedPhase = null, selectedSegmentIndex = 
   el.detail.innerHTML = `<div class="detail-wrap"><div class="detail-title"><h2>${escapeHtml(event.label)}</h2>${phaseBadge}${badge}</div>
     ${metaGrid([["Start", fmtDateTime(event.start)], ["Duration", event.instant ? "point event" : fmtDuration(event.durationSeconds ?? duration)], ["Span type", KIND_LABEL[event.kind] || event.kind], ["Status", event.status], ["Game", event.gameId], ["Prompt tokens", usage.promptTokens], ["Completion tokens", usage.completionTokens], ["Ledger revision", event.ledgerRevision ?? event.ledgerRevisionAfter], ["Evidence games", event.evidenceCount], ["Ledger entries", event.ledgerEntryCount]])}
     <div class="provenance-note${exact ? " exact" : ""}">${escapeHtml(provenance)}</div>${body}${link}${processTable(event)}</div>`;
+  installVoteRows(voteTarget);
   if (selectedPhase) {
     installReasoningScrubber(event, selectedPhase, selectedSegmentIndex, focusBody);
     const selected = state.pinned || state.preview;

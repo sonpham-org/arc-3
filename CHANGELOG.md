@@ -15,6 +15,29 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.02-trace-votes-everywhere] — main
+*Author: Claude Opus 5.5 | 2026-10-02*
+
+### Added
+- The thumbs from the entry below now also appear in the Run inspector's **literal** view and
+  on the **execution trace** page (`docs/trace.html`, under the captured text of a pinned
+  gameplay span). Requested by Mark.
+- All three places file a mark under the same position (the section's place in that turn's
+  own transcript) and against the transcript's copy of the text, so one mark shows in all of
+  them. In the literal view only this turn's own output carries thumbs; text carried over from
+  earlier turns is marked on its own turn.
+- `docs/static/css/trace-votes.css`: the vote styles, moved out of `app.css` so both pages
+  load one copy.
+
+### Changed
+- `trace-votes.js` keeps one read of a step's marks for a few seconds, because the trace page
+  redraws its detail pane on every hover. A save drops the kept read.
+
+### Notes
+- No server or database change. Supersedes the "review view only" note in the entry below.
+- Still without thumbs: curator and inline calls on the trace page, the harness lab, the
+  context debugger.
+
 ## [2026.10.01-trace-votes] — main
 *Author: Claude Opus 5.5 | 2026-10-01*
 

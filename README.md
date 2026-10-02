@@ -257,8 +257,9 @@ execute against or alter the archived game. See
 
 ### Thumbs up / thumbs down on the model's reasoning
 
-In the Run inspector, every section the model itself produced on a turn (`THINKING`,
-`ASSISTANT`, each `TOOL CALL`) carries a thumbs-up and a thumbs-down in its header. Press one
+In the Run inspector (both its review and literal views) and on the execution trace page,
+every section the model itself produced on a turn (`THINKING`, `ASSISTANT`, each `TOOL CALL`)
+carries a thumbs-up and a thumbs-down. Press one
 and a note box opens under the header asking why it was right or why it was wrong; the note
 saves when you leave the box, press **Save note**, or hit Cmd/Ctrl+Enter. Press the lit thumb
 again to take the mark back. Other reviewers' marks and reasons show under the note.
@@ -284,9 +285,20 @@ Each line is `{"run", "gameId", "gameIndex", "stepIndex", "turn", "sectionIndex"
 `/api/v1/traces/feedback?format=jsonl`. The export is the mark and the judged text only; join
 the prompt and board for that step from the run's own viewer files by run, game and step.
 
-The thumbs appear only in the Run inspector's **review** view. The literal view shows the same
-turn but lists the saved request sections, which are numbered differently, so it carries none.
-The harness lab reuses the same panel but its nodes are not published run turns. Tests:
+All three places file a mark under the same position, the section's place in that turn's own
+transcript, so a mark made in one shows in the others:
+
+- **Review view**: thumbs in each section header.
+- **Literal view**: the list there is the whole saved request, earlier turns included. Only
+  this turn's own output carries thumbs; text carried over from an earlier turn is marked on
+  that turn.
+- **Execution trace** (`trace.html`): click a gameplay span to pin it. Under the captured text
+  is a "Was this reasoning right?" box with one row per output section of the selected phase
+  (or of the whole turn when no phase is selected). Curator and inline calls have no thumbs:
+  they are not a published (run, game, step, section) position.
+
+The harness lab reuses the decision panel but its nodes are not published run turns, so it
+shows none; nor does the context debugger. Tests:
 `python3.13 -m unittest scripts.test_trace_feedback` (set `ARC3_TEST_DATABASE_URL` to a
 disposable Postgres for the round trip).
 

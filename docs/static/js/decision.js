@@ -7,7 +7,7 @@
 
 import { annotateCoordRefs, MODE } from "./coords.js";
 import { paintThumb } from "./board.js?v=20260815-frames";
-import { createVotes } from "./trace-votes.js?v=20261001-votes";
+import { createVotes } from "./trace-votes.js?v=20261002-votes";
 
 const NOISE = /^(MODEL CONTEXT|MODEL RESPONSE META|PROMPT LOG SNAPSHOT|ACTION_RESPONSE)$/i;
 const IS_CODE = /^TOOL CALL/i;
@@ -32,6 +32,8 @@ function typeClass(label) {
 // `feedback` names the turn being shown ({ run, gameIndex, gameId, stepIndex, turn }). With it,
 // each section of model output gets thumbs up / thumbs down; without it (the harness lab, whose
 // nodes are not published run turns) there is nothing stable to attach a mark to, so no thumbs.
+// Both views file a mark under the section's place in this turn's own transcript
+// (step.localContext.sections), so a mark made in one view shows in the other.
 export function renderDecision(root, step, { currentClick, previousStep, mode = "review", showFrames = true, feedback = null } = {}) {
   root.innerHTML = "";
   if (!step) {
@@ -39,16 +41,17 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
     return;
   }
 
+  const votes = feedback ? createVotes(feedback) : null;
   root.appendChild(renderHead(step, currentClick));
   if (mode === "literal") {
-    root.appendChild(renderLiteral(step));
+    root.appendChild(renderLiteral(step, votes));
+    votes?.load();
     return;
   }
   if (showFrames) root.appendChild(renderAbsorbedFrames(step));
 
   // A mark is filed under the section's place in the stored transcript, noise included.
   const position = new Map((step.localContext?.sections || []).map((s, index) => [s, index]));
-  const votes = feedback ? createVotes(feedback) : null;
   const sections = (step.localContext?.sections || []).filter((s) => !NOISE.test(s.label || ""));
   if (!sections.length) {
     root.insertAdjacentHTML("beforeend", '<div class="empty">No transcript for this turn.</div>');
@@ -87,7 +90,30 @@ export function renderDecision(root, step, { currentClick, previousStep, mode = 
   votes?.load();
 }
 
-function renderLiteral(step) {
+/**
+ * The literal view lists the whole saved request -- earlier turns included -- so its rows are
+ * numbered differently from this turn's transcript. Find which rows are this turn's own output
+ * and return row -> the transcript section it is. This turn's sections are the last ones, so
+ * match from the end. Earlier turns' text gets no thumbs here: it is marked on its own turn.
+ */
+function ownOutput(step, shown) {
+  const local = step.localContext?.sections || [];
+  const same = (a, b) => a.label === b.label && String(a.content || "").trim() === String(b.content || "").trim();
+  const found = new Map();
+  let cursor = shown.length - 1;
+  for (let index = local.length - 1; index >= 0; index -= 1) {
+    if (literalDirection(local[index].label) !== "output") continue;
+    for (let row = cursor; row >= 0; row -= 1) {
+      if (!same(shown[row], local[index])) continue;
+      found.set(shown[row], { sectionIndex: index, section: local[index] });
+      cursor = row - 1;
+      break;
+    }
+  }
+  return found;
+}
+
+function renderLiteral(step, votes = null) {
   const wrap = document.createElement("section");
   wrap.className = "literal-trace";
   const modelContext = step.context || step.localContext || {};
@@ -110,6 +136,7 @@ function renderLiteral(step) {
     return wrap;
   }
 
+  const own = votes ? ownOutput(step, sections) : new Map();
   for (const section of sections) {
     const direction = literalDirection(section.label);
     const record = document.createElement("article");
@@ -123,6 +150,10 @@ function renderLiteral(step) {
     const pre = document.createElement("pre");
     pre.textContent = String(section.content || "");
     record.append(head, pre);
+    const mine = own.get(section);
+    // The mark is saved against the transcript's copy of the text, so it is the same mark
+    // (same words, same hash) the review view shows.
+    if (mine) votes.attach(record, { head, sectionIndex: mine.sectionIndex, label: mine.section.label, content: mine.section.content || "" });
     wrap.appendChild(record);
   }
   return wrap;

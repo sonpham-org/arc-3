@@ -195,6 +195,22 @@ class ShippingTests(unittest.TestCase):
         self.assertNotIn("main.js?v=20260911-turn-links", viewer)
         self.assertIn("/api/v1/traces/feedback", (js / "trace-votes.js").read_text(encoding="utf-8"))
 
+    def test_every_page_with_thumbs_loads_their_script_and_styles(self) -> None:
+        docs = ROOT / "docs"
+        css = (docs / "static" / "css" / "trace-votes.css").read_text(encoding="utf-8")
+        for rule in (".vote-btn", ".vote-note", ".literal-record-head:has(> .vote)", ".vote-row-head"):
+            self.assertIn(rule, css)
+        # One copy of the styles: a second set left behind in app.css would drift.
+        self.assertNotIn(".vote-btn", (docs / "static" / "css" / "app.css").read_text(encoding="utf-8"))
+        for page in ("viewer.html", "trace.html"):
+            self.assertIn("./static/css/trace-votes.css", (docs / page).read_text(encoding="utf-8"))
+        trace = (docs / "static" / "js" / "trace.js").read_text(encoding="utf-8")
+        self.assertIn('from "./trace-votes.js', trace)
+        self.assertIn("installVoteRows(voteTarget);", trace)
+        self.assertNotIn("trace.js?v=20260824-trace-tokens", (docs / "trace.html").read_text(encoding="utf-8"))
+        decision = (docs / "static" / "js" / "decision.js").read_text(encoding="utf-8")
+        self.assertIn("renderLiteral(step, votes)", decision)
+
 
 @unittest.skipUnless(os.environ.get("ARC3_TEST_DATABASE_URL"), "set ARC3_TEST_DATABASE_URL to a disposable Postgres")
 class DatabaseTests(unittest.TestCase):

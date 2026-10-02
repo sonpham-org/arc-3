@@ -1,7 +1,10 @@
 // Thumbs up / thumbs down on what the model wrote, with the reviewer's reason.
 //
-// The decision panel calls attach() for each section of model output (THINKING, ASSISTANT,
-// a TOOL CALL) and load() once the turn is drawn. A mark is a training label, so it is saved
+// A page calls attach() for each section of model output (THINKING, ASSISTANT, a TOOL CALL)
+// and load() once the turn is drawn. The Run inspector does it in both of its views and the
+// execution trace page does it for the selected span; all three file a mark under the same
+// place (run, game, step, section of the turn's own transcript), so a mark made on one shows
+// on the others. A mark is a training label, so it is saved
 // with the section's exact text and that text's SHA-256 (railway/trace_feedback.py): if the
 // run is re-exported and the words at this position change, the old mark stays with the old
 // words and is not shown here. One reviewer has one mark per section; pressing the lit thumb
@@ -42,16 +45,36 @@ async function request(method, { query, body } = {}) {
   return payload;
 }
 
+// One read of a step's marks serves every redraw of it for a short while: the trace page
+// redraws its detail pane on hover. A save for that step drops the cached read.
+const LIST_TTL_MS = 20_000;
+const listCache = new Map();
+const listKey = (identity) => `${identity.run}\n${identity.gameIndex}\n${identity.stepIndex}`;
+
+function listVotes(identity) {
+  const key = listKey(identity);
+  const hit = listCache.get(key);
+  if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.promise;
+  const promise = request("GET", {
+    query: { run: identity.run, game: identity.gameIndex, step: identity.stepIndex },
+  });
+  listCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => listCache.delete(key));
+  return promise;
+}
+
 /**
  * identity: { run, gameIndex, gameId, stepIndex, turn } -- which turn of which game this is.
- * Returns { attach(details, { sectionIndex, label, content }), load() }.
+ * Returns { attach(host, { head, sectionIndex, label, content }), load() }.
+ * `host` is the element that holds the section; `head` is its header row (default: the
+ * host's <summary>). The thumbs go in the header and the note box right under it.
  */
 export function createVotes(identity) {
   const entries = [];
 
-  function attach(details, { sectionIndex, label, content }) {
-    if (!String(content || "").trim()) return;
-    const summary = details.querySelector("summary");
+  function attach(details, { head, sectionIndex, label, content }) {
+    if (!String(content || "").trim() || !Number.isInteger(sectionIndex)) return;
+    const summary = head || details.querySelector("summary");
     if (!summary) return;
 
     const entry = { details, sectionIndex, label, content, mine: null, reason: "", others: [], busy: false };
@@ -80,7 +103,7 @@ export function createVotes(identity) {
       entry.buttons[vote] = button;
       bar.appendChild(button);
     }
-    summary.insertBefore(bar, summary.querySelector(".size"));
+    summary.insertBefore(bar, summary.querySelector(".size, time"));
 
     const note = document.createElement("div");
     note.className = "vote-note";
@@ -163,10 +186,11 @@ export function createVotes(identity) {
     entry.status.textContent = "saving…";
     paint(entry);
     if (focus) {
-      entry.details.open = true;
+      if ("open" in entry.details) entry.details.open = true;
       entry.textarea.focus();
     }
     try {
+      listCache.delete(listKey(identity));
       await request("POST", {
         body: {
           run: identity.run,
@@ -198,9 +222,7 @@ export function createVotes(identity) {
     if (!entries.length) return;
     let payload;
     try {
-      payload = await request("GET", {
-        query: { run: identity.run, game: identity.gameIndex, step: identity.stepIndex },
-      });
+      payload = await listVotes(identity);
     } catch (error) {
       for (const entry of entries) {
         for (const button of Object.values(entry.buttons)) {
