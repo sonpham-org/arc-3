@@ -61,6 +61,7 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -qF -- '--skip-auth-route="^/api/v1/review/publication$"' /entrypoint.sh \
     && test -s /srv/review.html \
     && test -s /srv/rl.html \
+    && test -s /srv/tree.html \
     && grep -q "ARC DEBUGGER" /srv/arc-debugger.html \
     && chmod 0755 /entrypoint.sh
 

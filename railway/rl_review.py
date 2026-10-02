@@ -285,6 +285,66 @@ def rater_summary(cursor: Any, rater_id: str) -> dict[str, Any]:
     return {"rated": count, "last": iso(last), "splits": total}
 
 
+def tree(cursor: Any, game: str) -> dict[str, Any]:
+    """One game as a tree for the explorer: its nodes (level starts; forks later), every path out of each node and
+    where it led (the next level's node when it cleared), and how each path fared with raters (pairwise wins,
+    losses, ties, 'both bad', and turn marks)."""
+
+    cursor.execute("SELECT node_id, kind, level, meta FROM rl_review_nodes WHERE game_id = %s ORDER BY level, node_id",
+                   (game,))
+    nodes = _rows(cursor)
+    if not nodes:
+        raise ReviewProblem(404, "unknown_game", "nothing published for this game")
+    ids = [n["node_id"] for n in nodes]
+    cursor.execute("SELECT path_id, node_id, run_id, play, model, level, cleared, turns, actions FROM rl_review_paths "
+                   "WHERE node_id = ANY(%s) ORDER BY level, path_id", (ids,))
+    paths = _rows(cursor)
+    record = {p["path_id"]: {"wins": 0, "losses": 0, "ties": 0, "neither": 0} for p in paths}
+    marks: dict[str, dict[str, int]] = {}
+    cursor.execute("SELECT s.path_ids, r.choice, r.marks FROM rl_review_splits s "
+                   "JOIN rl_review_ratings r ON r.split_id = s.split_id WHERE s.node_id = ANY(%s)", (ids,))
+    for path_ids, choice, rating_marks in cursor.fetchall():
+        for pid in path_ids:
+            if pid in record:
+                key = "ties" if choice == "tie" else "neither" if choice == "neither" else (
+                    "wins" if choice == pid else "losses")
+                record[pid][key] += 1
+        for m in rating_marks or []:
+            d = marks.setdefault(m.get("path"), {"up": 0, "down": 0, "notes": 0})
+            if m.get("verdict") in VERDICTS:
+                d[m["verdict"]] += 1
+            if m.get("note"):
+                d["notes"] += 1
+    cursor.execute("SELECT node_id, split_id FROM rl_review_splits WHERE node_id = ANY(%s) AND active "
+                   "ORDER BY priority DESC, split_id", (ids,))
+    split_ids: dict[str, list[str]] = {}
+    for node_id, split_id in cursor.fetchall():
+        split_ids.setdefault(node_id, []).append(split_id)
+    splits_at = {k: len(v) for k, v in split_ids.items()}
+    cursor.execute("SELECT s.node_id, count(*) FROM rl_review_ratings r JOIN rl_review_splits s ON s.split_id = r.split_id "
+                   "WHERE s.node_id = ANY(%s) GROUP BY s.node_id", (ids,))
+    ratings_at = dict(cursor.fetchall())
+    same_play = {(p["run_id"], p["play"], p["level"]): p["node_id"] for p in paths}
+    first_at_level: dict[int, str] = {}
+    for n in nodes:
+        first_at_level.setdefault(n["level"], n["node_id"])
+    out_paths = []
+    for p in paths:
+        nxt = None
+        if p["cleared"]:   # the same play's next level, else the level's node any other play reached
+            nxt = same_play.get((p["run_id"], p["play"], p["level"] + 1)) or first_at_level.get(p["level"] + 1)
+        out_paths.append({"id": p["path_id"], "node": p["node_id"], "next": nxt, "run": p["run_id"], "play": p["play"],
+                          "model": p["model"], "level": p["level"], "cleared": p["cleared"], "turns": p["turns"],
+                          "actions": p["actions"], **record[p["path_id"]],
+                          "marks": marks.get(p["path_id"], {"up": 0, "down": 0, "notes": 0})})
+    return {"apiVersion": 1, "game": game,
+            "nodes": [{"id": n["node_id"], "kind": n["kind"], "level": n["level"], "start": (n["meta"] or {}).get("start"),
+                       "paths": sum(p["node_id"] == n["node_id"] for p in paths), "splits": splits_at.get(n["node_id"], 0),
+                       "splitIds": split_ids.get(n["node_id"], [])[:24], "ratings": ratings_at.get(n["node_id"], 0)}
+                      for n in nodes],
+            "paths": out_paths}
+
+
 def stats(cursor: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"apiVersion": 1}
     for name, table in (("nodes", "rl_review_nodes"), ("paths", "rl_review_paths"),
@@ -736,6 +796,10 @@ class RlReviewApi:
         if team and sub == "/stats" and method == "GET":
             with self._cursor() as cursor:
                 return _json(200, stats(cursor))
+        if team and sub == "/tree" and method == "GET":
+            game = _id(arg("game"), "game", GAME_RE)
+            with self._cursor() as cursor:
+                return _json(200, tree(cursor, game))
         if team and sub == "/raters":
             with self._cursor(commit=method == "POST") as cursor:
                 if method == "GET":

@@ -37,9 +37,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   round by round (each panel's runs before and after training), training progress, the loop's
   timing. Data is one document PUT by the loop to `/api/v1/rl/dashboard-publication`.
 - `scripts/test_rl_review.py`.
+- **Tree explorer** (`docs/tree.html`, `docs/static/js/tree.js`): every play of a game as a tree. Points
+  (level starts) are circles; each play's way through a level is a line to the next level, or a cross
+  where it got stuck, coloured by model. Click a point for its board and the plays out of it, a line for
+  its turns and how raters judged it. `GET /api/v1/review/tree?game=` (team). The board and turn reader is
+  shared with Trace review (`docs/static/js/review-ui.js`).
 
 ### Changed
-- The site nav replaces **Harness Lab** with **RL** and **Trace review** (Son). `harness.html`
+- The site nav replaces **Harness Lab** with **RL**, **Trace review** and **Tree** (Son). `harness.html`
   and its backend are untouched and still reachable by URL.
 - `railway/entrypoint.sh`: four new exact skip-auth routes (`^/review\.html$`, the review
   publication and export, the RL dashboard publication).

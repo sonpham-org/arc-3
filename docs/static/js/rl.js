@@ -448,8 +448,11 @@ function notice(text) {
 }
 async function load() {
   try {
-    // published every few minutes by the RL loop (gcp/controllers/rl/site/build_site.py on the RL branch)
-    const r = await fetch("/api/v1/rl/dashboard", { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    // published every few minutes by the RL loop (gcp/controllers/rl/site/build_site.py on the RL branch); the
+    // arc3-rl-live web.app copy of this page reads the same document as a static data.json beside it
+    const webApp = /\.web\.app$/.test(location.hostname);
+    const r = webApp ? await fetch("data.json?t=" + Date.now(), { cache: "no-store" })
+      : await fetch("/api/v1/rl/dashboard", { cache: "no-store", credentials: "same-origin", redirect: "manual" });
     if (r.type === "opaqueredirect" || r.status === 0 || r.status === 401) { notice("Sign in with your team account to see the RL page."); return; }
     if (r.status === 403) { notice("This Google account is not on the team list."); return; }
     if (r.status === 404) { notice("Nothing has been published here yet."); return; }

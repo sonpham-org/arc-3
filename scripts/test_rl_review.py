@@ -165,7 +165,7 @@ class ShippedFiles(unittest.TestCase):
         docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("COPY railway/rl_review.py /rl_review.py", docker)
         self.assertIn("RlReviewApi", (ROOT / "railway" / "catalog_server.py").read_text(encoding="utf-8"))
-        for page in ("review.html", "rl.html"):
+        for page in ("review.html", "rl.html", "tree.html"):
             self.assertTrue((ROOT / "docs" / page).is_file(), page)
 
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
@@ -177,6 +177,7 @@ class ShippedFiles(unittest.TestCase):
             nav = nav[:nav.index("</nav>")]
             self.assertIn('href="./rl.html"', nav, page.name)
             self.assertIn('href="./review.html"', nav, page.name)
+            self.assertIn('href="./tree.html"', nav, page.name)
             self.assertNotIn("Harness Lab", nav, page.name)
 
 
@@ -288,6 +289,29 @@ class DatabaseTests(unittest.TestCase):
         status, payload = call(self.api, "POST", "/api/v1/review/rating", self.team,
                                {"split": view["split"]["id"], "choice": "run-z:ka59_p7:L2"})
         self.assertEqual((status, payload["error"]), (400, "invalid_choice"))
+
+    def test_tree_links_levels_and_counts_ratings(self) -> None:
+        self.publish(self.bundle())
+        # the same plays' next level: p0 and p2 cleared level 2 (even k), so their level-3 paths follow from a new node
+        nxt = {"source": "test", "nodes": [{"id": "ka59:L3:def456", "kind": "level_start", "game": "ka59", "level": 3}],
+               "paths": [{"id": f"run-a:ka59_p{k}:L3", "node": "ka59:L3:def456", "run": "run-a", "play": f"ka59_p{k}",
+                          "model": "base", "level": 3, "cleared": False, "turns": 2, "actions": 4,
+                          "content": self.content(3, 2, f"run-a-{k}")} for k in (0, 2)]}
+        self.publish(nxt)
+        _, view = call(self.api, "GET", "/api/v1/review/next", self.team)
+        winner = view["paths"][0]["id"]
+        call(self.api, "POST", "/api/v1/review/rating", self.team, {"split": view["split"]["id"], "choice": winner,
+             "marks": [{"path": winner, "step": 1, "verdict": "up", "note": "good probe"}]})
+        status, tree = call(self.api, "GET", "/api/v1/review/tree?game=ka59", self.team)
+        self.assertEqual(status, 200)
+        self.assertEqual([n["level"] for n in tree["nodes"]], [2, 3])
+        paths = {p["id"]: p for p in tree["paths"]}
+        self.assertEqual(paths["run-a:ka59_p0:L2"]["next"], "ka59:L3:def456")
+        self.assertIsNone(paths["run-a:ka59_p1:L2"]["next"], "a path that did not clear leads nowhere")
+        self.assertEqual(paths[winner]["wins"], 1)
+        self.assertEqual(paths[winner]["marks"], {"up": 1, "down": 0, "notes": 1})
+        self.assertEqual(sum(p["losses"] for p in tree["paths"]), 1)
+        self.assertEqual(call(self.api, "GET", "/api/v1/review/tree?game=zz99", self.team)[0], 404)
 
     def test_stats_count_everything(self) -> None:
         self.publish(self.bundle())

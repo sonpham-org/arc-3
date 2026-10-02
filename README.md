@@ -332,6 +332,10 @@ Nothing is trained on these yet.
   `rl_review_ratings` (`catalog_schema.sql`); code `railway/rl_review.py`; tests
   `python3.13 -m unittest scripts.test_rl_review`.
 
+`tree.html` draws one game's plays as a tree: level starts as circles, each play's way through a level
+as a line to the next one (or a cross where it got stuck), with each path's rating record; it reads
+`/api/v1/review/tree?game=` and reuses the review page's board and turn reader.
+
 `rl.html` is the RL loop's own page (rounds, training progress, the before/after test
 panels). Its data is one JSON document the loop PUTs to `/api/v1/rl/dashboard-publication`
 (token) and the page reads from `/api/v1/rl/dashboard` (team).
