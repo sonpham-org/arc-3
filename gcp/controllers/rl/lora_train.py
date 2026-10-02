@@ -254,74 +254,138 @@ def adapter_sha(path: Path) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ modes
+def _dp() -> tuple[int, int]:
+    """(rank, world) of this copy under --dp; (0, 1) for a single copy."""
+    return int(os.environ.get("ARC3_DP_RANK", "0")), int(os.environ.get("ARC3_DP_WORLD", "1"))
+
+
+def _allreduce_grads(params, world: int) -> None:
+    """Average the LoRA gradients over the data-parallel copies: gloo through host memory, one flat tensor of the
+    adapter's ~61M floats (~1 s per optimizer step, against minutes of compute per record)."""
+    import torch.distributed as dist
+    flat = torch.cat([(p.grad if p.grad is not None else torch.zeros_like(p)).detach().float().reshape(-1).cpu()
+                      for p in params])
+    dist.all_reduce(flat)
+    flat /= world
+    off = 0
+    for p in params:
+        n = p.numel()
+        p.grad = flat[off:off + n].view_as(p).to(device=p.device, dtype=p.dtype)
+        off += n
+
+
+def spawn_dp(args) -> int:
+    """--dp N: N copies of the model, each on gpus/N cards, each training every N-th record; their gradients are
+    averaged at every optimizer step, so it is the same training on the same records, about N times sooner. The
+    copies talk over gloo on this host; each logs its own records to train_log.jsonl; copy 0 saves the adapter."""
+    import socket
+    import subprocess
+    per = args.gpus // args.dp
+    if per < 1 or per * args.dp != args.gpus:
+        raise SystemExit("--gpus must be a multiple of --dp")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    procs = []
+    for r in range(args.dp):
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(str(g) for g in range(r * per, (r + 1) * per)),
+                   ARC3_DP_RANK=str(r), ARC3_DP_WORLD=str(args.dp), ARC3_DP_INIT=f"tcp://127.0.0.1:{port}")
+        procs.append(subprocess.Popen([sys.executable, str(Path(__file__).resolve())] + sys.argv[1:], env=env))
+    codes = [p.wait() for p in procs]
+    print(f"dp copies exited {codes}", flush=True)
+    return max(codes)
+
+
 def mode_train(args) -> int:
     from transformers import AutoProcessor
+    rank, world = _dp()
+    if world > 1:
+        import torch.distributed as dist
+        dist.init_process_group("gloo", init_method=os.environ["ARC3_DP_INIT"], rank=rank, world_size=world)
     processor = AutoProcessor.from_pretrained(args.hf)
     recs = load_records(args.records)
     random.Random(args.seed).shuffle(recs)
+    if args.longest:   # memory tests: the longest records first
+        recs = [r for _, _, r in sorted(((len(render.render(processor, r)["input_ids"]), i, r)
+                                         for i, r in enumerate(recs)), key=lambda t: (-t[0], t[1]))]
     if args.limit:
         recs = recs[:args.limit]
-    print(f"{len(recs)} records", flush=True)
-    model = load_model(args.model, args.gpus, args.gpu_gib, args.rank, args.alpha, args.init_adapter, args.attn,
-                       fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4)
+    # each copy takes every world-th record; the lists are padded to one length so every copy reaches every
+    # optimizer step (a None slot trains nothing and still joins the step's gradient average)
+    mine = recs[rank::world]
+    slots = mine + [None] * (math.ceil(len(recs) / world) - len(mine))
+    accum = max(1, args.accum // world)              # records per copy per step: the global batch stays --accum
+    total_steps = max(1, math.ceil(len(slots) / accum) * args.epochs)
+    print(f"{len(recs)} records" + (f" (copy {rank} of {world}: {len(mine)})" if world > 1 else ""), flush=True)
+    model = load_model(args.model, args.gpus // world, args.gpu_gib, args.rank, args.alpha, args.init_adapter,
+                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     dev = next(model.parameters()).device
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     log = (out / "train_log.jsonl").open("a", encoding="utf-8")
-    step, acc = 0, 0
-    total = args.epochs * len(recs)
+    step = 0
     for ep in range(args.epochs):
-        for rec in recs:
+        for i, rec in enumerate(slots):
             t0 = time.time()
-            b = to_batch(processor, rec, dev)
-            if not b["spans_ok"] or b["n_loss"] == 0 or b["input_ids"].shape[1] > args.max_tokens:
-                log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
-                                      "spans_ok": b["spans_ok"], "n_loss": b["n_loss"]}) + "\n")
-                continue
-            w = float(rec.get("meta", {}).get("weight", 1.0))
-            try:
-                lp = token_logprobs(model, b, grad=True)
-                tw = trained_weights(b).to(lp.device)
-                # per-sequence mean over trained tokens, each token weighted by its reply's weight (level efficiency)
-                loss = -((tw * lp).sum() / max(1, lp.numel())) * w
-                (loss / args.accum).backward()
-            except torch.OutOfMemoryError as exc:
-                # a record that does not fit is skipped, not fatal (multi-hour rounds); its partial gradients are
-                # dropped with the accumulated ones of this step so no half-record update is applied
-                lp = loss = None
-                opt.zero_grad(set_to_none=True)
-                import gc
-                gc.collect()
-                torch.cuda.empty_cache()
-                log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
-                                      "oom": str(exc)[:200]}) + "\n")
-                log.flush()
-                acc = (acc // args.accum) * args.accum
-                continue
-            acc += 1
-            if acc % args.accum == 0:
+            loss = b = None
+            w = 1.0
+            if rec is not None:
+                b = to_batch(processor, rec, dev)
+                if not b["spans_ok"] or b["n_loss"] == 0 or b["input_ids"].shape[1] > args.max_tokens:
+                    log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
+                                          "spans_ok": b["spans_ok"], "n_loss": b["n_loss"], "rank": rank}) + "\n")
+                    rec = None
+            if rec is not None:
+                w = float(rec.get("meta", {}).get("weight", 1.0))
+                try:
+                    lp = token_logprobs(model, b, grad=True)
+                    tw = trained_weights(b).to(lp.device)
+                    # per-sequence mean over trained tokens, each token weighted by its reply's weight
+                    loss = -((tw * lp).sum() / max(1, lp.numel())) * w
+                    (loss / accum).backward()
+                except torch.OutOfMemoryError as exc:
+                    # a record that does not fit is skipped, not fatal (multi-hour rounds); this copy drops its
+                    # partial gradients for the step so no half-record update is applied
+                    lp = loss = None
+                    opt.zero_grad(set_to_none=True)
+                    import gc
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
+                                          "oom": str(exc)[:200], "rank": rank}) + "\n")
+                    log.flush()
+                    rec = None
+            if (i + 1) % accum == 0 or i == len(slots) - 1:
+                if world > 1:
+                    _allreduce_grads(params, world)
                 lr = args.lr * min(1.0, (step + 1) / max(1, args.warmup)) * \
-                    0.5 * (1 + math.cos(math.pi * min(1.0, step / max(1, total / args.accum))))
+                    0.5 * (1 + math.cos(math.pi * min(1.0, step / total_steps)))
                 for g in opt.param_groups:
                     g["lr"] = lr
                 torch.nn.utils.clip_grad_norm_(params, 1.0)
                 opt.step()
                 opt.zero_grad(set_to_none=True)
                 step += 1
-            log.write(json.dumps({"epoch": ep, "step": step, "game": rec["meta"].get("game"), "loss": loss.item(),
-                                  "tokens": b["input_ids"].shape[1], "n_loss": b["n_loss"], "w": w,
-                                  "sec": round(time.time() - t0, 1),
-                                  "mem_gib": [round(torch.cuda.max_memory_allocated(i) / 2**30, 1)
-                                              for i in range(torch.cuda.device_count())]}) + "\n")
-            log.flush()
-    model.save_pretrained(out)
-    sha = adapter_sha(out)
-    (out / "ADAPTER.json").write_text(json.dumps({"sha": sha, "rank": args.rank, "alpha": args.alpha,
-                                                  "lr": args.lr, "records": len(recs), "steps": step,
-                                                  "target_regex": TARGET_REGEX, "model": args.model}, indent=1))
-    print("saved adapter", sha, flush=True)
+            if rec is not None:
+                log.write(json.dumps({"epoch": ep, "step": step, "game": rec["meta"].get("game"), "loss": loss.item(),
+                                      "tokens": b["input_ids"].shape[1], "n_loss": b["n_loss"], "w": w,
+                                      "sec": round(time.time() - t0, 1), "rank": rank,
+                                      "mem_gib": [round(torch.cuda.max_memory_allocated(k) / 2**30, 1)
+                                                  for k in range(torch.cuda.device_count())]}) + "\n")
+                log.flush()
+    if world > 1:
+        dist.barrier()
+    if rank == 0:
+        model.save_pretrained(out)
+        sha = adapter_sha(out)
+        (out / "ADAPTER.json").write_text(json.dumps({"sha": sha, "rank": args.rank, "alpha": args.alpha,
+                                                      "lr": args.lr, "records": len(recs), "steps": step, "dp": world,
+                                                      "target_regex": TARGET_REGEX, "model": args.model}, indent=1))
+        print("saved adapter", sha, flush=True)
+    if world > 1:
+        dist.destroy_process_group()
     return 0
 
 
@@ -466,6 +530,9 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="train on the first N shuffled records (0 = all)")
     ap.add_argument("--init-adapter", default="", help="continue from this adapter (the previous round)")
+    ap.add_argument("--dp", type=int, default=1, help="train: copies of the model on gpus/dp cards each "
+                    "(every dp-th record each, gradients averaged per step)")
+    ap.add_argument("--longest", action="store_true", help="train: longest records first (memory tests)")
     ap.add_argument("--attn", default="", help="attn_implementation (e.g. flex_attention); default = model default")
     ap.add_argument("--fast", type=int, default=1, help="1 = fast_qsa.py long-sequence path (0 = reference code)")
     ap.add_argument("--offload", type=int, default=1, help="1 = decoder-layer inputs wait in host RAM")
@@ -476,6 +543,8 @@ def main() -> int:
     ap.add_argument("--ladder", default="", help="check: then time forward/backward at these lengths, e.g. 30000,60000")
     ap.add_argument("--ladder-records", default="", help="check: records glob for the ladder (default --records)")
     args = ap.parse_args()
+    if args.mode == "train" and args.dp > 1 and "ARC3_DP_RANK" not in os.environ:
+        return spawn_dp(args)
     return mode_train(args) if args.mode == "train" else mode_check(args)
 
 

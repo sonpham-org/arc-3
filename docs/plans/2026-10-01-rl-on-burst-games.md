@@ -632,6 +632,28 @@ cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tre
   so each lap is train + merge + test.
   Live page: https://arc3-rl-live.web.app (gcp/controllers/rl/site; add run ids per model in site_config.json).
 - **Later rounds generate the same way:** 5 games x 5 passes per VM gives several tries of the same game per run.
+- **Base panels (2-Oct, no-border):** held-out five 16.8 +- 1.6 levels per run (tn36 1/1/7/1/1), hard four
+  5.8 +- 0.6 (bp35 3/1/1/1/2/1, g50t 2/0/2/1/2/0, s5i5 2/2/2/3/2/2, sk48 1/1/2/1/1/0). The train-five base run
+  lost its Spot VM 10 min in; relaunched as daniel-p5train-base-b-1002.
+
+## 9h. A shorter lap (Son 2-Oct: "the training loop 12 hours are way too long")
+
+Round 0 measured: play 2 h 26, pick wins 2 min, **train 82 records ~7.5 h** (5.3 min per ~100k-token record),
+merge ~15 min, package ~10 min, test 2 h 26. Training is ~70% of a lap. Three cuts:
+
+1. **Two copies per box** (`lora_train.py --dp 2`, committed 2-Oct). The 4 cards hold one model in 4 stages and
+   take turns, so 3 idle at any moment. Two copies on 2 cards each train alternate records and average the LoRA
+   gradients every optimizer step (gloo on the host; same records, same global batch). Layer inputs already go to
+   host RAM (`--offload`), so 2 cards per copy should hold 120k tokens; job `027-dp2-test` (the 8 longest
+   records) checks memory and speed right after the round-0 merge. Expected ~2x.
+2. **Smaller rounds.** From round 1, train only on the new wins (round N's test plays on the train and hard
+   panels, never the held-out panel), continuing from round N's adapter (`--init-adapter`): a few dozen records,
+   ~1-1.5 h with (1).
+3. **Overlap.** Round N's test plays are round N+1's data, so the lap is test + train + merge; with (1) and (2)
+   ~4-4.5 h. Training round N+1 on the plays already in while round N still tests takes it to ~3 h, one round of
+   lag.
+
+The test itself (132-min budget) stays: it is the deployment setting, and the panels compare to it.
 
 ## 10. Decisions
 
