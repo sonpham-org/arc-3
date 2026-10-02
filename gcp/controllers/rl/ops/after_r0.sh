@@ -1,5 +1,5 @@
 #!/bin/bash
-# Round 0 after training (plan 9g): wait for the merge (trainer job 026-r0-merge), then launch the three test panels
+# Round 0 after training (plan 9g): wait for the merge (trainer job $MERGE_JOB, default 026-r0-merge), then launch the three test panels
 # on the LoRA copy of Daniel's inputs and add those runs to the RL page and Trace review. The panel VMs start right
 # away: they wait for the copy's _STAGED_OK (written last by make_eval_mirror.sh) while it is built.
 #   bash ops/after_r0.sh           (polls every 2 min; stops with a message if the merge failed)
@@ -8,19 +8,20 @@ export CLOUDSDK_PYTHON='C:\python312\python.exe'
 OPS=$(cd "$(dirname "$0")" && pwd)
 SITE=$(cd "$OPS/../site" && pwd)
 OUT=gs://cellens-ai-artifacts/arc3-rl/trainer/train4-1002/out
+MJ=${MERGE_JOB:-026-r0-merge}
 NBDIR=/d/codex-work/daniel-base-20261001/build
 IN=gs://cellens-ai-artifacts/arc3-duck/daniel-base/kaggle-input-r0
 RUNS_TXT=/d/codex-work/rl-20261001/review-runs.txt
 TAG=$(date -u +%m%d)
 say() { echo "$(date -u +%H:%M) $*"; }
 
-until gcloud storage cat "$OUT/026-r0-merge/EXIT" >/dev/null 2>&1; do sleep 120; done
-code=$(gcloud storage cat "$OUT/026-r0-merge/EXIT" | tr -d '\r\n ')
+until gcloud storage cat "$OUT/$MJ/EXIT" >/dev/null 2>&1; do sleep 120; done
+code=$(gcloud storage cat "$OUT/$MJ/EXIT" | tr -d '\r\n ')
 if [ "$code" != "0" ]; then
-  say "merge failed (exit $code); last log lines:"; gcloud storage cat "$OUT/026-r0-merge/job.log" | tail -n 30; exit 1
+  say "merge failed (exit $code); last log lines:"; gcloud storage cat "$OUT/$MJ/job.log" | tail -n 30; exit 1
 fi
-gcloud storage ls "$OUT/026-r0-merge/merged/MERGE_REPORT.json" >/dev/null || { say "merge report missing"; exit 1; }
-say "merged shards: $(gcloud storage ls "$OUT/026-r0-merge/merged/*.safetensors" | wc -l)"
+gcloud storage ls "$OUT/$MJ/merged/MERGE_REPORT.json" >/dev/null || { say "merge report missing"; exit 1; }
+say "merged shards: $(gcloud storage ls "$OUT/$MJ/merged/*.safetensors" | wc -l)"
 
 launch() {   # <label> <notebook build name>: first zone with capacity
   local label=$1 nbobj
@@ -38,7 +39,7 @@ T=$(launch "p5train-r0-a-$TAG" noborder-panel-train5x5-v1)
 K=$(launch "p4hard-r0-a-$TAG" noborder-panel-hard4x6-v1)
 say "launched: $H $T $K"
 
-bash "$OPS/make_eval_mirror.sh" r0 "$OUT/026-r0-merge/merged" || { say "LoRA input copy failed"; exit 1; }
+bash "$OPS/make_eval_mirror.sh" r0 "$OUT/$MJ/merged" || { say "LoRA input copy failed"; exit 1; }
 say "LoRA input copy staged: $IN"
 
 # the RL page's panels and Trace review's run list (held-out games are refused by the publisher anyway)

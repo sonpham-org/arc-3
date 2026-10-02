@@ -181,7 +181,7 @@ def run_table_on_cpu(model) -> list[str]:
 
 def load_model(model_dir: str, n_gpus: int, gpu_gib: int, rank: int, alpha: int, adapter: str = "",
                attn: str = "", fast: bool = True, offload: bool = True, nvfp4: str = ""):
-    from peft import LoraConfig, PeftModel, get_peft_model
+    from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForImageTextToText
     if nvfp4:
         # the served NVFP4 experts (nvfp4_experts.py): the BF16 expert keys are skipped, the packed ones load after
@@ -198,7 +198,19 @@ def load_model(model_dir: str, n_gpus: int, gpu_gib: int, rank: int, alpha: int,
     for p in model.parameters():
         p.requires_grad_(False)
     if adapter:
-        model = PeftModel.from_pretrained(model, adapter, is_trainable=True)
+        # Not PeftModel.from_pretrained: on a model whose device map includes the CPU it re-dispatches everything
+        # with "auto" over all visible GPUs, moving the CPU-pinned n-gram table to a GPU (2-Oct resume test: "cuda:3
+        # and cpu"). The same LoRA is built in place instead and the saved weights are copied into it.
+        from peft import set_peft_model_state_dict
+        from safetensors.torch import load_file
+        acfg = json.loads((Path(adapter) / "adapter_config.json").read_text())
+        model = get_peft_model(model, LoraConfig(r=acfg["r"], lora_alpha=acfg["lora_alpha"], lora_dropout=0.0,
+                                                 bias="none", target_modules=acfg.get("target_modules") or TARGET_REGEX))
+        res = set_peft_model_state_dict(model, load_file(str(Path(adapter) / "adapter_model.safetensors")))
+        missing = [k for k in res.missing_keys if "lora_" in k]
+        if missing or res.unexpected_keys:
+            raise RuntimeError(f"adapter {adapter} does not fit: missing {missing[:3]}, unexpected {res.unexpected_keys[:3]}")
+        print(f"adapter loaded from {adapter}", flush=True)
     else:
         model = get_peft_model(model, LoraConfig(r=rank, lora_alpha=alpha, lora_dropout=0.0, bias="none",
                                                  target_modules=TARGET_REGEX))
