@@ -655,6 +655,24 @@ merge ~15 min, package ~10 min, test 2 h 26. Training is ~70% of a lap. Three cu
 
 The test itself (132-min budget) stays: it is the deployment setting, and the panels compare to it.
 
+**2-Oct 20:25 UTC: Spot took the trainer VM back after 50 of 82 records, and nothing was saved** (the adapter
+was written only at the end). Loss on those 50 (each seen once) was flat: 0.284 / 0.280 / 0.290 / 0.292 per
+15 records. Fixes (commit 74225e405):
+- `lora_train.py --ckpt-every 1`: adapter + optimizer + position every optimizer step (4 records, ~21 min) in
+  `--out`; the same command resumes. Job 025 now runs `test_ckpt_tiny.py --part one` first (a stopped and resumed tiny
+  run must equal an unbroken one) and trains from scratch with checkpoints.
+- The trainer service mirrors `train_log.jsonl` itself (the hand-started `joblog_mirror.sh` died with the VM).
+- `--dp 2` on these records is unlikely to fit: one copy on 4 cards peaks at 83 GiB on card 0 (weights ~18 GiB per
+  card + ~65 GiB of activations); on 2 cards the weights double. Job 027 still measures it, after the merge, and
+  now first checks two tiny copies stay identical (copy 0's LoRA init is broadcast; before, nothing made them equal).
+- The zone (us-south1-b) was out of Spot G4s at restart: `restart_trainer.sh` retries; snapshot
+  `arc3-rl-train4-snap-20261002` lets the trainer move zones with its weights, setup and job queue.
+
+**Standing player (Son 2-Oct: "always have a GPU that plays the latestly trained model").**
+`ops/standing_player.sh` keeps one eval VM busy: newest staged model (base until `kaggle-input-r0/_STAGED_OK`),
+the panel with the fewest runs of that model, runs listed on the RL page and Trace review as they start, dropped from
+the page if they end unfinished. Labels `p5train-base-s1-1002` etc. Stop: `touch D:\codex-work\rl-20261001\standing.STOP`.
+
 ## 10. Decisions
 
 **2-Oct, Son: RL targets Daniel's notebook.** "Given that our notebook is flawed and that we want to submit Daniel's
