@@ -6,8 +6,7 @@ loop's timing. Plan: docs/plans/2026-10-01-rl-on-burst-games.md section 9g.
 
 Reads with the local gcloud login (GCS JSON API, one token per build): the trainer's train_log.jsonl / job.log /
 status.json and their .mtime.json sidecars (joblog_mirror.sh on the trainer VM copies them every minute), each test
-run's phases.tsv and per-game viewer files, the G0 extraction summaries (cached in site-cache/), and Daniel's four
-all-25 runs from the local Firestore dump. The page gets game ids only (never titles) and no bucket, VM or path.
+run's phases.tsv and per-game viewer files, and the G0 extraction summaries (cached in site-cache/). The page gets game ids only (never titles) and no bucket, VM or path.
 """
 import concurrent.futures
 import json
@@ -187,22 +186,41 @@ def summarize(games, plays):
     return out, round(total, 2), (round(math.sqrt(var), 2) if complete else None)
 
 
+def replicates(games, plays):
+    """One panel run per (run, pass): pass k of every game played side by side. Its levels = the sum over the
+    panel's games, its score = the mean per-game score (a game not started counts 0). The passes are independent
+    draws, so these totals are repeats of 'one run of the panel'; their mean is the panel total above."""
+    groups = {}
+    for x in plays:
+        groups.setdefault((x["run"], x["pass"] if x["pass"] is not None else -1), []).append(x)
+    out = []
+    for (run, ps), xs in sorted(groups.items()):
+        have = {x["game"] for x in xs}
+        playing = any(x["playing"] for x in xs)
+        out.append({"run": run, "pass": ps, "levels": sum(x["levels"] for x in xs),
+                    "score": round(sum(x["score"] for x in xs) / len(games), 1), "games": len(have),
+                    "complete": have >= set(games) and not playing, "playing": playing})
+    return out
+
+
 def panels():
-    run_ids = sorted({r for p in CFG["panels"] for arm in ("base", "lora") for r in p[arm]})
+    run_ids = sorted({r for p in CFG["panels"] for rs in p["runs"].values() for r in rs})
     with concurrent.futures.ThreadPoolExecutor(6) as pool:
         states = dict(zip(run_ids, pool.map(run_state, run_ids)))
     out = []
     for p in CFG["panels"]:
-        arms = {}
-        for arm in ("base", "lora"):
-            runs = [states[r] for r in p[arm]]
+        models = {}
+        for m in CFG["models"]:
+            runs = [states[r] for r in p["runs"].get(m["key"], [])]
             plays = [dict(x, run=i) for i, r in enumerate(runs) for x in r["plays"] if x["game"] in p["games"]]
             per_game, total, se = summarize(p["games"], plays)
-            arms[arm] = {"runs": [{k: r[k] for k in ("state", "phase", "started", "ready", "finished")} for r in runs],
-                         "plays": plays, "per_game": per_game, "total": total, "se": se,
-                         "playing": sum(x["playing"] for x in plays)}
+            models[m["key"]] = {
+                "runs": [{k: r[k] for k in ("state", "phase", "started", "ready", "finished")} for r in runs],
+                "plays": plays, "per_game": per_game, "total": total, "se": se,
+                "playing": sum(x["playing"] for x in plays), "reps": replicates(p["games"], plays),
+                "score": round(sum(x["score"] for x in plays) / len(plays), 1) if plays else None}
         out.append({"key": p["key"], "label": p["label"], "note": p["note"], "games": p["games"],
-                    "passes": p["passes"], "levels": {g: LEVELS[g] for g in p["games"]}, "arms": arms})
+                    "passes": p["passes"], "levels": {g: LEVELS[g] for g in p["games"]}, "models": models})
     return out
 
 
@@ -223,29 +241,21 @@ def g0_data():
     return out
 
 
-def noise():
-    rows = json.loads(Path(CFG["noise_dump"]).read_text(encoding="utf-8"))
-    by_id = {r["run_id"]: r for r in rows}
-    runs = [(rid, label) for rid, label in CFG["noise_runs"] if rid in by_id]
-    games = sorted(LEVELS)
-    return {"runs": [label for _, label in runs], "games": games,
-            "levels": {g: [(by_id[rid]["per_game"].get(g) or {}).get("levels") for rid, _ in runs] for g in games}}
-
-
 def main():
     t0 = time.time()
     with concurrent.futures.ThreadPoolExecutor(2) as outer:
         f_train, f_panels = outer.submit(training), outer.submit(panels)
         data = {"updated": iso(time.time()), "round": CFG["round"], "round_note": CFG["round_note"],
-                "split": CFG["split"], "levels": LEVELS, "g0": g0_data(), "noise": noise(),
+                "split": CFG["split"], "levels": LEVELS, "g0": g0_data(),
+                "models": CFG["models"], "next_model": CFG.get("next_model"),
                 "train": f_train.result(), "panels": f_panels.result()}
     data["stages"] = [dict(s, minutes=data["train"]["minutes_est"]) if s["key"] == "train" else s
                       for s in CFG["stages"]]
     data["build_sec"] = round(time.time() - t0, 1)
     (HERE / "public" / "data.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     tr = data["train"]
-    runs = [(p["key"], r["state"], len(p["arms"][a]["plays"])) for p in data["panels"] for a in ("base", "lora")
-            for r in p["arms"][a]["runs"]]
+    runs = [(p["key"], m, r["state"], len(p["models"][m]["plays"])) for p in data["panels"] for m in p["models"]
+            for r in p["models"][m]["runs"]]
     print(f"data.json: train {tr['done']}/{tr['total']} {tr['job_state']} eta {tr['eta']} load {tr['load_min']} min; "
           f"runs {runs}; {data['build_sec']} s")
     IO.shutdown(wait=False)

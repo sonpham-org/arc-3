@@ -601,10 +601,12 @@ cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tre
 - **Game split.** Train (14): bp35 cn04 g50t ka59 ls20 m0r0 r11l s5i5 sc25 sk48 sp80 tu93 vc33 wa30. Held out,
   never trained (5): dc22 lf52 re86 su15 tn36. Easy six (ar25 cd82 ft09 lp85 sb26 tr87): not trained, checked
   only for breakage.
-- **Noise (Daniel's four all-25 runs, 1-Oct).** One game swings hard between runs: tn36 1 / 6 / 7 / 1 levels,
-  vc33 7 / 4 / 3 / 7, sp80 1 / 4 / 1 / 1. Group totals are steadier: the 14 train games 48 / 48 / 48 / 52 levels,
-  the held-out five 16 / 22 / 23 / 15 (mostly tn36). So single games are not read; ~4 repeats per arm can see a
-  few levels on the train total, the held-out five need ~8.
+- **Noise.** First read from Daniel's four all-25 runs, but those are two notebooks: no-border c/d and border a/b
+  (border on). Part of that spread is the border rule (cn04: 1 / 1 levels without the border, 5 / 6 with it), so
+  the four-run table is not a noise measure and is off the live page. The no-border pair alone still swings: tn36
+  1 / 6 levels, vc33 7 / 4, sp80 1 / 4, ka59 6 / 3; the 14 train games total 48 / 48, the held-out five 16 / 22.
+  The base panels below (no-border only, 5-6 repeats per game) are the noise measure from now on. Single games
+  are not read; panel totals are. Training data and every test run are no-border only.
 - **Evaluation (Son 2-Oct: "smaller batches ... run 4 times or 8 times"): panels with repeats.** His notebook's
   `bm.n_passes` plays every game N times at once in one run. A panel = 5 games x 5 passes = 25 games in flight, the
   same load as an all-25 run (132-min budget, 10 active streams), so one VM gives 5 repeats per game:
@@ -619,6 +621,16 @@ cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tre
   gives the panel total with its standard error. A second wave doubles the repeats if the gap is small.
   Panel scores are not on the leaderboard line (fitted on all-25 runs); an all-25 run is the last check before any
   submission.
+  Third panel (Son 2-Oct: keep bp35 g50t sk48 s5i5, "when they win then it becomes very obvious"):
+  `noborder-panel-hard4x6-v1` = those four x 6 passes (24 in flight), `notebooks/be6f6cb08533`, base run
+  daniel-p4hard-base-a-1002.
+- **Rounds, and how progress is shown (Son 2-Oct: "over multiple courses of training, the model performance
+  increases").** Each round adds one model column: Before (base), R0, R1, ... Every model plays the same three
+  panels; a dot = one run of a panel (pass k of every game, levels summed), the bar = mean with its standard error.
+  Learning = the columns climb, on the held-out five as well as the trained games. Round N+1 trains from round N's
+  adapter on the new wins of round N's test plays (those plays are its data; the held-out panel's plays never are),
+  so each lap is train + merge + test.
+  Live page: https://arc3-rl-live.web.app (gcp/controllers/rl/site; add run ids per model in site_config.json).
 - **Later rounds generate the same way:** 5 games x 5 passes per VM gives several tries of the same game per run.
 
 ## 10. Decisions
