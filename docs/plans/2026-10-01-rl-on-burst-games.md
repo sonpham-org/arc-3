@@ -501,6 +501,59 @@ What to optimize before restarting, by measured cost:
 - **Trainer:** 77-91k-token records take 3-4 min per step; 109k+ runs out of memory on GPU 0; only one of the 4 GPUs
   works at a time (layers are split across them in sequence).
 
+## 9f. Memory plan for rollouts and training (2-Oct, Son: "optimize while reducing the risk of OOM")
+
+**What we know (measured, or from the Main innovation thread on Combo A):**
+- Try VM (1x RTX PRO 6000, ~177 GiB host RAM). GPU KV pool 1,935,872 tokens at mem 0.98 = ~19 full 101,888-token
+  contexts; 19 decode slots; Mamba cache 95. Their gate fires 19 concurrent ~95k prompts and gets all 19 back in
+  ~30 s with no errors, so a burst of big prompts alone does not crash the GPU side.
+- Host RAM is the tight wall. The server's host cache (51 GB KV + 12.6 GB Mamba + 3 GB QSA) plus the n-gram table's
+  64 GiB pinned block (47.7 GiB of data) leave ~22 GB on a 185 GB VM. Our try VMs sat at 145-149 GiB of 177 all
+  along (~28 free) with 16 tries replaying. On 1-Oct one sandbox spike made the kernel kill SGLang. Last night's
+  server death at the live switch fits that pattern, but is not proven: the restart overwrote the server log.
+- Replay costs 3-28 s per recorded turn with 16 tries replaying as threads of one process (the "fast" harness fix
+  was already on). Suspects: Python lock contention between the 16 threads, and per-turn harness work.
+- Trainer (4x RTX PRO 6000, 708 GB RAM): ~26 GB of weights per GPU with 4-bit experts; peaks 73 GB at 77.6k
+  tokens and 81 GB at 91k; out of memory at 109k+ on GPU 0 (embeddings + image model + 12 layers).
+
+**Rollout guards (try VMs):**
+1. The kernel kills a sandbox, never the server: oom_score_adj -1000 on the SGLang processes, +500 on sandboxes.
+2. Cap each sandbox's memory (RLIMIT_AS, e.g. 3 GB): a runaway model-written script ends its own try only.
+3. Free host RAM: the exact-size n-gram pin (+16 GiB, Main thread's Kaggle kit `install_ple_exact_pin_patch.py`;
+   not in the GCP startup yet: apply it inside the container before the server starts, like the QSA HiCache patch,
+   and check the server log for "ARC3_PLE_EXACT_PIN_V1 exact: 47.68 GiB"; a "fallback" warning means the 64 GiB
+   block is still there) and a smaller host cache on try VMs (64 -> 32 GB). Tries of one fork share their prompt,
+   so parking matters less. Target: at least 40 GB free at peak.
+4. Memory watchdog in the try driver (5 s samples): below 25 GB free, start no new try or live switch; below 15 GB,
+   stop the newest tries cleanly.
+5. Evidence on every VM: 5 s RAM/GPU samples and kernel OOM lines copied to the run folder; restarts write to
+   sglang-restart<N>.log so the first traceback survives. The Main thread wants that traceback: their leading theory
+   for the Kaggle runs that ended early is SGLang dying or stalling under load with ~110 open games.
+6. Warm, then fan out: per fork, one 1-token warm-up request loads the shared prompt into the cache; then the 8
+   tries go. One cold prompt at a time per VM.
+7. Lanes: 16 now; 19-24 (3 forks at once) only after a test shows 40 GB free at peak.
+
+**Replay:** measure one replay alone vs 16 at once (no model needed). If the lock is the cause: replay each fork
+once and fork the process (the 8 tries share memory copy-on-write), or one process per fork. If it is per-turn work:
+skip work that cannot change the state (viewer, HTML, transcript rewrites) during replay, keeping the exactness
+checks.
+
+**Training guards:**
+1. Train only the live part of a try; compute the history once without gradient (prefix cache, read-only during
+   the gradient pass). Memory then depends on the live part (usually 5-30k tokens), which removes the 109k+ OOM;
+   expected 2-3x faster per record; the 8 tries of a fork share one history pass. Must match the full-sequence
+   log-probs on the live tokens (test).
+2. Predict each record's peak from its length (ladder fit); split or skip what does not fit; an OOM skips the
+   record instead of killing the job.
+3. Rebalance GPU 0 (embeddings and the image model move to the last GPU).
+4. Host RAM: preallocate the pinned offload buffers once (~100 GB at 100k) next to the n-gram table (~100 GB BF16,
+   or ~50 GB with the served FP8 table); ~200 of 708 GB.
+5. Later: two 2-GPU replicas in data parallel once per-replica memory fits 2 GPUs (~2x throughput).
+
+**Order, each proven on one VM before the next:** (1) replay profile; (2) rollout guards + a 3-fork x 8 stress
+test with RAM evidence; (3) warm-then-fan-out, checked with the server's cached-token counts; (4) trainer prefix
+cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tree supervisor.
+
 ## 10. Decisions
 
 Settled by Son, 1-Oct:
