@@ -67,59 +67,67 @@ async function pickGame(game) {
 
 /* ------------------------------------------------------------------ the tree */
 function renderTree() {
+  // A real tree (Son 2-Oct): independent plays share only the game start, so the game start is the root and every
+  // play is its own branch out of it. Along a branch, length is moves (better = shorter): a marker where each level
+  // was cleared, a cross where the play got stuck. Forks of one play will hang off its branch at the fork's move.
   const t = state.tree;
-  const levels = Math.max(...t.nodes.map(n => n.level));
-  const byLevel = {};
-  t.nodes.forEach(n => (byLevel[n.level] = byLevel[n.level] || []).push(n));
-  const out = {};
-  t.paths.forEach(p => (out[p.node] = out[p.node] || []).push(p));
-  const laneGap = 13, colW = 200, left = 70;
-  const maxOut = Math.max(1, ...Object.values(out).map(ps => ps.length));
-  const H = Math.max(280, maxOut * laneGap * 1.35 + 150), W = left + levels * colW + 40;
-  const pos = {};
-  for (const [lv, ns] of Object.entries(byLevel)) ns.forEach((n, k) => {
-    pos[n.id] = { x: left + (+lv - 1) * colW, y: H / 2 + (k - (ns.length - 1) / 2) * 70 };
-  });
+  const plays = {};
+  for (const p of t.paths) (plays[`${p.run} ${p.play}`] = plays[`${p.run} ${p.play}`] || { run: p.run, play: p.play, model: p.model, segs: [] }).segs.push(p);
+  const list = Object.values(plays).map(pl => {
+    pl.segs.sort((a, b) => a.level - b.level);
+    pl.total = pl.segs.reduce((s, p) => s + p.actions, 0);
+    pl.cleared = pl.segs.filter(p => p.cleared).length;
+    return pl;
+  }).sort((a, b) => (b.cleared - a.cleared) || (a.total - b.total));
+  const maxMoves = Math.max(10, ...list.map(pl => pl.total));
+  const lane = 24, top = 46, left = 46, labelW = 150, right = 30;
+  const W = Math.max(760, left + 40 + Math.min(1300, 1.8 * maxMoves) + labelW + right);
+  const H = top + list.length * lane + 40;
+  const x0 = left, xs = left + 40, xe = W - labelW - right;
+  const x = moves => xs + (xe - xs) * moves / maxMoves;
+  const rootY = top + (list.length - 1) * lane / 2;
   const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": `tree of ${t.game}` });
-  for (let lv = 1; lv <= levels; lv++) {
-    const x = left + (lv - 1) * colW;
-    svg.append(sv("line", { x1: x, x2: x, y1: 28, y2: H - 16, class: "col" }));
-    svg.append(sv("text", { x, y: 18, class: "lvl", "text-anchor": "middle" }, `level ${lv}`));
+  const step = [10, 20, 25, 50, 100, 200, 250, 500].find(s => maxMoves / s <= 8) || 1000;
+  for (let m = 0; m <= maxMoves; m += step) {
+    svg.append(sv("line", { x1: x(m), x2: x(m), y1: top - 16, y2: H - 22, class: "col" }));
+    svg.append(sv("text", { x: x(m), y: top - 22, class: "meta", "text-anchor": "middle" }, m));
   }
-  const pathsLayer = sv("g"), nodesLayer = sv("g");
-  for (const n of t.nodes) {
-    const ps = (out[n.id] || []).slice().sort((a, b) => (b.cleared - a.cleared) || (a.actions - b.actions));
-    const { x: x1, y: y1 } = pos[n.id];
-    const r = 8 + 2.6 * Math.sqrt(n.paths);
-    ps.forEach((p, k) => {
-      const off = (k - (ps.length - 1) / 2) * laneGap;
-      let d, end = null;
-      if (p.cleared && p.next && pos[p.next]) {
-        const { x: x2, y: y2 } = pos[p.next], dx = x2 - x1, rr = 8;
-        d = `M${x1 + r},${y1} C${x1 + dx * 0.38},${y1 + off * 1.35} ${x2 - dx * 0.38},${y2 + off * 1.35} ${x2 - rr},${y2}`;
-      } else {
-        const ex = x1 + colW * (p.cleared ? 0.9 : 0.58), ey = y1 + off * 1.35;
-        d = `M${x1 + r},${y1} C${x1 + colW * 0.25},${y1 + off * 1.2} ${x1 + colW * 0.42},${ey} ${ex},${ey}`;
-        if (!p.cleared) end = { x: ex, y: ey };
-      }
-      const c = color(p.model);
-      const tip = `${label(p.model)} · ${p.play} (${p.run})\n${outcomeText(p)}\nraters: ${record(p)}`;
+  svg.append(sv("text", { x: xe, y: H - 6, class: "meta", "text-anchor": "end" }, "moves from the game start →"));
+  const paths = sv("g"), marks = sv("g");
+  list.forEach((pl, k) => {
+    const y = top + k * lane, c = color(pl.model);
+    // out of the root
+    paths.append(sv("path", { d: `M${x0 + 9},${rootY} C${x0 + 26},${rootY} ${xs - 18},${y} ${xs},${y}`, class: "path", stroke: c }));
+    let at = 0;
+    pl.segs.forEach(p => {
+      const a = x(at), b = x(at + p.actions);
+      at += p.actions;
+      const tip = `${label(p.model)} · ${p.play} (${p.run})\nlevel ${p.level}: ${outcomeText(p)}\nraters: ${record(p)}`;
       const g = sv("g", { "data-path": p.id });
-      g.append(sv("path", { d, class: "path" + (state.sel && state.sel.id === p.id ? " sel" : ""), stroke: c }, sv("title", {}, tip)));
-      if (end) g.append(sv("path", { d: `M${end.x - 4},${end.y - 4} L${end.x + 4},${end.y + 4} M${end.x + 4},${end.y - 4} L${end.x - 4},${end.y + 4}`,
-        class: "dead", stroke: c }));
-      g.append(sv("path", { d, class: "hit" }, sv("title", {}, tip)));
+      g.append(sv("path", { d: `M${a},${y} L${b},${y}`, class: "path" + (state.sel && state.sel.id === p.id ? " sel" : ""),
+        stroke: c, "stroke-width": p.level % 2 ? 3 : 5 }, sv("title", {}, tip)));
+      g.append(sv("path", { d: `M${a},${y} L${b},${y}`, class: "hit" }, sv("title", {}, tip)));
       g.addEventListener("click", () => select({ type: "path", id: p.id }));
-      pathsLayer.append(g);
+      paths.append(g);
+      if (p.cleared) {
+        const m = sv("g", { class: "node", transform: `translate(${b},${y})` },
+          sv("circle", { r: 7.5, style: `fill:${c};stroke:var(--panel);stroke-width:1.5` }),
+          sv("text", { class: "lvlnum", "text-anchor": "middle", dy: "0.35em" }, p.level), sv("title", {}, `cleared level ${p.level} at move ${at}`));
+        if (p.next) m.addEventListener("click", () => select({ type: "node", id: p.next }));
+        marks.append(m);
+      } else {
+        marks.append(sv("path", { d: `M${b - 5},${y - 5} L${b + 5},${y + 5} M${b + 5},${y - 5} L${b - 5},${y + 5}`, class: "dead", stroke: c },
+          sv("title", {}, `stuck in level ${p.level} after ${p.actions} moves`)));
+      }
     });
-    const g = sv("g", { class: "node" + (state.sel && state.sel.id === n.id ? " sel" : ""), transform: `translate(${x1},${y1})` },
-      sv("circle", { r }), sv("title", {}, `start of level ${n.level}: ${n.paths} plays, ${n.splits} pairs, ${n.ratings} ratings`));
-    g.addEventListener("click", () => select({ type: "node", id: n.id }));
-    nodesLayer.append(g);
-    nodesLayer.append(sv("text", { x: x1, y: y1 - r - 8, class: "meta", "text-anchor": "middle" },
-      `${n.paths} plays · ${n.ratings} rated`));
-  }
-  svg.append(pathsLayer, nodesLayer);
+    marks.append(sv("text", { x: x(at) + 12, y: y + 4, class: "meta" }, `${pl.play} · ${pl.cleared} level${pl.cleared === 1 ? "" : "s"} · ${pl.total} moves`));
+  });
+  const root = sv("g", { class: "node" + (state.sel && state.sel.type === "node" && t.nodes.find(n => n.id === state.sel.id && n.level === 1) ? " sel" : ""),
+    transform: `translate(${x0},${rootY})` }, sv("circle", { r: 9 }), sv("title", {}, "the game start: the one point every play shares"));
+  const first = t.nodes.find(n => n.level === 1);
+  if (first) root.addEventListener("click", () => select({ type: "node", id: first.id }));
+  svg.append(paths, marks, root,
+    sv("text", { x: x0, y: rootY - 16, class: "lvl", "text-anchor": "middle" }, "start"));
   $("tree").replaceChildren(svg);
 }
 
@@ -138,8 +146,8 @@ async function renderSide() {
     const canvas = el("canvas", { class: "start", width: 180, height: 180 });
     side.replaceChildren(
       el("h3", {}, `${t.game} · start of level ${n.level}`),
-      el("div", { class: "muted" }, n.level === 1 ? "The game's first board: every play starts here."
-        : "Every play that cleared the level before arrives on exactly this board."),
+      el("div", { class: "muted" }, n.level === 1 ? "The game start: the one point every play shares (same board, no history)."
+        : "Every play that cleared the level before arrives on this board, each with its own history, so these are not branches of one another."),
       el("div", { style: "margin-top:10px" }, canvas),
       el("div", { class: "muted", style: "margin-top:6px" }, `${n.paths} plays went on from here · ${n.splits} pairs to rate · ${n.ratings} ratings so far`),
       n.splitIds.length ? el("div", { class: "tx-actions" }, el("a", { href: `./review.html?split=${encodeURIComponent(n.splitIds[0])}` }, "Rate a pair from this point")) : null,
