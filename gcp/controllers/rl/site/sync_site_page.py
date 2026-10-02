@@ -16,7 +16,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--site", default=r"D:\codex-work\arc3-site-rl\docs")
 args = ap.parse_args()
 site, public = Path(args.site), HERE / "public"
-for rel in ("static/css/theme.css", "static/css/rl.css", "static/js/rl.js", "static/js/theme-toggle.js"):
+for rel in ("static/css/theme.css", "static/css/rl-shell.css", "static/css/rl.css", "static/js/rl.js",
+            "static/js/model-colors.js", "static/js/theme-toggle.js"):
     (public / rel).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(site / rel, public / rel)
 page = (site / "rl.html").read_text(encoding="utf-8")
