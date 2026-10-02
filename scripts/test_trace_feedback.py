@@ -207,6 +207,9 @@ class ShippingTests(unittest.TestCase):
         trace = (docs / "static" / "js" / "trace.js").read_text(encoding="utf-8")
         self.assertIn('from "./trace-votes.js', trace)
         self.assertIn("installVoteRows(voteTarget);", trace)
+        # Marks go on the step's own transcript, never on the page's rebuilt input context.
+        self.assertIn("sectionIndex: localSections.indexOf(section)", trace)
+        self.assertNotIn("inputSections.indexOf", trace)
         self.assertNotIn("trace.js?v=20260824-trace-tokens", (docs / "trace.html").read_text(encoding="utf-8"))
         decision = (docs / "static" / "js" / "decision.js").read_text(encoding="utf-8")
         self.assertIn("renderLiteral(step, votes)", decision)

@@ -100,10 +100,15 @@ function ownOutput(step, shown) {
   const local = step.localContext?.sections || [];
   const same = (a, b) => a.label === b.label && String(a.content || "").trim() === String(b.content || "").trim();
   const found = new Map();
+  // Never look above where this turn starts in the list (its first prompt), so a row from an
+  // earlier turn that happens to hold the same words is not given this turn's thumbs.
+  const opening = local.find((s) => IS_USER.test(s.label || ""));
+  let floor = 0;
+  if (opening) for (let row = shown.length - 1; row >= 0; row -= 1) if (same(shown[row], opening)) { floor = row; break; }
   let cursor = shown.length - 1;
   for (let index = local.length - 1; index >= 0; index -= 1) {
     if (literalDirection(local[index].label) !== "output") continue;
-    for (let row = cursor; row >= 0; row -= 1) {
+    for (let row = cursor; row >= floor; row -= 1) {
       if (!same(shown[row], local[index])) continue;
       found.set(shown[row], { sectionIndex: index, section: local[index] });
       cursor = row - 1;

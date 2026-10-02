@@ -35,8 +35,11 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 ### Notes
 - No server or database change. Supersedes the "review view only" note in the entry below.
-- Still without thumbs: curator and inline calls on the trace page, the harness lab, the
-  context debugger.
+- Still without thumbs: curator and inline calls on the trace page (they have no game step to
+  attach to), the harness lab, the context debugger.
+- The trace page's "reconstructed context" badge is about the *input* it shows. The vote rows
+  never use that input: they are built from the step's own transcript sections, which is the
+  text the Run inspector already marks. So they are not gated on the exact-input flag.
 
 ## [2026.10.01-trace-votes] — main
 *Author: Claude Opus 5.5 | 2026-10-01*

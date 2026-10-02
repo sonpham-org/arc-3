@@ -439,7 +439,8 @@ async function renderDetail(event, selectedPhase = null, selectedSegmentIndex = 
     focus = selectedPhase ? formatSections(selectedGroup?.phase === selectedPhase ? selectedGroup.sections : generated.filter((section) => sectionPhase(section) === selectedPhase)) : "";
     link = `<a class="detail-link" href="./viewer.html#run=${encodeURIComponent(state.run)}&game=${event.gameIndex}">Open this game in the frame viewer →</a>`;
     // Thumbs for the model's own output in this span: the selected phase's sections, or all of
-    // the turn's output when no phase is selected. Filed under the same place the Run inspector
+    // the turn's output when no phase is selected. These come from localSections -- the step's
+    // own transcript -- never from inputSections, which may be a reconstruction (see `exact`). Filed under the same place the Run inspector
     // uses (the section's index in this step's transcript), so the two pages share marks.
     const chosen = !selectedPhase ? generated : selectedGroup?.phase === selectedPhase ? selectedGroup.sections : generated.filter((section) => sectionPhase(section) === selectedPhase);
     voteTarget = {

@@ -295,7 +295,9 @@ transcript, so a mark made in one shows in the others:
 - **Execution trace** (`trace.html`): click a gameplay span to pin it. Under the captured text
   is a "Was this reasoning right?" box with one row per output section of the selected phase
   (or of the whole turn when no phase is selected). Curator and inline calls have no thumbs:
-  they are not a published (run, game, step, section) position.
+  they have no game step to attach a mark to. The rows take their text from the step's own
+  transcript, the same text the Run inspector marks, never from the page's rebuilt input
+  context, so they are offered whether or not the saved request is exact.
 
 The harness lab reuses the decision panel but its nodes are not published run turns, so it
 shows none; nor does the context debugger. Tests:
