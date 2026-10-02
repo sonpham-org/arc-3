@@ -54,9 +54,16 @@ def main() -> int:
     ap.add_argument("--n-moments", type=int, default=60)
     ap.add_argument("--tries", type=int, default=8)
     ap.add_argument("--max-game-share", type=float, default=0.15)
+    ap.add_argument("--harness", default="giantcmba1001",
+                    help="only fork points from runs of this harness (our Combo A stack); empty = any")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     moments = load_moments(a.moments)
+    if a.harness:       # forks replay through our harness: other harnesses' transcripts cannot be replayed here
+        skipped = sum(1 for m in moments if m.get("harness") != a.harness)
+        moments = [m for m in moments if m.get("harness") == a.harness]
+        if skipped:
+            print(f"skipped {skipped} fork points from other harnesses")
     priors = rt.priors_from_frontier(json.loads(Path(a.frontier).read_text()))
     pick = rt.select_moments(moments, a.n_moments, priors=priors, max_game_share=a.max_game_share)
     obs = sm._observer()

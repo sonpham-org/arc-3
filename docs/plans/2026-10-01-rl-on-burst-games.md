@@ -516,6 +516,32 @@ What to optimize before restarting, by measured cost:
 - Trainer (4x RTX PRO 6000, 708 GB RAM): ~26 GB of weights per GPU with 4-bit experts; peaks 73 GB at 77.6k
   tokens and 81 GB at 91k; out of memory at 109k+ on GPU 0 (embeddings + image model + 12 layers).
 
+**GPU memory model of a try VM (Combo A on one RTX PRO 6000; from the seed-A and try-vm0 server logs and the
+SGLang source in D:\codex-work\mtp-research\sglang-official). It only holds for this exact config (fp8 KV, mem 0.98,
+MTP on, 336-expert NVFP4, page 64):**
+- Fixed: weights ~57.6 GiB; CUDA graphs ~1.2 GB; free for activations 2.4 GB after allocation (the log warns
+  down to 0.84 GiB free in play).
+- Per token, full-attention KV (12 layers + the MTP layer, fp8): 1,938,176 tokens = 22.2 + 1.8 GB, ~12.3 KB per
+  token. 19 x 101,888 fits exactly, so running requests can never overflow it. In 2 h of normal play it peaked at
+  80% (median 51%).
+- Per request, linear-attention states (36 layers): 95 slots x ~55 MB = 5.3 GB. Each running request holds 4 slots
+  (one working state plus two tracking copies for prefix reuse, and one more). 19 running = 76 slots = 80%, all game
+  long; the other 19 slots hold saved prefix states (more on host via HiCache). This, not KV tokens, caps
+  concurrency: max_running_requests 19.
+- Prefix reuse needs all of: the same server process (nothing is shared across VMs or after a restart); token-exact
+  prompts (64-token pages); and a saved linear-attention state at the matched point. The server saves that state
+  only at the last 64-token boundary of each 4,096-token prefill piece and every 256 decoded tokens, and keeps it
+  only until evicted. Measured: 89% of prompt tokens came from cache in normal play (each turn extends the last).
+  Our 8-try forks arrived together, so hits stopped where a sibling's prefill had reached (53-70k of ~120k).
+- Precision: the server's KV cache is fp8; the trainer computes attention in BF16. Same tokens, different numbers:
+  emulate fp8 K/V in the trainer before trusting log-prob ratios (GRPO).
+- Levers to test, one at a time, with the Main thread's concurrency gate: extra_buffer_lazy (second tracking copy
+  only on demand: 3 slots per request instead of 4); int8 saved states (about 2x the saved-prefix capacity); the
+  host cache size.
+- Test before committing (1 VM, ~1 h): (a) 1 fork x 8 with a 1-token warm-up, expect each try's cached tokens =
+  prompt minus at most 63; (b) 2 and 3 forks x 8 (24 tries over 19 running): queueing, hits, slots, RAM, tokens/s;
+  (c) extra_buffer_lazy on/off.
+
 **Rollout guards (try VMs):**
 1. The kernel kills a sandbox, never the server: oom_score_adj -1000 on the SGLang processes, +500 on sandboxes.
 2. Cap each sandbox's memory (RLIMIT_AS, e.g. 3 GB): a runaway model-written script ends its own try only.
