@@ -580,6 +580,47 @@ checks.
 test with RAM evidence; (3) warm-then-fan-out, checked with the server's cached-token counts; (4) trainer prefix
 cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tree supervisor.
 
+## 9g. Round 0 on Daniel's no-border notebook (2-Oct, Son: "The no-border looks the best here. Let's build off of that")
+
+- **Base:** build noborder-v1 = his notebook (source sha 7b76c194) + our GCP override (25 games, 132-min pooled
+  budget) + the no-border port cell; notebook object `gs://cellens-ai-artifacts/arc3-duck/daniel-base/notebooks/
+  1074ebc735fa/notebook.ipynb`. The Kaggle build is kaggle-noborder-ct1.
+- **Data:** runs daniel-noborder-c-1001 and -d-1001: 108 records, 2,277 winning turns over 20 games, 126 moments
+  (fenced games excluded). Records are 71k-119k tokens; exact tokens checked against his server (render profile
+  sglang-0.5.19).
+- **Trainer:** his Intel W4A16 experts (int4, group 128, zero offset 1; checked against BF16, 1.22 GiB/layer),
+  non-expert tensors from the official BF16 model (byte-identical to his), chunked per-token work, layer inputs in
+  host RAM, an OOM skips a record. Ladder on his records (job 024, 2 steps each): 91k / 107k / 112k / 118k tokens
+  all fit, 245-327 s per step, the fullest card at 70 / 78 / 80 / 83 GiB.
+- **Round 0 (job 025, started 2-Oct 15:58 UTC):** 82 records from 28 files = the 14 train games x runs c and d;
+  1 epoch, accum 4, LR 1e-4, rank 32, alpha 64, max 121k tokens. The job deletes the easy six, the test five and
+  as66 itself before training. Job 026 merges it.
+- **Merge:** `merge_lora.py --only-changed` into his checkpoint; a mirror of his Kaggle inputs
+  (`gs://cellens-ai-artifacts/arc3-duck/daniel-base/kaggle-input/`) with only the changed shards replaced
+  (server-side copies for the rest).
+- **Game split.** Train (14): bp35 cn04 g50t ka59 ls20 m0r0 r11l s5i5 sc25 sk48 sp80 tu93 vc33 wa30. Held out,
+  never trained (5): dc22 lf52 re86 su15 tn36. Easy six (ar25 cd82 ft09 lp85 sb26 tr87): not trained, checked
+  only for breakage.
+- **Noise (Daniel's four all-25 runs, 1-Oct).** One game swings hard between runs: tn36 1 / 6 / 7 / 1 levels,
+  vc33 7 / 4 / 3 / 7, sp80 1 / 4 / 1 / 1. Group totals are steadier: the 14 train games 48 / 48 / 48 / 52 levels,
+  the held-out five 16 / 22 / 23 / 15 (mostly tn36). So single games are not read; ~4 repeats per arm can see a
+  few levels on the train total, the held-out five need ~8.
+- **Evaluation (Son 2-Oct: "smaller batches ... run 4 times or 8 times"): panels with repeats.** His notebook's
+  `bm.n_passes` plays every game N times at once in one run. A panel = 5 games x 5 passes = 25 games in flight, the
+  same load as an all-25 run (132-min budget, 10 active streams), so one VM gives 5 repeats per game:
+  - held-out panel `noborder-panel-held5x5-v1` (dc22 lf52 re86 su15 tn36): `notebooks/655b8a5946f0`;
+  - train panel `noborder-panel-train5x5-v1` (ka59 ls20 sc25 sp80 vc33: mid-range, swingy, wins in the data;
+    tu93 / r11l / m0r0 are near the top, bp35 / g50t / sk48 / s5i5 have almost no wins to learn from):
+    `notebooks/03015cf07849`.
+  Overrides in `D:\codex-work\daniel-base-20261001\variants\panel-*`; each notebook differs from noborder-v1 in
+  that one cell. Base arm: runs daniel-p5held-base-a-1002 and daniel-p5train-base-a-1002 (us-east5-b, launched
+  2-Oct 16:05 UTC). LoRA arm: the same notebooks with `arc3-input-prefix` = the mirror. Scoring:
+  `ops/score_panel.py <base runs> --vs <lora runs>` keeps repeats apart (score_row keeps one result per game) and
+  gives the panel total with its standard error. A second wave doubles the repeats if the gap is small.
+  Panel scores are not on the leaderboard line (fitted on all-25 runs); an all-25 run is the last check before any
+  submission.
+- **Later rounds generate the same way:** 5 games x 5 passes per VM gives several tries of the same game per run.
+
 ## 10. Decisions
 
 **2-Oct, Son: RL targets Daniel's notebook.** "Given that our notebook is flawed and that we want to submit Daniel's

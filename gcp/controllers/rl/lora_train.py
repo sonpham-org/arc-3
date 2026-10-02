@@ -280,12 +280,26 @@ def mode_train(args) -> int:
                 log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
                                       "spans_ok": b["spans_ok"], "n_loss": b["n_loss"]}) + "\n")
                 continue
-            lp = token_logprobs(model, b, grad=True)
             w = float(rec.get("meta", {}).get("weight", 1.0))
-            tw = trained_weights(b).to(lp.device)
-            # per-sequence mean over trained tokens, each token weighted by its reply's weight (level efficiency)
-            loss = -((tw * lp).sum() / max(1, lp.numel())) * w
-            (loss / args.accum).backward()
+            try:
+                lp = token_logprobs(model, b, grad=True)
+                tw = trained_weights(b).to(lp.device)
+                # per-sequence mean over trained tokens, each token weighted by its reply's weight (level efficiency)
+                loss = -((tw * lp).sum() / max(1, lp.numel())) * w
+                (loss / args.accum).backward()
+            except torch.OutOfMemoryError as exc:
+                # a record that does not fit is skipped, not fatal (multi-hour rounds); its partial gradients are
+                # dropped with the accumulated ones of this step so no half-record update is applied
+                lp = loss = None
+                opt.zero_grad(set_to_none=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
+                                      "oom": str(exc)[:200]}) + "\n")
+                log.flush()
+                acc = (acc // args.accum) * args.accum
+                continue
             acc += 1
             if acc % args.accum == 0:
                 lr = args.lr * min(1.0, (step + 1) / max(1, args.warmup)) * \
