@@ -252,15 +252,16 @@ def next_split(cursor: Any, rater_id: str, skip: list[str]) -> str | None:
     Ties break on a per-rater hash, so two raters do not walk the pool in the same order."""
 
     cursor.execute(
-        """
+        f"""
         SELECT s.split_id
         FROM rl_review_splits s
+        JOIN rl_review_nodes n ON n.node_id = s.node_id
         LEFT JOIN (SELECT split_id, count(*) AS n FROM rl_review_ratings GROUP BY split_id) c
                ON c.split_id = s.split_id
-        WHERE s.active
+        WHERE s.active AND {SHARED_CONTEXT_SQL}
           AND NOT EXISTS (SELECT 1 FROM rl_review_ratings r WHERE r.split_id = s.split_id AND r.rater_id = %s)
           AND NOT (s.split_id = ANY(%s))
-        ORDER BY COALESCE(c.n, 0) ASC, s.priority DESC, md5(s.split_id || %s)
+        ORDER BY COALESCE(c.n, 0) ASC, n.kind = 'fork' DESC, s.priority DESC, md5(s.split_id || %s)
         LIMIT 1
         """,
         (rater_id, skip, rater_id),
@@ -280,7 +281,8 @@ def path_meta(cursor: Any, path_id: str) -> dict[str, Any]:
 def rater_summary(cursor: Any, rater_id: str) -> dict[str, Any]:
     cursor.execute("SELECT count(*), max(updated_at) FROM rl_review_ratings WHERE rater_id = %s", (rater_id,))
     count, last = cursor.fetchone()
-    cursor.execute("SELECT count(*) FROM rl_review_splits WHERE active")
+    cursor.execute(f"SELECT count(*) FROM rl_review_splits s JOIN rl_review_nodes n ON n.node_id = s.node_id "
+                   f"WHERE s.active AND {SHARED_CONTEXT_SQL}")
     total = cursor.fetchone()[0]
     return {"rated": count, "last": iso(last), "splits": total}
 
@@ -351,13 +353,17 @@ def stats(cursor: Any) -> dict[str, Any]:
                         ("splits", "rl_review_splits"), ("ratings", "rl_review_ratings")):
         cursor.execute(f"SELECT count(*) FROM {table}")
         out[name] = cursor.fetchone()[0]
+    # the pool: only pairs that share a context (shared_context), still switched on
+    cursor.execute(f"SELECT count(*) FROM rl_review_splits s JOIN rl_review_nodes n ON n.node_id = s.node_id "
+                   f"WHERE s.active AND {SHARED_CONTEXT_SQL}")
+    out["splits"] = cursor.fetchone()[0]
     cursor.execute(
-        """
+        f"""
         SELECT n.game_id AS game, count(DISTINCT n.node_id) AS nodes, count(DISTINCT p.path_id) AS paths,
                count(DISTINCT s.split_id) AS splits, count(DISTINCT r.rating_id) AS ratings
         FROM rl_review_nodes n
         LEFT JOIN rl_review_paths p ON p.node_id = n.node_id
-        LEFT JOIN rl_review_splits s ON s.node_id = n.node_id
+        LEFT JOIN rl_review_splits s ON s.node_id = n.node_id AND s.active AND {SHARED_CONTEXT_SQL}
         LEFT JOIN rl_review_ratings r ON r.split_id = s.split_id
         GROUP BY n.game_id ORDER BY n.game_id
         """
@@ -450,12 +456,30 @@ def pair_priority(a: dict[str, Any], b: dict[str, Any]) -> float:
                  + abs(a["actions"] - b["actions"]) / max(a["actions"], b["actions"], 1), 3)
 
 
+SHARED_CONTEXT_SQL = "(n.kind = 'fork' OR (n.kind = 'level_start' AND n.level = 1))"
+
+
+def shared_context(node: dict[str, Any]) -> bool:
+    """Only paths that went on from the same context are a branch (Son 2-Oct: "the context is not the same").
+    A fork shares the forked play's exact history; the start of level 1 is the one point independent plays share
+    (same prompt, same first board, no history). A later level start is the same board reached with different
+    histories: comparing those paths compares different pasts, so no pairs are made there."""
+
+    return node["kind"] == "fork" or (node["kind"] == "level_start" and node["level"] == 1)
+
+
 def make_splits(cursor: Any, node_ids: list[str], source: str) -> int:
     """Every pair of paths at these nodes that is not a split yet, best pairs first, at most MAX_SPLITS_PER_NODE
-    splits per node."""
+    splits per node, only where the paths share a context (shared_context); pairs made earlier at other nodes
+    are switched off."""
 
     made = 0
     for node_id in node_ids:
+        cursor.execute("SELECT kind, level FROM rl_review_nodes WHERE node_id = %s", (node_id,))
+        kind, level = cursor.fetchone()
+        if not shared_context({"kind": kind, "level": level}):
+            cursor.execute("UPDATE rl_review_splits SET active = false WHERE node_id = %s AND active", (node_id,))
+            continue
         cursor.execute("SELECT path_id, model, cleared, actions FROM rl_review_paths WHERE node_id = %s ORDER BY path_id",
                        (node_id,))
         paths = _rows(cursor)

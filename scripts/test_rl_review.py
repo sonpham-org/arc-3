@@ -214,12 +214,14 @@ class DatabaseTests(unittest.TestCase):
                            "moves": [{"n": s, "action": "UP", "changed": True, "level_up": False, "diff": {}}]}
                           for s in range(1, n + 1)]}
 
-    def bundle(self, run: str = "run-a", model: str = "base", game: str = "ka59", plays=(0, 1, 2)) -> dict:
-        node = f"{game}:L2:abc123"
-        paths = [{"id": f"{run}:{game}_p{k}:L2", "node": node, "run": run, "play": f"{game}_p{k}", "model": model,
-                  "level": 2, "cleared": k % 2 == 0, "turns": 3 + k, "actions": 10 + 5 * k,
-                  "first_action": 20, "last_action": 30 + 5 * k, "content": self.content(2, 3 + k, run)} for k in plays]
-        return {"source": "test", "nodes": [{"id": node, "kind": "level_start", "game": game, "level": 2,
+    def bundle(self, run: str = "run-a", model: str = "base", game: str = "ka59", plays=(0, 1, 2), level: int = 1,
+               kind: str = "level_start") -> dict:
+        node = f"{game}:L{level}:abc123" if kind == "level_start" else f"{run}:{game}_p0:T7"
+        paths = [{"id": f"{run}:{game}_p{k}:L{level}" + ("" if kind == "level_start" else ":b"), "node": node, "run": run,
+                  "play": f"{game}_p{k}", "model": model, "level": level, "cleared": k % 2 == 0, "turns": 3 + k,
+                  "actions": 10 + 5 * k, "first_action": 20, "last_action": 30 + 5 * k,
+                  "content": self.content(level, 3 + k, run)} for k in plays]
+        return {"source": "test", "nodes": [{"id": node, "kind": kind, "game": game, "level": level,
                                              "meta": {"start": ["0" * 64] * 64}}], "paths": paths}
 
     def publish(self, bundle: dict, gz: bool = True):
@@ -237,6 +239,16 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(sorted(p["model"] for p in view["paths"]), ["base", "r0"])
         self.assertEqual(len(list((self.root / "_review" / "paths").glob("*.json"))), 4)
+
+    def test_pairs_only_where_the_context_is_shared(self) -> None:
+        # a later level start is the same board reached with different histories: no pairs
+        status, result = self.publish(self.bundle(level=2))
+        self.assertEqual((status, result["splitsMade"]), (200, 0))
+        # a fork shares the forked play's history: its branches are paired
+        status, result = self.publish(self.bundle(run="run-f", kind="fork", level=2))
+        self.assertEqual((status, result["splitsMade"]), (200, 3))
+        _, view = call(self.api, "GET", "/api/v1/review/next", self.team)
+        self.assertEqual(view["node"]["kind"], "fork")
 
     def test_held_out_games_are_refused_whole(self) -> None:
         status, payload = self.publish(self.bundle(game="tn36"))
@@ -287,16 +299,16 @@ class DatabaseTests(unittest.TestCase):
         self.publish(self.bundle())
         _, view = call(self.api, "GET", "/api/v1/review/next", self.team)
         status, payload = call(self.api, "POST", "/api/v1/review/rating", self.team,
-                               {"split": view["split"]["id"], "choice": "run-z:ka59_p7:L2"})
+                               {"split": view["split"]["id"], "choice": "run-z:ka59_p7:L1"})
         self.assertEqual((status, payload["error"]), (400, "invalid_choice"))
 
     def test_tree_links_levels_and_counts_ratings(self) -> None:
         self.publish(self.bundle())
         # the same plays' next level: p0 and p2 cleared level 2 (even k), so their level-3 paths follow from a new node
-        nxt = {"source": "test", "nodes": [{"id": "ka59:L3:def456", "kind": "level_start", "game": "ka59", "level": 3}],
-               "paths": [{"id": f"run-a:ka59_p{k}:L3", "node": "ka59:L3:def456", "run": "run-a", "play": f"ka59_p{k}",
-                          "model": "base", "level": 3, "cleared": False, "turns": 2, "actions": 4,
-                          "content": self.content(3, 2, f"run-a-{k}")} for k in (0, 2)]}
+        nxt = {"source": "test", "nodes": [{"id": "ka59:L2:def456", "kind": "level_start", "game": "ka59", "level": 2}],
+               "paths": [{"id": f"run-a:ka59_p{k}:L2", "node": "ka59:L2:def456", "run": "run-a", "play": f"ka59_p{k}",
+                          "model": "base", "level": 2, "cleared": False, "turns": 2, "actions": 4,
+                          "content": self.content(2, 2, f"run-a-{k}")} for k in (0, 2)]}
         self.publish(nxt)
         _, view = call(self.api, "GET", "/api/v1/review/next", self.team)
         winner = view["paths"][0]["id"]
@@ -304,10 +316,10 @@ class DatabaseTests(unittest.TestCase):
              "marks": [{"path": winner, "step": 1, "verdict": "up", "note": "good probe"}]})
         status, tree = call(self.api, "GET", "/api/v1/review/tree?game=ka59", self.team)
         self.assertEqual(status, 200)
-        self.assertEqual([n["level"] for n in tree["nodes"]], [2, 3])
+        self.assertEqual([n["level"] for n in tree["nodes"]], [1, 2])
         paths = {p["id"]: p for p in tree["paths"]}
-        self.assertEqual(paths["run-a:ka59_p0:L2"]["next"], "ka59:L3:def456")
-        self.assertIsNone(paths["run-a:ka59_p1:L2"]["next"], "a path that did not clear leads nowhere")
+        self.assertEqual(paths["run-a:ka59_p0:L1"]["next"], "ka59:L2:def456")
+        self.assertIsNone(paths["run-a:ka59_p1:L1"]["next"], "a path that did not clear leads nowhere")
         self.assertEqual(paths[winner]["wins"], 1)
         self.assertEqual(paths[winner]["marks"], {"up": 1, "down": 0, "notes": 1})
         self.assertEqual(sum(p["losses"] for p in tree["paths"]), 1)

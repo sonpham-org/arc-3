@@ -44,6 +44,9 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   shared with Trace review (`docs/static/js/review-ui.js`).
 
 ### Changed
+- Pairs only where the paths share a context (Son: "the context is not the same"): the start of
+  level 1, which independent plays share, and forks of one play. A later level start is the same board
+  reached with different histories, so its pairs are switched off and no new ones are made.
 - The site nav replaces **Harness Lab** with **RL**, **Trace review** and **Tree** (Son). `harness.html`
   and its backend are untouched and still reachable by URL.
 - `railway/entrypoint.sh`: four new exact skip-auth routes (`^/review\.html$`, the review
