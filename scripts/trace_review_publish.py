@@ -98,6 +98,8 @@ def put(site: str, token: str, bundle: dict) -> dict:
     body = gzip.compress(json.dumps(bundle, separators=(",", ":")).encode("utf-8"), compresslevel=6)
     req = urllib.request.Request(f"{site}/api/v1/review/publication", data=body, method="PUT",
                                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/gzip",
+                                          # Cloudflare in front of the site refuses Python-urllib's default agent
+                                          "User-Agent": "arc3-trace-review-publisher/1",
                                           "Content-Length": str(len(body))})
     try:
         with urllib.request.urlopen(req, timeout=600) as r:
