@@ -32,6 +32,7 @@ COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/games_schema.sql /games_schema.sql
 COPY railway/games_store.py /games_store.py
 COPY railway/trace_feedback.py /trace_feedback.py
+COPY railway/rl_review.py /rl_review.py
 COPY railway/publication_store.py /publication_store.py
 COPY railway/model_backfill.py /model_backfill.py
 COPY scripts/run_catalog.py /run_catalog.py
@@ -55,6 +56,11 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -qF -- '--skip-auth-route="^/api/v1/traces/feedback-export$"' /entrypoint.sh \
     && grep -q "trace-votes.js" /srv/static/js/decision.js \
     && grep -qF -- '--skip-auth-route="^/api/v1/public/"' /entrypoint.sh \
+    && grep -q "RlReviewApi" /catalog_server.py \
+    && grep -q "rl_review_ratings" /catalog_schema.sql \
+    && grep -qF -- '--skip-auth-route="^/api/v1/review/publication$"' /entrypoint.sh \
+    && test -s /srv/review.html \
+    && test -s /srv/rl.html \
     && grep -q "ARC DEBUGGER" /srv/arc-debugger.html \
     && chmod 0755 /entrypoint.sh
 

@@ -304,6 +304,38 @@ shows none; nor does the context debugger. Tests:
 `python3.13 -m unittest scripts.test_trace_feedback` (set `ARC3_TEST_DATABASE_URL` to a
 disposable Postgres for the round trip).
 
+### Trace review: which way forward is better (RL)
+
+`review.html` shows a rater one point in a game that several plays reached (a **node**: today
+the start of a level, where every repeat of a game sits on the same board) and two or more
+ways the model went on from there (**paths**: each one's thinking, the code it ran, its moves
+and the board after each). The rater picks the better one (or "about the same" / "both bad"),
+says how sure, can score each path 1-5 and mark single turns good or bad with a note.
+LEFT / RIGHT order is shuffled per rater and the models stay hidden until the rating is in.
+Nothing is trained on these yet.
+
+- **Who rates.** The signed-in team (and only `ALLOWED_EMAILS`, re-checked by the API) at
+  `/api/v1/review/*`, which also lists the pool and invites raters. Outside raters get a link
+  `review.html#k=<key>` from the team panel: no Google sign-in, `/api/v1/public/review/*`
+  with the key in `X-Review-Key`, rate-limited, revocable.
+- **Where paths come from.** `scripts/trace_review_publish.py --run <run> --model <label>`
+  reads a run's per-play event logs from GCS, cuts them into nodes and paths
+  (`scripts/trace_review_index.py`) and PUTs them to `/api/v1/review/publication`
+  (`ARC3_PUBLISH_TOKEN`). The server stores each path's turns on the volume
+  (`/srv/data/_review/paths/<sha256>.json`) and pairs every new path with the ones already at
+  that node, base against LoRA first, so publishing each new run keeps the pool growing
+  (`--watch runs.txt` re-publishes a list of runs every 15 minutes). Held-out games
+  (`ARC3_REVIEW_FENCED`, default the five test games and `as66`) are refused.
+- **Getting ratings out.** `GET /api/v1/review/export` with the publish token: JSON lines, one
+  per rating, with the paths it compared.
+- Tables `rl_review_nodes`, `rl_review_paths`, `rl_review_splits`, `rl_review_raters`,
+  `rl_review_ratings` (`catalog_schema.sql`); code `railway/rl_review.py`; tests
+  `python3.13 -m unittest scripts.test_rl_review`.
+
+`rl.html` is the RL loop's own page (rounds, training progress, the before/after test
+panels). Its data is one JSON document the loop PUTs to `/api/v1/rl/dashboard-publication`
+(token) and the page reads from `/api/v1/rl/dashboard` (team).
+
 ### The metric, and why we don't trust single runs
 
 Score is the ARC-AGI-3 score (level depth is weighted, so depth beats efficiency).

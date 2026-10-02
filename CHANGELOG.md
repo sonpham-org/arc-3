@@ -15,6 +15,38 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.02-rl-and-trace-review] — main
+*Author: Claude Opus 5.5 | 2026-10-02*
+
+### Added
+- **Trace review** (`docs/review.html`, `docs/static/js/review.js`, `docs/static/css/review.css`):
+  a rater sees one point in a game that several plays reached (today: the start of a level,
+  where every repeat of a game is on the same board), then 2-4 ways the model went on from
+  there (thinking, code, moves, the board after each), and says which is better, how sure, a
+  1-5 score per path and good/bad marks with notes on single turns. Requested by Son as
+  infrastructure to let outside raters judge the model's paths; nothing trains on it yet.
+- `railway/rl_review.py` and five tables (`rl_review_nodes`, `_paths`, `_splits`, `_raters`,
+  `_ratings`): the signed-in team at `/api/v1/review/*` (re-checked against `ALLOWED_EMAILS`),
+  outside raters by invite key at `/api/v1/public/review/*` (no sign-in, rate-limited,
+  revocable), token-gated publication of paths and export of ratings. The server makes the
+  pairs itself whenever new paths reach a node (base against LoRA first), so publishing each
+  new run keeps the pool growing. Held-out games are refused.
+- `scripts/trace_review_index.py` (cut a run's event logs into nodes and paths) and
+  `scripts/trace_review_publish.py` (GCS -> publication, `--watch` to keep it going).
+- **RL page** (`docs/rl.html`): the RL loop on Daniel's notebook, live: is it getting better
+  round by round (each panel's runs before and after training), training progress, the loop's
+  timing. Data is one document PUT by the loop to `/api/v1/rl/dashboard-publication`.
+- `scripts/test_rl_review.py`.
+
+### Changed
+- The site nav replaces **Harness Lab** with **RL** and **Trace review** (Son). `harness.html`
+  and its backend are untouched and still reachable by URL.
+- `railway/entrypoint.sh`: four new exact skip-auth routes (`^/review\.html$`, the review
+  publication and export, the RL dashboard publication).
+
+### Notes
+- Needs an image deploy (shell, API and schema change); tables are created at server start.
+
 ## [2026.10.02-trace-votes-everywhere] — main
 *Author: Claude Opus 5.5 | 2026-10-02*
 

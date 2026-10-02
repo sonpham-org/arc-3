@@ -117,6 +117,78 @@ CREATE TABLE IF NOT EXISTS arc3_trace_feedback (
 CREATE INDEX IF NOT EXISTS arc3_trace_feedback_updated_idx
 ON arc3_trace_feedback (updated_at, feedback_id);
 
+-- Trace review (RL): points in a game that several plays reach (nodes), the plays' paths forward
+-- from them, the sets of paths shown side by side (splits: LEFT / RIGHT / ...), the raters and
+-- their verdicts. A path's turns (thinking, code, actions, boards) live on the volume under
+-- /srv/data/_review/paths/<content_sha256>.json; these rows index them. Splits are made by the
+-- server whenever new paths reach a node, so the pool keeps growing as runs are published.
+-- See railway/rl_review.py.
+CREATE TABLE IF NOT EXISTS rl_review_nodes (
+    node_id text PRIMARY KEY CHECK (node_id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,199}$'),
+    kind text NOT NULL CHECK (kind IN ('level_start', 'fork')),
+    game_id text NOT NULL,
+    level integer NOT NULL CHECK (level >= 1),
+    meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS rl_review_paths (
+    path_id text PRIMARY KEY CHECK (path_id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,199}$'),
+    node_id text NOT NULL REFERENCES rl_review_nodes (node_id),
+    run_id text NOT NULL,
+    play text NOT NULL,
+    model text NOT NULL,
+    level integer NOT NULL,
+    cleared boolean NOT NULL,
+    turns integer NOT NULL CHECK (turns >= 0),
+    actions integer NOT NULL CHECK (actions >= 0),
+    content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS rl_review_paths_node_idx ON rl_review_paths (node_id);
+
+CREATE TABLE IF NOT EXISTS rl_review_splits (
+    split_id text PRIMARY KEY CHECK (split_id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,254}$'),
+    node_id text NOT NULL REFERENCES rl_review_nodes (node_id),
+    path_ids text[] NOT NULL CHECK (cardinality(path_ids) BETWEEN 2 AND 4),
+    priority real NOT NULL DEFAULT 0,
+    source text NOT NULL,
+    active boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS rl_review_splits_node_idx ON rl_review_splits (node_id);
+
+-- Outside raters hold an invite key (only its SHA-256 is stored); the signed-in team rates as
+-- 'team:<email>' without a row here.
+CREATE TABLE IF NOT EXISTS rl_review_raters (
+    rater_id text PRIMARY KEY CHECK (rater_id ~ '^r_[0-9a-f]{12}$'),
+    name text NOT NULL,
+    key_sha256 text NOT NULL UNIQUE CHECK (key_sha256 ~ '^[0-9a-f]{64}$'),
+    created_by text NOT NULL,
+    active boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS rl_review_ratings (
+    rating_id bigserial PRIMARY KEY,
+    split_id text NOT NULL REFERENCES rl_review_splits (split_id),
+    rater_id text NOT NULL,
+    choice text NOT NULL,
+    confidence integer CHECK (confidence BETWEEN 1 AND 3),
+    scores jsonb NOT NULL DEFAULT '{}'::jsonb,
+    marks jsonb NOT NULL DEFAULT '[]'::jsonb,
+    comment text,
+    seconds integer CHECK (seconds >= 0),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (split_id, rater_id)
+);
+
+CREATE INDEX IF NOT EXISTS rl_review_ratings_updated_idx ON rl_review_ratings (updated_at, rating_id);
+
 CREATE OR REPLACE FUNCTION arc3_refresh_catalog_snapshot()
 RETURNS void
 LANGUAGE sql
