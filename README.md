@@ -284,8 +284,9 @@ Each line is `{"run", "gameId", "gameIndex", "stepIndex", "turn", "sectionIndex"
 `/api/v1/traces/feedback?format=jsonl`. The export is the mark and the judged text only; join
 the prompt and board for that step from the run's own viewer files by run, game and step.
 
-The thumbs appear only in the Run inspector's review view. The harness lab reuses the same
-panel but its nodes are not published run turns, so it shows none. Tests:
+The thumbs appear only in the Run inspector's **review** view. The literal view shows the same
+turn but lists the saved request sections, which are numbered differently, so it carries none.
+The harness lab reuses the same panel but its nodes are not published run turns. Tests:
 `python3.13 -m unittest scripts.test_trace_feedback` (set `ARC3_TEST_DATABASE_URL` to a
 disposable Postgres for the round trip).
 

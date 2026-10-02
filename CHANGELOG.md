@@ -34,8 +34,11 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 ### Notes
 - This is shell and API code, so it needs an image deploy to go live; the table is created by
   the schema run at server start. Publishing run data, as always, does not deploy.
-- Not covered: the literal view of the decision panel, `trace.html`, the harness lab and the
-  context debugger. Their text is not a stable (run, game, step, section) position.
+- Marks are made in the Run inspector's **review** view only. The literal view shows the same
+  turn but lists the saved request sections, which are numbered differently, so a mark there
+  would be filed under a different section number for the same words. `trace.html`, the
+  harness lab and the context debugger are not covered either: their text is not a published
+  (run, game, step, section) position.
 
 ## [2026.09.28-canal-and-cable] — main
 *Author: GPT-6 Astra | 2026-09-28*
