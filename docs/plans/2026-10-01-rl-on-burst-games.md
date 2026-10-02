@@ -582,6 +582,18 @@ cache, exactness and the 118k ladder; (5) ls20 on 4 long-lived workers + the tre
 
 ## 10. Decisions
 
+**2-Oct, Son: RL targets Daniel's notebook.** "Given that our notebook is flawed and that we want to submit Daniel's
+notebook today. Let's use Daniel's data actually." This supersedes the Combo A pin below. Consequences:
+- Round-0 data: his 4 runs on our GCP runner (daniel-base-a/b-1001, daniel-noborder-c/d-1001): 220 records, 4,635
+  winning turns, exact tokens checked 220/220 against his server (§9a). Check which notebook variant is submitted.
+- Trainer experts: his served Intel W4A16 AutoRound weights (int4, group 128, symmetric, GPTQ packing; activations
+  BF16, so the trainer's BF16 math matches his server better than it matched NVFP4). Needs an int4 unpacker next to
+  `nvfp4_experts.py`. The adapter still lives in the BF16 shared tensors, which his model keeps in BF16 (§3).
+- Records average ~113k tokens: above today's 91k training limit until the history-without-gradient change (§9f).
+- Forks need a try runner for his harness (ours replays only our transcript format). Until then, sampling = full
+  plays of the chosen game in his notebook on the GCP runner (D:\codex-work\daniel-base-20261001).
+- Evaluation = his notebook with the merged weights vs without, on the GCP runner, then Kaggle.
+
 Settled by Son, 1-Oct:
 - **Where RL plays: our stack, the "giant"** (Son: "our stack is competitive"; the Main innovation thread named it
   the best current stack). Arms `cr_sgl_c99k_w25_s19_g7920_giantsl336{a,b,c,d}1001`: all-25 44.4, hard-7 11.0,

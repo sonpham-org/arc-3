@@ -54,8 +54,9 @@ def main() -> int:
     ap.add_argument("--n-moments", type=int, default=60)
     ap.add_argument("--tries", type=int, default=8)
     ap.add_argument("--max-game-share", type=float, default=0.15)
-    ap.add_argument("--harness", default="giantcmba1001",
-                    help="only fork points from runs of this harness (our Combo A stack); empty = any")
+    ap.add_argument("--harness", required=True,
+                    help="only fork points from runs of this harness (the stack being trained for; 2-Oct: Daniel's "
+                         "notebook); the try runner must be able to replay that harness")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     moments = load_moments(a.moments)
