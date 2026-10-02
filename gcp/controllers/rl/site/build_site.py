@@ -101,8 +101,9 @@ def training():
     rows = [jload(line) for line in (got["rows"] or "").splitlines() if line.strip()]
     recs = [r for r in rows if r and "loss" in r]
     skips = [r for r in rows if r and "skip" in r]
-    m = re.search(r"^(\d+) records$", got["log"] or "", re.M)
-    total = int(m.group(1)) if m else CFG["records_total"]
+    # the largest "N records" line: the job log also holds the tiny resume test's "6 records" before the real one
+    m = max((int(x) for x in re.findall(r"^(\d+) records$", got["log"] or "", re.M)), default=0)
+    total = m or CFG["records_total"]
     last_end = (jload(got["mt"]) or {}).get("mtime")
     # each record's end time, counted back from the log's last change by the records' own durations
     ends, at = [], last_end
