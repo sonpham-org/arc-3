@@ -72,6 +72,45 @@ def dequant(q: torch.Tensor, s: torch.Tensor, s2_rows: torch.Tensor, out_dtype=t
     return out
 
 
+GPTQ_GROUP = int(os.environ.get("ARC3_GPTQ_GROUP", "128"))
+# auto_gptq "v1" packing stores each zero point minus 1 (a symmetric int4 zero of 8 is stored as 7): test_nvfp4.py
+# --format gptq checks which convention Daniel's checkpoint uses against the BF16 experts.
+GPTQ_ZERO_OFFSET = int(os.environ.get("ARC3_GPTQ_ZERO_OFFSET", "1"))
+
+
+def dequant_gptq(qw: torch.Tensor, qz: torch.Tensor, s: torch.Tensor, out: torch.Tensor | None = None,
+                 group: int = 0, zero_offset: int | None = None, chunk: int = 0) -> torch.Tensor:
+    """GPTQ int4 (AutoRound "auto_round:auto_gptq"): qw int32 [E, in/8, out] (input row 8k+j in bits 4j..4j+3),
+    qz int32 [E, G, out/8] (output column 8c+j in bits 4j), s [E, G, out] -> [E, out, in] (nn.Linear layout).
+    W[o, i] = (q[i, o] - (z[g(i), o] + zero_offset)) * s[g(i), o], g(i) = i // group."""
+    e, in8, n_out = qw.shape
+    n_in = in8 * 8
+    group = group or GPTQ_GROUP
+    zo = GPTQ_ZERO_OFFSET if zero_offset is None else zero_offset
+    n_g = n_in // group
+    if out is None:
+        out = torch.empty(e, n_out, n_in, dtype=torch.bfloat16, device=qw.device)
+    shifts = torch.arange(0, 32, 4, device=qw.device, dtype=torch.int32)
+    chunk = chunk or CHUNK
+    for a in range(0, e, chunk):
+        b = min(e, a + chunk)
+        q = ((qw[a:b].unsqueeze(2) >> shifts.view(1, 1, 8, 1)) & 0xF).reshape(b - a, n_g, group, n_out)
+        z = ((qz[a:b].unsqueeze(-1) >> shifts.view(1, 1, 1, 8)) & 0xF).reshape(b - a, n_g, n_out) + zo
+        w = (q.float() - z.unsqueeze(2).float()) * s[a:b].float().unsqueeze(2)
+        out[a:b] = w.reshape(b - a, n_in, n_out).transpose(1, 2)
+    return out
+
+
+def checkpoint_format(weight_map: dict) -> str:
+    """'gptq' (Daniel's Intel W4A16) or 'nvfp4' (RadixArk, Combo A), from the expert tensor names."""
+    probe = "model.language_model.layers.0.mlp.experts.0.gate_proj."
+    if probe + "qweight" in weight_map:
+        return "gptq"
+    if probe + "weight_scale" in weight_map:
+        return "nvfp4"
+    raise ValueError("no packed routed experts found (neither GPTQ qweight nor NVFP4 weight_scale)")
+
+
 class _Shim:
     """What transformers' grouped_mm_experts_forward reads from an experts module."""
 
@@ -97,10 +136,19 @@ class NVFP4Experts(nn.Module):
         self.hidden_dim = config.hidden_size
         self.intermediate_dim = config.moe_intermediate_size
         self.act_fn = ACT2FN[config.hidden_act]
-        for n in ("gu_q", "gu_s", "gu_s2", "dn_q", "dn_s", "dn_s2", "gu_in", "dn_in"):
+        self.fmt = None
+        for n in ("gu_q", "gu_s", "gu_s2", "dn_q", "dn_s", "dn_s2", "gu_in", "dn_in",                 # nvfp4
+                  "g_qw", "g_qz", "g_s", "u_qw", "u_qz", "u_s", "d_qw", "d_qz", "d_s"):               # gptq
             self.register_buffer(n, None, persistent=False)
 
     def weights(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.fmt == "gptq":
+            n_i = self.g_qw.shape[2]                                  # gate rows, then up rows (fused gate_up layout)
+            gate_up = torch.empty(self.g_qw.shape[0], 2 * n_i, self.g_qw.shape[1] * 8, dtype=torch.bfloat16,
+                                  device=self.g_qw.device)
+            dequant_gptq(self.g_qw, self.g_qz, self.g_s, out=gate_up[:, :n_i])
+            dequant_gptq(self.u_qw, self.u_qz, self.u_s, out=gate_up[:, n_i:])
+            return gate_up, dequant_gptq(self.d_qw, self.d_qz, self.d_s)
         if self.gu_q is None:
             raise RuntimeError("NVFP4Experts: packed weights not loaded (call nvfp4_experts.load_packed)")
         return dequant(self.gu_q, self.gu_s, self.gu_s2), dequant(self.dn_q, self.dn_s, self.dn_s2)
@@ -187,10 +235,35 @@ def read_layer(nvfp4_dir: str | Path, layer: int, num_experts: int, weight_map: 
     }
 
 
+def read_layer_gptq(ckpt_dir: str | Path, layer: int, num_experts: int, weight_map: dict | None = None) -> dict:
+    """Stacked GPTQ tensors of one decoder layer's experts (CPU): per projection qweight, qzeros, scales."""
+    from safetensors import safe_open
+    d = Path(ckpt_dir)
+    wm = weight_map or json.loads((d / "model.safetensors.index.json").read_text())["weight_map"]
+    pre = f"model.language_model.layers.{layer}.mlp.experts."
+    names = {f"{pre}{e}.{p}.{t}" for e in range(num_experts) for p in ("gate_proj", "up_proj", "down_proj")
+             for t in ("qweight", "qzeros", "scales")}
+    by_file: dict[str, list[str]] = {}
+    for n in names:
+        by_file.setdefault(wm[n], []).append(n)
+    got: dict[str, torch.Tensor] = {}
+    for f, ns in by_file.items():
+        with safe_open(str(d / f), framework="pt") as sf:
+            for n in ns:
+                got[n] = sf.get_tensor(n)
+    out = {}
+    for short, proj in (("g", "gate_proj"), ("u", "up_proj"), ("d", "down_proj")):
+        for key, t in (("qw", "qweight"), ("qz", "qzeros"), ("s", "scales")):
+            out[f"{short}_{key}"] = torch.stack([got[f"{pre}{e}.{proj}.{t}"] for e in range(num_experts)])
+    return out
+
+
 def load_packed(model, nvfp4_dir: str | Path) -> dict:
-    """Fill every decoder layer's NVFP4Experts from the served checkpoint, on the device of that layer's router."""
+    """Fill every decoder layer's packed experts from the served checkpoint (RadixArk NVFP4 or Daniel's Intel GPTQ
+    int4, detected from the tensor names), on the device of that layer's router."""
     m = _m()
     wm = json.loads((Path(nvfp4_dir) / "model.safetensors.index.json").read_text())["weight_map"]
+    fmt = checkpoint_format(wm)
     n, gib = 0, 0.0
     for name, mod in model.named_modules():
         if not isinstance(mod, m.Qwen4ExpTextDecoderLayer) or ".mtp." in f".{name}.":
@@ -200,9 +273,11 @@ def load_packed(model, nvfp4_dir: str | Path) -> dict:
             raise RuntimeError(f"{name}: experts are {type(experts).__name__}; call install_placeholder() before loading")
         layer = int(name.rsplit(".", 1)[-1])
         dev = mod.mlp.gate.weight.device
-        packed = read_layer(nvfp4_dir, layer, experts.num_experts, wm)
+        reader = read_layer_gptq if fmt == "gptq" else read_layer
+        packed = reader(nvfp4_dir, layer, experts.num_experts, wm)
         for k, v in packed.items():
             setattr(experts, k, v.to(dev))
             gib += v.numel() * v.element_size() / 2**30
+        experts.fmt = fmt
         n += 1
-    return {"nvfp4_layers": n, "packed_gib": round(gib, 1)}
+    return {"format": fmt, "packed_layers": n, "packed_gib": round(gib, 1)}

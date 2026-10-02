@@ -176,6 +176,72 @@ def attention_forward(self, hidden_states, position_embeddings, attention_mask=N
     return self.o_proj(attn_output), None
 
 
+# ------------------------------------------------------------------------------------------------ chunked layer
+LAYER_CHUNK = int(os.environ.get("ARC3_LAYER_TOKEN_CHUNK", "16384"))    # tokens per chunk of the per-token work
+
+
+def _tokenwise(fn, *tensors, chunk: int = 0):
+    """fn(*tensors) for per-token work, in chunks along the sequence (dim 1), each under checkpoint when a gradient
+    is needed: only the chunk's own intermediates are alive at a time. Every tensor must have the sequence on dim 1."""
+    s = tensors[0].shape[1]
+    chunk = chunk or LAYER_CHUNK
+    if s <= chunk:
+        return fn(*tensors)
+    grad = torch.is_grad_enabled() and any(t.requires_grad for t in tensors)
+    outs = []
+    for a in range(0, s, chunk):
+        part = [t[:, a:a + chunk] for t in tensors]
+        outs.append(checkpoint(fn, *part, use_reentrant=False) if grad else fn(*part))
+    if isinstance(outs[0], tuple):
+        return tuple(torch.cat([o[i] for o in outs], dim=1) for i in range(len(outs[0])))
+    return torch.cat(outs, dim=1)
+
+
+def decoder_forward(self, hidden_states, position_embeddings, attention_mask=None, conv_mask=None,
+                    past_key_values=None, ple_input_ids=None, **kwargs):
+    """Qwen4ExpTextDecoderLayer.forward with its per-token parts in token chunks (same math, same order).
+
+    At ~110k tokens most of a layer's backward memory is per-token work around the attention core: the two
+    hyper-connection mixes ([S, 10240] float32 norms, sigmoid gates), the injections, and the MoE block (2-Oct
+    ladder: 109k and 118k ran out of memory). Only the attention / linear-attention core needs the whole sequence
+    at once. With a cache (generation), the stock forward runs."""
+    if past_key_values is not None or hidden_states.shape[0] != 1:
+        return _STATE["orig_layer"](self, hidden_states, position_embeddings, attention_mask=attention_mask,
+                                    conv_mask=conv_mask, past_key_values=past_key_values,
+                                    ple_input_ids=ple_input_ids, **kwargs)
+    if self.ple is not None:
+        hidden_states = hidden_states + self.ple(hidden_states, ple_input_ids, past_key_values, conv_mask=conv_mask)
+
+    def attn_mix(x):
+        mixed, _, weights = self.attn_hyper_connection(x)
+        return mixed, weights
+
+    mixed, inj_w = _tokenwise(attn_mix, hidden_states)
+    if self.layer_type == "linear_attention":
+        core = self.linear_attn(mixed, cache_params=past_key_values, attention_mask=conv_mask, **kwargs)
+    else:
+        core, _ = self.self_attn(mixed, position_embeddings, attention_mask=attention_mask,
+                                 past_key_values=past_key_values, **kwargs)
+    del mixed
+
+    def inject(x, c, w):
+        return x + (c.unsqueeze(-2) * w.unsqueeze(-1)).flatten(-2)
+
+    hidden_states = _tokenwise(inject, hidden_states, core, inj_w)
+    del core, inj_w
+
+    def mlp_mix(x):
+        mixed2, _, weights = self.mlp_hyper_connection(x)
+        return mixed2, weights
+
+    mixed, inj_w = _tokenwise(mlp_mix, hidden_states)
+    # the MoE block runs on the whole sequence: packed experts are unpacked once per call and chunk their own tokens
+    # (nvfp4_experts.TOKEN_CHUNK); chunking here would unpack them once per chunk
+    out = self.mlp(mixed)
+    del mixed
+    return _tokenwise(inject, hidden_states, out, inj_w)
+
+
 # ------------------------------------------------------------------------------------------------ offload
 class _OffloadedLayer(torch.autograd.Function):
     """Run a decoder layer without keeping anything on the GPU; its input waits in pinned host RAM for backward."""
@@ -230,8 +296,10 @@ def install(model=None, offload: bool = False) -> dict:
     m = _m()
     if not _STATE["installed"]:
         _STATE["orig_attn"] = m.Qwen4ExpTextAttention.forward
+        _STATE["orig_layer"] = m.Qwen4ExpTextDecoderLayer.forward
         _STATE["orig_masks"] = (m.create_causal_mask, m.create_recurrent_attention_mask)
         m.Qwen4ExpTextAttention.forward = attention_forward
+        m.Qwen4ExpTextDecoderLayer.forward = decoder_forward
 
         def no_mask(**kw):
             am = kw.get("attention_mask")
@@ -254,11 +322,16 @@ def install(model=None, offload: bool = False) -> dict:
                     mod._fast_qsa_orig = mod._old_forward
                 mod._old_forward = types.MethodType(attention_forward, mod)
                 n_hooked += 1
+            if isinstance(mod, m.Qwen4ExpTextDecoderLayer) and "_old_forward" in mod.__dict__:
+                if "_fast_qsa_orig" not in mod.__dict__:
+                    mod._fast_qsa_orig = mod._old_forward
+                mod._old_forward = types.MethodType(decoder_forward, mod)
+                n_hooked += 1
             if offload and isinstance(mod, m.Qwen4ExpTextDecoderLayer):
                 mod._gradient_checkpointing_func = offload_checkpoint_for(n_off)
                 mod.gradient_checkpointing = True
                 n_off += 1
-    return {"fast_qsa": True, "hooked_attention_layers": n_hooked, "offloaded_layers": n_off}
+    return {"fast_qsa": True, "hooked_layers": n_hooked, "offloaded_layers": n_off}
 
 
 def uninstall(model=None) -> None:
@@ -269,5 +342,6 @@ def uninstall(model=None) -> None:
                 mod._old_forward = mod.__dict__.pop("_fast_qsa_orig")
     if _STATE["installed"]:
         m.Qwen4ExpTextAttention.forward = _STATE["orig_attn"]
+        m.Qwen4ExpTextDecoderLayer.forward = _STATE["orig_layer"]
         m.create_causal_mask, m.create_recurrent_attention_mask = _STATE["orig_masks"]
         _STATE["installed"] = False

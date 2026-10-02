@@ -156,8 +156,8 @@ def main() -> int:
         out_h = torch.log_softmax(hooked(input_ids=ids, use_cache=False).logits.float(), -1)
     n_attn = sum(isinstance(x, m.Qwen4ExpTextAttention) for x in hooked.modules())
     check("hooked model: every attention layer runs the fast path",
-          info["hooked_attention_layers"] == n_attn and (out_h - fast).abs().max().item() < 1e-3,
-          f"{info['hooked_attention_layers']}/{n_attn} layers, max |dlogp| vs fast {(out_h - fast).abs().max().item():.2e}")
+          info["hooked_layers"] == n_attn and (out_h - fast).abs().max().item() < 1e-3,
+          f"{info['hooked_layers']}/{n_attn} layers, max |dlogp| vs fast {(out_h - fast).abs().max().item():.2e}")
     fq.uninstall(hooked)
     del hooked
 
@@ -196,6 +196,26 @@ def main() -> int:
           len(names) > 0 and set(names) == set(grads["offload"]) and worst < 1e-2,
           f"{len(names)} tensors, worst relative diff {worst:.2e}")
     check("offload checkpoint: pinned host buffers in use", len(fq._PINNED) > 0, f"{len(fq._PINNED)} layer buffers")
+
+    # ---------------- per-token work in token chunks (long records): same log-probs and LoRA gradients
+    def loss_and_grads(chunk):
+        fq.LAYER_CHUNK = chunk
+        fq.install(pm, offload=True)
+        pm.zero_grad(set_to_none=True)
+        lp = torch.log_softmax(pm(input_ids=ids, use_cache=False).logits.float(), -1)[0, :-1].gather(-1, ids[0, 1:, None])
+        (-lp.mean()).backward()
+        g = {n: p.grad.detach().float().clone() for n, p in pm.named_parameters() if p.requires_grad and p.grad is not None}
+        fq.uninstall()
+        return lp.detach().squeeze(-1), g
+    saved_chunk = fq.LAYER_CHUNK
+    lp_full, g_full = loss_and_grads(10 ** 9)
+    lp_chunk, g_chunk = loss_and_grads(37)
+    fq.LAYER_CHUNK = saved_chunk
+    dlp = (lp_full - lp_chunk).abs().max().item()
+    worst = max(((g_full[n] - g_chunk[n]).norm() / g_full[n].norm().clamp_min(1e-12)).item() for n in g_full)
+    check("chunked layers (37-token chunks) == whole layers: log-probs and LoRA gradients",
+          dlp < 2e-2 and worst < 2e-2 and set(g_full) == set(g_chunk),
+          f"max |dlogp| {dlp:.2e}, worst grad rel diff {worst:.2e}")
 
     # ---------------- one real-size attention layer at 4,096 tokens (budget 2,048: selection is active)
     from transformers import AutoConfig

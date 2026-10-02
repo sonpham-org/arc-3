@@ -70,7 +70,8 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def merge(adapter: Path, checkpoint: Path, out: Path, *, stochastic: bool, mult: float, seed: int) -> dict:
+def merge(adapter: Path, checkpoint: Path, out: Path, *, stochastic: bool, mult: float, seed: int,
+          only_changed: bool = False) -> dict:
     pairs, scale = lora_pairs(adapter)
     index = json.loads((checkpoint / "model.safetensors.index.json").read_text())["weight_map"]
     missing = [n for n in pairs if n not in index]
@@ -81,7 +82,7 @@ def merge(adapter: Path, checkpoint: Path, out: Path, *, stochastic: bool, mult:
     for n in pairs:
         by_shard.setdefault(index[n], []).append(n)
     for f in checkpoint.iterdir():                     # untouched files: copied as they are
-        if f.is_file() and f.name not in by_shard:
+        if f.is_file() and f.name not in by_shard and not only_changed:
             shutil.copy2(f, out / f.name)
     gen = torch.Generator().manual_seed(seed)
     report = {"scale": scale, "mult": mult, "stochastic": stochastic, "tensors": {}}
@@ -109,7 +110,9 @@ def merge(adapter: Path, checkpoint: Path, out: Path, *, stochastic: bool, mult:
                 report["tensors"][n] = {"dw_norm": dw.norm().item(), "w_norm": w.norm().item(),
                                         "kept_share": kept if dw.norm().item() > 0 else None}
     shards = sorted({*index.values()})
-    report["sha256"] = {s: sha256(out / s) for s in shards}
+    report["sha256"] = {s: sha256(out / s) for s in shards if (out / s).exists()}
+    # with only_changed, out/ holds just these shards: every other file of the checkpoint is unchanged
+    report["changed_shards"] = sorted(by_shard)
     kept = [t["kept_share"] for t in report["tensors"].values() if t["kept_share"] is not None]
     report["kept_share_mean"] = sum(kept) / len(kept) if kept else None
     (out / "MERGE_REPORT.json").write_text(json.dumps(report, indent=1))
@@ -125,9 +128,11 @@ def main() -> int:
     ap.add_argument("--mult", type=float, default=1.0, help="dial the adapter's strength (1 = as trained)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--expect-identical", action="store_true", help="zero check: every shard must match the input")
+    ap.add_argument("--only-changed", action="store_true",
+                    help="write only the shards that hold adapter targets (the rest of the checkpoint is unchanged)")
     args = ap.parse_args()
     rep = merge(Path(args.adapter), Path(args.checkpoint), Path(args.out), stochastic=args.stochastic,
-                mult=args.mult, seed=args.seed)
+                mult=args.mult, seed=args.seed, only_changed=args.only_changed)
     print(f"merged {len(rep['tensors'])} tensors, mean kept share {rep['kept_share_mean']}")
     if args.expect_identical:
         bad = [s for s in rep["sha256"] if rep["sha256"][s] != sha256(Path(args.checkpoint) / s)]
