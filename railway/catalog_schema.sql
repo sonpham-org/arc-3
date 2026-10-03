@@ -189,6 +189,19 @@ CREATE TABLE IF NOT EXISTS rl_review_ratings (
 
 CREATE INDEX IF NOT EXISTS rl_review_ratings_updated_idx ON rl_review_ratings (updated_at, rating_id);
 
+-- One good/bad mark (and its note) on one turn, saved the moment the rater makes it, before any verdict exists.
+-- Submitting the pair's rating rewrites these rows from the rating's own marks, so the two never disagree.
+CREATE TABLE IF NOT EXISTS rl_review_marks (
+    split_id text NOT NULL REFERENCES rl_review_splits (split_id),
+    rater_id text NOT NULL,
+    path_id text NOT NULL,
+    step integer NOT NULL CHECK (step >= 0),
+    verdict text CHECK (verdict IN ('up', 'down')),
+    note text,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (split_id, rater_id, path_id, step)
+);
+
 -- RL2 decision tree (turn coach). A node is the game state where the coach made a decision
 -- ('<game>:L<level>:<board_hash>'); plays that reach the same state merge into one node (no forks).
 -- A branch is one decision taken there: mode, cap, probability, what the coach saw (features), what

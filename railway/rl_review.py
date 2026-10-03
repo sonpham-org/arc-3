@@ -222,8 +222,45 @@ def save_rating(cursor: Any, split_id: str, rater_id: str, payload: Any) -> dict
          json.dumps(item["marks"]), item["comment"], item["seconds"]),
     )
     row = _rows(cursor)[0]
+    _write_marks(cursor, split_id, rater_id, item["marks"])
     return {"apiVersion": 1, "status": "saved", "ratingId": row["rating_id"], "split": split_id,
             "choice": item["choice"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+
+
+def _write_marks(cursor: Any, split_id: str, rater_id: str, marks: list[dict[str, Any]]) -> None:
+    """Make the saved marks for this rater and split exactly `marks`."""
+
+    cursor.execute("DELETE FROM rl_review_marks WHERE split_id = %s AND rater_id = %s", (split_id, rater_id))
+    for m in marks:
+        cursor.execute("INSERT INTO rl_review_marks (split_id, rater_id, path_id, step, verdict, note) "
+                       "VALUES (%s, %s, %s, %s, %s, %s)", (split_id, rater_id, m["path"], m["step"], m["verdict"], m["note"]))
+
+
+def saved_marks(cursor: Any, split_id: str, rater_id: str) -> list[dict[str, Any]]:
+    cursor.execute("SELECT path_id, step, verdict, note FROM rl_review_marks WHERE split_id = %s AND rater_id = %s "
+                   "ORDER BY path_id, step", (split_id, rater_id))
+    return [{"path": r["path_id"], "step": r["step"], "verdict": r["verdict"], "note": r["note"]} for r in _rows(cursor)]
+
+
+def save_mark(cursor: Any, split_id: str, rater_id: str, payload: Any) -> dict[str, Any]:
+    """Save (or clear) one turn's good/bad mark and note at once, without a verdict on the pair."""
+
+    split = split_row(cursor, split_id)
+    clean = clean_rating({"choice": "tie", "marks": [{"path": payload.get("path"), "step": payload.get("step"),
+                                                      "verdict": payload.get("verdict"), "note": payload.get("note")}]},
+                         list(split["path_ids"]))["marks"]
+    path_id, step = payload["path"], payload["step"]
+    if not saved_marks(cursor, split_id, rater_id):    # first live save for a pair rated before: keep what it had
+        cursor.execute("SELECT marks FROM rl_review_ratings WHERE split_id = %s AND rater_id = %s", (split_id, rater_id))
+        old = _rows(cursor)
+        if old:
+            _write_marks(cursor, split_id, rater_id, [m for m in old[0]["marks"] if isinstance(m, dict)])
+    cursor.execute("DELETE FROM rl_review_marks WHERE split_id = %s AND rater_id = %s AND path_id = %s AND step = %s",
+                   (split_id, rater_id, path_id, step))
+    for m in clean:
+        cursor.execute("INSERT INTO rl_review_marks (split_id, rater_id, path_id, step, verdict, note) "
+                       "VALUES (%s, %s, %s, %s, %s, %s)", (split_id, rater_id, m["path"], m["step"], m["verdict"], m["note"]))
+    return {"apiVersion": 1, "status": "saved", "split": split_id, "path": path_id, "step": step, "kept": bool(clean)}
 
 
 # ------------------------------------------------------------------------------------------------ reading
@@ -244,6 +281,12 @@ def split_view(cursor: Any, split_id: str, rater_id: str) -> dict[str, Any]:
     cursor.execute("SELECT choice, confidence, scores, marks, comment, seconds, updated_at FROM rl_review_ratings "
                    "WHERE split_id = %s AND rater_id = %s", (split_id, rater_id))
     mine = _rows(cursor)
+    live = saved_marks(cursor, split_id, rater_id)
+    if live and mine:
+        mine[0]["marks"] = live
+    elif live:
+        mine = [{"choice": None, "confidence": None, "scores": {}, "marks": live, "comment": None, "seconds": None,
+                 "updated_at": None}]
     cursor.execute("SELECT count(*) FROM rl_review_ratings WHERE split_id = %s", (split_id,))
     count = cursor.fetchone()[0]
     return {
@@ -256,7 +299,7 @@ def split_view(cursor: Any, split_id: str, rater_id: str) -> dict[str, Any]:
                    "actions": paths[p]["actions"], "meta": paths[p]["meta"]}
                   for p in _order(list(split["path_ids"]), rater_id, split_id) if p in paths],
         "mine": ({**{k: mine[0][k] for k in ("choice", "confidence", "scores", "marks", "comment", "seconds")},
-                  "updatedAt": iso(mine[0]["updated_at"])} if mine else None),
+                  "updatedAt": iso(mine[0]["updated_at"]) if mine[0]["updated_at"] else None} if mine else None),
     }
 
 
@@ -2324,6 +2367,13 @@ class RlReviewApi:
                 result = save_rating(cursor, split_id, rater_id, payload)
             print(f"review: {rater_id} rated {split_id} -> {result['choice']}", flush=True)
             return _json(200, result)
+        if sub == "/mark" and method == "POST":
+            payload = self._read_json(read_body, headers, MAX_BODY)
+            if not isinstance(payload, dict):
+                raise ReviewProblem(400, "invalid_body", "send a JSON object")
+            split_id = _id(payload.get("split"), "split", SPLIT_RE)
+            with self._cursor(commit=True) as cursor:
+                return _json(200, save_mark(cursor, split_id, rater_id, payload))
         if team and sub == "/stats" and method == "GET":
             with self._cursor() as cursor:
                 return _json(200, stats(cursor))

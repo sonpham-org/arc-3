@@ -95,7 +95,8 @@ export function player(content, onTurn) {
 }
 
 // marks: null (read only) or the page's store {pathId: {step: {verdict, note}}}, written as the rater clicks
-export function turnList(content, pathId, marks) {
+// onMark (optional): called as onMark(step) after a good/bad click or a note edit; may return a promise (saved or not)
+export function turnList(content, pathId, marks, onMark) {
   const items = content.turns.map((t, ti) => {
     const mark = marks ? (marks[pathId] || {})[t.step] || {} : {};
     const note = el("textarea", { class: "rv-note", placeholder: "Why? (optional)", maxlength: 2000 });
@@ -107,12 +108,22 @@ export function turnList(content, pathId, marks) {
       good.classList.toggle("on", m.verdict === "up");
       bad.classList.toggle("on", m.verdict === "down");
       if (m.verdict) note.focus();
+      save(t.step);
+    };
+    const status = el("span", { class: "rv-saved muted" });
+    let timer = null;
+    const save = (step, wait = 0) => {
+      if (!onMark) return;
+      status.textContent = "saving…";
+      clearTimeout(timer);
+      timer = setTimeout(() => Promise.resolve(onMark(step)).then(
+        () => { status.textContent = "saved"; }, () => { status.textContent = "NOT saved"; }), wait);
     };
     const good = el("button", { type: "button", class: "good" + (mark.verdict === "up" ? " on" : ""), title: "this turn was right",
       onclick: e => { e.stopPropagation(); setMark("up"); } }, "good");
     const bad = el("button", { type: "button", class: "bad" + (mark.verdict === "down" ? " on" : ""), title: "this turn was wrong",
       onclick: e => { e.stopPropagation(); setMark("down"); } }, "bad");
-    note.addEventListener("input", () => { slot().note = note.value; });
+    note.addEventListener("input", () => { slot().note = note.value; save(t.step, 600); });
     const think = el("div", { class: "rv-think clamp", title: "click to read all" }, (t.thinking || t.said || "").trim());
     think.addEventListener("click", () => think.classList.toggle("clamp"));
     const code = (t.code || []).filter(Boolean);
@@ -130,15 +141,15 @@ export function turnList(content, pathId, marks) {
       think,
       code.length ? el("details", { class: "rv-code" }, el("summary", {}, `code it ran (${code.length})`),
         ...code.map(c => el("pre", {}, c))) : null,
-      marks ? el("div", { class: "rv-rate" }, el("span", { class: "rv-thumbs" }, good, bad), note) : null);
+      marks ? el("div", { class: "rv-rate" }, el("span", { class: "rv-thumbs" }, good, bad), note, status) : null);
   });
   return el("ol", { class: "rv-turns" }, ...items);
 }
 
 // a player and its turn list kept in step: the board follows the turn clicked, the list follows the board
 // onTurn (optional): called with the turn index whenever the board lands on a turn (the review page steps both paths with it)
-export function pathView(content, pathId, marks, onTurn) {
-  const list = turnList(content, pathId, marks);
+export function pathView(content, pathId, marks, onTurn, onMark) {
+  const list = turnList(content, pathId, marks, onMark);
   const lis = [...list.children];
   const pl = player(content, ti => { lis.forEach((li, k) => li.classList.toggle("now", k === ti)); if (onTurn && ti >= 0) onTurn(ti); });
   list.addEventListener("click", e => {

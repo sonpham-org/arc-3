@@ -5,7 +5,7 @@
 // Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server; models stay hidden until
 // the rating is in.
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-note";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-live";
 
 const LETTERS = ["LEFT", "RIGHT", "C", "D"];
 const KEY_STORE = "arc3-review-key";
@@ -100,7 +100,7 @@ async function renderSplit(view) {
   const opts = $("options");
   opts.className = `rv-options n${paths.length}`;
   opts.replaceChildren(...paths.map((p, i) => {
-    const { player: pl, list } = pathView(contents[i], p.id, state.marks, ti => { if (ti !== state.step) setStep(ti, i); });
+    const { player: pl, list } = pathView(contents[i], p.id, state.marks, ti => { if (ti !== state.step) setStep(ti, i); }, saveMark(p.id));
     state.players.push(pl);
     state.lists.push(list);
     const stars = el("div", { class: "rv-stars" }, el("span", { class: "muted" }, "this path, 1-5:"),
@@ -145,6 +145,16 @@ function setStep(k, from) {
     if (i === from) return;
     if (over) state.players[i].last(); else state.players[i].jumpToTurn(k);
   });
+}
+
+// a good/bad click or a note edit is saved at once (before any verdict); the pair's rating later carries the same marks
+function saveMark(pathId) {
+  const split = state.view.split.id;
+  return step => {
+    const m = (state.marks[pathId] || {})[step] || {};
+    return api("/mark", { method: "POST", body: { split, path: pathId, step, verdict: m.verdict || null, note: (m.note || "").trim() || null } })
+      .catch(e => { showError(e); throw e; });
+  };
 }
 
 function pick(value, quiet) {
