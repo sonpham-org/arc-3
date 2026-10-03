@@ -6,7 +6,14 @@
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
 RUNS=gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs
 declare -A LAST NV DONE
+warned=0
 while :; do
+  # an expired gcloud login makes every VM look gone: wait for a working login instead of ending the watches
+  if ! gcloud auth print-access-token > /dev/null 2>&1; then
+    [ $((warned % 15)) -eq 0 ] && echo "$(date -u +%H:%M) gcloud login expired: run gcloud.cmd auth login (watch waits)"
+    warned=$((warned + 1)); sleep 120; continue
+  fi
+  warned=0
   left=0
   for LZ in "$@"; do
     L=${LZ%%:*} Z=${LZ##*:}

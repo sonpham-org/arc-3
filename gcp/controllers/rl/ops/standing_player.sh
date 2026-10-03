@@ -62,8 +62,46 @@ launch() {   # <label> <notebook build> <input prefix or "">: first zone with ca
   return 1
 }
 
+login_ok() {   # an expired gcloud login makes VMs look gone and launches fail: wait for a working one
+  local warned=0
+  until gcloud auth print-access-token > /dev/null 2>&1; do
+    [ $((warned % 15)) -eq 0 ] && say "gcloud login expired: run gcloud.cmd auth login (waiting)"
+    warned=$((warned + 1)); sleep 120
+  done
+}
+
+finish_run() {   # <label> <zone> <model> <panel>: watch a run to its end, keep or drop it, delete its powered-off VM
+  local label=$1 zone=$2 model=$3 panel=$4 run="daniel-$1" last st i
+  bash "$OPS/watch_daniel_runs.sh" "$label:$zone"
+  login_ok
+  last=$(gcloud storage cat "$RUNS/$run/phases.tsv" 2>/dev/null | tail -n 1 | cut -f3 | tr -d '\r')
+  if [[ "$last" != *finish*notebook_rc_0* ]]; then
+    say "$label ended without finishing (last phase: ${last:-none}): off the page's lists"
+    config drop "$model" "$panel" "$run"
+  fi
+  # the VM powers itself off at the end: delete it once it is off (never while it runs)
+  for i in $(seq 1 15); do
+    st=$(gcloud compute instances describe "arc3-daniel-$label" --zone "$zone" --format='value(status)' 2>/dev/null | tr -d '\r')
+    [ -z "$st" ] && break
+    if [ "$st" = TERMINATED ] || [ "$st" = STOPPED ]; then
+      gcloud compute instances delete "arc3-daniel-$label" --zone "$zone" --quiet > /dev/null 2>&1 && say "deleted VM arc3-daniel-$label"
+      break
+    fi
+    sleep 60
+  done
+}
+
+# RESUME=<label>:<zone>:<model>:<panel>: a run launched before this player was restarted; see it through first
+if [ -n "${RESUME:-}" ]; then
+  IFS=: read -r r_label r_zone r_model r_panel <<< "$RESUME"
+  say "resuming the watch on $r_label in $r_zone ($r_model, $r_panel panel)"
+  login_ok
+  finish_run "$r_label" "$r_zone" "$r_model" "$r_panel"
+fi
+
 n=0
 while [ ! -f "$STOP_FILE" ] && [ "$n" -lt "$MAX_RUNS" ]; do
+  login_ok
   model=$(latest)
   panel=$(config pick "$model")
   case $panel in
@@ -85,21 +123,6 @@ while [ ! -f "$STOP_FILE" ] && [ "$n" -lt "$MAX_RUNS" ]; do
   say "launched $label in $zone (model $model, $panel panel)"
   config add "$model" "$panel" "$run"
   [ "$panel" != held ] && echo "$run $model" >> "$WORK/review-runs.txt"
-  bash "$OPS/watch_daniel_runs.sh" "$label:$zone"
-  last=$(gcloud storage cat "$RUNS/$run/phases.tsv" 2>/dev/null | tail -n 1 | cut -f3 | tr -d '\r')
-  if [[ "$last" != *finish*notebook_rc_0* ]]; then
-    say "$label ended without finishing (last phase: ${last:-none}): off the page's lists"
-    config drop "$model" "$panel" "$run"
-  fi
-  # the VM powers itself off at the end: delete it once it is off (never while it runs)
-  for i in $(seq 1 15); do
-    st=$(gcloud compute instances describe "arc3-daniel-$label" --zone "$zone" --format='value(status)' 2>/dev/null | tr -d '\r')
-    [ -z "$st" ] && break
-    if [ "$st" = TERMINATED ] || [ "$st" = STOPPED ]; then
-      gcloud compute instances delete "arc3-daniel-$label" --zone "$zone" --quiet > /dev/null 2>&1 && say "deleted VM arc3-daniel-$label"
-      break
-    fi
-    sleep 60
-  done
+  finish_run "$label" "$zone" "$model" "$panel"
 done
 say "standing player stops ($([ -f "$STOP_FILE" ] && echo "stop file" || echo "$n runs"))"
