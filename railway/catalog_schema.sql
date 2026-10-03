@@ -229,6 +229,106 @@ CREATE INDEX IF NOT EXISTS rl2_tree_branches_node_idx ON rl2_tree_branches (node
 CREATE INDEX IF NOT EXISTS rl2_tree_branches_run_idx ON rl2_tree_branches (run);
 CREATE INDEX IF NOT EXISTS rl2_tree_branches_child_idx ON rl2_tree_branches (child_id);
 
+-- The universal game tree (gt_*): any rollout's data, any harness, any policy, stored once as steps and read as
+-- four trees. Separate from RL v1 (Firestore) and from the RL2 tables above, which stay for now.
+--   gt_steps     one action of one rollout (the mode chosen; 'stock' for an uncoached turn): the screen before
+--                it, level and moves, where it led, what the coach saw (features), what followed (outcome),
+--                its trace (on the volume, /srv/data/_gtree/traces/<sha256>.json), and its node in each tree
+--                (n1..n4) plus the node it led to (c1..c4, no FK; null at a rollout's end). Each tree is a
+--                GROUP BY over the same rows: t1 path (context-aware), t2 screen + moves, t3 level + screen,
+--                t4 screen only.
+--   gt_nodes     a node of one tree. The publisher computes the ids; the root of each (tree, game) is the
+--                game start, '<game>:t<k>:root', with no screen. parent and depth are kept for t1 only.
+--   gt_screens   one board per screen hash, shared by all trees (the first board sent is kept).
+--   gt_rollouts  one play: from the game start (origin_state null, origin_kind 'start') or restarted from a
+--                t1 node in the middle of the tree (Go-Explore style: origin_state the node, origin_kind
+--                replay_exact / replay_actions / restore, origin_edge the step it branched after, if any).
+-- Publication is per rollout: a rollout's steps are replaced whole. See rl_review.py.
+CREATE TABLE IF NOT EXISTS gt_screens (
+    screen_hash text PRIMARY KEY CHECK (screen_hash ~ '^[0-9a-f]{12}$'),
+    board jsonb,
+    first_seen timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS gt_nodes (
+    id text PRIMARY KEY CHECK (id ~ '^[a-z0-9]{4}:t[1-4]:([0-9a-f]{16}|root)$'),
+    tree smallint NOT NULL CHECK (tree BETWEEN 1 AND 4),
+    game text NOT NULL CHECK (game ~ '^[a-z0-9]{4}$'),
+    level integer CHECK (level >= 0),
+    moves integer CHECK (moves >= 0),
+    screen_hash text CHECK (screen_hash ~ '^[0-9a-f]{12}$'),
+    parent text,
+    depth integer CHECK (depth >= 0),
+    first_seen timestamptz NOT NULL DEFAULT now(),
+    CHECK (id LIKE game || ':t' || tree || ':%'),
+    CHECK (tree = 1 OR (parent IS NULL AND depth IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS gt_nodes_game_idx ON gt_nodes (game, tree);
+CREATE INDEX IF NOT EXISTS gt_nodes_parent_idx ON gt_nodes (parent);
+
+CREATE TABLE IF NOT EXISTS gt_rollouts (
+    id text PRIMARY KEY CHECK (id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,199}$'),
+    game text NOT NULL CHECK (game ~ '^[a-z0-9]{4}$'),
+    run text NOT NULL,
+    build text NOT NULL,
+    model text NOT NULL,
+    harness text NOT NULL,
+    policy text,
+    origin_state text REFERENCES gt_nodes (id) CHECK (origin_state ~ ':t1:'),
+    origin_edge text,
+    origin_kind text NOT NULL DEFAULT 'start'
+        CHECK (origin_kind IN ('start', 'replay_exact', 'replay_actions', 'restore')),
+    status text NOT NULL CHECK (status ~ '^[A-Za-z0-9_.-]{1,40}$'),
+    result jsonb NOT NULL DEFAULT '{}'::jsonb,
+    published_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((origin_state IS NULL) = (origin_kind = 'start'))
+);
+
+CREATE INDEX IF NOT EXISTS gt_rollouts_origin_idx ON gt_rollouts (origin_state);
+CREATE INDEX IF NOT EXISTS gt_rollouts_game_idx ON gt_rollouts (game);
+CREATE INDEX IF NOT EXISTS gt_rollouts_run_idx ON gt_rollouts (run);
+
+CREATE TABLE IF NOT EXISTS gt_steps (
+    id text PRIMARY KEY CHECK (id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,254}$'),
+    rollout_id text NOT NULL REFERENCES gt_rollouts (id) ON DELETE CASCADE,
+    seq integer NOT NULL CHECK (seq >= 0),
+    game text NOT NULL CHECK (game ~ '^[a-z0-9]{4}$'),
+    level integer NOT NULL CHECK (level >= 0),
+    moves integer NOT NULL CHECK (moves >= 0),
+    screen_hash text NOT NULL CHECK (screen_hash ~ '^[0-9a-f]{12}$'),
+    next_screen_hash text CHECK (next_screen_hash ~ '^[0-9a-f]{12}$'),
+    next_level integer CHECK (next_level >= 0),
+    next_moves integer CHECK (next_moves >= 0),
+    action text NOT NULL CHECK (action ~ '^[A-Za-z0-9_.:+-]{1,40}$'),
+    detail jsonb NOT NULL DEFAULT '{}'::jsonb,
+    features jsonb NOT NULL DEFAULT '{}'::jsonb,
+    outcome jsonb NOT NULL DEFAULT '{}'::jsonb,
+    trace_sha text CHECK (trace_sha ~ '^[0-9a-f]{64}$'),
+    hidden_ref text CHECK (length(hidden_ref) <= 500),
+    n1 text NOT NULL REFERENCES gt_nodes (id),
+    n2 text NOT NULL REFERENCES gt_nodes (id),
+    n3 text NOT NULL REFERENCES gt_nodes (id),
+    n4 text NOT NULL REFERENCES gt_nodes (id),
+    c1 text,
+    c2 text,
+    c3 text,
+    c4 text,
+    UNIQUE (rollout_id, seq),
+    CHECK ((c1 IS NULL) = (c2 IS NULL) AND (c2 IS NULL) = (c3 IS NULL) AND (c3 IS NULL) = (c4 IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS gt_steps_n1_idx ON gt_steps (n1, action);
+CREATE INDEX IF NOT EXISTS gt_steps_n2_idx ON gt_steps (n2, action);
+CREATE INDEX IF NOT EXISTS gt_steps_n3_idx ON gt_steps (n3, action);
+CREATE INDEX IF NOT EXISTS gt_steps_n4_idx ON gt_steps (n4, action);
+CREATE INDEX IF NOT EXISTS gt_steps_c1_idx ON gt_steps (c1);
+CREATE INDEX IF NOT EXISTS gt_steps_c2_idx ON gt_steps (c2);
+CREATE INDEX IF NOT EXISTS gt_steps_c3_idx ON gt_steps (c3);
+CREATE INDEX IF NOT EXISTS gt_steps_c4_idx ON gt_steps (c4);
+CREATE INDEX IF NOT EXISTS gt_steps_rollout_idx ON gt_steps (rollout_id);
+CREATE INDEX IF NOT EXISTS gt_steps_game_idx ON gt_steps (game);
+
 CREATE OR REPLACE FUNCTION arc3_refresh_catalog_snapshot()
 RETURNS void
 LANGUAGE sql

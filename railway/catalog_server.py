@@ -309,7 +309,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
         return True
 
     def handle_rl_review(self, method: str) -> bool:
-        """Route /api/v1/review/*, /api/v1/public/review/*, /api/v1/rl/* and /api/v1/rl2/* to rl_review. True if handled."""
+        """Route /api/v1/review/*, /api/v1/public/review/*, /api/v1/rl/*, /api/v1/rl2/* and /api/v1/gtree/* to rl_review.
+        True if handled."""
 
         path = urlparse(self.path).path
         if self.rl_review_api is None or not RlReviewApi.owns(path):

@@ -31,6 +31,11 @@ Who is calling, by route:
   /api/v1/rl2/publication/<name>      PUT, machines: an RL2 (turn coach) named document. GET .../rl2/doc/<name>, team.
   /api/v1/rl2/tree/publication        PUT, machines: one run's part of the RL2 decision tree (nodes, branches,
                                       traces). GET .../rl2/tree/games, /node/<id>, /trace/<sha>: the team.
+                                      (Kept for now; the RL2 page reads the universal tree below.)
+  /api/v1/gtree/publication           PUT, machines: rollouts, screens, nodes, steps, traces into the universal game
+                                      tree (one step table read as four trees; rollouts from the game start or
+                                      restarted mid-tree). GET .../gtree/games, /stats, /node/<id>, /rollout/<id>,
+                                      /trace/<sha>, /frontier?game=&tree=&N=: the team.
 
 Held-out games (ARC3_REVIEW_FENCED; default the five test games and as66) are refused at publication: a rating
 on them could leak into training. Game ids only, never titles.
@@ -53,7 +58,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 # This module imports nothing from its siblings, so it loads the same way in the image (flat files) and under
 # test (the railway package).
@@ -904,6 +909,541 @@ def tree_node(cursor: Any, node_id: str) -> dict[str, Any]:
             "branches": branches, "truncated": truncated, "by_mode": by_mode, "parents": parents}
 
 
+# ------------------------------------------------------------------------------------------------ the universal game tree
+# Any rollout's data, stored once and read as four trees (tables gt_screens / gt_nodes / gt_rollouts / gt_steps,
+# catalog_schema.sql), separate from RL v1 (Firestore) and from the RL2 tables above.
+#
+#   step     one action of one rollout: the mode chosen ('stock' for an uncoached turn), the screen before it, what
+#            the coach saw (features), what followed (outcome), its trace, and its node in each tree (n1..n4) plus the
+#            node it led to (c1..c4; null at a rollout's end).
+#   tree     t1 path (context-aware: the actions taken since the game start), t2 screen + moves, t3 level + screen,
+#            t4 screen only. Every step is in all four, so each tree is a GROUP BY over the same rows. The root of a
+#            tree is the game start, '<game>:t<k>:root' (screen null). The PUBLISHER computes every node id; the
+#            server only checks their shape and that a step's nodes exist.
+#   rollout  one play: from the game start (origin_state null, origin_kind 'start') or restarted from a t1 node in
+#            the middle of the tree (Go-Explore style: origin_state the node, origin_kind replay_exact /
+#            replay_actions / restore, origin_edge the step it branched after, if any).
+# Traces are on the volume, <data root>/_gtree/traces/<sha>.json, named like the RL2 traces (rl2_trace_bytes).
+GT_TREES = (1, 2, 3, 4)
+GT_TREE_NAMES = {1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only"}
+GT_ORIGINS = ("start", "replay_exact", "replay_actions", "restore")
+GT_NODE_RE = re.compile(r"^([a-z0-9]{4}):t([1-4]):([0-9a-f]{16}|root)$")
+GT_SCREEN_RE = re.compile(r"^[0-9a-f]{12}$")
+GT_STEP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~-]{0,254}$")
+GT_ACTION_RE = re.compile(r"^[A-Za-z0-9_.:+-]{1,40}$")
+GT_STATUS_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+MAX_GT_ROLLOUTS = 20_000
+MAX_GT_RESULT = 32 * 1024                   # one rollout's result, as JSON
+MAX_HIDDEN_REF = 500
+MAX_FRONTIER = 500
+MAX_FRONTIER_N = 1000
+GT_OUTCOME_KEYS = (("lvl30", "lvl30"), ("cleared", "cleared_level"), ("acts", "acts"), ("go", "go_turn"),
+                   ("level_score", "level_score"))
+
+
+def _small(value: Any, field: str, where: str, limit: int = MAX_TREE_JSON) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(json.dumps(value)) > limit:
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} must be an object under {limit} bytes")
+    return value
+
+
+def _node_id(value: Any, field: str, where: str, game: str | None = None, tree: int | None = None,
+             null: bool = False) -> str | None:
+    """A node id '<game>:t<tree>:<16 hex>' or '<game>:t<tree>:root', of this game and tree when given."""
+
+    if value is None and null:
+        return None
+    match = GT_NODE_RE.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a node id '<game>:t<1-4>:<16 hex>' or "
+                                                     f"'<game>:t<1-4>:root'" + (" or null" if null else ""))
+    if game is not None and match.group(1) != game:
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a node of another game")
+    if tree is not None and int(match.group(2)) != tree:
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} must be a node of tree t{tree}")
+    return value
+
+
+def _screen(value: Any, field: str, where: str, null: bool = False) -> str | None:
+    if value is None and null:
+        return None
+    if not isinstance(value, str) or not GT_SCREEN_RE.fullmatch(value):
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is 12 lowercase hex digits"
+                                                     + (" or null" if null else ""))
+    return value
+
+
+def _board(value: Any, where: str) -> list[str] | None:
+    if value is not None and (not isinstance(value, list) or not 1 <= len(value) <= 64 or any(
+            not isinstance(row, str) or not HEX_ROW_RE.fullmatch(row) for row in value)):
+        raise ReviewProblem(400, "invalid_board", f"{where}: board is up to 64 rows of hex digits, or null")
+    return value
+
+
+def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
+    """Validate one publication to the universal tree (no database, no disk). Returns {rollouts, screens, nodes,
+    steps, traces} ready for SQL; traces as {sha: canonical bytes}. References to nodes and traces outside the body
+    are checked against the database and the volume by publish_gtree."""
+
+    if not isinstance(bundle, dict):
+        raise ReviewProblem(400, "invalid_body", "send a JSON object")
+    lists = {k: bundle.get(k) or [] for k in ("rollouts", "screens", "nodes", "steps")}
+    traces = bundle.get("traces") or {}
+    if not all(isinstance(x, list) for x in lists.values()) or not isinstance(traces, dict):
+        raise ReviewProblem(400, "invalid_body", "rollouts, screens, nodes and steps are lists, traces an object")
+    if not lists["rollouts"]:
+        raise ReviewProblem(400, "invalid_body", "send at least one rollout")
+    if (len(lists["rollouts"]) > MAX_GT_ROLLOUTS or len(lists["screens"]) > MAX_TREE_NODES
+            or len(lists["nodes"]) > 4 * MAX_TREE_NODES or len(lists["steps"]) > MAX_TREE_BRANCHES
+            or len(traces) > MAX_TREE_TRACES):
+        raise ReviewProblem(413, "too_many", f"at most {MAX_GT_ROLLOUTS} rollouts, {MAX_TREE_NODES} screens, "
+                                             f"{4 * MAX_TREE_NODES} nodes, {MAX_TREE_BRANCHES} steps, "
+                                             f"{MAX_TREE_TRACES} traces per publication")
+    clean_traces: dict[str, bytes] = {}
+    for sha, content in traces.items():
+        _id(sha, "trace_sha", SHA_RE)
+        if not isinstance(content, dict) or not isinstance(content.get("turns"), list):
+            raise ReviewProblem(400, "invalid_trace", f"trace {sha[:12]} has no turns")
+        raw = rl2_trace_bytes(content)
+        if hashlib.sha256(raw).hexdigest() != sha:
+            raise ReviewProblem(400, "trace_sha_mismatch", f"trace {sha[:12]} does not match the sha256 of its "
+                                                           "canonical JSON (sort_keys, no spaces)")
+        clean_traces[sha] = raw
+    screens: dict[str, dict[str, Any]] = {}
+    for sc in lists["screens"]:
+        if not isinstance(sc, dict):
+            raise ReviewProblem(400, "invalid_screen", "each screen is an object")
+        h = _screen(sc.get("screen_hash"), "screen_hash", "a screen")
+        board = _board(sc.get("board"), f"screen {h}")
+        if h not in screens or screens[h]["board"] is None:
+            screens[h] = {"screen_hash": h, "board": board}
+    nodes: dict[str, dict[str, Any]] = {}
+    for nd in lists["nodes"]:
+        if not isinstance(nd, dict):
+            raise ReviewProblem(400, "invalid_node", "each node is an object")
+        nid = _node_id(nd.get("id"), "node", "a node")
+        match = GT_NODE_RE.fullmatch(nid)
+        game, tree, root = match.group(1), int(match.group(2)), match.group(3) == "root"
+        if nd.get("game", game) != game or nd.get("tree", tree) != tree:
+            raise ReviewProblem(400, "invalid_node", f"node {nid}: game and tree must match its id")
+        where = f"node {nid}"
+        item = {"id": nid, "tree": tree, "game": game, "level": _int(nd.get("level"), "level", null=True),
+                "moves": _int(nd.get("moves"), "moves", null=True),
+                "screen_hash": _screen(nd.get("screen_hash"), "screen_hash", where, null=True),
+                "parent": _node_id(nd.get("parent"), "parent", where, game, 1, null=True),
+                "depth": _int(nd.get("depth"), "depth", null=True)}
+        if tree != 1 and (item["parent"] is not None or item["depth"] is not None):
+            raise ReviewProblem(400, "invalid_node", f"{where}: parent and depth are for tree t1 only")
+        if root and (item["screen_hash"] is not None or item["parent"] is not None):
+            raise ReviewProblem(400, "invalid_node", f"{where}: a root (the game start) has no screen and no parent")
+        if nid in nodes:                                 # the same node twice: the first value of each field wins
+            item = {k: nodes[nid][k] if nodes[nid][k] is not None else v for k, v in item.items()}
+        nodes[nid] = item
+    rollouts: dict[str, dict[str, Any]] = {}
+    for ro in lists["rollouts"]:
+        if not isinstance(ro, dict):
+            raise ReviewProblem(400, "invalid_rollout", "each rollout is an object")
+        rid = _id(ro.get("id"), "rollout")
+        if rid in rollouts:
+            raise ReviewProblem(400, "duplicate_rollout", f"rollout {rid} appears twice")
+        game = _id(ro.get("game"), "game", GAME_RE)
+        if game in fenced_games():
+            # held-out / test-only games never enter the tree: its rollouts are training data
+            raise ReviewProblem(400, "fenced_game", f"{game} is a held-out game and is not stored")
+        where = f"rollout {rid}"
+        origin_kind = ro.get("origin_kind") or "start"
+        if origin_kind not in GT_ORIGINS:
+            raise ReviewProblem(400, "invalid_origin_kind", f"{where}: origin_kind is one of {', '.join(GT_ORIGINS)}")
+        origin_state = ro.get("origin_state")
+        if (origin_state is None) != (origin_kind == "start"):
+            raise ReviewProblem(400, "invalid_origin", f"{where}: a rollout from the game start has no origin_state; "
+                                                       "one started mid-tree names its t1 node and how (origin_kind)")
+        if origin_state is not None:
+            match = GT_NODE_RE.fullmatch(origin_state) if isinstance(origin_state, str) else None
+            if not match:
+                raise ReviewProblem(400, "invalid_origin_state", f"{where}: origin_state is a t1 node id")
+            if match.group(1) != game or match.group(2) != "1":
+                raise ReviewProblem(400, "invalid_origin", f"{where}: origin_state is a t1 node of the same game")
+        origin_edge = ro.get("origin_edge")
+        if origin_edge is not None:
+            if origin_state is None:
+                raise ReviewProblem(400, "invalid_origin", f"{where}: origin_edge needs an origin_state")
+            _id(origin_edge, "origin_edge", GT_STEP_RE)
+        status = ro.get("status") or "finished"
+        if not isinstance(status, str) or not GT_STATUS_RE.fullmatch(status):
+            raise ReviewProblem(400, "invalid_status", f"{where}: status is 1-40 letters, digits, '_', '.', '-'")
+        policy = ro.get("policy")
+        rollouts[rid] = {
+            "id": rid, "game": game, "run": _id(ro.get("run"), "run"), "build": _id(ro.get("build"), "build", BUILD_RE),
+            "model": _id(ro.get("model"), "model"), "harness": _id(ro.get("harness"), "harness"),
+            "policy": None if policy in (None, "") else _id(policy, "policy"), "origin_state": origin_state,
+            "origin_edge": origin_edge, "origin_kind": origin_kind, "status": status,
+            "result": _small(ro.get("result"), "result", where, MAX_GT_RESULT),
+        }
+    steps: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for st in lists["steps"]:
+        if not isinstance(st, dict):
+            raise ReviewProblem(400, "invalid_step", "each step is an object")
+        rid = st.get("rollout_id")
+        if not isinstance(rid, str) or rid not in rollouts:
+            raise ReviewProblem(400, "unknown_rollout", "each step names a rollout sent in the same publication "
+                                                        "(a rollout's steps are replaced whole)")
+        seq = _int(st.get("seq"), "seq")
+        sid = f"{rid}:{seq}"
+        if st.get("id") not in (None, sid):
+            raise ReviewProblem(400, "invalid_step", f"a step id is '<rollout id>:<seq>' ({sid})")
+        if not GT_STEP_RE.fullmatch(sid):
+            raise ReviewProblem(400, "invalid_step", f"step id {sid[:60]} is too long")
+        if sid in seen:
+            raise ReviewProblem(400, "duplicate_step", f"step {sid} appears twice")
+        seen.add(sid)
+        game = rollouts[rid]["game"]
+        if st.get("game", game) != game:
+            raise ReviewProblem(400, "invalid_step", f"step {sid}: game must be its rollout's")
+        action = st.get("action")
+        if not isinstance(action, str) or not GT_ACTION_RE.fullmatch(action):
+            raise ReviewProblem(400, "invalid_action", f"step {sid}: action is 1-40 of A-Z a-z 0-9 _ . : + -")
+        trace_sha = st.get("trace_sha")
+        if trace_sha is not None:
+            _id(trace_sha, "trace_sha", SHA_RE)
+        hidden_ref = st.get("hidden_ref")
+        if hidden_ref is not None and (not isinstance(hidden_ref, str) or not 1 <= len(hidden_ref) <= MAX_HIDDEN_REF
+                                       or any(ord(c) < 32 for c in hidden_ref)):
+            raise ReviewProblem(400, "invalid_hidden_ref", f"step {sid}: hidden_ref is one line of text, "
+                                                           f"at most {MAX_HIDDEN_REF} characters")
+        where = f"step {sid}"
+        item = {
+            "id": sid, "rollout_id": rid, "seq": seq, "game": game, "level": _int(st.get("level"), "level"),
+            "moves": _int(st.get("moves"), "moves"), "screen_hash": _screen(st.get("screen_hash"), "screen_hash", where),
+            "next_screen_hash": _screen(st.get("next_screen_hash"), "next_screen_hash", where, null=True),
+            "next_level": _int(st.get("next_level"), "next_level", null=True),
+            "next_moves": _int(st.get("next_moves"), "next_moves", null=True), "action": action,
+            "detail": _small(st.get("detail"), "detail", where), "features": _small(st.get("features"), "features", where),
+            "outcome": _small(st.get("outcome"), "outcome", where), "trace_sha": trace_sha, "hidden_ref": hidden_ref,
+        }
+        for k in GT_TREES:
+            item[f"n{k}"] = _node_id(st.get(f"n{k}"), f"n{k}", where, game, k)
+            item[f"c{k}"] = _node_id(st.get(f"c{k}"), f"c{k}", where, game, k, null=True)
+        if len({item[f"c{k}"] is None for k in GT_TREES}) > 1:
+            raise ReviewProblem(400, "invalid_step", f"{where}: c1..c4 are all set or all null (the rollout's end)")
+        steps.append(item)
+    return {"rollouts": list(rollouts.values()), "screens": list(screens.values()), "nodes": list(nodes.values()),
+            "steps": steps, "traces": clean_traces}
+
+
+def _insert_many(cursor: Any, sql: str, template: str, rows: list[tuple]) -> None:
+    """Batched INSERT (psycopg2's execute_values when it is there; plain executemany otherwise)."""
+
+    if not rows:
+        return
+    try:
+        from psycopg2.extras import execute_values
+    except ImportError:                                  # pragma: no cover - other drivers
+        cursor.executemany(sql.replace("VALUES %s", "VALUES " + template), rows)
+        return
+    execute_values(cursor, sql, rows, template=template, page_size=1000)
+
+
+def publish_gtree(cursor: Any, data_root: Path, bundle: Any) -> dict[str, Any]:
+    """Store one publication. Idempotent per rollout: screens and nodes are upserted (the first value of each field is
+    kept), each rollout row is upserted, its steps are deleted and the new ones inserted; traces are written once by
+    sha. Everything is checked before the first write, and the caller's transaction rolls back on any refusal."""
+
+    item = clean_gtree_bundle(bundle)
+    store = data_root / "_gtree" / "traces"
+    in_body = {n["id"] for n in item["nodes"]}
+    named = ({s[f"n{k}"] for s in item["steps"] for k in GT_TREES} | {n["parent"] for n in item["nodes"] if n["parent"]}
+             | {r["origin_state"] for r in item["rollouts"] if r["origin_state"]})
+    outside = sorted(named - in_body)
+    if outside:
+        cursor.execute("SELECT id FROM gt_nodes WHERE id = ANY(%s)", (outside,))
+        missing = set(outside) - {row[0] for row in cursor.fetchall()}
+        if missing:
+            raise ReviewProblem(400, "unknown_node", f"steps, nodes or rollouts name nodes that are neither in this "
+                                                     f"publication nor stored: {', '.join(sorted(missing)[:5])}")
+    for sha in sorted({s["trace_sha"] for s in item["steps"] if s["trace_sha"]} - set(item["traces"])):
+        if not (store / f"{sha}.json").exists():
+            raise ReviewProblem(400, "unknown_trace", f"trace {sha[:12]} is neither in this publication nor stored")
+    _insert_many(
+        cursor,
+        "INSERT INTO gt_screens (screen_hash, board) VALUES %s "
+        "ON CONFLICT (screen_hash) DO UPDATE SET board = COALESCE(gt_screens.board, EXCLUDED.board)",
+        "(%s, %s::jsonb)",
+        [(s["screen_hash"], None if s["board"] is None else json.dumps(s["board"])) for s in item["screens"]])
+    _insert_many(
+        cursor,
+        "INSERT INTO gt_nodes (id, tree, game, level, moves, screen_hash, parent, depth) VALUES %s "
+        "ON CONFLICT (id) DO UPDATE SET level = COALESCE(gt_nodes.level, EXCLUDED.level), "
+        "moves = COALESCE(gt_nodes.moves, EXCLUDED.moves), screen_hash = COALESCE(gt_nodes.screen_hash, "
+        "EXCLUDED.screen_hash), parent = COALESCE(gt_nodes.parent, EXCLUDED.parent), "
+        "depth = COALESCE(gt_nodes.depth, EXCLUDED.depth)",
+        "(%s, %s, %s, %s, %s, %s, %s, %s)",
+        [(n["id"], n["tree"], n["game"], n["level"], n["moves"], n["screen_hash"], n["parent"], n["depth"])
+         for n in item["nodes"]])
+    _insert_many(
+        cursor,
+        "INSERT INTO gt_rollouts (id, game, run, build, model, harness, policy, origin_state, origin_edge, "
+        "origin_kind, status, result) VALUES %s ON CONFLICT (id) DO UPDATE SET game = EXCLUDED.game, "
+        "run = EXCLUDED.run, build = EXCLUDED.build, model = EXCLUDED.model, harness = EXCLUDED.harness, "
+        "policy = EXCLUDED.policy, origin_state = EXCLUDED.origin_state, origin_edge = EXCLUDED.origin_edge, "
+        "origin_kind = EXCLUDED.origin_kind, status = EXCLUDED.status, result = EXCLUDED.result, published_at = now()",
+        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+        [(r["id"], r["game"], r["run"], r["build"], r["model"], r["harness"], r["policy"], r["origin_state"],
+          r["origin_edge"], r["origin_kind"], r["status"], json.dumps(r["result"])) for r in item["rollouts"]])
+    cursor.execute("DELETE FROM gt_steps WHERE rollout_id = ANY(%s)", ([r["id"] for r in item["rollouts"]],))
+    replaced = cursor.rowcount
+    _insert_many(
+        cursor,
+        "INSERT INTO gt_steps (id, rollout_id, seq, game, level, moves, screen_hash, next_screen_hash, next_level, "
+        "next_moves, action, detail, features, outcome, trace_sha, hidden_ref, n1, n2, n3, n4, c1, c2, c3, c4) "
+        "VALUES %s",
+        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, "
+        "%s, %s)",
+        [(s["id"], s["rollout_id"], s["seq"], s["game"], s["level"], s["moves"], s["screen_hash"],
+          s["next_screen_hash"], s["next_level"], s["next_moves"], s["action"], json.dumps(s["detail"]),
+          json.dumps(s["features"]), json.dumps(s["outcome"]), s["trace_sha"], s["hidden_ref"],
+          s["n1"], s["n2"], s["n3"], s["n4"], s["c1"], s["c2"], s["c3"], s["c4"]) for s in item["steps"]])
+    written = 0
+    if item["traces"]:
+        store.mkdir(parents=True, exist_ok=True)
+        for sha, raw in item["traces"].items():
+            target = store / f"{sha}.json"
+            if target.exists():
+                continue
+            tmp = store / f".{sha}.{secrets.token_hex(4)}.tmp"
+            tmp.write_bytes(raw)
+            os.replace(tmp, target)
+            written += 1
+    return {"apiVersion": 1, "status": "published", "rollouts": len(item["rollouts"]),
+            "screens": len(item["screens"]), "nodes": len(item["nodes"]), "steps": len(item["steps"]),
+            "stepsReplaced": replaced, "traces": len(item["traces"]), "tracesWritten": written}
+
+
+def _gt_tree(query: dict[str, list[str]]) -> int:
+    raw = (query.get("tree") or ["1"])[0]
+    if raw not in ("1", "2", "3", "4"):
+        raise ReviewProblem(400, "invalid_tree", "tree is 1, 2, 3 or 4")
+    return int(raw)
+
+
+def gtree_games(cursor: Any) -> list[dict[str, Any]]:
+    """Every game: rollouts (and how many started mid-tree), steps, and per tree its node count, deepest level and
+    start node: the root '<game>:t<k>:root' when published, else the node with the most steps out at the lowest
+    level."""
+
+    cursor.execute("SELECT game, tree, count(*), max(level) FROM gt_nodes GROUP BY game, tree")
+    trees: dict[str, dict[int, dict[str, Any]]] = {}
+    for game, tree, count, deepest in cursor.fetchall():
+        trees.setdefault(game, {})[tree] = {"nodes": count, "deepest": deepest, "root": None}
+    cursor.execute("SELECT game, tree, id FROM gt_nodes WHERE id ~ ':root$'")
+    for game, tree, nid in cursor.fetchall():
+        trees[game][tree]["root"] = nid
+    cursor.execute("SELECT game, count(*) FROM gt_steps GROUP BY game")
+    steps = dict(cursor.fetchall())
+    cursor.execute("SELECT game, count(*), count(*) FILTER (WHERE origin_kind <> 'start') FROM gt_rollouts GROUP BY game")
+    rollouts = {game: (n, mid) for game, n, mid in cursor.fetchall()}
+    for game, by_tree in trees.items():
+        for k, slot in by_tree.items():
+            slot["start"] = slot["root"]
+            if slot["root"] is None:
+                cursor.execute(f"SELECT n{k} FROM gt_steps WHERE game = %s GROUP BY n{k} "
+                               f"ORDER BY min(level), count(*) DESC, n{k} LIMIT 1", (game,))
+                row = cursor.fetchone()
+                slot["start"] = row[0] if row else None
+    out = []
+    for game in sorted(set(trees) | set(rollouts)):
+        n, mid = rollouts.get(game, (0, 0))
+        out.append({"game": game, "rollouts": n, "mid_rollouts": mid, "steps": steps.get(game, 0),
+                    "trees": {str(k): {**trees.get(game, {}).get(k, {"nodes": 0, "deepest": None, "root": None,
+                                                                         "start": None}), "name": GT_TREE_NAMES[k]}
+                              for k in GT_TREES}})
+    return out
+
+
+def _mean_stats(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"n": len(outcomes), **{name: _mean([o.get(key) for o in outcomes]) for name, key in GT_OUTCOME_KEYS}}
+
+
+ROLLOUT_COLUMNS = ("id, game, run, build, model, harness, policy, origin_state, origin_edge, origin_kind, status, "
+                   "result, published_at")
+STEP_COLUMNS = ("s.id, s.rollout_id, s.seq, s.game, s.level, s.moves, s.screen_hash, s.next_screen_hash, s.next_level, "
+                "s.next_moves, s.action, s.detail, s.features, s.outcome, s.trace_sha, s.hidden_ref, "
+                "s.n1, s.n2, s.n3, s.n4, s.c1, s.c2, s.c3, s.c4")
+
+
+def gtree_node(cursor: Any, node_id: str) -> dict[str, Any]:
+    """One node of one tree: the node, its screen (a root shows the screen its steps start from), its outgoing steps
+    (no trace content) with their rollout's run, build, policy and origin, a summary per action (n, means of lvl30,
+    cleared_level, acts, go_turn and level_score with nulls ignored, and the distinct children with counts), the
+    nodes that lead here, the rollouts restarted here and, per child, steps out and arrivals."""
+
+    match = GT_NODE_RE.fullmatch(node_id or "")
+    if not match:
+        raise ReviewProblem(400, "invalid_node", "a node id is '<game>:t<1-4>:<16 hex>' or '<game>:t<1-4>:root'")
+    k = int(match.group(2))
+    cursor.execute("SELECT id, tree, game, level, moves, screen_hash, parent, depth, first_seen FROM gt_nodes "
+                   "WHERE id = %s", (node_id,))
+    rows = _rows(cursor)
+    if not rows:
+        raise ReviewProblem(404, "unknown_node", "no such node")
+    node = {**rows[0], "first_seen": iso(rows[0]["first_seen"])}
+    cursor.execute(
+        f"""
+        SELECT {STEP_COLUMNS}, s.c{k} AS child, r.run, r.build, r.model, r.harness, r.policy, r.origin_kind,
+               r.origin_state
+        FROM gt_steps s JOIN gt_rollouts r ON r.id = s.rollout_id
+        WHERE s.n{k} = %s ORDER BY r.run, s.rollout_id, s.seq LIMIT {MAX_NODE_BRANCHES + 1}
+        """,
+        (node_id,))
+    steps = _rows(cursor)
+    truncated = len(steps) > MAX_NODE_BRANCHES
+    steps = steps[:MAX_NODE_BRANCHES]
+    screen = node["screen_hash"]
+    if screen is None and steps:                         # a root: the screen its steps start from, most common first
+        counts: dict[str, int] = {}
+        for s in steps:
+            counts[s["screen_hash"]] = counts.get(s["screen_hash"], 0) + 1
+        screen = min(counts, key=lambda h: (-counts[h], h))
+    board = None
+    if screen:
+        cursor.execute("SELECT board FROM gt_screens WHERE screen_hash = %s", (screen,))
+        row = cursor.fetchone()
+        board = row[0] if row else None
+    cursor.execute(f"SELECT count(*), count(DISTINCT rollout_id) FROM gt_steps WHERE c{k} = %s", (node_id,))
+    arrivals, arrival_rollouts = cursor.fetchone()
+    cursor.execute(f"SELECT n{k}, count(*) FROM gt_steps WHERE c{k} = %s GROUP BY n{k} "
+                   f"ORDER BY count(*) DESC, n{k} LIMIT 200", (node_id,))
+    parents = [{"id": nid, "n": n} for nid, n in cursor.fetchall()]
+    cursor.execute(f"SELECT {ROLLOUT_COLUMNS} FROM gt_rollouts WHERE origin_state = %s "
+                   "ORDER BY published_at DESC, id LIMIT 200", (node_id,))
+    started_here = [{**r, "published_at": iso(r["published_at"])} for r in _rows(cursor)]
+    children = sorted({s["child"] for s in steps if s["child"]})
+    child_info: dict[str, dict[str, Any]] = {}
+    if children:
+        cursor.execute(
+            f"""
+            SELECT c.id, (SELECT count(*) FROM gt_steps x WHERE x.n{k} = c.id) AS steps,
+                   (SELECT count(*) FROM gt_steps y WHERE y.c{k} = c.id) AS arrivals,
+                   z.id IS NOT NULL AS published, z.level, z.moves, z.screen_hash
+            FROM unnest(%s::text[]) AS c(id) LEFT JOIN gt_nodes z ON z.id = c.id
+            """,
+            (children,))
+        child_info = {r["id"]: {key: r[key] for key in ("steps", "arrivals", "published", "level", "moves",
+                                                        "screen_hash")} for r in _rows(cursor)}
+    for s in steps:
+        s["child_info"] = child_info.get(s["child"]) if s["child"] else None
+    by_action: dict[str, dict[str, Any]] = {}
+    for action in sorted({s["action"] for s in steps}):
+        mine = [s for s in steps if s["action"] == action]
+        kids: dict[str, int] = {}
+        for s in mine:
+            if s["child"]:
+                kids[s["child"]] = kids.get(s["child"], 0) + 1
+        by_action[action] = {**_mean_stats([s["outcome"] or {} for s in mine]),
+                             "children": [{"id": c, "n": n} for c, n in sorted(kids.items(), key=lambda x: (-x[1], x[0]))],
+                             "ended": sum(1 for s in mine if not s["child"])}
+    return {"apiVersion": 1, "tree": k, "tree_name": GT_TREE_NAMES[k],
+            "node": {**node, "screen_shown": screen, "board": board, "steps": len(steps), "arrivals": arrivals,
+                     "arrival_rollouts": arrival_rollouts},
+            "steps": steps, "truncated": truncated, "by_action": by_action, "parents": parents,
+            "started_here": started_here}
+
+
+def gtree_rollout(cursor: Any, rollout_id: str) -> dict[str, Any]:
+    cursor.execute(f"SELECT {ROLLOUT_COLUMNS} FROM gt_rollouts WHERE id = %s", (rollout_id,))
+    rows = _rows(cursor)
+    if not rows:
+        raise ReviewProblem(404, "unknown_rollout", "no such rollout")
+    cursor.execute(f"SELECT {STEP_COLUMNS} FROM gt_steps s WHERE s.rollout_id = %s ORDER BY s.seq "
+                   f"LIMIT {MAX_NODE_BRANCHES + 1}", (rollout_id,))
+    steps = _rows(cursor)
+    return {"apiVersion": 1, "rollout": {**rows[0], "published_at": iso(rows[0]["published_at"])},
+            "steps": steps[:MAX_NODE_BRANCHES], "truncated": len(steps) > MAX_NODE_BRANCHES}
+
+
+def gtree_stats(cursor: Any) -> dict[str, Any]:
+    """Totals: rollouts, steps, games; per tree its nodes and games (every step is in all four trees)."""
+
+    cursor.execute("SELECT count(*), count(DISTINCT game), count(*) FILTER (WHERE origin_kind <> 'start') "
+                   "FROM gt_rollouts")
+    rollouts, games, mid = cursor.fetchone()
+    cursor.execute("SELECT count(*) FROM gt_steps")
+    steps = cursor.fetchone()[0]
+    cursor.execute("SELECT count(*) FROM gt_screens")
+    screens = cursor.fetchone()[0]
+    cursor.execute("SELECT tree, count(*), count(DISTINCT game) FROM gt_nodes GROUP BY tree")
+    per = {tree: (n, g) for tree, n, g in cursor.fetchall()}
+    return {"apiVersion": 1, "rollouts": rollouts, "mid_rollouts": mid, "games": games, "steps": steps,
+            "screens": screens,
+            "trees": {str(k): {"name": GT_TREE_NAMES[k], "nodes": per.get(k, (0, 0))[0], "games": per.get(k, (0, 0))[1],
+                               "steps": steps, "rollouts": rollouts} for k in GT_TREES}}
+
+
+# Cleared rate of one step, as SQL: outcome.cleared_level as a number (true = 1, false = 0); null when absent.
+_CLEARED_SQL = ("CASE jsonb_typeof(s.outcome -> 'cleared_level') "
+                "WHEN 'number' THEN (s.outcome ->> 'cleared_level')::double precision "
+                "WHEN 'boolean' THEN CASE WHEN (s.outcome ->> 'cleared_level')::boolean THEN 1.0 ELSE 0.0 END END")
+
+
+def gtree_frontier(cursor: Any, game: str, tree: int = 1, n: int = 4, limit: int = 50,
+                   actions: list[str] | None = None) -> dict[str, Any]:
+    """Nodes to sample next: the nodes of one tree where some action has fewer than N samples (Go-Explore style
+    restarts, up to N per (node, action)). The actions are the ones given, else every action seen in this game. Best
+    first by a score of four parts, each returned so the order can be checked:
+
+      few     1 if at most 3 steps leave the node (little explored), else 0
+      depth   the node's level / the deepest level of this tree's nodes in the game (a root counts as level 0)
+      spread  the gap between the best and the worst action's mean cleared_level there (a choice that matters);
+              0 with fewer than two actions that have an outcome
+      merge   0.5 if steps from more than one rollout arrive (several plays meet here), else 0
+
+    score = few + depth + spread + merge; ties go to the higher level, then more arrivals, then the id. 'open' lists
+    the actions still short of N and how many samples each needs."""
+
+    cursor.execute("SELECT id, level FROM gt_nodes WHERE game = %s AND tree = %s", (game, tree))
+    levels = {nid: lvl or 0 for nid, lvl in cursor.fetchall()}
+    if not levels:
+        raise ReviewProblem(404, "unknown_game", "nothing stored for this game in this tree")
+    deepest = max(levels.values()) or 1
+    cursor.execute(f"SELECT s.n{tree}, s.action, count(*), avg({_CLEARED_SQL}) FROM gt_steps s WHERE s.game = %s "
+                   f"GROUP BY s.n{tree}, s.action", (game,))
+    per: dict[str, dict[str, tuple[int, float | None]]] = {}
+    for nid, action, count, rate in cursor.fetchall():
+        per.setdefault(nid, {})[action] = (count, None if rate is None else float(rate))
+    if not actions:
+        actions = sorted({a for d in per.values() for a in d})
+    cursor.execute(f"SELECT c{tree}, count(*), count(DISTINCT rollout_id) FROM gt_steps "
+                   f"WHERE game = %s AND c{tree} IS NOT NULL GROUP BY c{tree}", (game,))
+    arrivals = {nid: (count, ro) for nid, count, ro in cursor.fetchall()}
+    cursor.execute("SELECT origin_state, count(*) FROM gt_rollouts WHERE game = %s AND origin_state IS NOT NULL "
+                   "GROUP BY origin_state", (game,))
+    started = dict(cursor.fetchall())
+    rows = []
+    for nid, level in levels.items():
+        here = per.get(nid, {})
+        open_ = {a: n - here.get(a, (0, None))[0] for a in actions if here.get(a, (0, None))[0] < n}
+        if not open_:
+            continue
+        n_out = sum(c for c, _ in here.values())
+        rates = [r for _, r in here.values() if r is not None]
+        arr, arr_ro = arrivals.get(nid, (0, 0))
+        parts = {"few": 1.0 if n_out <= 3 else 0.0, "depth": round(level / deepest, 4),
+                 "spread": round(max(rates) - min(rates), 4) if len(rates) >= 2 else 0.0,
+                 "merge": 0.5 if arr_ro > 1 else 0.0}
+        rows.append({"id": nid, "level": level, "out": n_out, "samples": {a: c for a, (c, _) in sorted(here.items())},
+                     "open": open_, "missing": sum(open_.values()), "arrivals": arr, "arrival_rollouts": arr_ro,
+                     "started_here": started.get(nid, 0), "parts": parts, "score": round(sum(parts.values()), 4)})
+    rows.sort(key=lambda x: (-x["score"], -x["level"], -x["arrivals"], x["id"]))
+    return {"apiVersion": 1, "game": game, "tree": tree, "tree_name": GT_TREE_NAMES[tree], "N": n,
+            "actions": actions, "candidates": len(rows), "deepest": deepest,
+            "score": "few (<=3 steps out) + depth (level / deepest) + spread (best - worst action's mean cleared) "
+                     "+ merge (0.5 if more than one rollout arrives); only nodes where some action has < N samples",
+            "nodes": rows[:limit]}
+
+
 # ------------------------------------------------------------------------------------------------ the API
 class _Limiter:
     """Per-key sliding window, in memory (one server process)."""
@@ -930,6 +1470,7 @@ class RlReviewApi:
     PUBLIC = "/api/v1/public/review"
     RL = "/api/v1/rl"
     RL2 = "/api/v1/rl2"
+    GTREE = "/api/v1/gtree"
 
     def __init__(self, connect: Callable[[], Any], data_root: Path, publish_token: str):
         self.connect = connect
@@ -940,7 +1481,7 @@ class RlReviewApi:
 
     @classmethod
     def owns(cls, path: str) -> bool:
-        return any(path == p or path.startswith(p + "/") for p in (cls.REVIEW, cls.PUBLIC, cls.RL, cls.RL2))
+        return any(path == p or path.startswith(p + "/") for p in (cls.REVIEW, cls.PUBLIC, cls.RL, cls.RL2, cls.GTREE))
 
     # Identity. The team routes are behind oauth2-proxy; the allowlist is re-checked here because the proxy's
     # domain setting may let other Google accounts sign in. The public prefix is skip-auth, so X-Forwarded-Email
@@ -1068,6 +1609,63 @@ class RlReviewApi:
                 if not target.exists():
                     raise ReviewProblem(404, "missing_trace", "this trace is not on the server")
                 return Response(200, target.read_bytes())
+            raise ReviewProblem(404, "not_found", "not found")
+        # The universal game tree: publications (machines); games, nodes, rollouts, traces, frontier, stats (team).
+        if path == f"{self.GTREE}/publication":
+            self.require_token(headers)
+            if method != "PUT":
+                raise ReviewProblem(405, "method_not_allowed", "use PUT")
+            bundle = self._read_json(read_body, headers, MAX_PUBLICATION)
+            clean_gtree_bundle(bundle)                     # refuse a bad body before opening a connection
+            with self._cursor(commit=True) as cursor:
+                result = publish_gtree(cursor, self.data_root, bundle)
+            print(f"gtree: published {result['rollouts']} rollouts, {result['steps']} steps, {result['nodes']} nodes",
+                  flush=True)
+            return _json(200, result)
+        if path == self.GTREE or path.startswith(f"{self.GTREE}/"):
+            self.team_email(headers)
+            if method != "GET":
+                raise ReviewProblem(405, "method_not_allowed", "use GET")
+            # ids hold ':'; a browser may send it as %3A (each id is checked by its pattern after unquoting)
+            sub = unquote(path[len(f"{self.GTREE}/"):]) if path != self.GTREE else ""
+            arg = lambda key, default=None: (query.get(key) or [default])[0]  # noqa: E731
+            if sub == "games":
+                with self._cursor() as cursor:
+                    return _json(200, {"apiVersion": 1, "trees": {str(k): v for k, v in GT_TREE_NAMES.items()},
+                                       "games": gtree_games(cursor)})
+            if sub == "stats":
+                with self._cursor() as cursor:
+                    return _json(200, gtree_stats(cursor))
+            if sub.startswith("node/"):
+                node_id = sub[len("node/"):]
+                if not GT_NODE_RE.fullmatch(node_id):
+                    raise ReviewProblem(400, "invalid_node", "a node id is '<game>:t<1-4>:<16 hex>' or "
+                                                             "'<game>:t<1-4>:root'")
+                with self._cursor() as cursor:
+                    return _json(200, gtree_node(cursor, node_id))
+            if sub.startswith("rollout/"):
+                rollout_id = _id(sub[len("rollout/"):], "rollout")
+                with self._cursor() as cursor:
+                    return _json(200, gtree_rollout(cursor, rollout_id))
+            if sub.startswith("trace/"):
+                sha = _id(sub[len("trace/"):], "trace_sha", SHA_RE)
+                target = self.data_root / "_gtree" / "traces" / f"{sha}.json"
+                if not target.exists():
+                    raise ReviewProblem(404, "missing_trace", "this trace is not on the server")
+                return Response(200, target.read_bytes())
+            if sub == "frontier":
+                game = _id(arg("game"), "game", GAME_RE)
+                tree = _gt_tree(query)
+                raw_n, raw_limit = arg("N", "4"), arg("limit", "50")
+                if not raw_n.isdigit() or not 1 <= int(raw_n) <= MAX_FRONTIER_N:
+                    raise ReviewProblem(400, "invalid_N", f"N is 1..{MAX_FRONTIER_N}")
+                if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= MAX_FRONTIER:
+                    raise ReviewProblem(400, "invalid_limit", f"limit is 1..{MAX_FRONTIER}")
+                actions = [a for a in (arg("actions") or "").split(",") if a]
+                if len(actions) > 50 or not all(GT_ACTION_RE.fullmatch(a) for a in actions):
+                    raise ReviewProblem(400, "invalid_actions", "actions is a comma list of at most 50 action names")
+                with self._cursor() as cursor:
+                    return _json(200, gtree_frontier(cursor, game, tree, int(raw_n), int(raw_limit), actions or None))
             raise ReviewProblem(404, "not_found", "not found")
         # RL2 (turn coach): named documents, published by machines and read by the team.
         if path.startswith(f"{self.RL2}/publication/"):

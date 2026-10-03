@@ -1,9 +1,11 @@
 // RL2 page (docs/rl2.html): the turn coach. Four views over published documents and the decision tree:
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
 //   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened)
-//   GET /api/v1/rl2/tree/games        the decision tree: games, levels and their start nodes
-//   GET /api/v1/rl2/tree/node/<id>    one node (a game state where the coach decided): its branches, a summary per mode
-//   GET /api/v1/rl2/tree/trace/<sha>  one branch's turn: thinking, code, moves
+//   GET /api/v1/gtree/games           the universal game tree: games, their four trees and each tree's start (root)
+//   GET /api/v1/gtree/node/<id>       one node of one tree: its steps grouped by action, children, parents, restarts here
+//   GET /api/v1/gtree/frontier?...    restart candidates: nodes where some action has fewer than N samples
+//   GET /api/v1/gtree/rollout/<id>    one rollout's steps (for rollouts restarted mid-tree)
+//   GET /api/v1/gtree/trace/<sha>     one step's turn: thinking, code, moves
 // Server: railway/rl_review.py. With ?fixture=1 the page reads docs/static/data/rl2-fixture.json instead (fake data, for
 // checking the page locally). Chrome from theme.css and rl-shell.css; every colour is solid (no gradients).
 
@@ -19,9 +21,11 @@ const state = {
   dash: null, fixture: null, view: VIEWS.includes(params.get("view")) ? params.get("view") : "builds",
   run: params.get("run"), game: params.get("game"), modeFilter: new Set(), open: new Set(), docs: {},
   smpBuild: params.get("build"), metric: "share",
-  // tree view: the game and level picked, the trail of nodes walked (last = shown), open mode groups and traces
-  treeGames: null, tGame: params.get("tgame"), tLevel: params.get("tlevel") ? +params.get("tlevel") : null,
-  trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), treeCache: {},
+  // tree view: the game and tree (t1..t4) picked, the trail of nodes walked (last = shown), open action groups, traces
+  // and restarted rollouts, the restart-candidates panel
+  treeGames: null, tGame: params.get("tgame"), tTree: +(params.get("ttree") || 1),
+  trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), tRoll: new Set(),
+  treeCache: {}, frontOpen: true, frontAll: false,
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
@@ -63,7 +67,7 @@ function syncUrl() {
   if (state.view === "sampling" && state.smpBuild) q.set("build", state.smpBuild);
   if (state.view === "tree" && state.tGame) {
     q.set("tgame", state.tGame);
-    if (state.tLevel !== null) q.set("tlevel", String(state.tLevel));
+    if (state.tTree !== 1) q.set("ttree", String(state.tTree));
     if (state.trail.length) q.set("trail", state.trail.join(","));
   }
   const s = q.toString();
@@ -364,21 +368,23 @@ function modesCard() {
         el("td", { class: "mono" }, val(m.yield_tokens)), el("td", { class: "mono" }, val(m.cap)), el("td", { class: "mono" }, val(m.temperature))))))));
 }
 
-/* ------------------------------------------------------------------ view 4: decision tree */
-// A node is a game state where the coach decided; plays that reach the same state share it (merges, no forks).
-// A branch is one decision there: its mode, what followed, the turn's trace and the node of that play's next decision.
+/* ------------------------------------------------------------------ view 4: decision tree (the universal game tree) */
+// Every step of every rollout is stored once and read as four trees: t1 the path of actions (context-aware), t2 screen +
+// moves, t3 level + screen, t4 screen only. A node's steps are grouped by action (the mode chosen); a step leads to a child
+// node, and plays that reach the same child merge there. Each tree starts at the game's root (the game start). Rollouts can
+// also start in the middle of the tree (restarted from a stored t1 node): their steps carry an origin badge.
+const TREE_NAMES = { 1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only" };
+const FRONTIER_N = 4;
 async function getTree(sub) {
   if (state.treeCache[sub]) return state.treeCache[sub];
   let doc;
   if (FIXTURE) {
     await loadFixture();
-    const t = state.fixture.tree || {};
-    if (sub === "games") doc = t.games || { games: [] };
-    else if (sub.startsWith("node/")) doc = (t.nodes || {})[sub.slice(5)];
-    else if (sub.startsWith("trace/")) doc = (t.traces || {})[sub.slice(6)];
+    doc = (state.fixture.gtree || {})[sub];
     if (!doc) throw new NotPublished(sub);
   } else {
-    const r = await fetch("/api/v1/rl2/tree/" + sub.split("/").map(encodeURIComponent).join("/"),
+    const [path, query] = sub.split("?");
+    const r = await fetch("/api/v1/gtree/" + path.split("/").map(encodeURIComponent).join("/") + (query ? "?" + query : ""),
       { cache: "no-store", credentials: "same-origin", redirect: "manual" });
     if (r.type === "opaqueredirect" || r.status === 0 || r.status === 401) throw Object.assign(new Error("sign in"), { status: 401 });
     if (r.status === 403) throw Object.assign(new Error("not on team"), { status: 403 });
@@ -389,7 +395,19 @@ async function getTree(sub) {
   state.treeCache[sub] = doc;
   return doc;
 }
-const nodeLabel = id => { const [g, l, h] = String(id).split(":"); return `${g} · ${l} · ${h ? h.slice(0, 6) : "?"}`; };
+const treeOf = id => +((String(id).split(":")[1] || "t1").slice(1));
+// level / moves of nodes seen so far (from node views and their children), for short labels
+const nodeMeta = new Map();
+function nodeLabel(id) {
+  const s = String(id);
+  if (s.endsWith(":root")) return "start";
+  const m = nodeMeta.get(s);
+  const hex = s.split(":")[2] || "?";
+  // t3 and t4 merge plays whatever their move count, so only t1 and t2 labels carry one
+  const mv = treeOf(s) <= 2 ? ` · ${isNum(m && m.moves) ? m.moves + " mv" : "?"}` : "";
+  if (m && isNum(m.level)) return `L${m.level}${mv} · ${hex.slice(0, 6)}`;
+  return hex.slice(0, 8);
+}
 const pctOrDash = x => isNum(x) ? Math.round(x * 100) + "%" : "–";
 
 async function renderTree() {
@@ -412,30 +430,33 @@ async function renderTree() {
   const games = state.treeGames;
   if (!games.length) {
     $("treePickers").replaceChildren();
-    body.replaceChildren(el("div", { class: "empty" }, "No tree published yet. It appears here once a coached run publishes its decisions."));
+    body.replaceChildren(el("div", { class: "empty" }, "No tree published yet. It appears here once a run publishes its steps."));
     return;
   }
   let g = games.find(x => x.game === state.tGame);
-  if (!g) { g = games[0]; state.tGame = g.game; state.tLevel = null; state.trail = []; }
-  let lv = g.levels.find(x => x.level === state.tLevel);
-  if (!lv) { lv = g.levels[0]; state.tLevel = lv.level; state.trail = []; }
-  if (!state.trail.length || !state.trail[0].startsWith(g.game + ":")) state.trail = [lv.start_nodes[0]];
-  const gameSel = el("select", { "aria-label": "game", onchange: e => { state.tGame = e.target.value; state.tLevel = null; state.trail = []; resetNodeUi(); renderTree(); } },
-    games.map(x => el("option", { value: x.game, selected: x.game === g.game }, `${x.game} (${x.levels.reduce((s, l) => s + l.branches, 0)})`)));
-  const levelSel = el("select", { "aria-label": "level", onchange: e => { state.tLevel = +e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
-    g.levels.map(l => el("option", { value: l.level, selected: l.level === lv.level }, `level ${l.level} · ${l.branches} branch${l.branches === 1 ? "" : "es"} at ${l.nodes} node${l.nodes === 1 ? "" : "s"}`)));
-  const pick = [el("label", {}, "game ", gameSel), el("label", {}, "level ", levelSel)];
-  if (lv.start_nodes.length > 1) {
-    pick.push(el("label", {}, "start ", el("select", { "aria-label": "start node", onchange: e => { state.trail = [e.target.value]; resetNodeUi(); renderTree(); } },
-      lv.start_nodes.map(id => el("option", { value: id, selected: id === state.trail[0] }, nodeLabel(id))))));
-  }
-  $("treePickers").replaceChildren(...pick);
+  if (!g) { g = games[0]; state.tGame = g.game; state.trail = []; }
+  if (![1, 2, 3, 4].includes(state.tTree)) state.tTree = 1;
+  const t = (g.trees || {})[String(state.tTree)] || {};
+  const prefix = `${g.game}:t${state.tTree}:`;
+  if (!state.trail.length || !state.trail.every(id => id.startsWith(prefix))) state.trail = t.start ? [t.start] : [];
+  const gameSel = el("select", { "aria-label": "game", onchange: e => { state.tGame = e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
+    games.map(x => el("option", { value: x.game, selected: x.game === g.game },
+      `${x.game} · ${x.rollouts} rollout${x.rollouts === 1 ? "" : "s"}${x.mid_rollouts ? ` (${x.mid_rollouts} mid-tree)` : ""}`)));
+  const treeSel = el("select", { "aria-label": "tree", onchange: e => { state.tTree = +e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
+    [1, 2, 3, 4].map(k => el("option", { value: k, selected: k === state.tTree },
+      `t${k} · ${TREE_NAMES[k]} · ${((g.trees || {})[String(k)] || {}).nodes ?? 0} nodes`)));
+  $("treePickers").replaceChildren(el("label", {}, "game ", gameSel), el("label", {}, "tree ", treeSel),
+    el("span", { class: "muted rl2-small" }, `${g.steps ?? 0} steps`));
   syncUrl();
+  if (!state.trail.length) { body.replaceChildren(el("div", { class: "empty" }, "This tree has no nodes for this game yet.")); return; }
   await drawNode(state.trail[state.trail.length - 1]);
 }
-function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); }
-function goNode(id, { push = true } = {}) {
-  if (push) {
+function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); state.tRoll.clear(); }
+function goNode(id, { push = true, fromStart = false } = {}) {
+  if (fromStart) {
+    const start = state.trail[0];
+    state.trail = start && start !== id ? [start, id] : [id];
+  } else if (push) {
     const at = state.trail.indexOf(id);
     state.trail = at >= 0 ? state.trail.slice(0, at + 1) : [...state.trail, id];
   }
@@ -451,54 +472,117 @@ async function drawNode(id) {
     view = await getTree("node/" + id);
   } catch (e) {
     if (!(e instanceof NotPublished)) throw e;
-    body.replaceChildren(trailBar(), el("div", { class: "empty" }, `Node ${id} is not published yet.`));
+    body.replaceChildren(trailBar(), el("div", { class: "empty" }, `Node ${id} is not published yet.`), frontierPanel());
     return;
   }
   const n = view.node;
-  const canvas = n.board ? el("canvas", { class: "rl2-board", width: 160, height: 160, "aria-label": "board at this node" }) : null;
+  nodeMeta.set(n.id, { level: n.level, moves: n.moves });
+  for (const s of view.steps || []) if (s.child && s.child_info) nodeMeta.set(s.child, { level: s.child_info.level, moves: s.child_info.moves });
+  const canvas = n.board ? el("canvas", { class: "rl2-board", width: 160, height: 160, "aria-label": "screen at this node" }) : null;
+  const root = String(n.id).endsWith(":root");
+  const where = root ? `game ${n.game} · the game start` : `game ${n.game} · level ${val(n.level)} · ${val(n.moves)} moves`;
   const head = el("div", { class: "card rl2-node" },
-    canvas || el("div", { class: "rl2-board none" }, "no board stored"),
+    canvas || el("div", { class: "rl2-board none" }, "no screen stored"),
     el("div", { class: "rl2-node-info" },
       el("div", { class: "rl2-node-id mono" }, n.id),
       el("div", { class: "rl2-node-nums" },
-        el("div", {}, el("b", { class: "mono" }, n.branches), el("small", {}, n.branches === 1 ? "branch" : "branches")),
-        el("div", {}, el("b", { class: "mono" }, n.arrivals || 0), el("small", {}, "plays arrived")),
-        el("div", {}, el("b", { class: "mono" }, Object.keys(view.by_mode || {}).length), el("small", {}, "modes"))),
-      el("div", { class: "muted rl2-small" }, `game ${n.game} · level ${n.level}` + (n.first_run ? ` · first seen in ${n.first_run}` : "")),
+        el("div", {}, el("b", { class: "mono" }, n.steps), el("small", {}, n.steps === 1 ? "step out" : "steps out")),
+        el("div", {}, el("b", { class: "mono" }, n.arrivals || 0), el("small", {}, "arrived")),
+        el("div", {}, el("b", { class: "mono" }, Object.keys(view.by_action || {}).length), el("small", {}, "actions")),
+        (view.started_here || []).length ? el("div", {}, el("b", { class: "mono" }, view.started_here.length), el("small", {}, "restarts here")) : null),
+      el("div", { class: "muted rl2-small" }, `${where} · t${view.tree} ${view.tree_name || TREE_NAMES[view.tree] || ""}`),
       view.parents && view.parents.length ? el("div", { class: "rl2-parents rl2-small" }, el("span", { class: "muted" }, "came from"),
-        view.parents.slice(0, 12).map(p => el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(p) }, nodeLabel(p)))) : null,
-      view.truncated ? el("div", { class: "rl2-small rl2-bad" }, "Only the first branches are shown.") : null));
-  body.replaceChildren(trailBar(), head, modeGroups(view));
+        view.parents.slice(0, 12).map(p => el("button", { type: "button", class: "rl2-chip mono", title: `${p.id} (${p.n})`, onclick: () => goNode(p.id) },
+          nodeLabel(p.id), p.n > 1 ? ` ×${p.n}` : ""))) : null,
+      view.truncated ? el("div", { class: "rl2-small rl2-bad" }, "Only the first steps are shown.") : null));
+  body.replaceChildren(...[trailBar(), head, startedHere(view), actionGroups(view), frontierPanel()].filter(Boolean));
   if (canvas) requestAnimationFrame(() => draw(canvas, n.board));
 }
 function trailBar() {
-  if (state.trail.length < 2) return el("div", { class: "rl2-trail muted rl2-small" }, "Level start. Open a mode, then follow a branch with “next node →”.");
+  const first = state.trail[0] || "";
+  if (state.trail.length < 2 && first.endsWith(":root")) {
+    return el("div", { class: "rl2-trail muted rl2-small" }, "Game start. Open an action, then follow a step with “next node →”.");
+  }
   return el("nav", { class: "rl2-trail rl2-small", "aria-label": "nodes visited" }, state.trail.flatMap((id, i) => {
     const last = i === state.trail.length - 1;
     return [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
       last ? el("span", { class: "rl2-chip on mono", "aria-current": "page" }, nodeLabel(id))
-        : el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(id) }, i === 0 ? "start" : nodeLabel(id))];
+        : el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(id) }, nodeLabel(id))];
   }));
 }
-function modeGroups(view) {
-  const modes = Object.entries(view.by_mode || {}).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]));
-  if (!modes.length) return el("div", { class: "empty" }, "No branch leaves this node: the plays ended here.");
+function originBadge(kind, origin) {
+  if (!kind || kind === "start") return null;
+  const tip = `this rollout was restarted mid-tree (${kind}) from ${origin || "?"}`;
+  if (origin && treeOf(origin) === state.tTree) {
+    return el("button", { type: "button", class: "rl2-origin", title: tip + "; click to open that node", onclick: () => goNode(origin) }, `restart · ${kind}`);
+  }
+  return el("span", { class: "rl2-origin", title: tip }, `restart · ${kind}`);
+}
+function startedHere(view) {
+  const list = view.started_here || [];
+  if (!list.length) return null;
+  const wrap = el("div", { class: "card rl2-started" });
+  const redraw = () => wrap.replaceWith(startedHere(view));
+  wrap.append(el("h3", { class: "rl2-subh" }, `Rollouts started here (${list.length})`),
+    el("p", { class: "muted rl2-small" }, "Restarted from this node instead of the game start; their steps below carry a restart badge."));
+  for (const r of list) {
+    const open = state.tRoll.has(r.id);
+    const res = r.result || {};
+    const bits = [isNum(res.levels) ? `${res.levels} level${res.levels === 1 ? "" : "s"}` : null,
+      isNum(res.actions) ? `${res.actions} actions` : null, isNum(res.score) ? `score ${fx(res.score)}` : null].filter(Boolean);
+    const row = el("div", { class: "rl2-sroll" },
+      el("div", { class: "rl2-bmain" },
+        el("div", { class: "rl2-bwho mono" }, r.id),
+        el("div", { class: "rl2-bmeta rl2-small" }, el("span", { class: "rl2-origin" }, r.origin_kind),
+          el("span", { class: "rl2-chip mono" }, r.build), r.policy ? el("span", { class: "muted mono" }, r.policy) : null,
+          el("span", { class: "muted" }, r.status), ...bits.map(b => el("span", { class: "mono" }, b)))),
+      el("div", { class: "rl2-bact" }, el("button", { type: "button", class: "rl2-btn" + (open ? " on" : ""), "aria-expanded": open ? "true" : "false",
+        onclick: () => { open ? state.tRoll.delete(r.id) : state.tRoll.add(r.id); redraw(); } }, open ? "hide steps" : "steps")));
+    wrap.append(row);
+    if (open) {
+      const box = el("div", { class: "rl2-rsteps rl2-small" }, el("span", { class: "muted" }, "loading…"));
+      row.append(box);
+      getTree("rollout/" + r.id).then(doc => {
+        const k = state.tTree;
+        box.replaceChildren(...[...(doc.steps || []).flatMap((s, i) => [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
+          el("button", { type: "button", class: "rl2-stepchip", title: `step ${s.seq}: ${s.action} at ${s["n" + k]}`, onclick: () => goNode(s["n" + k], { fromStart: true }) },
+            modeTag(s.action), el("span", { class: "mono muted" }, `L${s.level}`))]),
+          doc.truncated ? el("span", { class: "rl2-bad" }, "(first steps only)") : null].filter(Boolean));
+      }).catch(e => {
+        if (!(e instanceof NotPublished)) console.error(e);
+        box.replaceChildren(el("span", { class: "muted" }, "This rollout is not on the server."));
+      });
+    }
+  }
+  return wrap;
+}
+function actionGroups(view) {
+  const actions = Object.entries(view.by_action || {}).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]));
+  if (!actions.length) return el("div", { class: "empty" }, "No step leaves this node: the plays ended here.");
   const wrap = el("div", { class: "rl2-groups" });
-  const redraw = () => wrap.replaceWith(modeGroups(view));
-  wrap.append(el("div", { class: "rl2-ghead muted rl2-small" }, el("span", {}, "mode"), el("span", {}, "n"),
+  const redraw = () => wrap.replaceWith(actionGroups(view));
+  wrap.append(el("div", { class: "rl2-ghead muted rl2-small" }, el("span", {}, "action"), el("span", {}, "n"),
     el("span", {}, "level within 30 actions"), el("span", { class: "rl2-gmore" }, "also")));
-  for (const [mode, s] of modes) {
-    const open = state.tOpen.has(mode);
+  for (const [action, s] of actions) {
+    const open = state.tOpen.has(action);
     const row = el("button", { type: "button", class: "rl2-grow" + (open ? " open" : ""), "aria-expanded": open ? "true" : "false",
-      onclick: () => { open ? state.tOpen.delete(mode) : state.tOpen.add(mode); redraw(); } },
-      el("span", { class: "rl2-gmode" }, el("span", { class: "rl2-caret", "aria-hidden": "true" }, open ? "▾" : "▸"), modeTag(mode)),
+      onclick: () => { open ? state.tOpen.delete(action) : state.tOpen.add(action); redraw(); } },
+      el("span", { class: "rl2-gmode" }, el("span", { class: "rl2-caret", "aria-hidden": "true" }, open ? "▾" : "▸"), modeTag(action)),
       el("span", { class: "mono" }, s.n),
       el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${isNum(s.lvl30) ? (100 * s.lvl30).toFixed(1) : 0}%` })),
         el("b", { class: "mono" }, pctOrDash(s.lvl30))),
-      el("span", { class: "rl2-gmore mono muted", title: "cleared this level · mean actions · game over" },
-        `cleared ${pctOrDash(s.cleared)} · ${fx(s.acts)} acts · over ${pctOrDash(s.go)}`));
+      el("span", { class: "rl2-gmore mono muted", title: "cleared this level · mean actions · game over · level score · children" },
+        `cleared ${pctOrDash(s.cleared)} · ${fx(s.acts)} acts · over ${pctOrDash(s.go)}` +
+        (isNum(s.level_score) ? ` · score ${fx(s.level_score)}` : "") + ` · ${(s.children || []).length} child${(s.children || []).length === 1 ? "" : "ren"}`));
     wrap.append(row);
-    if (open) wrap.append(el("div", { class: "rl2-blist" }, view.branches.filter(b => b.mode === mode).map(b => branchItem(b, redraw))));
+    if (open) {
+      const kids = s.children || [];
+      wrap.append(el("div", { class: "rl2-blist" },
+        el("div", { class: "rl2-kids rl2-small" }, el("span", { class: "muted" }, "leads to"),
+          kids.map(c => el("button", { type: "button", class: "rl2-chip mono", title: c.id, onclick: () => goNode(c.id) }, nodeLabel(c.id), c.n > 1 ? ` ×${c.n}` : "")),
+          s.ended ? el("span", { class: "muted" }, `${s.ended} ended here`) : null),
+        view.steps.filter(b => b.action === action).map(b => stepItem(b, redraw))));
+    }
   }
   return wrap;
 }
@@ -511,23 +595,25 @@ function outcomeBits(o) {
   if (o.go_turn) bits.push(el("span", { class: "rl2-bad" }, "game over"));
   return bits;
 }
-function branchItem(b, redraw) {
+function stepItem(b, redraw) {
   const tOpen = state.tTrace.has(b.id);
   const ci = b.child_info;
+  const d = b.detail || {};
   let next;
-  if (!b.child) next = el("span", { class: "muted rl2-small" }, "play ended");
+  if (!b.child) next = el("span", { class: "muted rl2-small" }, "rollout ended");
   else if (ci && ci.published === false) next = el("span", { class: "muted rl2-small", title: b.child }, "next node not published");
   else next = el("button", { type: "button", class: "rl2-btn primary", title: b.child, onclick: () => goNode(b.child) }, "next node →",
-    ci && ci.arrivals > 1 ? el("span", { class: "rl2-merge", title: `${ci.arrivals} plays reached this node (${ci.branches} branches leave it)` }, `${ci.arrivals} plays`) : null);
+    ci && ci.arrivals > 1 ? el("span", { class: "rl2-merge", title: `${ci.arrivals} steps reached this node (${ci.steps} steps leave it)` }, `${ci.arrivals} arrived`) : null);
   const traceBtn = b.trace_sha ? el("button", { type: "button", class: "rl2-btn" + (tOpen ? " on" : ""), "aria-expanded": tOpen ? "true" : "false",
     onclick: () => { tOpen ? state.tTrace.delete(b.id) : state.tTrace.add(b.id); redraw(); } }, tOpen ? "hide trace" : "trace")
     : el("span", { class: "muted rl2-small" }, "no trace");
   const item = el("div", { class: "rl2-branch" + (tOpen ? " open" : "") },
     el("div", { class: "rl2-bmain" },
-      el("div", { class: "rl2-bwho mono" }, el("b", {}, `#${b.decision}`), ` ${b.run}`, el("span", { class: "muted" }, ` · ${b.play}`)),
+      el("div", { class: "rl2-bwho mono" }, el("b", {}, `#${b.seq}`), ` ${b.rollout_id}`),
       el("div", { class: "rl2-bmeta rl2-small" },
+        originBadge(b.origin_kind, b.origin_state),
         el("span", { class: "rl2-chip mono" }, b.build), b.policy ? el("span", { class: "muted mono" }, b.policy) : null,
-        el("span", { class: "mono" }, `cap ${val(b.cap)}`), el("span", { class: "mono" }, `p ${val(b.prob)}`),
+        el("span", { class: "mono" }, `cap ${val(d.cap)}`), el("span", { class: "mono" }, `p ${val(d.prob)}`),
         ...outcomeBits(b.outcome))),
     el("div", { class: "rl2-bact" }, traceBtn, next));
   if (tOpen) {
@@ -542,6 +628,40 @@ function branchItem(b, redraw) {
     });
   }
   return item;
+}
+// Restart candidates: nodes of this game and tree where some action has fewer than N samples, best first (server score).
+function frontierPanel() {
+  const game = state.tGame, tree = state.tTree;
+  const key = `${game}|${tree}`;
+  const box = el("details", { class: "card rl2-front", open: state.frontOpen ? "" : null,
+    ontoggle: e => { state.frontOpen = e.target.open; } },
+    el("summary", {}, `Restart candidates · ${game} · t${tree}`),
+    el("p", { class: "muted rl2-small" }, `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked by few steps out + depth + `
+      + "the spread between actions' cleared rates + 0.5 when several rollouts meet. Click one to open it."));
+  const list = el("div", { class: "rl2-frows" }, el("div", { class: "muted rl2-small" }, "loading…"));
+  box.append(list);
+  getTree(`frontier?game=${game}&tree=${tree}&N=${FRONTIER_N}&limit=50`).then(doc => {
+    if (`${state.tGame}|${state.tTree}` !== key) return;
+    const rows = doc.nodes || [];
+    for (const r of rows) nodeMeta.set(r.id, { level: r.level, moves: (nodeMeta.get(r.id) || {}).moves });
+    if (!rows.length) { list.replaceChildren(el("div", { class: "muted rl2-small" }, "Every node has enough samples.")); return; }
+    const shown = state.frontAll ? rows : rows.slice(0, 10);
+    list.replaceChildren(
+      el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "score"),
+        el("span", { class: "rl2-fparts" }, "few · depth · spread · merge"), el("span", {}, "open")),
+      ...shown.map(r => el("button", { type: "button", class: "rl2-frow", title: `${r.id}\n${r.out} steps out · ${r.arrivals} arrived from ${r.arrival_rollouts} rollout(s)` +
+          (r.started_here ? ` · ${r.started_here} restart(s) here` : "") + `\nshort of ${doc.N}: ` + Object.entries(r.open || {}).map(([a, k]) => `${a} ${k}`).join(", "),
+        onclick: () => goNode(r.id, { fromStart: true }) },
+        el("span", { class: "mono rl2-fid" }, nodeLabel(r.id)), el("b", { class: "mono" }, fx(r.score, 2)),
+        el("span", { class: "mono muted rl2-fparts" }, ["few", "depth", "spread", "merge"].map(p => fx((r.parts || {})[p], 2)).join(" · ")),
+        el("span", { class: "mono" }, r.missing))),
+      rows.length > 10 ? el("button", { type: "button", class: "rl2-btn rl2-fmore", onclick: () => { state.frontAll = !state.frontAll; box.replaceWith(frontierPanel()); } },
+        state.frontAll ? "show the top 10" : `show all ${rows.length}`) : "");
+  }).catch(e => {
+    if (!(e instanceof NotPublished)) console.error(e);
+    list.replaceChildren(el("div", { class: "muted rl2-small" }, "No restart candidates for this tree yet."));
+  });
+  return box;
 }
 
 /* ------------------------------------------------------------------ shell */
