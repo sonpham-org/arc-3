@@ -74,27 +74,25 @@ async function renderSplit(view) {
   const node = view.node, paths = view.paths;
   const contents = await Promise.all(paths.map(p => content(p.id)));
 
-  // the shared point
+  // the shared point: a small board and one line, kept in the header so the paths start at the top of the screen
   const startRows = (node.meta && node.meta.start) || contents[0].start;
-  const ctxCanvas = el("canvas", { width: 220, height: 220 });
-  const hist = el("div", { class: "rv-hist" });
+  const ctxCanvas = el("canvas", { width: 120, height: 120 });
+  const hist = el("div", { class: "rv-hist", hidden: true });
   const earlier = paths.map(p => (p.meta && p.meta.earlier) || []);
   const histPick = node.level > 1 && earlier.some(e => e.length) ? el("div", { class: "rv-hist-pick" },
     el("span", { class: "muted" }, "How they got here:"),
     ...paths.map((p, i) => earlier[i].length ? el("button", { type: "button", onclick: () => showHistory(hist, earlier[i], LETTERS[i]) },
       node.level === 2 ? `${LETTERS[i]}'s level 1` : `${LETTERS[i]}'s levels 1-${node.level - 1}`) : null)) : null;
-  $("context").hidden = false;
+  $("deck").hidden = false;
   $("context").replaceChildren(
-    el("div", { class: "rv-ctx-head" },
-      el("span", { class: "game" }, node.game),
-      el("span", { class: "rv-tag" }, node.kind === "level_start" ? `start of level ${node.level}` : `turn branch · level ${node.level}`),
-      el("span", { class: "muted" }, node.kind === "level_start"
-        ? (node.level === 1 ? "The game's first board. Every play starts here." : "Every play that gets this far starts the level on exactly this board.")
-        : "Both continue from the same turn: same board, same thinking so far."),
-      el("span", { class: "muted" }, `${view.split.ratings} rating${view.split.ratings === 1 ? "" : "s"} on this pair so far`)),
-    el("div", { class: "rv-ctx-body" }, ctxCanvas,
-      el("div", {}, node.level === 1 && node.kind === "level_start"
-        ? el("p", { class: "muted" }, "Nothing happened before this point.") : histPick, hist)));
+    ctxCanvas,
+    el("div", { class: "rv-ctx-info" },
+      el("div", { class: "rv-ctx-head" },
+        el("span", { class: "game" }, node.game),
+        el("span", { class: "rv-tag" }, node.kind === "level_start" ? `start of level ${node.level}` : `turn branch · level ${node.level}`)),
+      el("div", { class: "muted" }, `${view.split.ratings} rating${view.split.ratings === 1 ? "" : "s"} on this pair so far`),
+      histPick),
+    hist);
   requestAnimationFrame(() => draw(ctxCanvas, startRows));
 
   // the options
@@ -119,12 +117,11 @@ async function renderSplit(view) {
   }));
 
   // the verdict
-  const choices = [...paths.map((p, i) => [p.id, LETTERS[i]]), ["tie", "about the same"], ["neither", "both bad"]];
-  $("choices").replaceChildren(...choices.map(([value, label]) => el("button", {
+  const choices = [...paths.map((p, i) => [p.id, LETTERS[i], String(i + 1)]), ["tie", "about the same", "T"], ["neither", "both bad", "N"]];
+  $("choices").replaceChildren(...choices.map(([value, label, hint]) => el("button", {
     type: "button", "data-choice": value, class: state.choice === value ? "on" : "",
-    onclick: () => pick(value) }, label)));
+    onclick: () => pick(value) }, label, " ", el("kbd", {}, hint))));
   [...$("conf").querySelectorAll("button")].forEach(b => b.classList.toggle("on", +b.dataset.conf === state.confidence));
-  $("verdict").hidden = false;
   pick(state.choice, true);
 }
 
@@ -137,6 +134,7 @@ function pick(value, quiet) {
 }
 
 async function showHistory(box, pathIds, who) {
+  box.hidden = false;
   box.replaceChildren(el("p", { class: "muted" }, "loading…"));
   try {
     const cs = await Promise.all(pathIds.map(content));
@@ -157,7 +155,7 @@ async function loadNext() {
   try {
     const view = await api(`/next?skip=${encodeURIComponent(state.skip.join(","))}`);
     if (view.done) {
-      $("context").hidden = true; $("verdict").hidden = true; $("options").replaceChildren();
+      $("deck").hidden = true; $("options").replaceChildren();
       $("empty").hidden = false;
       $("empty").textContent = `You have rated every pair in the pool (${view.rated} so far). New pairs arrive as runs finish; come back later.`;
       return;
@@ -211,11 +209,7 @@ async function refreshWho() {
   try {
     const me = await api("/me");
     state.me = me;
-    const pct = me.splits ? Math.min(100, 100 * me.rated / me.splits) : 0;
-    $("who").replaceChildren(
-      el("div", {}, "rating as ", el("b", {}, me.team ? me.name : me.name), me.team ? " (team)" : ""),
-      el("div", {}, `${me.rated} rated · ${me.splits} pairs in the pool`),
-      el("div", { class: "bar" }, el("i", { style: `width:${pct.toFixed(1)}%` })));
+    $("who").textContent = `${me.rated} rated of ${me.splits}`;
     if (me.team) renderTeam();
   } catch (e) {
     $("who").textContent = "";
@@ -279,7 +273,7 @@ async function renderTeam() {
 function keys(e) {
   if (e.target.closest("input, textarea")) return;
   const v = state.view;
-  if (!v || $("verdict").hidden) return;
+  if (!v || $("deck").hidden) return;
   if (/^[1-4]$/.test(e.key) && v.paths[+e.key - 1]) pick(v.paths[+e.key - 1].id);
   else if (e.key === "t") pick("tie");
   else if (e.key === "n") pick("neither");
