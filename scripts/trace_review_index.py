@@ -55,7 +55,17 @@ COACH_LINE = "Focus for this turn: "
 COACH_MODES = (("learn one thing", "probe"), ("step back before acting", "rethink"),
                ("the rules and the goal are established", "execute"), ("keep your thinking short", "brief"),
                ("your last attempt ended in a game over", "recover"), ("this is a new level", "transfer"),
-               ("write a small simulator", "search"), ("use UNDO to return", "backtrack"))
+               ("write a small simulator", "search"), ("use UNDO to return", "backtrack"),
+               # 3-Oct goal-grader modes (arc3_coach.GRADER_MODES)
+               ("if you have concluded that something is impossible", "assumption_check"),
+               ("for each kind of object on the board", "role_audit"),
+               ("your current idea has not made progress", "untried_element"),
+               ("say in one sentence which part of your last winning", "why_won"),
+               ("list each condition your goal needs", "requirement_audit"),
+               ("which actions have you tried only once", "action_coverage"),
+               ("part of the world may be outside the view", "look_around"),
+               ("measure the move budget", "budget_measure"),
+               ("pick the goal with the most evidence", "commit_test"))
 
 
 def coach_mode(user_prompt: str) -> str | None:
