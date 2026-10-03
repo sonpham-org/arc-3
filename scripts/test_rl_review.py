@@ -150,22 +150,80 @@ class Access(unittest.TestCase):
         self.assertEqual((status, payload), (200, doc))
 
 
+class Rl2Documents(unittest.TestCase):
+    """RL2 named documents: PUT /api/v1/rl2/publication/<name> (token), GET /api/v1/rl2/doc/<name> (team)."""
+
+    def setUp(self) -> None:
+        os.environ["ALLOWED_EMAILS"] = TEAM
+        self.root = Path(tempfile.mkdtemp())
+        self.api = RlReviewApi(no_db, self.root, "secret-token")
+        self.machine = {"Authorization": "Bearer secret-token"}
+        self.team = {"X-Forwarded-Email": TEAM}
+
+    def test_the_prefix_is_claimed(self) -> None:
+        for path in ("/api/v1/rl2/doc/dashboard", "/api/v1/rl2/publication/run-a", "/api/v1/rl2"):
+            self.assertTrue(RlReviewApi.owns(path), path)
+        self.assertFalse(RlReviewApi.owns("/api/v1/rl2x/doc/dashboard"))
+
+    def test_bad_names_are_refused_before_disk(self) -> None:
+        bad = ["", "Dashboard", "../dashboard", "..", ".hidden", "-x", "a/b", "a%2Fb", "a b", "x" * 122, "a\\b"]
+        for name in bad:
+            for method, prefix, headers in (("PUT", "publication", self.machine), ("GET", "doc", self.team)):
+                status, payload = call(self.api, method, f"/api/v1/rl2/{prefix}/{name}", headers, {"x": 1})
+                self.assertIn(status, (400, 404), name)
+                if status == 400:
+                    self.assertEqual(payload["error"], "invalid_name", name)
+        self.assertFalse((self.root / "_rl2").exists(), "nothing written for a bad name")
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/doc/../_rl/dashboard", self.team)[0], 400)
+
+    def test_good_names(self) -> None:
+        for name in ("dashboard", "run-daniel-coach-random50-a-1003", "a.b_c-1", "x" * 121):
+            status, _ = call(self.api, "PUT", f"/api/v1/rl2/publication/{name}", self.machine, {"x": 1})
+            self.assertEqual(status, 200, name)
+
+    def test_publication_needs_the_token(self) -> None:
+        path = "/api/v1/rl2/publication/dashboard"
+        self.assertEqual(call(self.api, "PUT", path, {"Authorization": "Bearer nope"}, {"x": 1})[0], 401)
+        self.assertEqual(call(self.api, "PUT", path, self.team, {"x": 1})[0], 401)
+        self.assertEqual(call(self.api, "GET", path, self.machine)[0], 405)
+        self.assertEqual(call(self.api, "PUT", path, self.machine, [1, 2])[0], 400)
+
+    def test_docs_need_a_team_email(self) -> None:
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/doc/dashboard")[0], 401)
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/doc/dashboard", self.machine)[0], 401)
+        status, payload = call(self.api, "GET", "/api/v1/rl2/doc/dashboard", self.team)
+        self.assertEqual((status, payload["error"]), (404, "no_document"))
+
+    def test_round_trip_on_disk(self) -> None:
+        doc = {"generated_at": "2026-10-03T05:30:00Z", "builds": [{"id": "animft", "parent": None}]}
+        run = {"run": "daniel-coach-a", "games": {"ka59": [{"d": 1, "mode": "probe"}]}}
+        self.assertEqual(call(self.api, "PUT", "/api/v1/rl2/publication/dashboard", self.machine,
+                              gzip.compress(json.dumps(doc).encode()))[0], 200)
+        self.assertEqual(call(self.api, "PUT", "/api/v1/rl2/publication/run-daniel-coach-a", self.machine, run)[0], 200)
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/doc/dashboard", self.team), (200, doc))
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/doc/run-daniel-coach-a", self.team), (200, run))
+        self.assertEqual(sorted(p.name for p in (self.root / "_rl2").iterdir()),
+                         ["dashboard.json", "run-daniel-coach-a.json"], "no temp files left behind")
+
+
 class ShippedFiles(unittest.TestCase):
     def test_skip_auth_routes_are_exact(self) -> None:
         entry = (ROOT / "railway" / "entrypoint.sh").read_text(encoding="utf-8")
         for route in ("^/review\\.html$", "^/api/v1/review/publication$", "^/api/v1/review/export$",
-                      "^/api/v1/rl/dashboard-publication$"):
+                      "^/api/v1/rl/dashboard-publication$", "^/api/v1/rl2/publication/[a-z0-9][a-z0-9._-]*$"):
             self.assertIn(f'--skip-auth-route="{route}"', entry)
         # nothing that would open the team routes or the RL data
         for pattern in re.findall(r'--skip-auth-route="([^"]+)"', entry):
             self.assertFalse(pattern.startswith("^/api/v1/review/") and not pattern.endswith("$"), pattern)
-            self.assertNotIn(pattern, ("^/api/v1/review/", "^/api/v1/rl/", "^/api/v1/rl/dashboard$"))
+            self.assertNotIn(pattern, ("^/api/v1/review/", "^/api/v1/rl/", "^/api/v1/rl/dashboard$", "^/api/v1/rl2/",
+                                       "^/api/v1/rl2/doc/"))
+            self.assertFalse(pattern.startswith("^/api/v1/rl2/doc"), pattern)
 
     def test_image_ships_the_module_and_pages(self) -> None:
         docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("COPY railway/rl_review.py /rl_review.py", docker)
         self.assertIn("RlReviewApi", (ROOT / "railway" / "catalog_server.py").read_text(encoding="utf-8"))
-        for page in ("review.html", "rl.html", "tree.html"):
+        for page in ("review.html", "rl.html", "rl2.html", "tree.html"):
             self.assertTrue((ROOT / "docs" / page).is_file(), page)
 
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
@@ -176,6 +234,7 @@ class ShippedFiles(unittest.TestCase):
             nav = text[text.index('class="sitetabs"'):]
             nav = nav[:nav.index("</nav>")]
             self.assertIn('href="./rl.html"', nav, page.name)
+            self.assertIn('href="./rl2.html"', nav, page.name)
             self.assertIn('href="./review.html"', nav, page.name)
             self.assertIn('href="./tree.html"', nav, page.name)
             self.assertNotIn("Harness Lab", nav, page.name)

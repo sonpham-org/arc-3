@@ -103,5 +103,6 @@ exec oauth2-proxy \
   --skip-auth-route="^/api/v1/review/publication$" \
   --skip-auth-route="^/api/v1/review/export$" \
   --skip-auth-route="^/api/v1/rl/dashboard-publication$" \
+  --skip-auth-route="^/api/v1/rl2/publication/[a-z0-9][a-z0-9._-]*$" \
   --skip-auth-route="^/data/_games/" \
   --whitelist-domain="arc3.sonpham.net"

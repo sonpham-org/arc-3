@@ -61,6 +61,7 @@ GAME_RE = re.compile(r"^[a-z0-9]{4}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+RL2_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,120}$")
 DEFAULT_FENCED = "lf52,tn36,re86,dc22,su15,as66"
 CHOICE_EXTRA = ("tie", "neither")
 VERDICTS = ("up", "down")
@@ -659,6 +660,7 @@ class RlReviewApi:
     REVIEW = "/api/v1/review"
     PUBLIC = "/api/v1/public/review"
     RL = "/api/v1/rl"
+    RL2 = "/api/v1/rl2"
 
     def __init__(self, connect: Callable[[], Any], data_root: Path, publish_token: str):
         self.connect = connect
@@ -669,7 +671,7 @@ class RlReviewApi:
 
     @classmethod
     def owns(cls, path: str) -> bool:
-        return any(path == p or path.startswith(p + "/") for p in (cls.REVIEW, cls.PUBLIC, cls.RL))
+        return any(path == p or path.startswith(p + "/") for p in (cls.REVIEW, cls.PUBLIC, cls.RL, cls.RL2))
 
     # Identity. The team routes are behind oauth2-proxy; the allowlist is re-checked here because the proxy's
     # domain setting may let other Google accounts sign in. The public prefix is skip-auth, so X-Forwarded-Email
@@ -765,6 +767,30 @@ class RlReviewApi:
             if not target.exists():
                 raise ReviewProblem(404, "no_dashboard", "nothing published yet")
             return Response(200, target.read_bytes())
+        # RL2 (turn coach): named documents, published by machines and read by the team.
+        if path.startswith(f"{self.RL2}/publication/"):
+            name = self._rl2_name(path[len(f"{self.RL2}/publication/"):])
+            self.require_token(headers)
+            if method != "PUT":
+                raise ReviewProblem(405, "method_not_allowed", "use PUT")
+            document = self._read_json(read_body, headers, MAX_DASHBOARD)
+            if not isinstance(document, dict):
+                raise ReviewProblem(400, "invalid_body", "send a JSON object")
+            target = self.data_root / "_rl2" / f"{name}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(f".{name}.{secrets.token_hex(4)}.tmp")
+            tmp.write_bytes(json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            os.replace(tmp, target)
+            return _json(200, {"apiVersion": 1, "status": "published", "name": name})
+        if path.startswith(f"{self.RL2}/doc/"):
+            name = self._rl2_name(path[len(f"{self.RL2}/doc/"):])
+            self.team_email(headers)
+            if method != "GET":
+                raise ReviewProblem(405, "method_not_allowed", "use GET")
+            target = self.data_root / "_rl2" / f"{name}.json"
+            if not target.exists():
+                raise ReviewProblem(404, "no_document", "nothing published under this name yet")
+            return Response(200, target.read_bytes())
 
         # Raters.
         if path.startswith(self.PUBLIC + "/"):
@@ -783,6 +809,12 @@ class RlReviewApi:
             sub = path[len(self.REVIEW):]
             return self._rater_route(method, sub, query, headers, read_body, f"team:{email}", email, team=True)
         raise ReviewProblem(404, "not_found", "not found")
+
+    @staticmethod
+    def _rl2_name(name: str) -> str:
+        if not RL2_NAME_RE.fullmatch(name or ""):
+            raise ReviewProblem(400, "invalid_name", "document names are lowercase letters, digits, '.', '_' and '-'")
+        return name
 
     def _rater_route(self, method: str, sub: str, query: dict[str, list[str]], headers: Any,
                      read_body: Callable[[int], bytes], rater_id: str, name: str, team: bool) -> Response:
