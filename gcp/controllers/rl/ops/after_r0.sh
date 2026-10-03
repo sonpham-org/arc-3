@@ -46,7 +46,13 @@ T=$(launch "p5train-r0-$LETTER-$TAG" noborder-panel-train5x5-v1)
 K=$(launch "p4hard-r0-$LETTER-$TAG" noborder-panel-hard4x6-v1)
 say "launched: $H $T $K"
 
-bash "$OPS/make_eval_mirror.sh" r0 "$OUT/$MJ/merged" || { say "LoRA input copy failed"; exit 1; }
+# A rerun of the panels (LETTER b, c, ...) must not rebuild the copy: its _STAGED_OK already exists, so the new VMs
+# start copying at once, and rewriting the files under them crashed their gcloud rsync (3-Oct, the b runs).
+if [ -n "${SKIP_MIRROR:-}" ]; then
+  timeout 120 gcloud storage ls "$IN/_STAGED_OK" > /dev/null 2>&1 || { say "SKIP_MIRROR but $IN is not staged"; exit 1; }
+else
+  bash "$OPS/make_eval_mirror.sh" r0 "$OUT/$MJ/merged" || { say "LoRA input copy failed"; exit 1; }
+fi
 say "LoRA input copy staged: $IN"
 
 # the RL page's panels and Trace review's run list (held-out games are refused by the publisher anyway)
