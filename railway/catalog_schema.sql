@@ -230,13 +230,19 @@ CREATE INDEX IF NOT EXISTS rl2_tree_branches_run_idx ON rl2_tree_branches (run);
 CREATE INDEX IF NOT EXISTS rl2_tree_branches_child_idx ON rl2_tree_branches (child_id);
 
 -- The universal game tree (gt_*): any rollout's data, any harness, any policy, stored once as steps and read as
--- four trees. Separate from RL v1 (Firestore) and from the RL2 tables above, which stay for now.
+-- five trees. Separate from RL v1 (Firestore) and from the RL2 tables above, which stay for now.
 --   gt_steps     one action of one rollout (the mode chosen; 'stock' for an uncoached turn): the screen before
 --                it, level and moves, where it led, what the coach saw (features), what followed (outcome),
 --                its trace (on the volume, /srv/data/_gtree/traces/<sha256>.json), and its node in each tree
---                (n1..n4) plus the node it led to (c1..c4, no FK; null at a rollout's end). Each tree is a
+--                (n1..n5) plus the node it led to (c1..c5, no FK; null at a rollout's end). Each tree is a
 --                GROUP BY over the same rows: t1 path (context-aware), t2 screen + moves, t3 level + screen,
---                t4 screen only.
+--                t4 screen only, t5 level + screen + moves bucketed by 6 (the restart grid).
+--                moves_step: game moves (engine actions the competition counts, resets included) executed in
+--                this step; tokens: tokens generated; ctx_before / ctx_after: sha256 of the context before and
+--                after the step (gs://cellens-ai-artifacts/arc3-gtree/v1/ctx/<sha>.json.gz); state_ref: sha256
+--                of a harness / REPL state record; resumable: ctx_before is exact (the step can be re-run).
+--                outcome.moves_to_clear: game moves from the start of this step until this level was cleared
+--                in this rollout (null: never cleared); the objective is fewest moves to clear a level.
 --   gt_nodes     a node of one tree. The publisher computes the ids; the root of each (tree, game) is the
 --                game start, '<game>:t<k>:root', with no screen. parent and depth are kept for t1 only.
 --   gt_screens   one board per screen hash, shared by all trees (the first board sent is kept).
@@ -251,8 +257,8 @@ CREATE TABLE IF NOT EXISTS gt_screens (
 );
 
 CREATE TABLE IF NOT EXISTS gt_nodes (
-    id text PRIMARY KEY CHECK (id ~ '^[a-z0-9]{4}:t[1-4]:([0-9a-f]{16}|root)$'),
-    tree smallint NOT NULL CHECK (tree BETWEEN 1 AND 4),
+    id text PRIMARY KEY CONSTRAINT gt_nodes_id_t5 CHECK (id ~ '^[a-z0-9]{4}:t[1-5]:([0-9a-f]{16}|root)$'),
+    tree smallint NOT NULL CONSTRAINT gt_nodes_tree_t5 CHECK (tree BETWEEN 1 AND 5),
     game text NOT NULL CHECK (game ~ '^[a-z0-9]{4}$'),
     level integer CHECK (level >= 0),
     moves integer CHECK (moves >= 0),
@@ -310,24 +316,80 @@ CREATE TABLE IF NOT EXISTS gt_steps (
     n2 text NOT NULL REFERENCES gt_nodes (id),
     n3 text NOT NULL REFERENCES gt_nodes (id),
     n4 text NOT NULL REFERENCES gt_nodes (id),
+    n5 text NOT NULL REFERENCES gt_nodes (id),
     c1 text,
     c2 text,
     c3 text,
     c4 text,
+    c5 text,
+    moves_step integer NOT NULL DEFAULT 0 CONSTRAINT gt_steps_moves_step_check CHECK (moves_step >= 0),
+    tokens integer CONSTRAINT gt_steps_tokens_check CHECK (tokens >= 0),
+    ctx_before text CONSTRAINT gt_steps_ctx_before_check CHECK (ctx_before ~ '^[0-9a-f]{64}$'),
+    ctx_after text CONSTRAINT gt_steps_ctx_after_check CHECK (ctx_after ~ '^[0-9a-f]{64}$'),
+    state_ref text CONSTRAINT gt_steps_state_ref_check CHECK (state_ref ~ '^[0-9a-f]{64}$'),
+    resumable boolean NOT NULL DEFAULT false,
     UNIQUE (rollout_id, seq),
-    CHECK ((c1 IS NULL) = (c2 IS NULL) AND (c2 IS NULL) = (c3 IS NULL) AND (c3 IS NULL) = (c4 IS NULL))
+    -- c1..c5 all set or all null (the rollout's end); n5 IS NULL only on rows stored before t5 (see below)
+    CONSTRAINT gt_steps_children_t5 CHECK (
+        ((c1 IS NULL) = (c2 IS NULL) AND (c2 IS NULL) = (c3 IS NULL) AND (c3 IS NULL) = (c4 IS NULL))
+        AND (n5 IS NULL OR (c4 IS NULL) = (c5 IS NULL))),
+    CONSTRAINT gt_steps_resumable_ctx CHECK (NOT resumable OR ctx_before IS NOT NULL)
 );
+
+-- Migrations for a database made before t5 and the moves columns (3-Oct-2026). Safe to re-run on every start:
+-- each step checks before it changes anything. Rows stored before t5 keep n5 / c5 null (the server refuses new
+-- steps without them); n5 becomes NOT NULL once no such row is left.
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS n5 text REFERENCES gt_nodes (id);
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS c5 text;
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS moves_step integer NOT NULL DEFAULT 0
+    CONSTRAINT gt_steps_moves_step_check CHECK (moves_step >= 0);
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS tokens integer CONSTRAINT gt_steps_tokens_check CHECK (tokens >= 0);
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS ctx_before text
+    CONSTRAINT gt_steps_ctx_before_check CHECK (ctx_before ~ '^[0-9a-f]{64}$');
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS ctx_after text
+    CONSTRAINT gt_steps_ctx_after_check CHECK (ctx_after ~ '^[0-9a-f]{64}$');
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS state_ref text
+    CONSTRAINT gt_steps_state_ref_check CHECK (state_ref ~ '^[0-9a-f]{64}$');
+ALTER TABLE gt_steps ADD COLUMN IF NOT EXISTS resumable boolean NOT NULL DEFAULT false;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_nodes_id_t5') THEN
+        ALTER TABLE gt_nodes DROP CONSTRAINT IF EXISTS gt_nodes_id_check;
+        ALTER TABLE gt_nodes ADD CONSTRAINT gt_nodes_id_t5 CHECK (id ~ '^[a-z0-9]{4}:t[1-5]:([0-9a-f]{16}|root)$');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_nodes_tree_t5') THEN
+        ALTER TABLE gt_nodes DROP CONSTRAINT IF EXISTS gt_nodes_tree_check;
+        ALTER TABLE gt_nodes ADD CONSTRAINT gt_nodes_tree_t5 CHECK (tree BETWEEN 1 AND 5);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_steps_children_t5') THEN
+        ALTER TABLE gt_steps DROP CONSTRAINT IF EXISTS gt_steps_check;
+        ALTER TABLE gt_steps ADD CONSTRAINT gt_steps_children_t5 CHECK (
+            ((c1 IS NULL) = (c2 IS NULL) AND (c2 IS NULL) = (c3 IS NULL) AND (c3 IS NULL) = (c4 IS NULL))
+            AND (n5 IS NULL OR (c4 IS NULL) = (c5 IS NULL)));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_steps_resumable_ctx') THEN
+        ALTER TABLE gt_steps ADD CONSTRAINT gt_steps_resumable_ctx CHECK (NOT resumable OR ctx_before IS NOT NULL);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'gt_steps'::regclass AND attname = 'n5'
+               AND NOT attnotnull) AND NOT EXISTS (SELECT 1 FROM gt_steps WHERE n5 IS NULL) THEN
+        ALTER TABLE gt_steps ALTER COLUMN n5 SET NOT NULL;
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS gt_steps_n1_idx ON gt_steps (n1, action);
 CREATE INDEX IF NOT EXISTS gt_steps_n2_idx ON gt_steps (n2, action);
 CREATE INDEX IF NOT EXISTS gt_steps_n3_idx ON gt_steps (n3, action);
 CREATE INDEX IF NOT EXISTS gt_steps_n4_idx ON gt_steps (n4, action);
+CREATE INDEX IF NOT EXISTS gt_steps_n5_idx ON gt_steps (n5, action);
 CREATE INDEX IF NOT EXISTS gt_steps_c1_idx ON gt_steps (c1);
 CREATE INDEX IF NOT EXISTS gt_steps_c2_idx ON gt_steps (c2);
 CREATE INDEX IF NOT EXISTS gt_steps_c3_idx ON gt_steps (c3);
 CREATE INDEX IF NOT EXISTS gt_steps_c4_idx ON gt_steps (c4);
+CREATE INDEX IF NOT EXISTS gt_steps_c5_idx ON gt_steps (c5);
 CREATE INDEX IF NOT EXISTS gt_steps_rollout_idx ON gt_steps (rollout_id);
-CREATE INDEX IF NOT EXISTS gt_steps_game_idx ON gt_steps (game);
+DROP INDEX IF EXISTS gt_steps_game_idx;
+CREATE INDEX IF NOT EXISTS gt_steps_game_level_idx ON gt_steps (game, level);
 
 CREATE OR REPLACE FUNCTION arc3_refresh_catalog_snapshot()
 RETURNS void

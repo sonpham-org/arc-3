@@ -33,9 +33,10 @@ Who is calling, by route:
                                       traces). GET .../rl2/tree/games, /node/<id>, /trace/<sha>: the team.
                                       (Kept for now; the RL2 page reads the universal tree below.)
   /api/v1/gtree/publication           PUT, machines: rollouts, screens, nodes, steps, traces into the universal game
-                                      tree (one step table read as four trees; rollouts from the game start or
+                                      tree (one step table read as five trees; rollouts from the game start or
                                       restarted mid-tree). GET .../gtree/games, /stats, /node/<id>, /rollout/<id>,
-                                      /trace/<sha>, /frontier?game=&tree=&N=: the team.
+                                      /trace/<sha>, /frontier?game=&tree=&N=&mode=, /value/<id>?penalty=&pi=,
+                                      /shortest?game=&level=&tree=: the team.
 
 Held-out games (ARC3_REVIEW_FENCED; default the five test games and as66) are refused at publication: a rating
 on them could leak into training. Game ids only, never titles.
@@ -910,24 +911,33 @@ def tree_node(cursor: Any, node_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------------------ the universal game tree
-# Any rollout's data, stored once and read as four trees (tables gt_screens / gt_nodes / gt_rollouts / gt_steps,
+# Any rollout's data, stored once and read as five trees (tables gt_screens / gt_nodes / gt_rollouts / gt_steps,
 # catalog_schema.sql), separate from RL v1 (Firestore) and from the RL2 tables above.
 #
 #   step     one action of one rollout: the mode chosen ('stock' for an uncoached turn), the screen before it, what
-#            the coach saw (features), what followed (outcome), its trace, and its node in each tree (n1..n4) plus the
-#            node it led to (c1..c4; null at a rollout's end).
+#            the coach saw (features), what followed (outcome), its trace, and its node in each tree (n1..n5) plus the
+#            node it led to (c1..c5; null at a rollout's end). moves_step is the game moves it executed (engine
+#            actions the competition counts, resets included); tokens, ctx_before / ctx_after (sha256 of context
+#            nodes in gs://cellens-ai-artifacts/arc3-gtree/v1/ctx/<sha>.json.gz), state_ref and resumable say what
+#            it cost and whether it can be re-run from its exact context.
 #   tree     t1 path (context-aware: the actions taken since the game start), t2 screen + moves, t3 level + screen,
-#            t4 screen only. Every step is in all four, so each tree is a GROUP BY over the same rows. The root of a
-#            tree is the game start, '<game>:t<k>:root' (screen null). The PUBLISHER computes every node id; the
-#            server only checks their shape and that a step's nodes exist.
+#            t4 screen only, t5 level + screen + moves bucketed by 6 (the restart grid). Every step is in all five, so
+#            each tree is a GROUP BY over the same rows. The root of a tree is the game start, '<game>:t<k>:root'
+#            (screen null). The PUBLISHER computes every node id; the server only checks their shape and that a
+#            step's nodes exist.
+#   value    the objective is game MOVES to clear a level. A step's outcome.moves_to_clear is the moves from its start
+#            until its rollout cleared the level (null: never). Q(node, a) = mean over the steps of a there of
+#            -(moves_to_clear), or -penalty for a step whose rollout never cleared; V = sum_a pi(a) Q(a).
 #   rollout  one play: from the game start (origin_state null, origin_kind 'start') or restarted from a t1 node in
 #            the middle of the tree (Go-Explore style: origin_state the node, origin_kind replay_exact /
 #            replay_actions / restore, origin_edge the step it branched after, if any).
 # Traces are on the volume, <data root>/_gtree/traces/<sha>.json, named like the RL2 traces (rl2_trace_bytes).
-GT_TREES = (1, 2, 3, 4)
-GT_TREE_NAMES = {1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only"}
+GT_TREES = (1, 2, 3, 4, 5)
+GT_TREE_NAMES = {1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only",
+                 5: "screen + move bucket (restart grid)"}
 GT_ORIGINS = ("start", "replay_exact", "replay_actions", "restore")
-GT_NODE_RE = re.compile(r"^([a-z0-9]{4}):t([1-4]):([0-9a-f]{16}|root)$")
+GT_NODE_RE = re.compile(r"^([a-z0-9]{4}):t([1-5]):([0-9a-f]{16}|root)$")
+GT_NODE_HELP = "a node id is '<game>:t<1-5>:<16 hex>' or '<game>:t<1-5>:root'"
 GT_SCREEN_RE = re.compile(r"^[0-9a-f]{12}$")
 GT_STEP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~-]{0,254}$")
 GT_ACTION_RE = re.compile(r"^[A-Za-z0-9_.:+-]{1,40}$")
@@ -938,7 +948,11 @@ MAX_HIDDEN_REF = 500
 MAX_FRONTIER = 500
 MAX_FRONTIER_N = 1000
 GT_OUTCOME_KEYS = (("lvl30", "lvl30"), ("cleared", "cleared_level"), ("acts", "acts"), ("go", "go_turn"),
-                   ("level_score", "level_score"))
+                   ("level_score", "level_score"), ("moves_to_clear", "moves_to_clear"))
+DEFAULT_PENALTY = 200                       # value of a step whose rollout never cleared its level: -penalty moves
+MAX_PENALTY = 1_000_000
+MAX_SHORTEST_STEPS = 200_000                # steps read per shortest-path query (more: truncated)
+FRONTIER_MODES = ("coverage", "uncertain", "backward")
 
 
 def _small(value: Any, field: str, where: str, limit: int = MAX_TREE_JSON) -> dict[str, Any]:
@@ -957,8 +971,8 @@ def _node_id(value: Any, field: str, where: str, game: str | None = None, tree: 
         return None
     match = GT_NODE_RE.fullmatch(value) if isinstance(value, str) else None
     if not match:
-        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a node id '<game>:t<1-4>:<16 hex>' or "
-                                                     f"'<game>:t<1-4>:root'" + (" or null" if null else ""))
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a node id '<game>:t<1-5>:<16 hex>' or "
+                                                     f"'<game>:t<1-5>:root'" + (" or null" if null else ""))
     if game is not None and match.group(1) != game:
         raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a node of another game")
     if tree is not None and int(match.group(2)) != tree:
@@ -982,6 +996,55 @@ def _board(value: Any, where: str) -> list[str] | None:
     return value
 
 
+def _sha_ref(value: Any, field: str, where: str) -> str | None:
+    """A sha256 reference (64 lowercase hex) or null: a context node in GCS, or a harness state record."""
+
+    if value is None:
+        return None
+    if not isinstance(value, str) or not SHA_RE.fullmatch(value):
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} is a sha256 (64 lowercase hex) or null")
+    return value
+
+
+def _outcome(value: Any, where: str, moves_step: int) -> dict[str, Any]:
+    """A step's outcome: any small object, with the typed keys the value and shortest-path reads use checked.
+
+      moves_to_clear  int >= moves_step, or null: game moves from the start of this step until this level was cleared
+                      in this rollout (null: never cleared). The clearing step has moves_to_clear == moves_step.
+      cleared_level   0 / 1 (true / false accepted): this rollout cleared this level. If both are sent, it is 1
+                      exactly when moves_to_clear is set.
+      level_weight    int >= 0 (k, the level's weight in the score), or null
+      human_moves     int >= 0 (the level's human baseline), or null
+      level_score     number >= 0 (uncapped speed score), or null"""
+
+    out = _small(value, "outcome", where)
+
+    def bad(text: str) -> ReviewProblem:
+        return ReviewProblem(400, "invalid_outcome", f"{where}: outcome.{text}")
+
+    def whole(key: str) -> int | None:
+        v = out.get(key)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
+            raise bad(f"{key} is an integer >= 0 or null")
+        return v
+
+    mtc = whole("moves_to_clear")
+    whole("level_weight")
+    whole("human_moves")
+    if mtc is not None and mtc < moves_step:
+        raise bad("moves_to_clear counts this step's moves too, so it is at least moves_step")
+    cleared = out.get("cleared_level")
+    if cleared is not None and (not isinstance(cleared, (int, bool)) or cleared not in (0, 1)):
+        raise bad("cleared_level is 0, 1 or null")
+    if "moves_to_clear" in out and cleared is not None and bool(cleared) != (mtc is not None):
+        raise bad("cleared_level is 1 exactly when moves_to_clear is set")
+    score = out.get("level_score")
+    # uncapped speed score (Son 3-Oct: no 1.15 cap; beating the fastest known clear scores above 1)
+    if score is not None and (isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 1e6):
+        raise bad("level_score is a number >= 0 or null")
+    return out
+
+
 def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
     """Validate one publication to the universal tree (no database, no disk). Returns {rollouts, screens, nodes,
     steps, traces} ready for SQL; traces as {sha: canonical bytes}. References to nodes and traces outside the body
@@ -996,10 +1059,10 @@ def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
     if not lists["rollouts"]:
         raise ReviewProblem(400, "invalid_body", "send at least one rollout")
     if (len(lists["rollouts"]) > MAX_GT_ROLLOUTS or len(lists["screens"]) > MAX_TREE_NODES
-            or len(lists["nodes"]) > 4 * MAX_TREE_NODES or len(lists["steps"]) > MAX_TREE_BRANCHES
+            or len(lists["nodes"]) > len(GT_TREES) * MAX_TREE_NODES or len(lists["steps"]) > MAX_TREE_BRANCHES
             or len(traces) > MAX_TREE_TRACES):
         raise ReviewProblem(413, "too_many", f"at most {MAX_GT_ROLLOUTS} rollouts, {MAX_TREE_NODES} screens, "
-                                             f"{4 * MAX_TREE_NODES} nodes, {MAX_TREE_BRANCHES} steps, "
+                                             f"{len(GT_TREES) * MAX_TREE_NODES} nodes, {MAX_TREE_BRANCHES} steps, "
                                              f"{MAX_TREE_TRACES} traces per publication")
     clean_traces: dict[str, bytes] = {}
     for sha, content in traces.items():
@@ -1115,6 +1178,13 @@ def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
             raise ReviewProblem(400, "invalid_hidden_ref", f"step {sid}: hidden_ref is one line of text, "
                                                            f"at most {MAX_HIDDEN_REF} characters")
         where = f"step {sid}"
+        moves_step = _int(st.get("moves_step"), "moves_step")
+        resumable = st.get("resumable", False)
+        if not isinstance(resumable, bool):
+            raise ReviewProblem(400, "invalid_resumable", f"{where}: resumable is true or false")
+        ctx_before = _sha_ref(st.get("ctx_before"), "ctx_before", where)
+        if resumable and ctx_before is None:
+            raise ReviewProblem(400, "invalid_resumable", f"{where}: a resumable step names its exact ctx_before")
         item = {
             "id": sid, "rollout_id": rid, "seq": seq, "game": game, "level": _int(st.get("level"), "level"),
             "moves": _int(st.get("moves"), "moves"), "screen_hash": _screen(st.get("screen_hash"), "screen_hash", where),
@@ -1122,13 +1192,17 @@ def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
             "next_level": _int(st.get("next_level"), "next_level", null=True),
             "next_moves": _int(st.get("next_moves"), "next_moves", null=True), "action": action,
             "detail": _small(st.get("detail"), "detail", where), "features": _small(st.get("features"), "features", where),
-            "outcome": _small(st.get("outcome"), "outcome", where), "trace_sha": trace_sha, "hidden_ref": hidden_ref,
+            "outcome": _outcome(st.get("outcome"), where, moves_step), "trace_sha": trace_sha,
+            "hidden_ref": hidden_ref, "moves_step": moves_step,
+            "tokens": _int(st.get("tokens"), "tokens", null=True), "ctx_before": ctx_before,
+            "ctx_after": _sha_ref(st.get("ctx_after"), "ctx_after", where),
+            "state_ref": _sha_ref(st.get("state_ref"), "state_ref", where), "resumable": resumable,
         }
         for k in GT_TREES:
             item[f"n{k}"] = _node_id(st.get(f"n{k}"), f"n{k}", where, game, k)
             item[f"c{k}"] = _node_id(st.get(f"c{k}"), f"c{k}", where, game, k, null=True)
         if len({item[f"c{k}"] is None for k in GT_TREES}) > 1:
-            raise ReviewProblem(400, "invalid_step", f"{where}: c1..c4 are all set or all null (the rollout's end)")
+            raise ReviewProblem(400, "invalid_step", f"{where}: c1..c5 are all set or all null (the rollout's end)")
         steps.append(item)
     return {"rollouts": list(rollouts.values()), "screens": list(screens.values()), "nodes": list(nodes.values()),
             "steps": steps, "traces": clean_traces}
@@ -1198,14 +1272,14 @@ def publish_gtree(cursor: Any, data_root: Path, bundle: Any) -> dict[str, Any]:
     _insert_many(
         cursor,
         "INSERT INTO gt_steps (id, rollout_id, seq, game, level, moves, screen_hash, next_screen_hash, next_level, "
-        "next_moves, action, detail, features, outcome, trace_sha, hidden_ref, n1, n2, n3, n4, c1, c2, c3, c4) "
-        "VALUES %s",
-        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, "
-        "%s, %s)",
+        "next_moves, action, detail, features, outcome, trace_sha, hidden_ref, n1, n2, n3, n4, n5, c1, c2, c3, c4, c5, "
+        "moves_step, tokens, ctx_before, ctx_after, state_ref, resumable) VALUES %s",
+        "(" + ", ".join(["%s"] * 11 + ["%s::jsonb"] * 3 + ["%s"] * 18) + ")",
         [(s["id"], s["rollout_id"], s["seq"], s["game"], s["level"], s["moves"], s["screen_hash"],
           s["next_screen_hash"], s["next_level"], s["next_moves"], s["action"], json.dumps(s["detail"]),
           json.dumps(s["features"]), json.dumps(s["outcome"]), s["trace_sha"], s["hidden_ref"],
-          s["n1"], s["n2"], s["n3"], s["n4"], s["c1"], s["c2"], s["c3"], s["c4"]) for s in item["steps"]])
+          *(s[f"n{k}"] for k in GT_TREES), *(s[f"c{k}"] for k in GT_TREES), s["moves_step"], s["tokens"],
+          s["ctx_before"], s["ctx_after"], s["state_ref"], s["resumable"]) for s in item["steps"]])
     written = 0
     if item["traces"]:
         store.mkdir(parents=True, exist_ok=True)
@@ -1222,10 +1296,10 @@ def publish_gtree(cursor: Any, data_root: Path, bundle: Any) -> dict[str, Any]:
             "stepsReplaced": replaced, "traces": len(item["traces"]), "tracesWritten": written}
 
 
-def _gt_tree(query: dict[str, list[str]]) -> int:
-    raw = (query.get("tree") or ["1"])[0]
-    if raw not in ("1", "2", "3", "4"):
-        raise ReviewProblem(400, "invalid_tree", "tree is 1, 2, 3 or 4")
+def _gt_tree(query: dict[str, list[str]], default: int = 1) -> int:
+    raw = (query.get("tree") or [str(default)])[0]
+    if raw not in [str(k) for k in GT_TREES]:
+        raise ReviewProblem(400, "invalid_tree", "tree is 1, 2, 3, 4 or 5")
     return int(raw)
 
 
@@ -1271,7 +1345,8 @@ ROLLOUT_COLUMNS = ("id, game, run, build, model, harness, policy, origin_state, 
                    "result, published_at")
 STEP_COLUMNS = ("s.id, s.rollout_id, s.seq, s.game, s.level, s.moves, s.screen_hash, s.next_screen_hash, s.next_level, "
                 "s.next_moves, s.action, s.detail, s.features, s.outcome, s.trace_sha, s.hidden_ref, "
-                "s.n1, s.n2, s.n3, s.n4, s.c1, s.c2, s.c3, s.c4")
+                "s.n1, s.n2, s.n3, s.n4, s.n5, s.c1, s.c2, s.c3, s.c4, s.c5, s.moves_step, s.tokens, s.ctx_before, "
+                "s.ctx_after, s.state_ref, s.resumable")
 
 
 def gtree_node(cursor: Any, node_id: str) -> dict[str, Any]:
@@ -1282,7 +1357,7 @@ def gtree_node(cursor: Any, node_id: str) -> dict[str, Any]:
 
     match = GT_NODE_RE.fullmatch(node_id or "")
     if not match:
-        raise ReviewProblem(400, "invalid_node", "a node id is '<game>:t<1-4>:<16 hex>' or '<game>:t<1-4>:root'")
+        raise ReviewProblem(400, "invalid_node", GT_NODE_HELP)
     k = int(match.group(2))
     cursor.execute("SELECT id, tree, game, level, moves, screen_hash, parent, depth, first_seen FROM gt_nodes "
                    "WHERE id = %s", (node_id,))
@@ -1365,7 +1440,7 @@ def gtree_rollout(cursor: Any, rollout_id: str) -> dict[str, Any]:
 
 
 def gtree_stats(cursor: Any) -> dict[str, Any]:
-    """Totals: rollouts, steps, games; per tree its nodes and games (every step is in all four trees)."""
+    """Totals: rollouts, steps, games; per tree its nodes and games (every step is in all five trees)."""
 
     cursor.execute("SELECT count(*), count(DISTINCT game), count(*) FILTER (WHERE origin_kind <> 'start') "
                    "FROM gt_rollouts")
@@ -1388,11 +1463,179 @@ _CLEARED_SQL = ("CASE jsonb_typeof(s.outcome -> 'cleared_level') "
                 "WHEN 'boolean' THEN CASE WHEN (s.outcome ->> 'cleared_level')::boolean THEN 1.0 ELSE 0.0 END END")
 
 
+# Moves to clear of one step, as SQL: outcome.moves_to_clear when it is a number; null otherwise (never cleared).
+_MTC_SQL = ("CASE WHEN jsonb_typeof(s.outcome -> 'moves_to_clear') = 'number' "
+            "THEN (s.outcome ->> 'moves_to_clear')::double precision END")
+
+
+def _r4(x: Any) -> float | None:
+    return None if x is None else round(float(x), 4)
+
+
+def gtree_value(cursor: Any, node_id: str, penalty: float = DEFAULT_PENALTY,
+                pi: dict[str, float] | None = None) -> dict[str, Any]:
+    """The value of one node of any tree, in game moves (the objective: fewest moves to clear the level). Per action a
+    over the steps leaving the node:
+
+      n                    steps
+      cleared, clear_rate  steps whose rollout cleared this level (outcome.moves_to_clear set), and their share
+      mean_moves_to_clear  mean moves_to_clear over the steps that cleared (null if none did)
+      q                    mean over all steps of -(moves_to_clear) if it cleared, else -penalty
+      tokens, moves_step   mean tokens generated and game moves executed in the step itself (nulls ignored)
+
+    V = sum_a pi(a) q(a). pi is the one given (renormalised over the actions seen here; actions not seen here are
+    listed in pi_ignored), else the empirical action frequencies. best: the fewest moves_to_clear among all steps
+    leaving the node, and the step that achieved it (ties: rollout id, then seq)."""
+
+    match = GT_NODE_RE.fullmatch(node_id or "")
+    if not match:
+        raise ReviewProblem(400, "invalid_node", GT_NODE_HELP)
+    k = int(match.group(2))
+    cursor.execute("SELECT id, tree, game, level, moves, screen_hash FROM gt_nodes WHERE id = %s", (node_id,))
+    rows = _rows(cursor)
+    if not rows:
+        raise ReviewProblem(404, "unknown_node", "no such node")
+    cursor.execute(
+        f"""
+        SELECT s.action, count(*), count(m.mtc), avg(m.mtc),
+               avg(CASE WHEN m.mtc IS NULL THEN %s::double precision ELSE -m.mtc END), avg(s.tokens), avg(s.moves_step)
+        FROM gt_steps s CROSS JOIN LATERAL (SELECT {_MTC_SQL} AS mtc) m
+        WHERE s.n{k} = %s GROUP BY s.action ORDER BY s.action
+        """,
+        (-float(penalty), node_id))
+    actions: dict[str, dict[str, Any]] = {}
+    for action, n, cleared, mean_mtc, q, tokens, moves_step in cursor.fetchall():
+        actions[action] = {"n": n, "cleared": cleared, "clear_rate": _r4(cleared / n), "mean_moves_to_clear":
+                           _r4(mean_mtc), "q": _r4(q), "tokens": _r4(tokens), "moves_step": _r4(moves_step)}
+    total = sum(a["n"] for a in actions.values())
+    ignored: list[str] = []
+    if pi is not None:
+        source = "query"
+        ignored = sorted(set(pi) - set(actions))
+        weights = {a: float(pi.get(a, 0.0)) for a in actions}
+    else:
+        source = "empirical"
+        weights = {a: float(v["n"]) for a, v in actions.items()}
+    norm = sum(weights.values())
+    value = _r4(sum(w / norm * actions[a]["q"] for a, w in weights.items())) if norm > 0 else None
+    policy = {a: round(w / norm, 6) for a, w in weights.items()} if norm > 0 else {}
+    cursor.execute(
+        f"""
+        SELECT s.id, s.rollout_id, s.seq, s.action, m.mtc
+        FROM gt_steps s CROSS JOIN LATERAL (SELECT {_MTC_SQL} AS mtc) m
+        WHERE s.n{k} = %s AND m.mtc IS NOT NULL ORDER BY m.mtc, s.rollout_id, s.seq LIMIT 1
+        """,
+        (node_id,))
+    row = cursor.fetchone()
+    best = None if row is None else {"moves_to_clear": int(row[4]), "step_id": row[0], "rollout_id": row[1],
+                                     "seq": row[2], "action": row[3]}
+    return {"apiVersion": 1, "node": rows[0], "tree": k, "tree_name": GT_TREE_NAMES[k], "penalty": penalty,
+            "n": total, "actions": actions, "pi": policy, "pi_source": source, "pi_ignored": ignored, "V": value,
+            "best": best,
+            "formula": "q(a) = mean over steps of a: -(moves_to_clear) if the rollout cleared this level, else "
+                       "-penalty; V = sum_a pi(a) q(a)"}
+
+
+def _shortest(cursor: Any, game: str, level: int, tree: int, cap: int = MAX_SHORTEST_STEPS) -> dict[str, Any]:
+    """Cross-run shortest known paths to clear one level, on the graph of one tree: every step of that game and
+    level is an edge from its node n<tree> to the node it led to c<tree>, weighted by its game moves (moves_step).
+    A goal step is one where its rollout cleared the level in that very step (cleared_level 1 and moves_to_clear ==
+    moves_step); it is an edge to the goal. Dijkstra backward from the goal gives each node its fewest known moves to
+    clear, and the step to take (ties: the lower step id). Plays merge wherever they share a node, so a path may
+    combine several rollouts. A level start is a step whose rollout was on a lower level the step before, or the
+    first step of a rollout from the game start."""
+
+    import heapq
+
+    cursor.execute(
+        f"""
+        SELECT s.id, s.rollout_id, s.seq, s.action, s.n{tree}, s.c{tree}, s.moves_step, s.n1, {_MTC_SQL},
+               {_CLEARED_SQL},
+               (p.id IS NOT NULL AND p.level < s.level) OR (p.id IS NULL AND r.origin_kind = 'start')
+        FROM gt_steps s JOIN gt_rollouts r ON r.id = s.rollout_id
+             LEFT JOIN gt_steps p ON p.rollout_id = s.rollout_id AND p.seq = s.seq - 1
+        WHERE s.game = %s AND s.level = %s ORDER BY s.rollout_id, s.seq LIMIT {cap + 1}
+        """,
+        (game, level))
+    rows = cursor.fetchall()
+    truncated = len(rows) > cap
+    rows = rows[:cap]
+    steps: dict[str, dict[str, Any]] = {}
+    back: dict[str, list[tuple[str, int, str]]] = {}       # to -> [(from, moves, step id)]
+    goal_from: dict[str, tuple[int, str]] = {}               # node -> (moves, step id) of its best goal step
+    nodes: set[str] = set()
+    starts: set[str] = set()
+    goals = 0
+    for sid, rid, seq, action, n, c, w, n1, mtc, cleared, level_start in rows:
+        steps[sid] = {"id": sid, "rollout_id": rid, "seq": seq, "action": action, "from": n, "to": c,
+                      "moves_step": w, "t1": n1}
+        nodes.add(n)
+        if level_start:
+            starts.add(n)
+        if cleared == 1 and mtc is not None and int(mtc) == w:
+            goals += 1
+            steps[sid]["to"] = None                           # the goal: this level is cleared
+            if n not in goal_from or (w, sid) < goal_from[n]:
+                goal_from[n] = (w, sid)
+        elif c is not None:
+            back.setdefault(c, []).append((n, w, sid))
+    dist: dict[str, tuple[int, str]] = {}                     # node -> (moves to clear, first step id)
+    heap = [(w, sid, n) for n, (w, sid) in goal_from.items()]
+    heapq.heapify(heap)
+    while heap:
+        d, sid, u = heapq.heappop(heap)
+        if u in dist:
+            continue
+        dist[u] = (d, sid)
+        for v, w, via in back.get(u, ()):
+            if v not in dist:
+                heapq.heappush(heap, (d + w, via, v))
+    best = None
+    reach = sorted((dist[n][0], n) for n in starts if n in dist)
+    if reach:
+        moves, at = reach[0]
+        path, seen = [], set()
+        while at is not None and at not in seen:
+            seen.add(at)
+            step = steps[dist[at][1]]
+            path.append(step)
+            at = step["to"]
+        best = {"start": reach[0][1], "moves": moves, "steps": path}
+    return {"dist": dist, "steps": steps, "nodes": nodes, "starts": starts, "goals": goals, "best": best,
+            "steps_read": len(rows), "truncated": truncated}
+
+
+def gtree_shortest(cursor: Any, game: str, level: int, tree: int = 3) -> dict[str, Any]:
+    """Shortest known paths (in game moves) to clear one level of one game, across all runs: per node of that level
+    its distance to the goal and the step to take, the level's start nodes, and the best path from them (a list of
+    steps, possibly from several rollouts). See _shortest."""
+
+    g = _shortest(cursor, game, level, tree)
+    if not g["nodes"]:
+        raise ReviewProblem(404, "unknown_level", "no steps stored for this game and level")
+    dist, steps = g["dist"], g["steps"]
+
+    def row(nid: str) -> dict[str, Any]:
+        if nid not in dist:
+            return {"id": nid, "distance": None, "step": None, "action": None, "t1": None, "start": nid in g["starts"]}
+        d, sid = dist[nid]
+        return {"id": nid, "distance": d, "step": sid, "action": steps[sid]["action"], "t1": steps[sid]["t1"],
+                "start": nid in g["starts"]}
+
+    order = sorted(g["nodes"], key=lambda n: (n not in dist, dist.get(n, (0, ""))[0], n))
+    return {"apiVersion": 1, "game": game, "level": level, "tree": tree, "tree_name": GT_TREE_NAMES[tree],
+            "steps_read": g["steps_read"], "truncated": g["truncated"], "goal_steps": g["goals"],
+            "reachable": len(dist), "nodes": [row(n) for n in order],
+            "starts": [row(n) for n in sorted(g["starts"], key=lambda n: (n not in dist, dist.get(n, (0, ""))[0], n))],
+            "best": g["best"]}
+
+
 def gtree_frontier(cursor: Any, game: str, tree: int = 1, n: int = 4, limit: int = 50,
-                   actions: list[str] | None = None) -> dict[str, Any]:
-    """Nodes to sample next: the nodes of one tree where some action has fewer than N samples (Go-Explore style
-    restarts, up to N per (node, action)). The actions are the ones given, else every action seen in this game. Best
-    first by a score of four parts, each returned so the order can be checked:
+                   actions: list[str] | None = None, mode: str = "coverage") -> dict[str, Any]:
+    """Nodes to sample next (Go-Explore style restarts) in one tree. Three modes:
+
+    coverage (default): the nodes where some action has fewer than N samples (up to N per (node, action)). The actions
+    are the ones given, else every action seen in this game. Best first by a score of four parts, each returned:
 
       few     1 if at most 3 steps leave the node (little explored), else 0
       depth   the node's level / the deepest level of this tree's nodes in the game (a root counts as level 0)
@@ -1401,18 +1644,27 @@ def gtree_frontier(cursor: Any, game: str, tree: int = 1, n: int = 4, limit: int
       merge   0.5 if steps from more than one rollout arrive (several plays meet here), else 0
 
     score = few + depth + spread + merge; ties go to the higher level, then more arrivals, then the id. 'open' lists
-    the actions still short of N and how many samples each needs."""
+    the actions still short of N and how many samples each needs.
+
+    uncertain: the same nodes and parts, plus
+      uncertain  p (1 - p), p the node's clear rate (cleared_level over its steps that have one; 0 with none)
+      explore    1 / sqrt(steps out + 1)  (the Go-Explore count bonus)
+
+    backward (Salimans & Chen 2018: restart from a demonstration's end and move the start back): the nodes on the
+    best known path of each level (from each level start that reaches the goal; see gtree_shortest), nearest the goal
+    first, with their distance in moves, the step to take and its t1 node (a node a rollout can restart from). Not
+    filtered by N; 'open' is still reported."""
 
     cursor.execute("SELECT id, level FROM gt_nodes WHERE game = %s AND tree = %s", (game, tree))
     levels = {nid: lvl or 0 for nid, lvl in cursor.fetchall()}
     if not levels:
         raise ReviewProblem(404, "unknown_game", "nothing stored for this game in this tree")
     deepest = max(levels.values()) or 1
-    cursor.execute(f"SELECT s.n{tree}, s.action, count(*), avg({_CLEARED_SQL}) FROM gt_steps s WHERE s.game = %s "
-                   f"GROUP BY s.n{tree}, s.action", (game,))
-    per: dict[str, dict[str, tuple[int, float | None]]] = {}
-    for nid, action, count, rate in cursor.fetchall():
-        per.setdefault(nid, {})[action] = (count, None if rate is None else float(rate))
+    cursor.execute(f"SELECT s.n{tree}, s.action, count(*), avg({_CLEARED_SQL}), count({_CLEARED_SQL}) FROM gt_steps s "
+                   f"WHERE s.game = %s GROUP BY s.n{tree}, s.action", (game,))
+    per: dict[str, dict[str, tuple[int, float | None, int]]] = {}
+    for nid, action, count, rate, known in cursor.fetchall():
+        per.setdefault(nid, {})[action] = (count, None if rate is None else float(rate), known)
     if not actions:
         actions = sorted({a for d in per.values() for a in d})
     cursor.execute(f"SELECT c{tree}, count(*), count(DISTINCT rollout_id) FROM gt_steps "
@@ -1421,27 +1673,82 @@ def gtree_frontier(cursor: Any, game: str, tree: int = 1, n: int = 4, limit: int
     cursor.execute("SELECT origin_state, count(*) FROM gt_rollouts WHERE game = %s AND origin_state IS NOT NULL "
                    "GROUP BY origin_state", (game,))
     started = dict(cursor.fetchall())
-    rows = []
-    for nid, level in levels.items():
+
+    def base(nid: str, level: int) -> dict[str, Any]:
         here = per.get(nid, {})
-        open_ = {a: n - here.get(a, (0, None))[0] for a in actions if here.get(a, (0, None))[0] < n}
-        if not open_:
-            continue
-        n_out = sum(c for c, _ in here.values())
-        rates = [r for _, r in here.values() if r is not None]
+        open_ = {a: n - here.get(a, (0, None, 0))[0] for a in actions if here.get(a, (0, None, 0))[0] < n}
         arr, arr_ro = arrivals.get(nid, (0, 0))
-        parts = {"few": 1.0 if n_out <= 3 else 0.0, "depth": round(level / deepest, 4),
+        return {"id": nid, "level": level, "out": sum(c for c, _, _ in here.values()),
+                "samples": {a: c for a, (c, _, _) in sorted(here.items())}, "open": open_,
+                "missing": sum(open_.values()), "arrivals": arr, "arrival_rollouts": arr_ro,
+                "started_here": started.get(nid, 0)}
+
+    head = {"apiVersion": 1, "game": game, "tree": tree, "tree_name": GT_TREE_NAMES[tree], "N": n, "mode": mode,
+            "actions": actions, "deepest": deepest}
+    if mode == "backward":
+        cursor.execute("SELECT DISTINCT level FROM gt_steps WHERE game = %s ORDER BY level", (game,))
+        rows: dict[str, dict[str, Any]] = {}
+        truncated = False
+        for (lvl,) in cursor.fetchall():
+            g = _shortest(cursor, game, lvl, tree)
+            truncated = truncated or g["truncated"]
+            for start in sorted(g["starts"]):
+                at, seen = start, set()
+                while at is not None and at in g["dist"] and at not in seen:
+                    seen.add(at)
+                    d, sid = g["dist"][at]
+                    step = g["steps"][sid]
+                    if at not in rows or d < rows[at]["distance"]:
+                        rows[at] = {**base(at, levels.get(at, lvl)), "level": lvl, "distance": d, "step": sid,
+                                    "action": step["action"], "t1": step["t1"], "rollout_id": step["rollout_id"],
+                                    "seq": step["seq"]}
+                    at = step["to"]
+        ordered = sorted(rows.values(), key=lambda x: (x["distance"], -x["level"], x["id"]))
+        return {**head, "candidates": len(ordered), "truncated": truncated,
+                "score": "nodes on the best known path of each level, nearest the goal first (distance = fewest "
+                         "known game moves to clear the level from there)", "nodes": ordered[:limit]}
+    out = []
+    for nid, level in levels.items():
+        row = base(nid, level)
+        if not row["open"]:
+            continue
+        here = per.get(nid, {})
+        rates = [r for _, r, _ in here.values() if r is not None]
+        parts = {"few": 1.0 if row["out"] <= 3 else 0.0, "depth": round(level / deepest, 4),
                  "spread": round(max(rates) - min(rates), 4) if len(rates) >= 2 else 0.0,
-                 "merge": 0.5 if arr_ro > 1 else 0.0}
-        rows.append({"id": nid, "level": level, "out": n_out, "samples": {a: c for a, (c, _) in sorted(here.items())},
-                     "open": open_, "missing": sum(open_.values()), "arrivals": arr, "arrival_rollouts": arr_ro,
-                     "started_here": started.get(nid, 0), "parts": parts, "score": round(sum(parts.values()), 4)})
-    rows.sort(key=lambda x: (-x["score"], -x["level"], -x["arrivals"], x["id"]))
-    return {"apiVersion": 1, "game": game, "tree": tree, "tree_name": GT_TREE_NAMES[tree], "N": n,
-            "actions": actions, "candidates": len(rows), "deepest": deepest,
-            "score": "few (<=3 steps out) + depth (level / deepest) + spread (best - worst action's mean cleared) "
-                     "+ merge (0.5 if more than one rollout arrives); only nodes where some action has < N samples",
-            "nodes": rows[:limit]}
+                 "merge": 0.5 if row["arrival_rollouts"] > 1 else 0.0}
+        if mode == "uncertain":
+            known = sum(kn for _, _, kn in here.values())
+            p = sum(r * kn for _, r, kn in here.values() if r is not None) / known if known else 0.0
+            parts["uncertain"] = round(p * (1 - p), 4)
+            parts["explore"] = round(1 / (row["out"] + 1) ** 0.5, 4)
+        out.append({**row, "parts": parts, "score": round(sum(parts.values()), 4)})
+    out.sort(key=lambda x: (-x["score"], -x["level"], -x["arrivals"], x["id"]))
+    score = ("few (<=3 steps out) + depth (level / deepest) + spread (best - worst action's mean cleared) "
+             "+ merge (0.5 if more than one rollout arrives)")
+    if mode == "uncertain":
+        score += " + uncertain (p (1 - p) of the node's clear rate) + explore (1 / sqrt(steps out + 1))"
+    return {**head, "candidates": len(out), "truncated": False,
+            "score": score + "; only nodes where some action has < N samples", "nodes": out[:limit]}
+
+
+def _pi(raw: str | None) -> dict[str, float] | None:
+    """The pi query parameter: JSON {action: probability >= 0}, at most 50 actions; None when absent."""
+
+    if raw is None or raw == "":
+        return None
+    try:
+        pi = json.loads(raw)
+    except ValueError:
+        pi = None
+    if (not isinstance(pi, dict) or not 1 <= len(pi) <= 50
+            or not all(isinstance(a, str) and GT_ACTION_RE.fullmatch(a) for a in pi)
+            or not all(not isinstance(p, bool) and isinstance(p, (int, float)) and 0 <= p < float("inf")
+                       for p in pi.values())):
+        raise ReviewProblem(400, "invalid_pi", "pi is JSON {action: probability >= 0}, 1 to 50 actions")
+    if sum(pi.values()) <= 0:
+        raise ReviewProblem(400, "invalid_pi", "pi needs some probability above 0")
+    return {a: float(p) for a, p in pi.items()}
 
 
 # ------------------------------------------------------------------------------------------------ the API
@@ -1639,8 +1946,7 @@ class RlReviewApi:
             if sub.startswith("node/"):
                 node_id = sub[len("node/"):]
                 if not GT_NODE_RE.fullmatch(node_id):
-                    raise ReviewProblem(400, "invalid_node", "a node id is '<game>:t<1-4>:<16 hex>' or "
-                                                             "'<game>:t<1-4>:root'")
+                    raise ReviewProblem(400, "invalid_node", GT_NODE_HELP)
                 with self._cursor() as cursor:
                     return _json(200, gtree_node(cursor, node_id))
             if sub.startswith("rollout/"):
@@ -1664,8 +1970,36 @@ class RlReviewApi:
                 actions = [a for a in (arg("actions") or "").split(",") if a]
                 if len(actions) > 50 or not all(GT_ACTION_RE.fullmatch(a) for a in actions):
                     raise ReviewProblem(400, "invalid_actions", "actions is a comma list of at most 50 action names")
+                mode = arg("mode", "coverage")
+                if mode not in FRONTIER_MODES:
+                    raise ReviewProblem(400, "invalid_mode", f"mode is one of {', '.join(FRONTIER_MODES)}")
                 with self._cursor() as cursor:
-                    return _json(200, gtree_frontier(cursor, game, tree, int(raw_n), int(raw_limit), actions or None))
+                    return _json(200, gtree_frontier(cursor, game, tree, int(raw_n), int(raw_limit), actions or None,
+                                                     mode))
+            if sub.startswith("value/"):
+                node_id = sub[len("value/"):]
+                if not GT_NODE_RE.fullmatch(node_id):
+                    raise ReviewProblem(400, "invalid_node", GT_NODE_HELP)
+                raw_pen = arg("penalty", str(DEFAULT_PENALTY))
+                try:
+                    penalty = float(raw_pen)
+                except ValueError:
+                    penalty = -1.0
+                if not 0 <= penalty <= MAX_PENALTY or penalty != penalty:
+                    raise ReviewProblem(400, "invalid_penalty", f"penalty is a number of moves, 0..{MAX_PENALTY}")
+                if penalty == int(penalty):
+                    penalty = int(penalty)
+                pi = _pi(arg("pi"))
+                with self._cursor() as cursor:
+                    return _json(200, gtree_value(cursor, node_id, penalty, pi))
+            if sub == "shortest":
+                game = _id(arg("game"), "game", GAME_RE)
+                raw_level = arg("level") or ""
+                if not raw_level.isdigit() or len(raw_level) > 6:
+                    raise ReviewProblem(400, "invalid_level", "level is an integer >= 0")
+                tree = _gt_tree(query, default=3)
+                with self._cursor() as cursor:
+                    return _json(200, gtree_shortest(cursor, game, int(raw_level), tree))
             raise ReviewProblem(404, "not_found", "not found")
         # RL2 (turn coach): named documents, published by machines and read by the team.
         if path.startswith(f"{self.RL2}/publication/"):

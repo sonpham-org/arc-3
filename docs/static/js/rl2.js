@@ -1,9 +1,11 @@
 // RL2 page (docs/rl2.html): the turn coach. Four views over published documents and the decision tree:
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
 //   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened)
-//   GET /api/v1/gtree/games           the universal game tree: games, their four trees and each tree's start (root)
+//   GET /api/v1/gtree/games           the universal game tree: games, their five trees and each tree's start (root)
 //   GET /api/v1/gtree/node/<id>       one node of one tree: its steps grouped by action, children, parents, restarts here
-//   GET /api/v1/gtree/frontier?...    restart candidates: nodes where some action has fewer than N samples
+//   GET /api/v1/gtree/value/<id>      per action: clear rate, mean moves to clear, Q; V; the best known path from the node
+//   GET /api/v1/gtree/shortest?...    one level's shortest known path in moves, merged across runs (screen graph)
+//   GET /api/v1/gtree/frontier?...    restart candidates (mode coverage / uncertain / backward)
 //   GET /api/v1/gtree/rollout/<id>    one rollout's steps (for rollouts restarted mid-tree)
 //   GET /api/v1/gtree/trace/<sha>     one step's turn: thinking, code, moves
 // Server: railway/rl_review.py. With ?fixture=1 the page reads docs/static/data/rl2-fixture.json instead (fake data, for
@@ -21,11 +23,11 @@ const state = {
   dash: null, fixture: null, view: VIEWS.includes(params.get("view")) ? params.get("view") : "builds",
   run: params.get("run"), game: params.get("game"), modeFilter: new Set(), open: new Set(), docs: {},
   smpBuild: params.get("build"), metric: "share",
-  // tree view: the game and tree (t1..t4) picked, the trail of nodes walked (last = shown), open action groups, traces
-  // and restarted rollouts, the restart-candidates panel
+  // tree view: the game and tree (t1..t5) picked, the trail of nodes walked (last = shown), open action groups, traces
+  // and restarted rollouts, the best-path box, the restart-candidates panel and its mode
   treeGames: null, tGame: params.get("tgame"), tTree: +(params.get("ttree") || 1),
   trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), tRoll: new Set(),
-  treeCache: {}, frontOpen: true, frontAll: false,
+  treeCache: {}, frontOpen: true, frontAll: false, frontMode: "coverage", bestOpen: false,
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
@@ -369,11 +371,17 @@ function modesCard() {
 }
 
 /* ------------------------------------------------------------------ view 4: decision tree (the universal game tree) */
-// Every step of every rollout is stored once and read as four trees: t1 the path of actions (context-aware), t2 screen +
-// moves, t3 level + screen, t4 screen only. A node's steps are grouped by action (the mode chosen); a step leads to a child
-// node, and plays that reach the same child merge there. Each tree starts at the game's root (the game start). Rollouts can
-// also start in the middle of the tree (restarted from a stored t1 node): their steps carry an origin badge.
-const TREE_NAMES = { 1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only" };
+// Every step of every rollout is stored once and read as five trees: t1 the path of actions (context-aware), t2 screen +
+// moves, t3 level + screen, t4 screen only, t5 level + screen + moves bucketed by 6 (the restart grid). A node's steps are
+// grouped by action (the mode chosen); a step leads to a child node, and plays that reach the same child merge there. Each
+// tree starts at the game's root (the game start). Rollouts can also start in the middle of the tree (restarted from a
+// stored t1 node): their steps carry an origin badge. The objective is game MOVES to clear a level: per action the clear
+// rate and mean moves to clear, the best known path from a node, and per level the shortest path known across all runs.
+const TREES = [1, 2, 3, 4, 5];
+const TREE_NAMES = { 1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only",
+  5: "screen + move bucket (restart grid)" };
+const FRONT_MODES = [["coverage", "nodes short of samples"], ["uncertain", "short of samples, unsure clear rate first"],
+  ["backward", "on the best known paths, nearest the goal first"]];
 const FRONTIER_N = 4;
 async function getTree(sub) {
   if (state.treeCache[sub]) return state.treeCache[sub];
@@ -403,8 +411,10 @@ function nodeLabel(id) {
   if (s.endsWith(":root")) return "start";
   const m = nodeMeta.get(s);
   const hex = s.split(":")[2] || "?";
-  // t3 and t4 merge plays whatever their move count, so only t1 and t2 labels carry one
-  const mv = treeOf(s) <= 2 ? ` · ${isNum(m && m.moves) ? m.moves + " mv" : "?"}` : "";
+  // t3 and t4 merge plays whatever their move count, so only t1 and t2 labels carry one; t5 a bucket of 6 moves
+  const t = treeOf(s);
+  const mv = t <= 2 ? ` · ${isNum(m && m.moves) ? m.moves + " mv" : "?"}`
+    : t === 5 ? ` · ${isNum(m && m.moves) ? `${m.moves}–${m.moves + 5} mv` : "?"}` : "";
   if (m && isNum(m.level)) return `L${m.level}${mv} · ${hex.slice(0, 6)}`;
   return hex.slice(0, 8);
 }
@@ -435,7 +445,7 @@ async function renderTree() {
   }
   let g = games.find(x => x.game === state.tGame);
   if (!g) { g = games[0]; state.tGame = g.game; state.trail = []; }
-  if (![1, 2, 3, 4].includes(state.tTree)) state.tTree = 1;
+  if (!TREES.includes(state.tTree)) state.tTree = 1;
   const t = (g.trees || {})[String(state.tTree)] || {};
   const prefix = `${g.game}:t${state.tTree}:`;
   if (!state.trail.length || !state.trail.every(id => id.startsWith(prefix))) state.trail = t.start ? [t.start] : [];
@@ -443,7 +453,7 @@ async function renderTree() {
     games.map(x => el("option", { value: x.game, selected: x.game === g.game },
       `${x.game} · ${x.rollouts} rollout${x.rollouts === 1 ? "" : "s"}${x.mid_rollouts ? ` (${x.mid_rollouts} mid-tree)` : ""}`)));
   const treeSel = el("select", { "aria-label": "tree", onchange: e => { state.tTree = +e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
-    [1, 2, 3, 4].map(k => el("option", { value: k, selected: k === state.tTree },
+    TREES.map(k => el("option", { value: k, selected: k === state.tTree },
       `t${k} · ${TREE_NAMES[k]} · ${((g.trees || {})[String(k)] || {}).nodes ?? 0} nodes`)));
   $("treePickers").replaceChildren(el("label", {}, "game ", gameSel), el("label", {}, "tree ", treeSel),
     el("span", { class: "muted rl2-small" }, `${g.steps ?? 0} steps`));
@@ -451,7 +461,7 @@ async function renderTree() {
   if (!state.trail.length) { body.replaceChildren(el("div", { class: "empty" }, "This tree has no nodes for this game yet.")); return; }
   await drawNode(state.trail[state.trail.length - 1]);
 }
-function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); state.tRoll.clear(); }
+function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); state.tRoll.clear(); state.bestOpen = false; }
 function goNode(id, { push = true, fromStart = false } = {}) {
   if (fromStart) {
     const start = state.trail[0];
@@ -467,9 +477,12 @@ function goNode(id, { push = true, fromStart = false } = {}) {
 
 async function drawNode(id) {
   const body = $("treeBody");
-  let view;
+  let view, value;
   try {
-    view = await getTree("node/" + id);
+    [view, value] = await Promise.all([getTree("node/" + id), getTree("value/" + id).catch(e => {
+      if (!(e instanceof NotPublished)) console.error(e);
+      return null;
+    })]);
   } catch (e) {
     if (!(e instanceof NotPublished)) throw e;
     body.replaceChildren(trailBar(), el("div", { class: "empty" }, `Node ${id} is not published yet.`), frontierPanel());
@@ -494,8 +507,11 @@ async function drawNode(id) {
       view.parents && view.parents.length ? el("div", { class: "rl2-parents rl2-small" }, el("span", { class: "muted" }, "came from"),
         view.parents.slice(0, 12).map(p => el("button", { type: "button", class: "rl2-chip mono", title: `${p.id} (${p.n})`, onclick: () => goNode(p.id) },
           nodeLabel(p.id), p.n > 1 ? ` ×${p.n}` : ""))) : null,
+      bestLine(value),
       view.truncated ? el("div", { class: "rl2-small rl2-bad" }, "Only the first steps are shown.") : null));
-  body.replaceChildren(...[trailBar(), head, startedHere(view), actionGroups(view), frontierPanel()].filter(Boolean));
+  const level = isNum(n.level) ? n.level : Math.min(...(view.steps || []).map(s => s.level).filter(isNum), Infinity);
+  body.replaceChildren(...[trailBar(), head, startedHere(view), actionGroups(view, value),
+    isFinite(level) ? shortestPanel(level, n.id) : null, frontierPanel()].filter(Boolean));
   if (canvas) requestAnimationFrame(() => draw(canvas, n.board));
 }
 function trailBar() {
@@ -556,24 +572,64 @@ function startedHere(view) {
   }
   return wrap;
 }
-function actionGroups(view) {
+// "Best known path from here": the fewest moves to clear this level any step leaving the node achieved, and the rollout
+// that did it; the button lists that rollout's steps from there to the end of the level.
+function bestLine(value) {
+  const best = value && value.best;
+  if (!value) return null;
+  if (!best) return el("div", { class: "rl2-best muted rl2-small" }, "No rollout has cleared this level from here yet.");
+  const wrap = el("div", { class: "rl2-best rl2-small" });
+  const redraw = () => wrap.replaceWith(bestLine(value));
+  wrap.append(el("span", {}, "best known path from here: ", el("b", { class: "mono" }, `${best.moves_to_clear} moves`)),
+    el("span", { class: "muted mono", title: best.rollout_id }, `${best.rollout_id} #${best.seq}`),
+    el("button", { type: "button", class: "rl2-btn" + (state.bestOpen ? " on" : ""), "aria-expanded": state.bestOpen ? "true" : "false",
+      onclick: () => { state.bestOpen = !state.bestOpen; redraw(); } }, state.bestOpen ? "hide steps" : "open it"));
+  if (state.bestOpen) {
+    const box = el("div", { class: "rl2-rsteps" }, el("span", { class: "muted" }, "loading…"));
+    wrap.append(box);
+    getTree("rollout/" + best.rollout_id).then(doc => {
+      const k = state.tTree;
+      const from = (doc.steps || []).filter(s => s.seq >= best.seq);
+      const lvl = from.length ? from[0].level : null;
+      const mine = from.filter(s => s.level === lvl);
+      box.replaceChildren(...mine.flatMap((s, i) => [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
+        el("button", { type: "button", class: "rl2-stepchip", title: `step ${s.seq}: ${s.action}, ${s.moves_step} moves, at ${s["n" + k]}`,
+          onclick: () => goNode(s["n" + k]) }, modeTag(s.action), el("span", { class: "mono muted" }, `${s.moves_step} mv`))]).filter(Boolean),
+        doc.truncated ? el("span", { class: "rl2-bad" }, "(first steps only)") : "");
+    }).catch(e => {
+      if (!(e instanceof NotPublished)) console.error(e);
+      box.replaceChildren(el("span", { class: "muted" }, "This rollout is not on the server."));
+    });
+  }
+  return wrap;
+}
+const movesTxt = x => isNum(x) ? `${Number.isInteger(x) ? x : x.toFixed(1)} mv` : "–";
+function actionGroups(view, value) {
   const actions = Object.entries(view.by_action || {}).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]));
   if (!actions.length) return el("div", { class: "empty" }, "No step leaves this node: the plays ended here.");
   const wrap = el("div", { class: "rl2-groups" });
-  const redraw = () => wrap.replaceWith(actionGroups(view));
+  const redraw = () => wrap.replaceWith(actionGroups(view, value));
+  const vals = (value && value.actions) || {};
   wrap.append(el("div", { class: "rl2-ghead muted rl2-small" }, el("span", {}, "action"), el("span", {}, "n"),
-    el("span", {}, "level within 30 actions"), el("span", { class: "rl2-gmore" }, "also")));
+    el("span", {}, "cleared the level"), el("span", { class: "rl2-gmore" }, "moves to clear · also")));
   for (const [action, s] of actions) {
     const open = state.tOpen.has(action);
+    const v = vals[action] || {};
+    const rate = isNum(v.clear_rate) ? v.clear_rate : s.cleared;
+    const mtc = isNum(v.mean_moves_to_clear) ? v.mean_moves_to_clear : s.moves_to_clear;
+    const kids = (s.children || []).length;
     const row = el("button", { type: "button", class: "rl2-grow" + (open ? " open" : ""), "aria-expanded": open ? "true" : "false",
       onclick: () => { open ? state.tOpen.delete(action) : state.tOpen.add(action); redraw(); } },
       el("span", { class: "rl2-gmode" }, el("span", { class: "rl2-caret", "aria-hidden": "true" }, open ? "▾" : "▸"), modeTag(action)),
       el("span", { class: "mono" }, s.n),
-      el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${isNum(s.lvl30) ? (100 * s.lvl30).toFixed(1) : 0}%` })),
-        el("b", { class: "mono" }, pctOrDash(s.lvl30))),
-      el("span", { class: "rl2-gmore mono muted", title: "cleared this level · mean actions · game over · level score · children" },
-        `cleared ${pctOrDash(s.cleared)} · ${fx(s.acts)} acts · over ${pctOrDash(s.go)}` +
-        (isNum(s.level_score) ? ` · score ${fx(s.level_score)}` : "") + ` · ${(s.children || []).length} child${(s.children || []).length === 1 ? "" : "ren"}`));
+      el("span", { class: "rl2-gbar", title: "share of these steps whose rollout went on to clear this level" },
+        el("span", { class: "rl2-bar" }, el("i", { style: `width:${isNum(rate) ? (100 * rate).toFixed(1) : 0}%` })),
+        el("b", { class: "mono" }, pctOrDash(rate))),
+      el("span", { class: "rl2-gmore mono muted", title: "mean moves to clear (steps that cleared) · Q (mean of −moves, −" +
+          `${value ? value.penalty : 200} if never cleared) · level within 30 actions · mean actions · game over · children` },
+        el("b", { class: "rl2-mtc" }, movesTxt(mtc)),
+        (isNum(v.q) ? ` · Q ${fx(v.q)}` : "") + ` · ≤30 ${pctOrDash(s.lvl30)} · ${fx(s.acts)} acts · over ${pctOrDash(s.go)}` +
+        ` · ${kids} child${kids === 1 ? "" : "ren"}`));
     wrap.append(row);
     if (open) {
       const kids = s.children || [];
@@ -629,32 +685,93 @@ function stepItem(b, redraw) {
   }
   return item;
 }
-// Restart candidates: nodes of this game and tree where some action has fewer than N samples, best first (server score).
+// Shortest known path to clear one level, merged across every run on the screen graph (t3, t4 or t5; t1 and t2 use t3):
+// its length in moves, its steps (from any rollouts), and this node's own distance when it is on that graph.
+function shortestPanel(level, nodeId) {
+  const game = state.tGame, tree = state.tTree >= 3 ? state.tTree : 3;
+  const box = el("div", { class: "card rl2-short" }, el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level} · t${tree}`),
+    el("div", { class: "muted rl2-small" }, "loading…"));
+  getTree(`shortest?game=${game}&level=${level}&tree=${tree}`).then(doc => {
+    const kids = [el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level} · t${tree}`)];
+    const best = doc.best;
+    if (!best) {
+      kids.push(el("p", { class: "muted rl2-small" }, "No run has cleared this level yet."));
+    } else {
+      const rollouts = new Set(best.steps.map(s => s.rollout_id)).size;
+      kids.push(el("p", { class: "rl2-small" }, el("b", { class: "mono" }, `${best.moves} moves`),
+        ` in ${best.steps.length} step${best.steps.length === 1 ? "" : "s"}` +
+        (rollouts > 1 ? `, joined from ${rollouts} runs (no single run went this way)` : ", one run") +
+        ` · ${doc.goal_steps} clearing step${doc.goal_steps === 1 ? "" : "s"} known`));
+      kids.push(el("div", { class: "rl2-rsteps" }, best.steps.flatMap((s, i) => [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
+        el("button", { type: "button", class: "rl2-stepchip", title: `${s.id}: ${s.action}, ${s.moves_step} moves` +
+            (tree === state.tTree ? "; click to open its node" : ""), disabled: tree === state.tTree ? null : true,
+          onclick: tree === state.tTree ? () => goNode(s.from) : null },
+          modeTag(s.action), el("span", { class: "mono muted" }, `${s.moves_step} mv`))]).filter(Boolean)));
+    }
+    const here = tree === state.tTree ? (doc.nodes || []).find(x => x.id === nodeId) : null;
+    if (here) kids.push(el("p", { class: "rl2-small" }, isNum(here.distance)
+      ? [`From this node: `, el("b", { class: "mono" }, `${here.distance} moves`), ` (next: `, modeTag(here.action), `)`]
+      : el("span", { class: "muted" }, "From this node no known path clears the level.")));
+    if (state.tTree < 3) kids.push(el("p", { class: "muted rl2-small" }, "Paths merge on screens, so this panel reads tree t3 (level + screen)."));
+    if (doc.truncated) kids.push(el("p", { class: "rl2-bad rl2-small" }, `Only the first ${doc.steps_read} steps of this level were read.`));
+    box.replaceChildren(...kids);
+  }).catch(e => {
+    if (!(e instanceof NotPublished)) console.error(e);
+    box.replaceChildren(el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level}`),
+      el("p", { class: "muted rl2-small" }, "No steps of this level are stored yet."));
+  });
+  return box;
+}
+
+// Restart candidates (server ranking), three ways: nodes short of N samples (coverage); the same plus how unsure the
+// clear rate is and a count bonus (uncertain); the nodes on each level's best known path, nearest the goal first
+// (backward: start just before the goal, then move the start back).
 function frontierPanel() {
-  const game = state.tGame, tree = state.tTree;
-  const key = `${game}|${tree}`;
+  const game = state.tGame, tree = state.tTree, mode = state.frontMode;
+  const key = `${game}|${tree}|${mode}`;
+  const intro = {
+    coverage: `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked by few steps out + depth + `
+      + "the spread between actions' cleared rates + 0.5 when several rollouts meet.",
+    uncertain: `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked as above plus p(1−p) of the clear rate `
+      + "and 1/√(steps out + 1).",
+    backward: "Nodes on each level's shortest known path, nearest the goal first: restart just before the goal, then further back.",
+  }[mode];
   const box = el("details", { class: "card rl2-front", open: state.frontOpen ? "" : null,
     ontoggle: e => { state.frontOpen = e.target.open; } },
     el("summary", {}, `Restart candidates · ${game} · t${tree}`),
-    el("p", { class: "muted rl2-small" }, `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked by few steps out + depth + `
-      + "the spread between actions' cleared rates + 0.5 when several rollouts meet. Click one to open it."));
+    el("div", { class: "rl2-seg rl2-fmode", role: "group", "aria-label": "ranking" }, FRONT_MODES.map(([m, label]) =>
+      el("button", { type: "button", class: m === mode ? "on" : "", "aria-pressed": m === mode ? "true" : "false", title: label,
+        onclick: () => { state.frontMode = m; state.frontAll = false; box.replaceWith(frontierPanel()); } }, m))),
+    el("p", { class: "muted rl2-small" }, intro + " Click one to open it."));
   const list = el("div", { class: "rl2-frows" }, el("div", { class: "muted rl2-small" }, "loading…"));
   box.append(list);
-  getTree(`frontier?game=${game}&tree=${tree}&N=${FRONTIER_N}&limit=50`).then(doc => {
-    if (`${state.tGame}|${state.tTree}` !== key) return;
+  getTree(`frontier?game=${game}&tree=${tree}&N=${FRONTIER_N}&limit=50` + (mode === "coverage" ? "" : `&mode=${mode}`)).then(doc => {
+    if (`${state.tGame}|${state.tTree}|${state.frontMode}` !== key) return;
     const rows = doc.nodes || [];
     for (const r of rows) nodeMeta.set(r.id, { level: r.level, moves: (nodeMeta.get(r.id) || {}).moves });
-    if (!rows.length) { list.replaceChildren(el("div", { class: "muted rl2-small" }, "Every node has enough samples.")); return; }
+    if (!rows.length) {
+      list.replaceChildren(el("div", { class: "muted rl2-small" }, mode === "backward" ? "No run has cleared a level in this game yet."
+        : "Every node has enough samples."));
+      return;
+    }
     const shown = state.frontAll ? rows : rows.slice(0, 10);
+    const parts = mode === "uncertain" ? ["few", "depth", "spread", "merge", "uncertain", "explore"] : ["few", "depth", "spread", "merge"];
+    const tip = r => `${r.id}\n${r.out} steps out · ${r.arrivals} arrived from ${r.arrival_rollouts} rollout(s)` +
+      (r.started_here ? ` · ${r.started_here} restart(s) here` : "") +
+      (mode === "backward" ? `\nnext: ${r.action} (${r.step}); restart from t1 node ${r.t1}` : "") +
+      (Object.keys(r.open || {}).length ? `\nshort of ${doc.N}: ` + Object.entries(r.open).map(([a, k]) => `${a} ${k}`).join(", ") : "");
     list.replaceChildren(
-      el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "score"),
-        el("span", { class: "rl2-fparts" }, "few · depth · spread · merge"), el("span", {}, "open")),
-      ...shown.map(r => el("button", { type: "button", class: "rl2-frow", title: `${r.id}\n${r.out} steps out · ${r.arrivals} arrived from ${r.arrival_rollouts} rollout(s)` +
-          (r.started_here ? ` · ${r.started_here} restart(s) here` : "") + `\nshort of ${doc.N}: ` + Object.entries(r.open || {}).map(([a, k]) => `${a} ${k}`).join(", "),
-        onclick: () => goNode(r.id, { fromStart: true }) },
-        el("span", { class: "mono rl2-fid" }, nodeLabel(r.id)), el("b", { class: "mono" }, fx(r.score, 2)),
-        el("span", { class: "mono muted rl2-fparts" }, ["few", "depth", "spread", "merge"].map(p => fx((r.parts || {})[p], 2)).join(" · ")),
-        el("span", { class: "mono" }, r.missing))),
+      mode === "backward"
+        ? el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "to goal"),
+          el("span", { class: "rl2-fparts" }, "next step"), el("span", {}, "level"))
+        : el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "score"),
+          el("span", { class: "rl2-fparts" }, parts.join(" · ")), el("span", {}, "open")),
+      ...shown.map(r => el("button", { type: "button", class: "rl2-frow", title: tip(r), onclick: () => goNode(r.id, { fromStart: true }) },
+        el("span", { class: "mono rl2-fid" }, nodeLabel(r.id)),
+        mode === "backward" ? el("b", { class: "mono" }, movesTxt(r.distance)) : el("b", { class: "mono" }, fx(r.score, 2)),
+        mode === "backward" ? el("span", { class: "rl2-fparts" }, modeTag(r.action))
+          : el("span", { class: "mono muted rl2-fparts" }, parts.map(p => fx((r.parts || {})[p], 2)).join(" · ")),
+        el("span", { class: "mono" }, mode === "backward" ? `L${r.level}` : r.missing))),
       rows.length > 10 ? el("button", { type: "button", class: "rl2-btn rl2-fmore", onclick: () => { state.frontAll = !state.frontAll; box.replaceWith(frontierPanel()); } },
         state.frontAll ? "show the top 10" : `show all ${rows.length}`) : "");
   }).catch(e => {

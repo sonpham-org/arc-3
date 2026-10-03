@@ -18,6 +18,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import quote
 
 from railway.rl_review import (
     RlReviewApi,
@@ -334,7 +335,8 @@ class Rl2Tree(unittest.TestCase):
 
 
 SCREEN_A, SCREEN_B, SCREEN_C, SCREEN_D = "a" * 12, "b" * 12, "c" * 12, "d" * 12
-ROOT_IDS = {k: f"ka59:t{k}:root" for k in (1, 2, 3, 4)}
+ROOT_IDS = {k: f"ka59:t{k}:root" for k in (1, 2, 3, 4, 5)}
+TREES = (1, 2, 3, 4, 5)
 
 
 def gt_node(k: int, *parts) -> str:
@@ -345,31 +347,32 @@ def gt_node(k: int, *parts) -> str:
 
 def gt_nodes_at(level: int, moves: int, screen: str, path: tuple) -> dict:
     """A position's node in each tree: t1 the path of actions since the game start, t2 screen + moves, t3 level +
-    screen, t4 screen. The game start (empty path) is every tree's root."""
+    screen, t4 screen, t5 level + screen + moves // 6 (the restart grid). The game start (empty path) is every tree's
+    root."""
 
     if not path:
-        return {f"n{k}": ROOT_IDS[k] for k in (1, 2, 3, 4)}
+        return {f"n{k}": ROOT_IDS[k] for k in TREES}
     return {"n1": gt_node(1, *path), "n2": gt_node(2, screen, moves), "n3": gt_node(3, level, screen),
-            "n4": gt_node(4, screen)}
+            "n4": gt_node(4, screen), "n5": gt_node(5, level, screen, moves // 6)}
 
 
 def gt_node_rows(level: int, moves: int, screen: str, path: tuple) -> list:
     ids = gt_nodes_at(level, moves, screen, path)
     if not path:
-        return [{"id": ids[f"n{k}"]} for k in (1, 2, 3, 4)]
+        return [{"id": ids[f"n{k}"]} for k in TREES]
     parent = gt_nodes_at(0, 0, "", path[:-1])["n1"]
     return [{"id": ids["n1"], "tree": 1, "level": level, "moves": moves, "screen_hash": screen, "parent": parent,
              "depth": len(path)}] + [{"id": ids[f"n{k}"], "level": level, "moves": moves, "screen_hash": screen}
-                                     for k in (2, 3, 4)]
+                                     for k in (2, 3, 4, 5)]
 
 
-def gt_step(rid: str, seq: int, at: tuple, action: str, to: tuple | None, **extra) -> dict:
+def gt_step(rid: str, seq: int, at: tuple, action: str, to: tuple | None, moves_step: int = 1, **extra) -> dict:
     level, moves, screen, _path = at
     step = {"rollout_id": rid, "seq": seq, "level": level, "moves": moves, "screen_hash": screen, "action": action,
-            **gt_nodes_at(*at), **extra}
+            "moves_step": moves_step, **gt_nodes_at(*at), **extra}
     if to is not None:
         step.update({"next_level": to[0], "next_moves": to[1], "next_screen_hash": to[2]})
-        step.update({f"c{k}": v for k, v in zip((1, 2, 3, 4), gt_nodes_at(*to).values())})
+        step.update({f"c{k}": v for k, v in zip(TREES, gt_nodes_at(*to).values())})
     return step
 
 
@@ -395,7 +398,7 @@ def gt_bundle(run: str = "run-a", choices=("probe", "stock"), build: str = "anim
             gt_step(rid, 0, a, choice, b, detail={"cap": 6, "prob": 0.5, "decision": 1}, trace_sha=sha,
                     features={"level": 1, "actions_in_level": 0}, hidden_ref=f"gs://bucket/round0/{run}.npz#{p}",
                     outcome={"acts": 6, "lvl30": p == 0, "cleared_level": p == 0, "go_turn": False,
-                             "level_score": 10 + p}),
+                             "level_score": 0.1 + 0.1 * p}),
             gt_step(rid, 1, b, "execute", c, detail={"cap": 20}, trace_sha=sha,
                     outcome={"acts": 12, "lvl30": True, "cleared_level": True, "go_turn": False}),
             gt_step(rid, 2, c, "stock", None, outcome={"acts": 3, "lvl30": False, "cleared_level": None, "go_turn": True}),
@@ -419,7 +422,41 @@ def gt_mid(rid: str = "run-m:ka59_r0", origin: str = MID_FROM) -> dict:
             "screens": [{"screen_hash": SCREEN_D, "board": ["7" * 64] * 64}],
             "nodes": gt_node_rows(*c)[:1] + gt_node_rows(*d),
             "steps": [gt_step(rid, 0, b, "probe", c, outcome={"acts": 4, "cleared_level": 0}),
-                      gt_step(rid, 1, c, "execute", d, outcome={"acts": 9, "cleared_level": 1, "level_score": 30})]}
+                      gt_step(rid, 1, c, "execute", d, outcome={"acts": 9, "cleared_level": 1, "level_score": 0.3})]}
+
+
+CTX = hashlib.sha256(b"context before").hexdigest()
+
+
+def gt_value_bundle() -> dict:
+    """Three plays of level 1 for the value and shortest-path reads (game moves in brackets):
+
+      p0  start -left(3)-> X -solve(10)-> cleared       13 moves
+      p1  start -right(9)-> X -jump(2)-> cleared        11 moves
+      p2  start -left(4)-> Y -left(4)-> (ends)          never cleared
+
+    In t3 (level + screen) and t4 (screen) both plays reach the same X, so the screen graph knows start -left(3)-> X
+    -jump(2)-> cleared: 5 moves, shorter than either play. In t5 (moves // 6) X at 3 moves and X at 9 moves are
+    different cells, so no merge: the best is p1's 11."""
+
+    rollouts = [{"id": f"run-v:ka59_p{p}", "game": "ka59", "run": "run-v", "build": "animft/coach1",
+                 "model": "flash-next", "harness": "daniel-v3", "status": "finished", "result": {}} for p in range(3)]
+    start, c = (1, 0, SCREEN_A, ()), (2, 0, SCREEN_C, ("next",))
+    x0, x1, y = (1, 3, SCREEN_B, ("left",)), (1, 9, SCREEN_B, ("right",)), (1, 4, SCREEN_D, ("left", "p2"))
+    nodes = gt_node_rows(*start) + gt_node_rows(*x0) + gt_node_rows(*x1) + gt_node_rows(*y) + gt_node_rows(*c)
+    out = lambda mtc: {"moves_to_clear": mtc, "cleared_level": int(mtc is not None), "level_weight": 1,  # noqa: E731
+                       "human_moves": 12, "level_score": None if mtc is None else min(1.0, 12 / mtc)}
+    steps = [
+        gt_step("run-v:ka59_p0", 0, start, "left", x0, 3, outcome=out(13), tokens=100, ctx_before=CTX, resumable=True),
+        gt_step("run-v:ka59_p0", 1, x0, "solve", c, 10, outcome=out(10)),
+        gt_step("run-v:ka59_p1", 0, start, "right", x1, 9, outcome=out(11)),
+        gt_step("run-v:ka59_p1", 1, x1, "jump", c, 2, outcome=out(2)),
+        gt_step("run-v:ka59_p2", 0, start, "left", y, 4, outcome=out(None)),
+        gt_step("run-v:ka59_p2", 1, y, "left", None, 4, outcome=out(None)),
+    ]
+    return {"rollouts": rollouts, "screens": [{"screen_hash": h, "board": None} for h in
+                                              (SCREEN_A, SCREEN_B, SCREEN_C, SCREEN_D)],
+            "nodes": nodes, "steps": steps}
 
 
 class Gtree(unittest.TestCase):
@@ -444,8 +481,8 @@ class Gtree(unittest.TestCase):
         item = clean_gtree_bundle(gt_bundle())
         self.assertEqual((len(item["rollouts"]), len(item["screens"]), len(item["steps"]), len(item["traces"])),
                          (2, 3, 6, 2))
-        # nodes: 4 roots, then per play B and C in each tree, merged in t2..t4: 4 + 2 * 2 (t1) + 2 * 3 (t2..t4)
-        self.assertEqual(len(item["nodes"]), 14)
+        # nodes: 5 roots, then per play B and C in each tree, merged in t2..t5: 5 + 2 * 2 (t1) + 2 * 4 (t2..t5)
+        self.assertEqual(len(item["nodes"]), 17)
         first = item["steps"][0]
         self.assertEqual((first["id"], first["n1"], first["c2"]), ("run-a:ka59_p0:0", ROOT_IDS[1],
                                                                    gt_node(2, SCREEN_B, 6)))
@@ -488,7 +525,7 @@ class Gtree(unittest.TestCase):
             ("invalid_screen", mutate(lambda b: b["screens"].append("aaaa"))),
             ("invalid_screen_hash", mutate(lambda b: b["screens"][0].update(screen_hash="A" * 12))),
             ("invalid_board", mutate(lambda b: b["screens"][0].update(board=["zz"] * 64))),
-            ("invalid_node", mutate(lambda b: b["nodes"].append({"id": "ka59:t5:root"}))),
+            ("invalid_node", mutate(lambda b: b["nodes"].append({"id": "ka59:t6:root"}))),
             ("invalid_node", mutate(lambda b: b["nodes"].append({"id": "ka59:t1:abc"}))),
             ("invalid_node", mutate(lambda b: t2(b).update(tree=1))),
             ("invalid_node", mutate(lambda b: t2(b).update(depth=2))),
@@ -522,6 +559,32 @@ class Gtree(unittest.TestCase):
             ("invalid_trace_sha", mutate(lambda b: st(b).update(trace_sha="abc"))),
             ("trace_sha_mismatch", mutate(lambda b: b["traces"][first_sha(b)]["turns"].append({"step": 9}))),
             ("invalid_trace", mutate(lambda b: b["traces"].update({first_sha(b): {"no": "turns"}}))),
+            # t5 and the moves fields
+            ("invalid_n5", mutate(lambda b: st(b).pop("n5"))),
+            ("invalid_n5", mutate(lambda b: st(b).update(n5=ROOT_IDS[4]))),
+            ("invalid_step", mutate(lambda b: st(b).update(c5=None))),
+            ("invalid_moves_step", mutate(lambda b: st(b).pop("moves_step"))),
+            ("invalid_moves_step", mutate(lambda b: st(b).update(moves_step=-1))),
+            ("invalid_moves_step", mutate(lambda b: st(b).update(moves_step=2.5))),
+            ("invalid_tokens", mutate(lambda b: st(b).update(tokens=-5))),
+            ("invalid_tokens", mutate(lambda b: st(b).update(tokens="100"))),
+            ("invalid_ctx_before", mutate(lambda b: st(b).update(ctx_before="abc"))),
+            ("invalid_ctx_after", mutate(lambda b: st(b).update(ctx_after="A" * 64))),
+            ("invalid_state_ref", mutate(lambda b: st(b).update(state_ref=12))),
+            ("invalid_resumable", mutate(lambda b: st(b).update(resumable="yes"))),
+            ("invalid_resumable", mutate(lambda b: st(b).update(resumable=True))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"moves_to_clear": -1}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"moves_to_clear": "5"}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"moves_to_clear": True}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(moves_step=6, outcome={"moves_to_clear": 5}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"cleared_level": 2}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"cleared_level": "1"}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"moves_to_clear": 9, "cleared_level": 0}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"moves_to_clear": None, "cleared_level": 1}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"level_score": -0.5}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"level_score": True}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"human_moves": 2.5}))),
+            ("invalid_outcome", mutate(lambda b: st(b).update(outcome={"level_weight": -1}))),
         ]
         for code, bundle in bad:
             with self.assertRaises(ReviewProblem, msg=code) as ctx:
@@ -534,6 +597,16 @@ class Gtree(unittest.TestCase):
         self.assertEqual(next(n for n in clean_gtree_bundle(ok)["nodes"] if n["id"] == ROOT_IDS[1])["level"], 1)
         for kind in ("replay_exact", "replay_actions", "restore"):
             clean_gtree_bundle(mutate(lambda b: ro(b).update(origin_kind=kind), gt_mid))
+        # the new step fields are kept as sent; booleans pass for cleared_level; the defaults
+        item = clean_gtree_bundle(gt_value_bundle())
+        first, last = item["steps"][0], item["steps"][-1]
+        self.assertEqual((first["moves_step"], first["tokens"], first["ctx_before"], first["resumable"],
+                          first["n5"], first["c5"]), (3, 100, CTX, True, ROOT_IDS[5], gt_node(5, 1, SCREEN_B, 0)))
+        self.assertEqual((last["tokens"], last["ctx_after"], last["state_ref"], last["resumable"], last["c5"]),
+                         (None, None, None, False, None))
+        self.assertEqual(item["steps"][1]["outcome"]["moves_to_clear"], 10)
+        clean_gtree_bundle(mutate(lambda b: st(b).update(outcome={"moves_to_clear": 1, "cleared_level": True})))
+        clean_gtree_bundle(mutate(lambda b: st(b).update(state_ref=CTX, ctx_after=CTX, moves_step=0, tokens=0)))
 
     def test_the_routes_are_claimed_and_guarded(self) -> None:
         node = gt_node(2, SCREEN_B, 6)
@@ -554,13 +627,14 @@ class Gtree(unittest.TestCase):
                          "a bad body is refused before the database")
         reads = ("/api/v1/gtree/games", "/api/v1/gtree/stats", f"/api/v1/gtree/node/{node}",
                  "/api/v1/gtree/rollout/run-a:ka59_p0", "/api/v1/gtree/trace/" + "a" * 64,
-                 "/api/v1/gtree/frontier?game=ka59")
+                 "/api/v1/gtree/frontier?game=ka59", "/api/v1/gtree/value/ka59:t5:root",
+                 "/api/v1/gtree/shortest?game=ka59&level=1")
         for path in reads:
             self.assertEqual(call(self.api, "GET", path)[0], 401, path)
             self.assertEqual(call(self.api, "GET", path, self.machine)[0], 401, path)
             self.assertEqual(call(self.api, "GET", path, {"X-Forwarded-Email": "x@gmail.com"})[0], 403, path)
             self.assertEqual(call(self.api, "PUT", path, self.team, {"x": 1})[0], 405, path)
-        for path, code in (("/api/v1/gtree/node/ka59:t5:root", "invalid_node"),
+        for path, code in (("/api/v1/gtree/node/ka59:t6:root", "invalid_node"),
                            ("/api/v1/gtree/node/ka59:t1:abc", "invalid_node"),
                            ("/api/v1/gtree/node/ka59:L1:aaaaaaaaaaaa", "invalid_node"),
                            ("/api/v1/gtree/node/..%2F..%2Fx", "invalid_node"),
@@ -568,7 +642,23 @@ class Gtree(unittest.TestCase):
                            ("/api/v1/gtree/trace/../../etc", "invalid_trace_sha"),
                            ("/api/v1/gtree/trace/" + "A" * 64, "invalid_trace_sha"),
                            ("/api/v1/gtree/frontier", "invalid_game"),
-                           ("/api/v1/gtree/frontier?game=ka59&tree=5", "invalid_tree"),
+                           ("/api/v1/gtree/frontier?game=ka59&tree=6", "invalid_tree"),
+                           ("/api/v1/gtree/frontier?game=ka59&tree=0", "invalid_tree"),
+                           ("/api/v1/gtree/frontier?game=ka59&mode=forward", "invalid_mode"),
+                           ("/api/v1/gtree/value/ka59:t6:root", "invalid_node"),
+                           ("/api/v1/gtree/value/..%2Fx", "invalid_node"),
+                           ("/api/v1/gtree/value/ka59:t1:root?penalty=-1", "invalid_penalty"),
+                           ("/api/v1/gtree/value/ka59:t1:root?penalty=abc", "invalid_penalty"),
+                           ("/api/v1/gtree/value/ka59:t1:root?penalty=nan", "invalid_penalty"),
+                           ("/api/v1/gtree/value/ka59:t1:root?pi=%7Bbad", "invalid_pi"),
+                           ("/api/v1/gtree/value/ka59:t1:root?pi=%5B1%5D", "invalid_pi"),
+                           ("/api/v1/gtree/value/ka59:t1:root?pi=%7B%22a%22%3A-1%7D", "invalid_pi"),
+                           ("/api/v1/gtree/value/ka59:t1:root?pi=%7B%22a%22%3A0%7D", "invalid_pi"),
+                           ("/api/v1/gtree/value/ka59:t1:root?pi=%7B%22a%20b%22%3A1%7D", "invalid_pi"),
+                           ("/api/v1/gtree/shortest?level=1", "invalid_game"),
+                           ("/api/v1/gtree/shortest?game=ka59", "invalid_level"),
+                           ("/api/v1/gtree/shortest?game=ka59&level=-1", "invalid_level"),
+                           ("/api/v1/gtree/shortest?game=ka59&level=1&tree=9", "invalid_tree"),
                            ("/api/v1/gtree/frontier?game=ka59&tree=t1", "invalid_tree"),
                            ("/api/v1/gtree/frontier?game=ka59&N=0", "invalid_N"),
                            ("/api/v1/gtree/frontier?game=ka59&N=1001", "invalid_N"),
@@ -910,14 +1000,14 @@ class GtreeDatabase(unittest.TestCase):
     def test_four_trees_over_the_same_steps(self) -> None:
         status, result = self.publish(gt_bundle())
         self.assertEqual((status, result["rollouts"], result["nodes"], result["steps"], result["tracesWritten"]),
-                         (200, 2, 14, 6, 2))
+                         (200, 2, 17, 6, 2))
         # a second run, another build: in t1 its path is its own, in t2..t4 it merges with run-a at screens B and C
         self.assertEqual(self.publish(gt_bundle(run="run-b", choices=("rethink",), build="coach2"))[0], 200)
         games = self.get("games")
         self.assertEqual(games["trees"]["1"], "path (context-aware)")
         g = games["games"][0]
         self.assertEqual((g["game"], g["rollouts"], g["mid_rollouts"], g["steps"]), ("ka59", 3, 0, 9))
-        self.assertEqual({k: t["nodes"] for k, t in g["trees"].items()}, {"1": 7, "2": 3, "3": 3, "4": 3})
+        self.assertEqual({k: t["nodes"] for k, t in g["trees"].items()}, {"1": 7, "2": 3, "3": 3, "4": 3, "5": 3})
         self.assertEqual({k: t["start"] for k, t in g["trees"].items()}, {str(k): v for k, v in ROOT_IDS.items()})
         self.assertEqual(g["trees"]["3"]["deepest"], 2)
 
@@ -925,7 +1015,7 @@ class GtreeDatabase(unittest.TestCase):
         self.assertEqual((root["tree"], root["node"]["screen_hash"], root["node"]["screen_shown"]), (2, None, SCREEN_A))
         self.assertEqual(len(root["node"]["board"]), 64, "a root shows the screen its steps start from")
         self.assertEqual(root["by_action"]["probe"], {"n": 1, "lvl30": 1.0, "cleared": 1.0, "acts": 6.0, "go": 0.0,
-                                                      "level_score": 10.0, "ended": 0,
+                                                      "level_score": 0.1, "moves_to_clear": None, "ended": 0,
                                                       "children": [{"id": gt_node(2, SCREEN_B, 6), "n": 1}]})
         self.assertEqual(sorted(root["by_action"]), ["probe", "rethink", "stock"])
         first = root["steps"][0]
@@ -951,14 +1041,14 @@ class GtreeDatabase(unittest.TestCase):
 
         stats = self.get("stats")
         self.assertEqual((stats["rollouts"], stats["steps"], stats["games"], stats["screens"]), (3, 9, 1, 3))
-        self.assertEqual({k: t["nodes"] for k, t in stats["trees"].items()}, {"1": 7, "2": 3, "3": 3, "4": 3})
+        self.assertEqual({k: t["nodes"] for k, t in stats["trees"].items()}, {"1": 7, "2": 3, "3": 3, "4": 3, "5": 3})
 
     def test_republishing_is_idempotent(self) -> None:
         self.publish(gt_bundle())
         status, result = self.publish(gt_bundle(), gz=False)
         self.assertEqual((status, result["steps"], result["stepsReplaced"], result["tracesWritten"]), (200, 6, 6, 0))
         self.assertEqual([self.count(f"SELECT count(*) FROM {t}") for t in ("gt_steps", "gt_rollouts", "gt_nodes",
-                                                                            "gt_screens")], [6, 2, 14, 3])
+                                                                            "gt_screens")], [6, 2, 17, 3])
 
     def test_a_smaller_republication_drops_that_rollouts_steps(self) -> None:
         self.publish(gt_bundle(choices=("probe", "stock", "search")))
@@ -974,7 +1064,7 @@ class GtreeDatabase(unittest.TestCase):
     def test_a_rollout_restarted_mid_tree(self) -> None:
         self.publish(gt_bundle())
         status, result = self.publish(gt_mid())
-        self.assertEqual((status, result["rollouts"], result["nodes"], result["steps"]), (200, 1, 5, 2), result)
+        self.assertEqual((status, result["rollouts"], result["nodes"], result["steps"]), (200, 1, 6, 2), result)
         at = self.get(f"node/{MID_FROM}")
         self.assertEqual([(r["id"], r["origin_kind"], r["origin_edge"]) for r in at["started_here"]],
                          [("run-m:ka59_r0", "replay_actions", "run-a:ka59_p0:0")])
@@ -1000,9 +1090,9 @@ class GtreeDatabase(unittest.TestCase):
                          (2, None, 1.0, 3.0, None), "null and missing outcomes are ignored")
         execute = view["by_action"]["execute"]
         self.assertEqual((execute["n"], execute["lvl30"], execute["cleared"], execute["acts"], execute["go"],
-                          execute["level_score"]), (1, None, 1.0, 9.0, None, 30.0))
+                          execute["level_score"]), (1, None, 1.0, 9.0, None, 0.3))
         at_start = self.get(f"node/{ROOT_IDS[1]}")["by_action"]
-        self.assertEqual((at_start["probe"]["level_score"], at_start["stock"]["level_score"]), (10.0, 11.0))
+        self.assertEqual((at_start["probe"]["level_score"], at_start["stock"]["level_score"]), (0.1, 0.2))
 
     def test_frontier_ranking(self) -> None:
         self.publish(gt_bundle())
@@ -1033,6 +1123,84 @@ class GtreeDatabase(unittest.TestCase):
         self.assertEqual((t1["tree"], t1["candidates"]), (1, 9))
         self.assertEqual(next(r for r in t1["nodes"] if r["id"] == MID_FROM)["started_here"], 1)
         self.assertEqual(call(self.api, "GET", "/api/v1/gtree/frontier?game=zz99", self.team)[0], 404)
+
+    def test_value_in_moves(self) -> None:
+        status, _ = self.publish(gt_value_bundle())
+        self.assertEqual(status, 200)
+        # at the start, by hand: left = [p0 cleared in 13, p2 never] and right = [p1 cleared in 11]
+        v = self.get(f"value/{ROOT_IDS[3]}")
+        self.assertEqual((v["tree"], v["penalty"], v["n"], v["pi_source"]), (3, 200, 3, "empirical"))
+        self.assertEqual(v["actions"]["left"], {"n": 2, "cleared": 1, "clear_rate": 0.5, "mean_moves_to_clear": 13.0,
+                                                "q": -106.5, "tokens": 100.0, "moves_step": 3.5})
+        self.assertEqual(v["actions"]["right"], {"n": 1, "cleared": 1, "clear_rate": 1.0, "mean_moves_to_clear": 11.0,
+                                                 "q": -11.0, "tokens": None, "moves_step": 9.0})
+        self.assertEqual(v["pi"], {"left": round(2 / 3, 6), "right": round(1 / 3, 6)})
+        self.assertAlmostEqual(v["V"], 2 / 3 * -106.5 + 1 / 3 * -11, places=3)
+        self.assertEqual(v["best"], {"moves_to_clear": 11, "step_id": "run-v:ka59_p1:0", "rollout_id": "run-v:ka59_p1",
+                                     "seq": 0, "action": "right"})
+        # a penalty and a policy: pi is renormalised over the actions seen here; an unseen one is listed
+        pi = quote(json.dumps({"left": 0.25, "right": 0.75, "wait": 1}))
+        v = self.get(f"value/{ROOT_IDS[3]}?penalty=100&pi={pi}")
+        self.assertEqual((v["penalty"], v["actions"]["left"]["q"], v["pi_source"], v["pi_ignored"]),
+                         (100, -56.5, "query", ["wait"]))
+        self.assertEqual(v["pi"], {"left": 0.25, "right": 0.75})
+        self.assertAlmostEqual(v["V"], 0.25 * -56.5 + 0.75 * -11, places=3)
+        # any tree: in t1 the start is the same node; a node never cleared from has no best path
+        self.assertEqual(self.get(f"value/{ROOT_IDS[1]}")["V"], self.get(f"value/{ROOT_IDS[3]}")["V"])
+        y = self.get(f"value/{gt_node(5, 1, SCREEN_D, 0)}")
+        self.assertEqual((y["actions"]["left"]["q"], y["actions"]["left"]["clear_rate"], y["best"]), (-200.0, 0.0, None))
+        x = self.get(f"value/{gt_node(4, SCREEN_B)}")
+        self.assertEqual((x["best"]["moves_to_clear"], x["best"]["action"]), (2, "jump"))
+        self.assertEqual(call(self.api, "GET", "/api/v1/gtree/value/zz99:t3:root", self.team)[0], 404)
+        # the step fields come back on the node view
+        first = next(s for s in self.get(f"node/{ROOT_IDS[3]}")["steps"] if s["id"] == "run-v:ka59_p0:0")
+        self.assertEqual((first["moves_step"], first["tokens"], first["ctx_before"], first["resumable"], first["n5"]),
+                         (3, 100, CTX, True, ROOT_IDS[5]))
+        # republishing changes nothing
+        before = self.get(f"value/{ROOT_IDS[3]}")
+        status, result = self.publish(gt_value_bundle())
+        self.assertEqual((status, result["stepsReplaced"]), (200, 6))
+        self.assertEqual(self.get(f"value/{ROOT_IDS[3]}"), before)
+
+    def test_shortest_merges_rollouts(self) -> None:
+        self.publish(gt_value_bundle())
+        x3, y3 = gt_node(3, 1, SCREEN_B), gt_node(3, 1, SCREEN_D)
+        sp = self.get("shortest?game=ka59&level=1")
+        self.assertEqual((sp["tree"], sp["steps_read"], sp["truncated"], sp["goal_steps"], sp["reachable"]),
+                         (3, 6, False, 2, 2))
+        # p0's first step to X, then p1's jump: 3 + 2 = 5 moves, shorter than either play (13, 11)
+        self.assertEqual((sp["best"]["start"], sp["best"]["moves"]), (ROOT_IDS[3], 5))
+        self.assertEqual([s["id"] for s in sp["best"]["steps"]], ["run-v:ka59_p0:0", "run-v:ka59_p1:1"])
+        self.assertEqual([(n["id"], n["distance"], n["step"]) for n in sp["nodes"]],
+                         [(x3, 2, "run-v:ka59_p1:1"), (ROOT_IDS[3], 5, "run-v:ka59_p0:0"), (y3, None, None)])
+        self.assertEqual([(n["id"], n["start"]) for n in sp["starts"]], [(ROOT_IDS[3], True)])
+        self.assertEqual(sp["nodes"][0]["t1"], gt_node(1, "right"), "the t1 node a rollout can restart from")
+        self.assertEqual(self.get("shortest?game=ka59&level=1&tree=4")["best"]["moves"], 5)
+        # t5 keeps X at 3 moves and X at 9 moves apart: no merge, the best is p1 alone
+        t5 = self.get("shortest?game=ka59&level=1&tree=5")
+        self.assertEqual((t5["best"]["moves"], [s["id"] for s in t5["best"]["steps"]]),
+                         (11, ["run-v:ka59_p1:0", "run-v:ka59_p1:1"]))
+        self.assertEqual(call(self.api, "GET", "/api/v1/gtree/shortest?game=ka59&level=7", self.team)[0], 404)
+
+    def test_frontier_modes(self) -> None:
+        self.publish(gt_value_bundle())
+        x3, y3, c3 = gt_node(3, 1, SCREEN_B), gt_node(3, 1, SCREEN_D), gt_node(3, 2, SCREEN_C)
+        cov = self.get("frontier?game=ka59&tree=3")
+        self.assertEqual((cov["mode"], [r["id"] for r in cov["nodes"]]), ("coverage", [c3, x3, y3, ROOT_IDS[3]]))
+        unc = self.get("frontier?game=ka59&tree=3&mode=uncertain")
+        rows = {r["id"]: r for r in unc["nodes"]}
+        # the start: left cleared 1 of 2, right 1 of 1, so p = 2/3; 3 steps out
+        self.assertEqual(rows[ROOT_IDS[3]]["parts"], {"few": 1.0, "depth": 0.0, "spread": 0.5, "merge": 0.0,
+                                                      "uncertain": 0.2222, "explore": 0.5})
+        self.assertEqual((rows[y3]["parts"]["uncertain"], rows[y3]["parts"]["explore"]), (0.0, 0.7071))
+        self.assertEqual((rows[c3]["score"], rows[x3]["score"]), (3.5, 2.5774))
+        self.assertEqual([r["id"] for r in unc["nodes"]], [c3, x3, ROOT_IDS[3], y3], "the start passes Y")
+        back = self.get("frontier?game=ka59&tree=3&mode=backward")
+        self.assertEqual([(r["id"], r["distance"], r["action"], r["t1"]) for r in back["nodes"]],
+                         [(x3, 2, "jump", gt_node(1, "right")), (ROOT_IDS[3], 5, "left", ROOT_IDS[1])])
+        self.assertEqual(back["nodes"][0]["open"], {"left": 4, "right": 4, "solve": 3, "jump": 3})
+        # t5: no merge, so the backward list follows p1 alone
+        self.assertEqual([r["distance"] for r in self.get("frontier?game=ka59&tree=5&mode=backward")["nodes"]], [2, 11])
 
     def test_a_refused_body_changes_nothing(self) -> None:
         base = gt_bundle()
