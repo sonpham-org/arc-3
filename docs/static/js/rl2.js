@@ -1,6 +1,9 @@
-// RL2 page (docs/rl2.html): the turn coach. Four views over published documents and the decision tree:
+// RL2 page (docs/rl2.html): the turn coach. Five views over published documents and the decision tree:
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
 //   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened)
+//   GET /api/v1/rl2/doc/rl-campaigns  the RL training campaigns ({campaigns: [{name, updated}]})
+//   GET /api/v1/rl2/doc/rl-campaign-<name>  one campaign: VMs, rounds, policy, totals, sibling groups
+//                                     (gcp/controllers/gtree-rollout/rl_loop.py publish-status, arc3-sglang-parking repo)
 //   GET /api/v1/gtree/games           the universal game tree: games, their five trees and each tree's start (root)
 //   GET /api/v1/gtree/node/<id>       one node of one tree: its steps grouped by action, children, parents, restarts here
 //   GET /api/v1/gtree/value/<id>      per action: clear rate, mean moves to clear, Q; V; the best known path from the node
@@ -16,7 +19,7 @@ import { draw, pathView } from "./review-ui.js?v=20261003-coach";
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const FIXTURE = params.get("fixture") === "1";
-const VIEWS = ["builds", "decisions", "sampling", "tree"];
+const VIEWS = ["builds", "decisions", "sampling", "tree", "training"];
 const MIN_N = 20;
 
 const state = {
@@ -28,6 +31,8 @@ const state = {
   treeGames: null, tGame: params.get("tgame"), tTree: +(params.get("ttree") || 1),
   trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), tRoll: new Set(),
   treeCache: {}, frontOpen: true, frontAll: false, frontMode: "coverage", bestOpen: false,
+  // training view: the campaign shown, and whether every sibling group is listed
+  camp: params.get("campaign"), campAll: false,
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
@@ -72,6 +77,7 @@ function syncUrl() {
     if (state.tTree !== 1) q.set("ttree", String(state.tTree));
     if (state.trail.length) q.set("trail", state.trail.join(","));
   }
+  if (state.view === "training" && state.camp) q.set("campaign", state.camp);
   const s = q.toString();
   history.replaceState(null, "", location.pathname + (s ? "?" + s : ""));
 }
@@ -781,6 +787,193 @@ function frontierPanel() {
   return box;
 }
 
+/* ------------------------------------------------------------------ view 5: training (the RL campaign) */
+// One campaign document per RL campaign, written by the learner after every round: the rollout VMs, the rounds, the
+// policy's mode mix at a few typical situations, totals by the first (assigned) mode, and the sibling groups (one row
+// per node of the tree, one chip per try). A node links to the Decision tree view at that node.
+const STATUS_TONE = { RUNNING: "run", PROVISIONING: "wait", STAGING: "wait", STOPPING: "wait", SUSPENDING: "wait" };
+const when = t => {
+  if (t === null || t === undefined || t === "") return "–";
+  const d = new Date(isNum(t) ? t * 1000 : t);
+  return isNaN(d) ? String(t) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+const nodeHex = id => (String(id).split(":")[2] || "?").slice(0, 8);
+async function renderTraining() {
+  const body = $("trnBody");
+  body.replaceChildren(el("div", { class: "empty" }, "loading…"));
+  let index;
+  try {
+    index = await getDoc("rl-campaigns");
+  } catch (e) {
+    $("trnPickers").replaceChildren();
+    if (e instanceof NotPublished) { body.replaceChildren(el("div", { class: "empty" }, "No training campaign published yet.")); return; }
+    body.replaceChildren(el("div", { class: "empty" }, e.status === 401 ? "Sign in with your team account to see the training."
+      : e.status === 403 ? "This Google account is not on the team list." : "Could not load the training campaigns."));
+    if (!e.status) console.error(e);
+    return;
+  }
+  const camps = (index.campaigns || []).filter(c => c && c.name);
+  if (!camps.length) {
+    $("trnPickers").replaceChildren();
+    body.replaceChildren(el("div", { class: "empty" }, "No training campaign published yet."));
+    return;
+  }
+  if (!state.camp || !camps.some(c => c.name === state.camp)) state.camp = camps[0].name;
+  const sel = el("select", { "aria-label": "campaign", onchange: e => { state.camp = e.target.value; state.campAll = false; renderTraining(); } },
+    camps.map(c => el("option", { value: c.name, selected: c.name === state.camp }, `${c.name} · updated ${when(c.updated)}`)));
+  $("trnPickers").replaceChildren(el("label", {}, "campaign ", sel));
+  syncUrl();
+  let doc;
+  try {
+    doc = await getDoc("rl-campaign-" + state.camp);
+  } catch (e) {
+    if (e instanceof NotPublished) { body.replaceChildren(el("div", { class: "empty" }, "This campaign's status is not published yet.")); return; }
+    throw e;
+  }
+  $("trnPickers").append(el("span", { class: "muted rl2-small" }, `${doc.harness || ""}${doc.harness ? " · " : ""}data ${when(doc.generated_at)}`));
+  body.replaceChildren(
+    el("h3", { class: "rl2-h3" }, "Machines"), vmStrip(doc.vms || []),
+    el("h3", { class: "rl2-h3" }, "Rounds"), roundsTable(doc.rounds || []),
+    el("h3", { class: "rl2-h3" }, `What the policy picks now · ${(doc.policy || {}).version || "no policy"}`), policyBars(doc.policy || {}),
+    el("h3", { class: "rl2-h3" }, "How each first mode did"), totalsCard(doc.totals || {}, doc.advantage_by_action || {}),
+    el("h3", { class: "rl2-h3" }, "Sibling groups"), siblingGroups(doc));
+}
+function vmStrip(vms) {
+  if (!vms.length) return el("div", { class: "empty" }, "No VM has started for this campaign yet.");
+  return el("div", { class: "rl2-vms" }, vms.map(v => {
+    const r = v.restores || {};
+    const tone = STATUS_TONE[v.status] || "off";
+    return el("div", { class: "card rl2-vm" },
+      el("div", { class: "rl2-vm-top" }, el("b", { class: "mono" }, v.name),
+        el("span", { class: "rl2-status " + tone }, String(v.status || "unknown").toLowerCase())),
+      el("div", { class: "rl2-vm-phase rl2-small", title: v.phase_time || "" },
+        el("span", { class: "muted" }, "phase "), el("span", { class: "mono" }, v.last_phase || "–"),
+        v.phase_time ? el("span", { class: "muted" }, ` · ${when(v.phase_time)}`) : null),
+      el("div", { class: "rl2-vm-nums" },
+        el("div", {}, el("b", { class: "mono" }, val(v.tries_done)), el("small", {}, "tries done")),
+        el("div", {}, el("b", { class: "mono" }, val(v.tries_running)), el("small", {}, "running")),
+        el("div", {}, el("b", { class: "mono" }, val(v.cleared)), el("small", {}, "cleared"))),
+      el("div", { class: "rl2-vm-meta rl2-small" },
+        el("span", { title: "nodes restored by replaying the logged play" }, `replay ${r.replay_exact ?? 0}`),
+        el("span", { title: "nodes restored from a state snapshot" }, `snapshot ${r.snapshot ?? 0}`),
+        r.unknown ? el("span", {}, `other ${r.unknown}`) : null,
+        el("span", { class: "muted", title: "mean seconds to restore a node" }, `restore ${isNum(v.mean_restore_s) ? fx(v.mean_restore_s) + " s" : "–"}`),
+        isNum(v.cached_tokens_first_request) ? el("span", { class: "muted", title: "mean cached tokens of each try's first request" +
+          (isNum(v.prompt_tokens_first_request) ? ` (of ${Math.round(v.prompt_tokens_first_request)} prompt tokens)` : "") },
+          `cached ${Math.round(v.cached_tokens_first_request / 1000)}k`) : null,
+        v.errors ? el("span", { class: "rl2-bad" }, `${v.errors} error${v.errors === 1 ? "" : "s"}`) : null),
+      el("div", { class: "muted rl2-small mono rl2-vm-run" }, v.run_id || ""));
+  }));
+}
+function roundsTable(rounds) {
+  if (!rounds.length) return el("div", { class: "empty" }, "No round yet.");
+  const head = ["round", "policy", "trained", "train steps", "nodes with siblings", "ESS", "jobs", "tries", "at"];
+  return el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table" },
+    el("thead", {}, el("tr", {}, head.map(h => el("th", {}, h)))),
+    el("tbody", {}, [...rounds].reverse().map(r => el("tr", {},
+      el("td", { class: "mono" }, r.round), el("td", { class: "mono" }, r.version || "–"),
+      el("td", { class: r.trained ? "rl2-yes" : "muted" }, r.trained ? "yes" : "·"),
+      el("td", { class: "mono" }, val(r.train_steps)), el("td", { class: "mono" }, val(r.nodes_with_siblings)),
+      el("td", { class: "mono" }, isNum(r.ess) ? fx(r.ess) : "–"),
+      el("td", { class: "mono" }, val(r.jobs)), el("td", { class: "mono" }, val(r.tries)),
+      el("td", { class: "muted" }, when(r.t)))))));
+}
+function policyBars(pol) {
+  const pts = pol.mode_dist_at || [];
+  if (!pts.length || pts.every(p => !Object.keys(p.dist || {}).length)) return el("div", { class: "empty" }, "No policy yet.");
+  const modes = [...new Set(pts.flatMap(p => Object.keys(p.dist || {})))];
+  return el("div", { class: "card rl2-mix" },
+    el("div", { class: "muted rl2-small" }, `${pol.kind || "policy"} · seq ${val(pol.seq)}` +
+      (pol.stats && isNum(pol.stats.ess) ? ` · ESS ${fx(pol.stats.ess)}` : "") + (pol.trained_at ? ` · trained ${when(pol.trained_at)}` : "")),
+    pts.map(p => {
+      const d = Object.entries(p.dist || {}).sort((a, b) => b[1] - a[1]);
+      return el("div", { class: "rl2-mixrow" },
+        el("span", { class: "rl2-mixname" }, p.label),
+        el("div", { class: "rl2-mixbar", role: "img", "aria-label": d.map(([m, x]) => `${m} ${pct(x)}`).join(", ") },
+          d.map(([m, x]) => el("span", { style: `width:${(100 * x).toFixed(2)}%;background:${modeColor(m)}`, title: `${m}: ${pct(x)}` }))),
+        el("span", { class: "mono muted rl2-small" }, d.length ? `${d[0][0]} ${pct(d[0][1])}` : "–"));
+    }),
+    el("div", { class: "legend rl2-small" }, modes.map(m => el("span", {}, el("i", { style: `background:${modeColor(m)}` }), m))));
+}
+function totalsCard(t, adv) {
+  const by = Object.entries(t.by_first_action || {});
+  if (!t.tries) return el("div", { class: "empty" }, "No try has finished yet.");
+  return el("div", {},
+    el("div", { class: "card rl2-tot" },
+      el("div", {}, el("b", { class: "mono" }, t.tries), el("small", {}, "tries")),
+      el("div", {}, el("b", { class: "mono" }, t.cleared), el("small", {}, "cleared")),
+      el("div", {}, el("b", { class: "mono" }, pct(t.clear_rate)), el("small", {}, "clear rate")),
+      el("div", {}, el("b", { class: "mono" }, isNum(t.mean_moves_to_clear) ? fx(t.mean_moves_to_clear) : "–"), el("small", {}, "moves to clear")),
+      el("div", {}, el("b", { class: "mono" }, val(t.nodes_with_siblings)), el("small", {}, "nodes with siblings")),
+      t.censored ? el("div", { title: "tries cut short (deadline, divergence, abort): left out of every number here" },
+        el("b", { class: "mono muted" }, t.censored), el("small", {}, "cut short")) : null),
+    el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table rl2-acts" },
+      el("thead", {}, el("tr", {}, ["first mode", "tries", "cleared", "mean moves", "advantage"].map(h => el("th", {}, h)))),
+      el("tbody", {}, by.map(([m, a]) => {
+        const g = adv[m] || {};
+        const ad = g.mean_adv;
+        return el("tr", {}, el("td", {}, modeTag(m)), el("td", { class: "mono" }, a.n),
+          el("td", {}, el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${isNum(a.clear_rate) ? (100 * a.clear_rate).toFixed(1) : 0}%` })),
+            el("b", { class: "mono" }, pct(a.clear_rate)))),
+          el("td", { class: "mono" }, isNum(a.mean_moves) ? fx(a.mean_moves) : "–"),
+          el("td", { class: "mono " + (isNum(ad) ? (ad > 0 ? "rl2-yes" : ad < 0 ? "rl2-bad" : "") : "muted"),
+            title: isNum(ad) ? `mean reward minus the siblings' mean at the same node, over ${g.n} tries` : "no sibling to compare with" },
+            isNum(ad) ? (ad > 0 ? "+" : ad < 0 ? "−" : "±") + Math.abs(ad).toFixed(2) : "–"));
+      })))),
+    el("p", { class: "muted rl2-small" }, "Advantage: the try's reward (a cleared level scores level × (fastest known moves ÷ its moves)²) minus " +
+      "the mean of its siblings at the same node. Above zero: faster than the other modes there."));
+}
+function openTreeAt(node, game) {
+  state.tGame = game;
+  state.tTree = 1;
+  state.trail = [node];
+  resetNodeUi();
+  state.treeShown = false;
+  show("tree");
+  $("view-tree").scrollIntoView({ block: "start" });
+}
+function siblingGroups(doc) {
+  const nodes = doc.nodes || [];
+  if (!nodes.length) return el("div", { class: "empty" }, "No node has finished tries yet.");
+  const shown = state.campAll ? nodes : nodes.slice(0, 40);
+  const used = [...new Set(nodes.flatMap(n => (n.tries || []).map(t => t.action)))];
+  const wrap = el("div", { class: "rl2-sibs" });
+  wrap.append(el("p", { class: "muted rl2-small" }, `${doc.nodes_total ?? nodes.length} nodes, newest round first. One chip per try, ` +
+    "coloured by its first mode: filled ✓ with the moves it took to clear the level, outlined ✗ when it did not, dashed when it was cut short. " +
+    "The ring marks the fastest try. Click a node to open it in the Decision tree."));
+  for (const n of shown) {
+    const tries = n.tries || [];
+    const best = n.best_moves;
+    let ringed = false;
+    const href = `?${FIXTURE ? "fixture=1&" : ""}view=tree&tgame=${encodeURIComponent(n.game)}&trail=${encodeURIComponent(n.node)}`;
+    wrap.append(el("div", { class: "rl2-sib" },
+      el("div", { class: "rl2-sib-head" },
+        el("a", { class: "rl2-sib-node mono", href, title: `${n.node}\nopen in the Decision tree`,
+          onclick: e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); openTreeAt(n.node, n.game); } },
+          `${n.game} · L${val(n.level)} · ${nodeHex(n.node)}`),
+        n.class ? el("span", { class: "rl2-kind" }, n.class.replace("_", " ")) : null,
+        el("span", { class: "muted rl2-small mono" }, `round ${val(n.round)}`),
+        el("span", { class: "rl2-small rl2-sib-sum" },
+          el("span", { class: "muted" }, "best "), el("b", { class: "mono" }, isNum(best) ? `${best} mv` : "–"),
+          el("span", { class: "muted" }, " · stock "), el("b", { class: "mono" }, isNum(n.stock_moves) ? `${n.stock_moves} mv` : "–"))),
+      el("div", { class: "rl2-sib-chips" }, tries.map(t => {
+        const isBest = !ringed && t.cleared && isNum(best) && t.moves_to_clear === best && !t.censored;
+        if (isBest) ringed = true;
+        const c = modeColor(t.action);
+        const cls = "rl2-try" + (t.censored ? " cut" : t.cleared ? " ok" : " no") + (isBest ? " best" : "");
+        const tip = `${t.action}${isBest ? " (fastest)" : ""}\n` + (t.censored ? `cut short: ${t.stop || "?"}` : t.cleared
+          ? `cleared in ${val(t.moves_to_clear)} moves` : `not cleared (${t.stop || "stopped"})`) +
+          `\n${val(t.turns)} turns · ${isNum(t.tokens) ? Math.round(t.tokens / 1000) + "k" : "–"} tokens · policy ${t.policy_version || "–"} · round ${val(t.round)}`;
+        return el("span", { class: cls, title: tip, style: t.cleared && !t.censored ? `background:${c};border-color:${c}` : `border-color:${c};color:${c}` },
+          t.censored ? "cut" : t.cleared ? `✓ ${val(t.moves_to_clear)}` : "✗");
+      }))));
+  }
+  if (nodes.length > 40) wrap.append(el("button", { type: "button", class: "rl2-btn", onclick: () => { state.campAll = !state.campAll; wrap.replaceWith(siblingGroups(doc)); } },
+    state.campAll ? "show the newest 40" : `show all ${nodes.length}`));
+  wrap.append(el("div", { class: "legend rl2-small" }, used.map(m => el("span", {}, el("i", { style: `background:${modeColor(m)}` }), m))));
+  return wrap;
+}
+
 /* ------------------------------------------------------------------ shell */
 function show(view) {
   state.view = view;
@@ -791,11 +984,14 @@ function show(view) {
   }
   for (const v of VIEWS) $("view-" + v).hidden = v !== view;
   syncUrl();
-  // the tree has its own data; it does not wait for the dashboard
-  if (!state.dash && view !== "tree") return;
+  // the tree and training views have their own data; they do not wait for the dashboard
+  if (!state.dash && view !== "tree" && view !== "training") return;
   if (view === "tree" && state.treeShown) return;
   if (view === "tree") state.treeShown = true;
-  const fn = { builds: renderBuilds, decisions: renderDecisions, sampling: renderSampling, tree: renderTree }[view];
+  if (view === "training" && state.trainingShown) return;
+  if (view === "training") state.trainingShown = true;
+  const fn = { builds: renderBuilds, decisions: renderDecisions, sampling: renderSampling, tree: renderTree,
+    training: renderTraining }[view];
   Promise.resolve().then(fn).catch(err => {
     console.error(view, err);
     if (err && err.status === 401) notice("Sign in with your team account to see the RL2 page.");

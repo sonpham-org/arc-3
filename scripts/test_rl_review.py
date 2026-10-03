@@ -697,6 +697,18 @@ class ShippedFiles(unittest.TestCase):
         for page in ("review.html", "rl.html", "rl2.html", "tree.html"):
             self.assertTrue((ROOT / "docs" / page).is_file(), page)
 
+    def test_rl2_page_has_every_view(self) -> None:
+        page = (ROOT / "docs" / "rl2.html").read_text(encoding="utf-8")
+        script = (ROOT / "docs" / "static" / "js" / "rl2.js").read_text(encoding="utf-8")
+        views = re.search(r"const VIEWS = \[([^\]]*)\]", script).group(1)
+        for view in ("builds", "decisions", "sampling", "tree", "training"):
+            self.assertIn(f'data-view="{view}"', page, view)
+            self.assertIn(f'id="view-{view}"', page, view)
+            self.assertIn(f'"{view}"', views, view)
+        fixture = json.loads((ROOT / "docs" / "static" / "data" / "rl2-fixture.json").read_text(encoding="utf-8"))
+        names = [c["name"] for c in fixture["docs"]["rl-campaigns"]["campaigns"]]
+        self.assertTrue(any(f"rl-campaign-{n}" in fixture["docs"] for n in names), "a fake campaign for ?fixture=1")
+
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
         pages = [p for p in (ROOT / "docs").glob("*.html") if 'class="sitetabs"' in p.read_text(encoding="utf-8")]
         self.assertGreater(len(pages), 5)
