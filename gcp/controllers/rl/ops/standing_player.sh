@@ -7,6 +7,8 @@
 # preemption deletes the VM). A finished run's powered-off VM is deleted. A running base play is never cut short:
 # a new model starts at the next launch.
 #   bash ops/standing_player.sh            stop: touch /d/codex-work/rl-20261001/standing.STOP (ends after this run)
+# Every gcloud call here runs under `timeout 120`: with an expired login gcloud can hang instead of failing
+# (3-Oct 02:57 UTC froze this loop for hours); a timeout reads as a failed check and the loop goes on.
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
 OPS=$(cd "$(dirname "$0")" && pwd)
@@ -23,7 +25,7 @@ say() { echo "$(date -u +%H:%M) $*"; }
 latest() {   # the newest staged model, in round order
   local best=base m
   for m in r0 r1 r2 r3 r4 r5 r6 r7 r8 r9; do
-    gcloud storage ls "$INPUTS/kaggle-input-$m/_STAGED_OK" > /dev/null 2>&1 || break
+    timeout 120 gcloud storage ls "$INPUTS/kaggle-input-$m/_STAGED_OK" > /dev/null 2>&1 || break
     best=$m
   done
   echo "$best"
@@ -64,7 +66,7 @@ launch() {   # <label> <notebook build> <input prefix or "">: first zone with ca
 
 login_ok() {   # an expired gcloud login makes VMs look gone and launches fail: wait for a working one
   local warned=0
-  until gcloud auth print-access-token > /dev/null 2>&1; do
+  until timeout 120 gcloud auth print-access-token > /dev/null 2>&1; do
     [ $((warned % 15)) -eq 0 ] && say "gcloud login expired: run gcloud.cmd auth login (waiting)"
     warned=$((warned + 1)); sleep 120
   done
@@ -74,17 +76,17 @@ finish_run() {   # <label> <zone> <model> <panel>: watch a run to its end, keep 
   local label=$1 zone=$2 model=$3 panel=$4 run="daniel-$1" last st i
   bash "$OPS/watch_daniel_runs.sh" "$label:$zone"
   login_ok
-  last=$(gcloud storage cat "$RUNS/$run/phases.tsv" 2>/dev/null | tail -n 1 | cut -f3 | tr -d '\r')
+  last=$(timeout 120 gcloud storage cat "$RUNS/$run/phases.tsv" 2>/dev/null | tail -n 1 | cut -f3 | tr -d '\r')
   if [[ "$last" != *finish*notebook_rc_0* ]]; then
     say "$label ended without finishing (last phase: ${last:-none}): off the page's lists"
     config drop "$model" "$panel" "$run"
   fi
   # the VM powers itself off at the end: delete it once it is off (never while it runs)
   for i in $(seq 1 15); do
-    st=$(gcloud compute instances describe "arc3-daniel-$label" --zone "$zone" --format='value(status)' 2>/dev/null | tr -d '\r')
+    st=$(timeout 120 gcloud compute instances describe "arc3-daniel-$label" --zone "$zone" --format='value(status)' 2>/dev/null | tr -d '\r')
     [ -z "$st" ] && break
     if [ "$st" = TERMINATED ] || [ "$st" = STOPPED ]; then
-      gcloud compute instances delete "arc3-daniel-$label" --zone "$zone" --quiet > /dev/null 2>&1 && say "deleted VM arc3-daniel-$label"
+      timeout 120 gcloud compute instances delete "arc3-daniel-$label" --zone "$zone" --quiet > /dev/null 2>&1 && say "deleted VM arc3-daniel-$label"
       break
     fi
     sleep 60

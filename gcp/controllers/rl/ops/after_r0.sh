@@ -3,6 +3,8 @@
 # on the LoRA copy of Daniel's inputs and add those runs to the RL page and Trace review. The panel VMs start right
 # away: they wait for the copy's _STAGED_OK (written last by make_eval_mirror.sh) while it is built.
 #   bash ops/after_r0.sh           (polls every 2 min; stops with a message if the merge failed)
+# Every gcloud call here runs under `timeout 120`: with an expired login gcloud can hang instead of failing
+# (3-Oct 02:57 UTC froze this loop for hours); a timeout reads as a failed check and the loop goes on.
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
 OPS=$(cd "$(dirname "$0")" && pwd)
@@ -15,13 +17,13 @@ RUNS_TXT=/d/codex-work/rl-20261001/review-runs.txt
 TAG=$(date -u +%m%d)
 say() { echo "$(date -u +%H:%M) $*"; }
 
-until gcloud storage cat "$OUT/$MJ/EXIT" >/dev/null 2>&1; do sleep 120; done
-code=$(gcloud storage cat "$OUT/$MJ/EXIT" | tr -d '\r\n ')
+until timeout 120 gcloud storage cat "$OUT/$MJ/EXIT" >/dev/null 2>&1; do sleep 120; done
+code=$(timeout 120 gcloud storage cat "$OUT/$MJ/EXIT" | tr -d '\r\n ')
 if [ "$code" != "0" ]; then
-  say "merge failed (exit $code); last log lines:"; gcloud storage cat "$OUT/$MJ/job.log" | tail -n 30; exit 1
+  say "merge failed (exit $code); last log lines:"; timeout 120 gcloud storage cat "$OUT/$MJ/job.log" | tail -n 30; exit 1
 fi
-gcloud storage ls "$OUT/$MJ/merged/MERGE_REPORT.json" >/dev/null || { say "merge report missing"; exit 1; }
-say "merged shards: $(gcloud storage ls "$OUT/$MJ/merged/*.safetensors" | wc -l)"
+timeout 120 gcloud storage ls "$OUT/$MJ/merged/MERGE_REPORT.json" >/dev/null || { say "merge report missing"; exit 1; }
+say "merged shards: $(timeout 120 gcloud storage ls "$OUT/$MJ/merged/*.safetensors" | wc -l)"
 
 launch() {   # <label> <notebook build name>: first zone with capacity
   local label=$1 nbobj
