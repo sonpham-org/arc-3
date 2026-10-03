@@ -22,20 +22,26 @@ SHA=${SHA:?set SHA to a code snapshot (ops/push_code.sh)}
 N=${1:?round number, e.g. 2}
 ROUND=r$N PREV=r$((N - 1))
 J=$((30 + 3 * (N - 1)))                                  # round 1: jobs 030-032, round 2: 033-035, round 3: 036-038
-JR=$(printf '%03d-%s-records' $J $ROUND) JT=$(printf '%03d-%s-train' $((J + 1)) $ROUND) JM=$(printf '%03d-%s-merge' $((J + 2)) $ROUND)
-PREV_TRAIN=$(printf '%03d-%s-train' $((J - 2)) $PREV)
-REC=/opt/m/work/records/$(printf '%03d' $((J + 1)))
+T=${JOBTAG:-}            # a rerun needs new job ids (the trainer runs each id once): JOBTAG=b gives 033b-r2-records ...
+JR=$(printf '%03d%s-%s-records' $J "$T" $ROUND) JT=$(printf '%03d%s-%s-train' $((J + 1)) "$T" $ROUND)
+JM=$(printf '%03d%s-%s-merge' $((J + 2)) "$T" $ROUND)
+# the records folder on the VM goes to Python as a bare name: Git Bash rewrites a /opt/... argument to Windows Python
+# into C:/Program Files/Git/opt/... (3-Oct: that broke round 2's first try)
+RECN=$(printf '%03d%s' $((J + 1)) "$T")
 say() { echo "$(date -u +%H:%M) $*"; }
 g() { timeout 120 gcloud "$@"; }
 
 # ---------------------------------------------------------------- 0. the previous round's plays
-read -r TR HR < <(C:/Python312/python.exe - "$SITE/site_config.json" "$PREV" <<'PY' | tr -d '\r'
+# the RL page still names the previous round's training job, which may have been a rerun (034b-r2-train)
+read -r TR HR PT < <(C:/Python312/python.exe - "$SITE/site_config.json" "$PREV" <<'PY' | tr -d '\r'
 import json, sys
 cfg = json.load(open(sys.argv[1], encoding="utf-8"))
 runs = {p["key"]: (p["runs"].get(sys.argv[2]) or [""])[-1] for p in cfg["panels"]}
-print(runs.get("train", ""), runs.get("hard", ""))
+tj = cfg.get("train_job") or ""
+print(runs.get("train", ""), runs.get("hard", ""), tj if tj.endswith(f"-{sys.argv[2]}-train") else "")
 PY
 )
+PREV_TRAIN=${PREV_TRAIN:-${PT:-$(printf '%03d-%s-train' $((J - 2)) $PREV)}}
 [ -n "$TR" ] && [ -n "$HR" ] || { say "no $PREV train/hard runs on the RL page"; exit 1; }
 say "$ROUND: records from $TR and $HR (adapter from $PREV_TRAIN); jobs $JR $JT $JM"
 for r in $TR $HR; do
@@ -44,9 +50,10 @@ for r in $TR $HR; do
 done
 
 # ---------------------------------------------------------------- 1. the jobs
-C:/Python312/python.exe - "$WORK" "$SHA" "$TR" "$HR" "$JR" "$JT" "$JM" "$PREV_TRAIN" "$REC" "$ROUND" "$PREV" <<'PY' || { echo "job files not written"; exit 1; }
+C:/Python312/python.exe - "$WORK" "$SHA" "$TR" "$HR" "$JR" "$JT" "$JM" "$PREV_TRAIN" "$RECN" "$ROUND" "$PREV" <<'PY' || { echo "job files not written"; exit 1; }
 import json, sys
-work, sha, tr, hr, jr, jt, jm, prev_train, rec, rnd, prev = sys.argv[1:]
+work, sha, tr, hr, jr, jt, jm, prev_train, recn, rnd, prev = sys.argv[1:]
+rec = f"/opt/m/work/records/{recn}"
 records = (f"set -e; cd /opt/rl && gcloud storage cp 'gs://cellens-ai-artifacts/arc3-rl/code/{sha}/*' /opt/rl/ && "
            f"rm -rf {rec} /opt/m/work/g0{rnd} && mkdir -p {rec} /opt/m/work/g0{rnd} && "
            f"for r in {tr} {hr}; do /opt/rl/venv/bin/python g0_data.py --run $r "
@@ -64,11 +71,13 @@ merge = (f"set -e; test -f /opt/m/work/out/{jt}/ADAPTER.json && cd /opt/rl && mk
          f"/opt/rl/venv/bin/python merge_lora.py --adapter /opt/m/work/out/{jt} --checkpoint /opt/m/daniel "
          f"--out /opt/m/work/out/{jm}/merged --only-changed && ls -la /opt/m/work/out/{jm}/merged | head -50")
 for name, cmd in ((jr, records), (jt, train), (jm, merge)):
-    open(f"{work}/job{name[:3]}.json", "w", newline="\n").write(json.dumps({"cmd": "shell", "args": {"command": cmd}}))
+    assert "/opt/m/work/" in cmd and "Program Files" not in cmd and "Files/Git" not in cmd, f"{name}: a Windows path got into the command"
+    open(f"{work}/job-{name}.json", "w", newline="\n").write(json.dumps({"cmd": "shell", "args": {"command": cmd}}))
 print("job files written")
 PY
+if [ -n "${DRYRUN:-}" ]; then for j in $JR $JT $JM; do echo "== $j"; cat "$WORK/job-$j.json"; echo; done; exit 0; fi
 for j in $JR $JT $JM; do
-  gcloud storage cp "$WORK/job${j:0:3}.json" "$B/jobs/$j.json" > /dev/null 2>&1 || { say "could not queue $j"; exit 1; }
+  gcloud storage cp "$WORK/job-$j.json" "$B/jobs/$j.json" > /dev/null 2>&1 || { say "could not queue $j"; exit 1; }
 done
 say "queued $JR, $JT, $JM (code $SHA)"
 C:/Python312/python.exe - "$SITE/site_config.json" "$N" "$JT" "$JM" <<'PY'
@@ -87,20 +96,22 @@ PY
 
 # ---------------------------------------------------------------- 2. the trainer, until the merge is done and uploaded
 while true; do
-  g storage ls "$B/out/$JM/EXIT" > /dev/null 2>&1 && break
-  for j in $JR $JT; do
+  for j in $JR $JT; do      # the first failure is the one worth reading: later jobs fail on its missing outputs
     code=$(g storage cat "$B/out/$j/EXIT" 2>/dev/null | tr -d '\r\n ')
     if [ -n "$code" ] && [ "$code" != 0 ]; then
       say "$j failed (exit $code); last log lines:"; g storage cat "$B/out/$j/job.log" | tail -n 25
       g compute instances stop $VM --zone $ZONE > /dev/null 2>&1 && say "trainer VM stopped"; exit 1
     fi
   done
+  g storage ls "$B/out/$JM/EXIT" > /dev/null 2>&1 && break
   st=$(g compute instances describe $VM --zone $ZONE --format='value(status)' 2>/dev/null | tr -d '\r')
   case "$st" in
     TERMINATED|STOPPED|SUSPENDED)
-      out=$(g compute instances start $VM --zone $ZONE 2>&1 | tr '\n' ' ')
-      if echo "$out" | grep -qiE "STOCKOUT|exhausted|not enough resources|unavailable"; then say "trainer start: no capacity, retrying"
-      else say "trainer VM was $st; started (jobs resume from their checkpoints)"; fi ;;
+      if out=$(g compute instances start $VM --zone $ZONE 2>&1); then
+        say "trainer VM was $st; started (jobs resume from their checkpoints)"
+      else   # 3-Oct: QUOTA_EXCEEDED (other sessions' G4s in us-south1) was logged as "started"
+        say "trainer start refused ($(echo "$out" | grep -oiE 'QUOTA_EXCEEDED|STOCKOUT|ZONE_RESOURCE_POOL_EXHAUSTED|not enough resources|timed out' | head -n 1)); retrying"
+      fi ;;
     "") say "could not read the trainer's status (gcloud login?)" ;;
   esac
   sleep 180
