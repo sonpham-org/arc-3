@@ -75,7 +75,18 @@ const fx = (x, d = 1) => isNum(x) ? x.toFixed(d) : "–";
 const pct = x => isNum(x) ? Math.round(x * 100) + "%" : "–";
 const val = x => x === null || x === undefined ? "–" : isNum(x) ? (Number.isInteger(x) ? String(x) : x.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")) : String(x);
 const yesNo = x => x === null || x === undefined ? "–" : x ? "yes" : "·";
-const modeTag = (name, extra) => el("span", { class: "rl2-mode" + (extra ? " " + extra : ""), style: `background:${modeColor(name)}` }, name);
+// The prompt a mode adds to the turn message, and its dials: shown on hover over any mode tag or legend chip
+function modePrompt(name) {
+  const m = ((state.dash && state.dash.modes) || []).find(x => x.name === name);
+  if (!m) return "";
+  const dials = [isNum(m.cap) ? `move cap ${m.cap}` : null, isNum(m.yield_tokens) ? `thinking budget ${m.yield_tokens} tokens` : null,
+    isNum(m.temperature) ? `temperature ${m.temperature}` : null].filter(Boolean).join(" · ");
+  return (m.line ? m.line.trim() : "No focus line: the turn message is left as it is.") + (dials ? "\n" + dials : "");
+}
+const modeTag = (name, extra) => el("span", { class: "rl2-mode" + (extra ? " " + extra : ""), style: `background:${modeColor(name)}`,
+  title: modePrompt(name) || null }, name);
+// inside a canvas tooltip (which the pointer cannot reach): the prompt as text under the tag
+const modePromptLine = name => { const t = modePrompt(name); return t ? el("div", { class: "rl2-small rl2-eprompt" }, t) : null; };
 
 function notice(text) { $("notice").hidden = !text; $("notice").textContent = text || ""; }
 function syncUrl() {
@@ -1237,11 +1248,11 @@ function laneChart(lanes, game) {
     const { lane, d, i } = h, f = d.f || {}, o = d.o;
     const out = !o ? "last decision of the game" : [o.lvl_turn ? `level up this turn (to ${newLevel(lane.decs, i)})` : null,
       o.go_turn ? "game over this turn" : null, !o.lvl_turn && o.lvl30 ? "level within 30 moves" : null].filter(Boolean).join(" · ") || "no level within 30 moves";
-    tip.replaceChildren(el("div", { class: "mono rl2-small" }, `${lane.name} · #${d.d}`), modeTag(d.mode),
+    tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `${lane.name} · #${d.d}`), modeTag(d.mode), modePromptLine(d.mode),
       el("div", { class: "rl2-small" }, `level ${val(f.level)} · moves ${val(f.actions_total)}→${segEnd(lane.decs, i)}` +
         (o && isNum(o.acts) ? ` (${o.acts})` : "") + ` · cap ${val(d.cap)}`),
       el("div", { class: "rl2-small " + (o && o.go_turn ? "rl2-bad" : o && (o.lvl_turn || o.lvl30) ? "rl2-yes" : "muted") }, out),
-      el("div", { class: "muted rl2-small" }, "click to open in Decisions"));
+      el("div", { class: "muted rl2-small" }, "click to open in Decisions")].filter(Boolean));
     tip.hidden = false;
     const cr = chart.getBoundingClientRect();
     const left = Math.min(e.clientX - cr.left + 12, cr.width - tip.offsetWidth - 4);
@@ -1255,7 +1266,7 @@ function laneChart(lanes, game) {
   });
   lanesUi.paint = paint; // renderLanes paints once the chart is in the page (it needs the container's width)
   return el("div", { class: "card rl2-lanes" }, chart,
-    el("div", { class: "legend rl2-small" }, present.map(m => el("span", {},
+    el("div", { class: "legend rl2-small" }, present.map(m => el("span", { class: "rl2-lgmode", title: modePrompt(m) || null },
       el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
       el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level up (the new level)"),
       el("span", {}, el("i", { class: "lg-golane" }), "red mark: game over"),
@@ -1492,9 +1503,9 @@ function exploreChart(doc, groups) {
     canvas.style.cursor = f.kind === "turn" && coached ? "pointer" : "";
     if (f.kind === "turn") {
       const t = r.turns[f.i], m = doc.modes[t[3]];
-      tip.replaceChildren(el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${t[0]}`), modeTag(m),
+      tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${t[0]}`), modeTag(m), modePromptLine(m),
         el("div", { class: "rl2-small" }, `level ${t[2]} · moves ${t[1]}→${exTurnEnd(r, f.i)}`),
-        el("div", { class: "muted rl2-small" }, coached ? "click to open in Decisions" : "no coach: stock"));
+        el("div", { class: "muted rl2-small" }, coached ? "click to open in Decisions" : "no coach: stock")].filter(Boolean));
     } else {
       const cps = r.grades.cps, c = cps[f.k];
       const held = c[4];
@@ -1521,7 +1532,8 @@ function exploreChart(doc, groups) {
   exUi.paint = paint;
   return el("div", { class: "card rl2-lanes" }, chart,
     el("div", { class: "legend rl2-small" },
-      ordered.map(m => el("span", {}, el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
+      ordered.map(m => el("span", { class: "rl2-lgmode", title: modePrompt(m) || null },
+        el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
       el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level reached")),
     graded ? el("div", { class: "legend rl2-small" }, el("span", {}, "thin line, the goal held:"),
       GOAL_NAMES.map((n, k) => el("span", {}, el("i", { class: "rl2-egoal" + (GOAL_COLORS[k] ? "" : " none"),
