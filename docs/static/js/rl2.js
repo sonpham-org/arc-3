@@ -2,6 +2,8 @@
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
 //   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened, and by Lanes for
 //                                     every run of the builds picked there)
+//   GET /api/v1/rl2/doc/explore-index, explore-<game>  Exploration: every run of the best combo per game, coach mode
+//                                     per turn and the trace grader's goal labels (grader/explore_publish.py)
 //   GET /api/v1/rl2/doc/rl-campaigns  the RL training campaigns ({campaigns: [{name, updated}]})
 //   GET /api/v1/rl2/doc/rl-campaign-<name>  one campaign: VMs, rounds, policy, totals, sibling groups
 //                                     (gcp/controllers/gtree-rollout/rl_loop.py publish-status, arc3-sglang-parking repo)
@@ -20,7 +22,7 @@ import { draw, pathView } from "./review-ui.js?v=20261003-coach";
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const FIXTURE = params.get("fixture") === "1";
-const VIEWS = ["builds", "decisions", "lanes", "sampling", "tree", "training"];
+const VIEWS = ["builds", "decisions", "lanes", "explore", "sampling", "tree", "training"];
 const MIN_N = 20;
 
 const state = {
@@ -39,6 +41,8 @@ const state = {
   lnBuilds: params.get("builds") ? new Set(params.get("builds").split(",").filter(Boolean)) : null,
   lnGame: params.get("view") === "lanes" ? params.get("game") : null, lnX: params.get("x") === "index" ? "index" : "moves",
   lnAll: params.get("all") === "1", lnZoom: 1, focusDec: null,
+  // exploration view: the game tab, x axis (moves | index), zoom
+  eGame: params.get("egame"), eX: params.get("ex") === "index" ? "index" : "moves", eZoom: 1,
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
@@ -85,6 +89,7 @@ function syncUrl() {
     if (state.lnX === "index") q.set("x", "index");
     if (state.lnAll) q.set("all", "1");
   }
+  if (state.view === "explore") { if (state.eGame) q.set("egame", state.eGame); if (state.eX === "index") q.set("ex", "index"); }
   if (state.view === "sampling" && state.smpBuild) q.set("build", state.smpBuild);
   if (state.view === "tree" && state.tGame) {
     q.set("tgame", state.tGame);
@@ -1305,10 +1310,256 @@ function allGamesGrid(loaded, games) {
 let lanesResize = 0;
 window.addEventListener("resize", () => {
   clearTimeout(lanesResize);
-  lanesResize = setTimeout(() => { if (state.view === "lanes" && lanesUi.paint) lanesUi.paint(); }, 120);
+  lanesResize = setTimeout(() => {
+    if (state.view === "lanes" && lanesUi.paint) lanesUi.paint();
+    if (state.view === "explore" && exUi.paint) exUi.paint();
+  }, 120);
 });
-new MutationObserver(() => { if (state.view === "lanes" && lanesUi.paint) requestAnimationFrame(lanesUi.paint); })
+new MutationObserver(() => {
+  if (state.view === "lanes" && lanesUi.paint) requestAnimationFrame(lanesUi.paint);
+  if (state.view === "explore" && exUi.paint) requestAnimationFrame(exUi.paint);
+})
   .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+/* ------------------------------------------------------------------ view 4: exploration */
+// One tab per game; one row per run of the best combo (no coach, then each coach arm). Each row is the play left to right:
+// a thick line coloured by the coach mode of every turn (no-coach runs: stock throughout) and, on games the trace grader
+// judged, a thin line under it with the goal the model held (status colours: right / partly right / wrong / none stated).
+// Data: explore-index and explore-<game>, written by grader/explore_publish.py (D:/codex-work/daniel-base-20261001).
+// A turn row is [decision #, moves at its start, level, mode index]; a checkpoint [decision #, moves, level, stated label,
+// held label, belief, rule errors] (held = the last stated goal on the same level, as the grader's scoring counts it).
+const GOAL_COLORS = ["#0ca30c", "#fab219", "#d03b3b", null];   // correct, partial, wrong, unstated (status palette)
+const GOAL_NAMES = ["right goal", "partly right", "wrong goal", "no goal stated"];
+const EX_ARM_H = 24, EX_ROW_H = 40, EX_TOP = 12, EX_MODE = 13, EX_GAP = 3, EX_GOAL = 7;
+const exUi = { token: 0, paint: null };
+const exTurnEnd = (row, i) => i + 1 < row.turns.length ? row.turns[i + 1][1] : Math.max(row.end, row.turns[i][1] + 1);
+
+async function renderExplore() {
+  const token = ++exUi.token;
+  let idx;
+  try { idx = await getDoc("explore-index"); } catch (e) {
+    if (e instanceof NotPublished) {
+      $("exPickers").replaceChildren();
+      $("exBody").replaceChildren(el("div", { class: "empty" }, "The exploration data is not published yet."));
+      return;
+    }
+    throw e;
+  }
+  if (token !== exUi.token) return;
+  const games = [...idx.games].sort((a, b) => (b.graded - a.graded) || a.game.localeCompare(b.game));
+  if (!state.eGame || !games.some(g => g.game === state.eGame)) state.eGame = games[0] && games[0].game;
+  const tab = g => el("button", { type: "button", role: "tab", class: "rl2-fbtn" + (g.game === state.eGame ? " on" : ""),
+    "aria-selected": g.game === state.eGame ? "true" : "false", title: g.graded ? "goal judged by the trace grader" : "modes only",
+    onclick: () => { state.eGame = g.game; renderExplore(); } },
+    g.game, g.graded ? el("i", { class: "rl2-egraded", "aria-hidden": "true" }) : null);
+  const seg = (label, opts, cur, set) => el("div", { class: "rl2-seg", role: "group", "aria-label": label }, opts.map(([k, t]) =>
+    el("button", { type: "button", class: cur === k ? "on" : "", "aria-pressed": cur === k ? "true" : "false",
+      onclick: () => { set(k); renderExplore(); } }, t)));
+  $("exPickers").replaceChildren(
+    el("div", { class: "rl2-etabs", role: "tablist", "aria-label": "game" },
+      el("span", { class: "muted rl2-small" }, "goal judged"), games.filter(g => g.graded).map(tab),
+      el("span", { class: "muted rl2-small rl2-esep" }, "modes only"), games.filter(g => !g.graded).map(tab)),
+    el("div", { class: "rl2-lctl" },
+      seg("x axis", [["moves", "game moves"], ["index", "turn #"]], state.eX, v => { state.eX = v; }),
+      seg("zoom", ZOOMS.map(z => [z, z === 1 ? "fit" : z + "×"]), state.eZoom, v => { state.eZoom = v; })));
+  syncUrl();
+  const body = $("exBody");
+  let doc;
+  if (!state.docs["explore-" + state.eGame]) body.replaceChildren(el("div", { class: "empty" }, "loading…"));
+  try { doc = await getDoc("explore-" + state.eGame); } catch (e) {
+    if (e instanceof NotPublished) { body.replaceChildren(el("div", { class: "empty" }, `No exploration data for ${state.eGame}.`)); return; }
+    throw e;
+  }
+  if (token !== exUi.token) return;
+  const arms = idx.arms.filter(a => doc.rows.some(r => r.arm === a.id));
+  const groups = arms.map(a => ({ arm: a, rows: doc.rows.filter(r => r.arm === a.id && r.turns.length) })).filter(g => g.rows.length);
+  if (!groups.length) { body.replaceChildren(el("div", { class: "empty" }, `No run has turns in ${state.eGame}.`)); return; }
+  body.replaceChildren(...[exploreChart(doc, groups), el("h3", { class: "rl2-h3" }, `By arm in ${doc.game}`), exploreTable(doc, arms),
+    doc.graded ? exploreSummaries(doc, groups) : null].filter(Boolean));
+  exUi.paint();
+}
+
+function exploreChart(doc, groups) {
+  const modes = doc.modes;
+  const graded = doc.graded;
+  const ordered = orderModes([...new Set(groups.flatMap(g => g.rows.flatMap(r => r.turns.map(t => modes[t[3]]))))]);
+  const fmtScore = r => isNum(r.score) ? `${fx(r.score, 0)} pts · ${val(r.levels)} lv` : "no score";
+  const labels = el("div", { class: "rl2-llabels" },
+    el("div", { class: "rl2-laxis muted", style: `height:${AXIS_H}px` }, state.eX === "moves" ? "moves →" : "turn →"),
+    groups.flatMap(g => [
+      el("div", { class: "rl2-earm", style: `height:${EX_ARM_H}px` }, g.arm.short),
+      ...g.rows.map(r => el("div", { class: "rl2-llabel", style: `height:${EX_ROW_H}px`,
+        title: `${r.run}\n${r.lost ? "VM lost mid-run: left out of the averages\n" : ""}${fmtScore(r)} in ${doc.game}` },
+        el("span", { class: "rl2-lname" }, `run ${r.letter}`, r.lost ? el("small", { class: "muted" }, " · VM lost") : null),
+        el("span", { class: "mono muted" }, fmtScore(r))))]));
+  const canvas = el("canvas", { class: "rl2-lcanvas", role: "img",
+    "aria-label": `${groups.reduce((t, g) => t + g.rows.length, 0)} runs of ${doc.game}: coach mode per turn` + (graded ? " and the goal held" : "") });
+  const scroll = el("div", { class: "rl2-lscroll" }, canvas);
+  const tip = el("div", { class: "rl2-ltip", hidden: true });
+  const chart = el("div", { class: "rl2-lchart" }, labels, scroll, tip);
+  const layout = [];   // [y of the row top, row]
+  let y = AXIS_H;
+  for (const g of groups) { y += EX_ARM_H; for (const r of g.rows) { layout.push([y, r]); y += EX_ROW_H; } }
+  const H = y;
+  let hits = [];
+  const paint = () => {
+    if (!canvas.isConnected) return;
+    const css = getComputedStyle(canvas);
+    const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
+    const ink = v("--text", "#111"), muted = v("--muted", "#888"), line = v("--wash-line", "#ddd"), card = v("--sh-card", "#fff"),
+      track = v("--wash", "#f3f4f6"), stock = v("--rl2-stock", "#d4d9e1");
+    const W = Math.round(Math.max(160, scroll.clientWidth) * state.eZoom);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + "px"; canvas.style.height = H + "px";
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const byMoves = state.eX === "moves";
+    const rowEnd = r => byMoves ? r.end : r.turns.length;
+    const maxX = Math.max(1, ...layout.map(([, r]) => rowEnd(r)));
+    const sx = x => PAD_L + x * (W - PAD_L - PAD_R) / maxX;
+    const raw = maxX / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 70));
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 5, 10].map(k => k * mag).reduce((a, k) => Math.abs(k - raw) < Math.abs(a - raw) ? k : a);
+    g.font = "10px " + v("--rl-mono", "monospace");
+    for (let x = 0; x <= maxX; x += step) {
+      const px = Math.round(sx(x)) + 0.5;
+      g.fillStyle = line; g.fillRect(px - 0.5, AXIS_H - 4, 1, H - AXIS_H + 4);
+      g.fillStyle = muted; g.textAlign = x === 0 ? "left" : "center"; g.fillText(String(x), px, AXIS_H - 8);
+    }
+    // arm bands: a faint rule through each arm's header
+    let yy = AXIS_H;
+    for (const grp of groups) { g.fillStyle = line; g.fillRect(0, yy + EX_ARM_H / 2, W, 1); yy += EX_ARM_H + grp.rows.length * EX_ROW_H; }
+    hits = layout.map(([y0, r]) => {
+      const mY = y0 + EX_TOP, gY = mY + EX_MODE + EX_GAP;
+      const turnSegs = r.turns.map((t, i) => {
+        const x0 = sx(byMoves ? t[1] : i), x1 = sx(byMoves ? exTurnEnd(r, i) : i + 1);
+        return [x0, Math.max(x0 + 2, x1), i];
+      });
+      g.globalAlpha = r.lost ? 0.55 : 1;
+      g.fillStyle = track;
+      g.fillRect(sx(0), mY, Math.max(2, sx(rowEnd(r)) - sx(0)), EX_MODE);
+      if (graded && r.grades) g.fillRect(sx(0), gY, Math.max(2, sx(rowEnd(r)) - sx(0)), EX_GOAL);
+      for (const [x0, x1, i] of turnSegs) {
+        const m = modes[r.turns[i][3]];
+        g.fillStyle = m === "stock" ? stock : modeColor(m);
+        g.fillRect(x0, mY, x1 - x0, EX_MODE);
+      }
+      // level changes: a thin gap in the line, a tick above it with the new level
+      g.textAlign = "left";
+      for (let i = 1; i < r.turns.length; i++) {
+        if (r.turns[i][2] > r.turns[i - 1][2]) {
+          const x = Math.round(turnSegs[i][0]);
+          g.fillStyle = card; g.fillRect(x - 1, mY, 2, EX_MODE);
+          g.fillStyle = ink; g.fillRect(x - 1, y0 + 2, 2, EX_TOP - 2 + EX_MODE);
+          g.fillText(String(r.turns[i][2]), x + 2, y0 + 10);
+        }
+      }
+      // the goal held, checkpoint to checkpoint (turn axis: the checkpoint's turn position)
+      const goalSegs = [];
+      if (graded && r.grades) {
+        const at = new Map(r.turns.map((t, i) => [t[0], i]));
+        const turnPos = d => at.has(d) ? at.get(d) : Math.max(0, r.turns.findIndex(t => t[0] >= d));
+        const cps = r.grades.cps;
+        const cx = c => sx(byMoves ? c[1] : turnPos(c[0]));
+        cps.forEach((c, k) => {
+          const x0 = cx(c), x1 = k + 1 < cps.length ? cx(cps[k + 1]) : sx(rowEnd(r));
+          const col = GOAL_COLORS[c[4]];
+          if (col) { g.fillStyle = col; g.fillRect(x0, gY, Math.max(1, x1 - x0), EX_GOAL); }
+          goalSegs.push([x0, Math.max(x0 + 2, x1), k]);
+        });
+      }
+      g.globalAlpha = 1;
+      return { y0, mY, gY, r, turnSegs, goalSegs };
+    });
+  };
+  const find = e => {
+    const rc = canvas.getBoundingClientRect();
+    const x = e.clientX - rc.left, y = e.clientY - rc.top;
+    const h = hits.find(h => y >= h.y0 && y < h.y0 + EX_ROW_H);
+    if (!h) return null;
+    const pick = segs => { let best = null; for (const s of segs) if (x >= s[0] - 1 && x <= s[1] + 1) best = s; return best; };
+    if (graded && h.r.grades && y >= h.gY - 1) { const s = pick(h.goalSegs); return s ? { h, kind: "goal", k: s[2] } : null; }
+    if (y >= h.mY - 4) { const s = pick(h.turnSegs); return s ? { h, kind: "turn", i: s[2] } : null; }
+    return null;
+  };
+  canvas.addEventListener("pointermove", e => {
+    const f = find(e);
+    if (!f) { tip.hidden = true; canvas.style.cursor = ""; return; }
+    const r = f.h.r;
+    const coached = r.arm.includes("/");
+    canvas.style.cursor = f.kind === "turn" && coached ? "pointer" : "";
+    if (f.kind === "turn") {
+      const t = r.turns[f.i], m = doc.modes[t[3]];
+      tip.replaceChildren(el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${t[0]}`), modeTag(m),
+        el("div", { class: "rl2-small" }, `level ${t[2]} · moves ${t[1]}→${exTurnEnd(r, f.i)}`),
+        el("div", { class: "muted rl2-small" }, coached ? "click to open in Decisions" : "no coach: stock"));
+    } else {
+      const cps = r.grades.cps, c = cps[f.k];
+      const held = c[4];
+      // a turn that states no goal keeps the last one stated on its level: quote that turn
+      let src = c;
+      if (c[3] === 3) for (let j = f.k - 1; j >= 0 && cps[j][2] === c[2]; j--) if (cps[j][3] !== 3) { src = cps[j]; break; }
+      tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${c[0]} · level ${c[2]} · moves ${c[1]}`),
+        el("div", { class: "rl2-small" },
+          el("i", { class: "rl2-egoal" + (GOAL_COLORS[held] ? "" : " none"), style: GOAL_COLORS[held] ? `background:${GOAL_COLORS[held]}` : "" }),
+          el("b", {}, GOAL_NAMES[held]), src !== c ? el("span", { class: "muted" }, ` (as stated at turn #${src[0]})`) : null),
+        src[5] ? el("div", { class: "rl2-small" }, `“${src[5]}”`) : null,
+        (src[6] || []).length ? el("div", { class: "rl2-small rl2-bad" }, "Wrong rule: " + src[6].join("; ")) : null].filter(Boolean));
+    }
+    tip.hidden = false;
+    const cr = chart.getBoundingClientRect();
+    tip.style.left = Math.max(0, Math.min(e.clientX - cr.left + 12, cr.width - tip.offsetWidth - 4)) + "px";
+    tip.style.top = (e.clientY - cr.top + 14) + "px";
+  });
+  canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
+  canvas.addEventListener("click", e => {
+    const f = find(e);
+    if (f && f.kind === "turn" && f.h.r.arm.includes("/")) openDecision(f.h.r.run, doc.game, f.h.r.turns[f.i][0]);
+  });
+  exUi.paint = paint;
+  return el("div", { class: "card rl2-lanes" }, chart,
+    el("div", { class: "legend rl2-small" },
+      ordered.map(m => el("span", {}, el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
+      el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level reached")),
+    graded ? el("div", { class: "legend rl2-small" }, el("span", {}, "thin line, the goal held:"),
+      GOAL_NAMES.map((n, k) => el("span", {}, el("i", { class: "rl2-egoal" + (GOAL_COLORS[k] ? "" : " none"),
+        style: GOAL_COLORS[k] ? `background:${GOAL_COLORS[k]}` : "" }), n))) : null);
+}
+
+function exploreTable(doc, arms) {
+  const base = doc.by_arm[arms[0] && arms[0].id] || {};
+  const head = ["arm", "runs", "score in this game", "levels", ...(doc.graded ? ["time on a wrong goal", "time not on the right goal"] : [])];
+  const diff = (x, b) => isNum(x) && isNum(b) && x !== b
+    ? el("small", { class: x > b ? "rl2-delta up" : "rl2-delta down" }, ` ${x > b ? "+" : ""}${fx(x - b)}`) : null;
+  return el("div", {},
+    el("p", { class: "sub" }, `Averages over each arm's runs in ${doc.game}; a run whose VM was lost is left out. Under a coach arm, ` +
+      `the change against no coach. ` + (doc.graded ? "Time shares are of active play, counted as the grader counts them: a turn that " +
+      "states no goal keeps the last goal stated on that level." : "")),
+    el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table" },
+      el("thead", {}, el("tr", {}, head.map(h => el("th", {}, h)))),
+      el("tbody", {}, arms.map((a, k) => {
+        const s = doc.by_arm[a.id];
+        if (!s) return null;
+        return el("tr", {}, el("td", {}, a.short), el("td", { class: "mono" }, s.n),
+          el("td", { class: "mono" }, fx(s.score), k ? diff(s.score, base.score) : null),
+          el("td", { class: "mono" }, fx(s.levels), k ? diff(s.levels, base.levels) : null),
+          doc.graded ? el("td", { class: "mono" }, s.graded ? pct(s.wrong) : "–") : null,
+          doc.graded ? el("td", { class: "mono" }, s.graded ? pct(s.off) : "–") : null);
+      })))));
+}
+
+function exploreSummaries(doc, groups) {
+  return el("div", {}, el("h3", { class: "rl2-h3" }, "What the judge saw, run by run"),
+    groups.map(g => g.rows.some(r => r.grades) ? el("div", { class: "rl2-esum" },
+      el("div", { class: "rl2-earm" }, g.arm.short),
+      g.rows.filter(r => r.grades).map(r => el("details", {},
+        el("summary", {}, el("b", {}, `run ${r.letter}`), el("span", { class: "mono muted" },
+          ` ${isNum(r.score) ? fx(r.score, 0) + " pts · " : ""}${val(r.levels)} lv · wrong goal ${pct(r.grades.wrong)}` +
+          ` · not the right goal ${pct(r.grades.off)}`)),
+        el("p", {}, r.grades.summary || "–")))) : null));
+}
 
 /* ------------------------------------------------------------------ shell */
 function show(view) {
@@ -1326,7 +1577,8 @@ function show(view) {
   if (view === "tree") state.treeShown = true;
   if (view === "training" && state.trainingShown) return;
   if (view === "training") state.trainingShown = true;
-  const fn = { builds: renderBuilds, decisions: renderDecisions, lanes: renderLanes, sampling: renderSampling, tree: renderTree,
+  const fn = { builds: renderBuilds, decisions: renderDecisions, lanes: renderLanes, explore: renderExplore, sampling: renderSampling,
+    tree: renderTree,
     training: renderTraining }[view];
   Promise.resolve().then(fn).catch(err => {
     console.error(view, err);

@@ -701,7 +701,7 @@ class ShippedFiles(unittest.TestCase):
         page = (ROOT / "docs" / "rl2.html").read_text(encoding="utf-8")
         script = (ROOT / "docs" / "static" / "js" / "rl2.js").read_text(encoding="utf-8")
         views = re.search(r"const VIEWS = \[([^\]]*)\]", script).group(1)
-        for view in ("builds", "decisions", "lanes", "sampling", "tree", "training"):
+        for view in ("builds", "decisions", "lanes", "explore", "sampling", "tree", "training"):
             self.assertIn(f'data-view="{view}"', page, view)
             self.assertIn(f'id="view-{view}"', page, view)
             self.assertIn(f'"{view}"', views, view)
@@ -713,6 +713,11 @@ class ShippedFiles(unittest.TestCase):
         self.assertGreaterEqual(len({d["build"] for d in runs}), 3, "fake run docs for 3 builds")
         shared = set.intersection(*(set(d["games"]) for d in runs))
         self.assertGreaterEqual(len(shared), 2, "games every fake run played")
+        # Exploration: an index naming each game, a document per game, one of them with fake goal labels
+        index = fixture["docs"]["explore-index"]
+        games = [g["game"] for g in index["games"]]
+        self.assertTrue(all(f"explore-{g}" in fixture["docs"] for g in games), "a fake explore doc per game")
+        self.assertTrue(any(r["grades"] for g in games for r in fixture["docs"][f"explore-{g}"]["rows"]), "fake goal labels")
 
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
         pages = [p for p in (ROOT / "docs").glob("*.html") if 'class="sitetabs"' in p.read_text(encoding="utf-8")]
