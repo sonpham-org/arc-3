@@ -21,12 +21,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 from railway.rl_review import (
+    DEFAULT_FENCED,
     RlReviewApi,
     ReviewProblem,
     _order,
     clean_gtree_bundle,
     clean_rating,
     clean_tree_bundle,
+    gt_arm,
     pair_priority,
 )
 
@@ -608,6 +610,49 @@ class Gtree(unittest.TestCase):
         clean_gtree_bundle(mutate(lambda b: st(b).update(outcome={"moves_to_clear": 1, "cleared_level": True})))
         clean_gtree_bundle(mutate(lambda b: st(b).update(state_ref=CTX, ctx_after=CTX, moves_step=0, tokens=0)))
 
+    def test_rl_rollout_server_tries_are_kept(self) -> None:
+        """What gtree-rollout/rollout_core.py writes (arc3-sglang-parking): run gtr-<campaign>, origin_kind = the job's
+        mode (replay_exact / replay_actions / snapshot), policy '<coach spec>@<policy version>', restored at the game
+        start or mid-tree. The values below are the ones in the store's gtr-rl1 and gtr-rl2 tries (3-Oct)."""
+
+        def try_(kind="snapshot", policy="policy@rl2-v0", origin=MID_FROM, game=None):
+            b = gt_mid(rid="gtr-rl2:ka59_p0.rl2-r001-ka59-n1.k0", origin=origin)
+            b["rollouts"][0].update(run="gtr-rl2", build="gtree-rollout", origin_kind=kind, policy=policy,
+                                    status="move_budget", origin_edge=None)
+            if game:
+                b["rollouts"][0]["game"] = game
+            return b
+
+        item = clean_gtree_bundle(try_())
+        r = item["rollouts"][0]
+        self.assertEqual((r["run"], r["origin_kind"], r["origin_state"], r["policy"]),
+                         ("gtr-rl2", "snapshot", MID_FROM, "policy@rl2-v0"))
+        self.assertEqual(clean_gtree_bundle(try_(origin=ROOT_IDS[1]))["rollouts"][0]["origin_state"], ROOT_IDS[1],
+                         "a try restored at the game start")
+        for kind in ("replay_exact", "replay_actions", "snapshot"):
+            for policy in ("policy@rl1-v0", "policy@rl2-v12", "policy", "rules", "force:probe", "random:0.5", None, ""):
+                clean_gtree_bundle(try_(kind, policy))
+        for code, bundle in (("invalid_origin_kind", try_("snapshots")),
+                             ("invalid_origin_kind", try_("SNAPSHOT")),
+                             ("invalid_origin", try_(origin=None)),
+                             ("invalid_origin", try_(origin="ka59:t3:root")),
+                             ("invalid_origin_state", try_(origin="ka59:L1:aaaaaaaaaaaa")),
+                             ("invalid_policy", try_(policy="policy@")),
+                             ("invalid_policy", try_(policy="@rl2-v0")),
+                             ("invalid_policy", try_(policy="policy@rl2@v0")),
+                             ("invalid_policy", try_(policy="policy@rl2 v0")),
+                             ("invalid_policy", try_(policy="policy/../x")),
+                             ("invalid_policy", try_(policy="p" * 161)),
+                             ("invalid_policy", try_(policy=["policy"])),
+                             ("fenced_game", try_(game="as66"))):
+            with self.assertRaises(ReviewProblem, msg=code) as ctx:
+                clean_gtree_bundle(bundle)
+            self.assertEqual(ctx.exception.code, code, f"{code}: {ctx.exception.message}")
+        # every RL campaign is the Tree view's 'rl' source
+        self.assertEqual([gt_arm(run) for run in ("gtr-rl1", "gtr-rl2", "gtr-rl17", "daniel-hicache-sbt06-b-1003",
+                                                  "daniel-hicache-best-grader30-a-1003", "hist/x", "")],
+                         ["rl", "rl", "rl", "nocoach", "grader30", "other", "other"])
+
     def test_the_routes_are_claimed_and_guarded(self) -> None:
         node = gt_node(2, SCREEN_B, 6)
         for path in ("/api/v1/gtree/games", "/api/v1/gtree/publication", f"/api/v1/gtree/node/{node}",
@@ -628,7 +673,8 @@ class Gtree(unittest.TestCase):
         reads = ("/api/v1/gtree/games", "/api/v1/gtree/stats", f"/api/v1/gtree/node/{node}",
                  "/api/v1/gtree/rollout/run-a:ka59_p0", "/api/v1/gtree/trace/" + "a" * 64,
                  "/api/v1/gtree/frontier?game=ka59", "/api/v1/gtree/value/ka59:t5:root",
-                 "/api/v1/gtree/shortest?game=ka59&level=1")
+                 "/api/v1/gtree/shortest?game=ka59&level=1", "/api/v1/gtree/tree?game=ka59&tree=2",
+                 "/api/v1/gtree/tree?game=as66")
         for path in reads:
             self.assertEqual(call(self.api, "GET", path)[0], 401, path)
             self.assertEqual(call(self.api, "GET", path, self.machine)[0], 401, path)
@@ -664,9 +710,19 @@ class Gtree(unittest.TestCase):
                            ("/api/v1/gtree/frontier?game=ka59&N=1001", "invalid_N"),
                            ("/api/v1/gtree/frontier?game=ka59&limit=0", "invalid_limit"),
                            ("/api/v1/gtree/frontier?game=ka59&limit=-3", "invalid_limit"),
-                           ("/api/v1/gtree/frontier?game=ka59&actions=probe,a%20b", "invalid_actions")):
+                           ("/api/v1/gtree/frontier?game=ka59&actions=probe,a%20b", "invalid_actions"),
+                           ("/api/v1/gtree/tree", "invalid_game"),
+                           ("/api/v1/gtree/tree?game=KA59", "invalid_game"),
+                           ("/api/v1/gtree/tree?game=ka59&tree=6", "invalid_tree"),
+                           ("/api/v1/gtree/tree?game=ka59&tree=t3", "invalid_tree"),
+                           ("/api/v1/gtree/tree?game=ka59&arms=rl,bogus", "invalid_arms"),
+                           ("/api/v1/gtree/tree?game=ka59&arms=nocoach,,rl", "invalid_arms")):
             status, payload = call(self.api, "GET", path, self.team)
             self.assertEqual((status, payload["error"]), (400, code), path)
+        # held-out games have no tree: refused before any database work
+        for game in ("as66", "lf52"):
+            status, payload = call(self.api, "GET", f"/api/v1/gtree/tree?game={game}&tree=3", self.team)
+            self.assertEqual((status, payload["error"]), (404, "fenced_game"), game)
         self.assertEqual(call(self.api, "GET", "/api/v1/gtree/trace/" + "a" * 64, self.team)[0], 404)
         self.assertEqual(call(self.api, "GET", "/api/v1/gtree/nothing", self.team)[0], 404)
         self.assertEqual(call(self.api, "GET", "/api/v1/gtree", self.team)[0], 404)
@@ -701,23 +757,44 @@ class ShippedFiles(unittest.TestCase):
         page = (ROOT / "docs" / "rl2.html").read_text(encoding="utf-8")
         script = (ROOT / "docs" / "static" / "js" / "rl2.js").read_text(encoding="utf-8")
         views = re.search(r"const VIEWS = \[([^\]]*)\]", script).group(1)
-        for view in ("builds", "decisions", "lanes", "explore", "sampling", "tree", "training"):
+        for view in ("builds", "decisions", "tree", "training"):
             self.assertIn(f'data-view="{view}"', page, view)
             self.assertIn(f'id="view-{view}"', page, view)
             self.assertIn(f'"{view}"', views, view)
+        # Lanes, Exploration and Sampling folded into the Tree view (Son 3-Oct); their old links open the Tree
+        for gone in ("lanes", "explore", "sampling"):
+            self.assertNotIn(f'data-view="{gone}"', page, gone)
+            self.assertNotIn(f'id="view-{gone}"', page, gone)
+            self.assertNotIn(f'"{gone}"', views, gone)
+            self.assertIn(f'{gone}: "tree"', script, gone)
         fixture = json.loads((ROOT / "docs" / "static" / "data" / "rl2-fixture.json").read_text(encoding="utf-8"))
         names = [c["name"] for c in fixture["docs"]["rl-campaigns"]["campaigns"]]
         self.assertTrue(any(f"rl-campaign-{n}" in fixture["docs"] for n in names), "a fake campaign for ?fixture=1")
-        # Lanes puts runs of several builds side by side: the fixture has run docs for 3+ builds sharing 2+ games
-        runs = [d for name, d in fixture["docs"].items() if name.startswith("run-")]
-        self.assertGreaterEqual(len({d["build"] for d in runs}), 3, "fake run docs for 3 builds")
-        shared = set.intersection(*(set(d["games"]) for d in runs))
-        self.assertGreaterEqual(len(shared), 2, "games every fake run played")
-        # Exploration: an index naming each game, a document per game, one of them with fake goal labels
-        index = fixture["docs"]["explore-index"]
-        games = [g["game"] for g in index["games"]]
-        self.assertTrue(all(f"explore-{g}" in fixture["docs"] for g in games), "a fake explore doc per game")
-        self.assertTrue(any(r["grades"] for g in games for r in fixture["docs"][f"explore-{g}"]["rows"]), "fake goal labels")
+        self.assertTrue(any(name.startswith("run-") for name in fixture["docs"]), "fake run docs for Decisions")
+        # Tree: every game x tree, the way the page asks for it; coach modes, RL restarts mid-tree, clears, game overs
+        gt = fixture["gtree"]
+        games = [g["game"] for g in gt["games"]["games"]]
+        self.assertGreaterEqual(len(games), 2)
+        self.assertFalse(set(games) & set(DEFAULT_FENCED.split(",")), "no held-out game in the fixture")
+        for game in games:
+            for k in TREES:
+                self.assertIn(f"tree?game={game}&tree={k}", gt, (game, k))
+            self.assertIn(f"node/{game}:t1:root", gt)
+            self.assertIn(f"value/{game}:t1:root", gt)
+        t = gt[f"tree?game={games[0]}&tree=1"]
+        self.assertGreaterEqual(len(set(t["modes"]) - {"stock"}), 4, "fake coach modes")
+        self.assertTrue({"nocoach", "random30", "grader30", "rl"} <= {a["id"] for a in t["arms"]})
+        self.assertTrue(any(r["origin"] is not None and r["origin"] != t["root"] for r in t["runs"]), "an RL restart mid-tree")
+        flags = {s[6] for r in t["runs"] for s in r["steps"]}
+        self.assertTrue(any(f & 1 for f in flags) and any(f & 2 for f in flags), "level clears and game overs")
+        self.assertTrue(all(f"rollout/{r['id']}" in gt for r in t["runs"]), "every run's steps (for its traces)")
+        self.assertTrue(any(k.startswith("trace/") for k in gt))
+        # the goal overlay: fake grader labels for runs of that tree, one checkpoint per graded turn
+        explore = fixture["docs"][f"explore-{games[0]}"]
+        graded = {r["run"]: r["grades"]["cps"] for r in explore["rows"] if r["grades"]}
+        turns = {r["run"]: {s[5] for s in r["steps"]} for r in t["runs"] if r["origin_kind"] == "start"}
+        self.assertTrue(graded and set(graded) <= set(turns))
+        self.assertTrue(all(c[0] in turns[run] for run, cps in graded.items() for c in cps), "checkpoints join by turn")
 
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
         pages = [p for p in (ROOT / "docs").glob("*.html") if 'class="sitetabs"' in p.read_text(encoding="utf-8")]
@@ -1223,6 +1300,139 @@ class GtreeDatabase(unittest.TestCase):
         self.assertEqual(back["nodes"][0]["open"], {"left": 4, "right": 4, "solve": 3, "jump": 3})
         # t5: no merge, so the backward list follows p1 alone
         self.assertEqual([r["distance"] for r in self.get("frontier?game=ka59&tree=5&mode=backward")["nodes"]], [2, 11])
+
+    def tree_plays(self) -> None:
+        """The best combo's plain run (two plays), a coach arm's run (one) and an RL rollout restarted mid-tree from
+        the plain run's node after 'probe' (its t1 node MID_FROM, 1 game move and 1 step into that play)."""
+
+        plain = gt_bundle(run="daniel-hicache-sbt06-b-1003", build="sbt06hic11")
+        plain["steps"][0]["detail"]["turn"] = 1
+        self.assertEqual(self.publish(plain)[0], 200)
+        coach = gt_bundle(run="daniel-hicache-best-random30-a-1003", choices=("rethink",),
+                          build="sbt06hic11/coach-random30")
+        self.assertEqual(self.publish(coach)[0], 200)
+        rl = gt_mid(rid="gtr-rl1:ka59_p0.job1.k0")
+        rl["rollouts"][0].update(run="gtr-rl1", build="gtree-rollout", result={"levels": 1, "origin_actions_before": 99})
+        self.assertEqual(self.publish(rl)[0], 200)
+
+    def test_whole_tree(self) -> None:
+        self.tree_plays()
+        b3, c3, d3 = gt_node(3, 1, SCREEN_B), gt_node(3, 2, SCREEN_C), gt_node(3, 2, SCREEN_D)
+        t = self.get("tree?game=ka59&tree=3")
+        self.assertEqual((t["game"], t["tree"], t["tree_name"], t["steps"], t["truncated"]),
+                         ("ka59", 3, "level + screen", 11, False))
+        self.assertEqual(t["step_fields"], ["seq", "edge", "mode", "moves_step", "level", "turn", "flags", "tokens"])
+        self.assertEqual(t["modes"], ["stock", "execute", "probe", "rethink"], "stock first")
+        self.assertEqual([(a["id"], a["rollouts"], a["shown"]) for a in t["arms"]],
+                         [("nocoach", 2, True), ("random30", 1, True), ("rl", 1, True)])
+        ids = [n["id"] for n in t["nodes"]]
+        self.assertEqual(sorted(ids), sorted([ROOT_IDS[3], b3, c3, d3]))
+        self.assertEqual(ids[t["root"]], ROOT_IDS[3])
+        node = {n["id"]: n for n in t["nodes"]}
+        self.assertEqual((node[b3]["level"], node[b3]["in"], node[b3]["out"], node[b3]["started"]), (1, 3, 4, 1))
+        self.assertEqual((node[c3]["in"], node[c3]["out"], node[d3]["in"], node[d3]["out"]), (4, 4, 1, 0))
+        edge = {(ids[e["from"]], ids[e["to"]] if e["to"] is not None else None): e for e in t["edges"]}
+        self.assertEqual(len(edge), 4)
+        # three plays merge on screen B in t3; the RL rollout's first step joins them from B to C
+        first = edge[(ROOT_IDS[3], b3)]
+        self.assertEqual((first["plays"], first["modes"], first["go"], first["cleared"], first["moves"]),
+                         (3, {"probe": 1, "stock": 1, "rethink": 1}, 0, 0, 1.0))
+        self.assertRegex(first["trace"], r"^[0-9a-f]{64}$")
+        up = edge[(b3, c3)]
+        self.assertEqual((up["plays"], up["modes"], up["cleared"]), (4, {"execute": 3, "probe": 1}, 4))
+        end = edge[(c3, None)]
+        self.assertEqual((end["plays"], end["modes"], end["go"], len(end["runs"])), (3, {"stock": 3}, 3, 3))
+        self.assertIsNone(end["trace"], "the last steps have no trace")
+        runs = {r["id"]: r for r in t["runs"]}
+        self.assertEqual([r["arm"] for r in t["runs"]], ["random30", "nocoach", "nocoach", "rl"], "plays from the start first")
+        p0 = runs["daniel-hicache-sbt06-b-1003:ka59_p0"]
+        self.assertEqual((p0["run"], p0["origin"], p0["x0"], p0["t0"], p0["levels"]),
+                         ("daniel-hicache-sbt06-b-1003", None, 0, 0, 1))
+        self.assertEqual([ids[i] for i in p0["path"]], [ROOT_IDS[3], b3, c3])
+        modes = t["modes"]
+        self.assertEqual([(s[0], modes[s[2]], s[3], s[4], s[5], s[6]) for s in p0["steps"]],
+                         [(0, "probe", 1, 1, 1, 0), (1, "execute", 1, 1, None, 1), (2, "stock", 1, 2, None, 2)])
+        self.assertEqual([t["edges"][s[1]]["from"] for s in p0["steps"]], p0["path"])
+        rl = runs["gtr-rl1:ka59_p0.job1.k0"]
+        # restarted from B: 1 move and 1 step into the plain run's play (read from that play, not the 99 it reports)
+        self.assertEqual((rl["origin_kind"], ids[rl["origin"]], rl["x0"], rl["t0"], rl["policy"]),
+                         ("replay_actions", b3, 1, 1, "pol-v1"))
+        self.assertEqual([ids[i] for i in rl["path"]], [b3, c3, d3])
+        # t1 keeps every play apart; the restart branches off the plain run's own path
+        t1 = self.get("tree?game=ka59&tree=1")
+        ids1 = [n["id"] for n in t1["nodes"]]
+        rl1 = next(r for r in t1["runs"] if r["arm"] == "rl")
+        self.assertEqual(ids1[rl1["origin"]], MID_FROM)
+        at = next(n for n in t1["nodes"] if n["id"] == MID_FROM)
+        self.assertEqual((at["in"], at["out"], at["started"]), (1, 2, 1))
+        self.assertEqual(len(t1["nodes"]), 1 + 3 + 3 + 2, "root, three first moves, three level 2 starts, the RL's two")
+        # the arms filter: only the RL rollout, still placed where it restarted; every arm is still listed
+        only = self.get("tree?game=ka59&tree=3&arms=rl")
+        self.assertEqual([(a["id"], a["shown"]) for a in only["arms"]], [("nocoach", False), ("random30", False), ("rl", True)])
+        self.assertEqual(([r["id"] for r in only["runs"]], only["steps"], len(only["edges"])),
+                         (["gtr-rl1:ka59_p0.job1.k0"], 2, 2))
+        self.assertEqual((only["runs"][0]["x0"], only["nodes"][only["root"]]["id"]), (1, ROOT_IDS[3]))
+        self.assertEqual(self.get("tree?game=ka59&tree=3&arms=random30,nocoach")["steps"], 9)
+        self.assertEqual(call(self.api, "GET", "/api/v1/gtree/tree?game=zz99", self.team)[0], 404)
+
+    def test_rl_tries_restored_from_snapshots(self) -> None:
+        # a database made before 'snapshot' existed: the old constraint, then the schema re-run on start
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE gt_rollouts DROP CONSTRAINT gt_rollouts_origin_kind_snapshot")
+            cursor.execute("ALTER TABLE gt_rollouts ADD CONSTRAINT gt_rollouts_origin_kind_check CHECK "
+                           "(origin_kind IN ('start', 'replay_exact', 'replay_actions', 'restore'))")
+            cursor.execute((ROOT / "railway" / "catalog_schema.sql").read_text(encoding="utf-8"))
+        self.assertEqual(self.count("SELECT count(*) FROM pg_constraint WHERE conname = 'gt_rollouts_origin_kind_check'"), 0)
+        self.assertEqual(self.publish(gt_bundle(run="daniel-hicache-sbt06-b-1003", build="sbt06hic11"))[0], 200)
+        # as the RL rollout server writes them: one try restored mid-tree, one at the game start, campaign rl2
+        mid = gt_mid(rid="gtr-rl2:ka59_p0.rl2-r001-ka59-n1.k0")
+        mid["rollouts"][0].update(run="gtr-rl2", build="gtree-rollout", origin_kind="snapshot", policy="policy@rl2-v1",
+                                  status="cleared")
+        root = gt_mid(rid="gtr-rl2:ka59_p0.rl2-r001-ka59-root.k1", origin=ROOT_IDS[1])
+        root["rollouts"][0].update(run="gtr-rl2", build="gtree-rollout", origin_kind="snapshot", policy="policy@rl2-v0",
+                                   status="move_budget", origin_edge=None)
+        rid = root["rollouts"][0]["id"]
+        root["steps"] = [gt_step(rid, 1, (1, 0, SCREEN_A, ()), "execute", (1, 6, SCREEN_B, ("execute",))),
+                         gt_step(rid, 2, (1, 6, SCREEN_B, ("execute",)), "stock", None)]
+        root["nodes"] = gt_node_rows(1, 6, SCREEN_B, ("execute",))
+        status, result = self.publish({k: mid[k] + root[k] for k in ("rollouts", "steps", "nodes", "screens")})
+        self.assertEqual((status, result.get("rollouts")), (200, 2), result)
+        t = self.get("tree?game=ka59&tree=1")
+        ids = [n["id"] for n in t["nodes"]]
+        self.assertEqual([(a["id"], a["rollouts"]) for a in t["arms"]], [("nocoach", 2), ("rl", 2)])
+        rl = {r["id"]: r for r in t["runs"] if r["arm"] == "rl"}
+        m, r = rl["gtr-rl2:ka59_p0.rl2-r001-ka59-n1.k0"], rl["gtr-rl2:ka59_p0.rl2-r001-ka59-root.k1"]
+        self.assertEqual((m["origin_kind"], ids[m["origin"]], m["policy"], m["x0"], m["t0"]),
+                         ("snapshot", MID_FROM, "policy@rl2-v1", 1, 1))
+        self.assertEqual((r["origin_kind"], r["origin"], r["x0"]), ("snapshot", t["root"], 0))
+        self.assertEqual((t["nodes"][t["root"]]["started"], next(n for n in t["nodes"] if n["id"] == MID_FROM)["started"]),
+                         (1, 1))
+        self.assertEqual(self.get(f"node/{MID_FROM}")["started_here"][0]["origin_kind"], "snapshot")
+
+    def test_whole_tree_cache_and_cap(self) -> None:
+        from railway.rl_review import gtree_tree
+
+        self.tree_plays()
+        first = self.get("tree?game=ka59&tree=4")
+        self.assertEqual(self.get("tree?game=ka59&tree=4"), first, "served again from the cache")
+        self.assertEqual(len(self.api.tree_cache), 1)
+        # a new publication for the game changes the answer
+        self.assertEqual(self.publish(gt_bundle(run="daniel-hicache-sbt06-c-1003", choices=("probe",)))[0], 200)
+        again = self.get("tree?game=ka59&tree=4")
+        self.assertEqual((again["arms"][0]["rollouts"], again["steps"]), (3, first["steps"] + 3))
+        # whole rollouts only, plays from the start first, until the cap
+        with self.connect() as connection, connection.cursor() as cursor:
+            capped = gtree_tree(cursor, "ka59", 3, None, cap=4)
+        self.assertEqual((capped["truncated"], capped["steps"], [r["id"] for r in capped["runs"]]),
+                         (True, 3, ["daniel-hicache-best-random30-a-1003:ka59_p0"]))
+        # a game held out later is no longer listed or drawn
+        os.environ["ARC3_REVIEW_FENCED"] = "ka59"
+        try:
+            self.assertEqual(self.get("games")["games"], [])
+            status, payload = call(self.api, "GET", "/api/v1/gtree/tree?game=ka59&tree=3", self.team)
+            self.assertEqual((status, payload["error"]), (404, "fenced_game"))
+        finally:
+            os.environ.pop("ARC3_REVIEW_FENCED", None)
 
     def test_a_refused_body_changes_nothing(self) -> None:
         base = gt_bundle()

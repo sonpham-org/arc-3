@@ -1,18 +1,17 @@
-// RL2 page (docs/rl2.html): the turn coach. Six views over published documents and the decision tree:
-//   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
-//   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened, and by Lanes for
-//                                     every run of the builds picked there)
-//   GET /api/v1/rl2/doc/explore-index, explore-<game>  Exploration: every run of the best combo per game, coach mode
-//                                     per turn and the trace grader's goal labels (grader/explore_publish.py)
+// RL2 page (docs/rl2.html): the turn coach. Four views over published documents and the universal game tree:
+//   GET /api/v1/rl2/doc/dashboard     builds (a tree) and modes (name, the line it adds, its dials)
+//   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (Decisions)
+//   GET /api/v1/rl2/doc/explore-<game>  the trace grader's goal labels per run of the best combo (rows[].grades.cps,
+//                                     grader/explore_publish.py): the Tree view's "goal held" overlay
 //   GET /api/v1/rl2/doc/rl-campaigns  the RL training campaigns ({campaigns: [{name, updated}]})
 //   GET /api/v1/rl2/doc/rl-campaign-<name>  one campaign: VMs, rounds, policy, totals, sibling groups
 //                                     (gcp/controllers/gtree-rollout/rl_loop.py publish-status, arc3-sglang-parking repo)
 //   GET /api/v1/gtree/games           the universal game tree: games, their five trees and each tree's start (root)
+//   GET /api/v1/gtree/tree?game=&tree=[&arms=]  one game's whole tree for one node definition: nodes, edges (the
+//                                     turns between two nodes, aggregated), every run's path (the Tree view's drawing)
 //   GET /api/v1/gtree/node/<id>       one node of one tree: its steps grouped by action, children, parents, restarts here
 //   GET /api/v1/gtree/value/<id>      per action: clear rate, mean moves to clear, Q; V; the best known path from the node
-//   GET /api/v1/gtree/shortest?...    one level's shortest known path in moves, merged across runs (screen graph)
-//   GET /api/v1/gtree/frontier?...    restart candidates (mode coverage / uncertain / backward)
-//   GET /api/v1/gtree/rollout/<id>    one rollout's steps (for rollouts restarted mid-tree)
+//   GET /api/v1/gtree/rollout/<id>    one rollout's steps (a turn's trace sha; the best known path's steps)
 //   GET /api/v1/gtree/trace/<sha>     one step's turn: thinking, code, moves
 // Server: railway/rl_review.py. With ?fixture=1 the page reads docs/static/data/rl2-fixture.json instead (fake data, for
 // checking the page locally). Chrome from theme.css and rl-shell.css; every colour is solid (no gradients).
@@ -22,28 +21,29 @@ import { draw, pathView } from "./review-ui.js?v=20261003-coach";
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const FIXTURE = params.get("fixture") === "1";
-const VIEWS = ["builds", "decisions", "lanes", "explore", "sampling", "tree", "training"];
-const MIN_N = 20;
+const VIEWS = ["builds", "decisions", "tree", "training"];
+// views folded into the Tree view (Son 3-Oct): old links still land there
+const OLD_VIEWS = { lanes: "tree", explore: "tree", sampling: "tree" };
+const rawView = params.get("view");
+const startNode = params.get("node") || (params.get("trail") || "").split(",").filter(Boolean).pop() || null;
 
 const state = {
-  dash: null, fixture: null, view: VIEWS.includes(params.get("view")) ? params.get("view") : "builds",
+  dash: null, fixture: null, view: VIEWS.includes(rawView) ? rawView : OLD_VIEWS[rawView] || "builds",
   run: params.get("run"), game: params.get("game"), modeFilter: new Set(), open: new Set(), docs: {},
-  smpBuild: params.get("build"), metric: "share",
-  // tree view: the game and tree (t1..t5) picked, the trail of nodes walked (last = shown), open action groups, traces
-  // and restarted rollouts, the best-path box, the restart-candidates panel and its mode
-  treeGames: null, tGame: params.get("tgame"), tTree: +(params.get("ttree") || 1),
-  trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), tRoll: new Set(),
-  treeCache: {}, frontOpen: true, frontAll: false, frontMode: "coverage", bestOpen: false,
+  // tree view: game, tree (t1..t5), x axis (game moves | turns), zoom, sources shown (null = all), goal overlay, the
+  // node whose panel is open, the edge whose turns are listed, the run highlighted (pinned / hovered)
+  treeGames: null, treeCache: {},
+  tGame: params.get("tgame") || (rawView === "lanes" ? params.get("game") : null) || params.get("egame"),
+  tTree: startNode ? +((startNode.split(":")[1] || "t1").slice(1)) || 1 : +(params.get("ttree") || 1),
+  tX: params.get("tx") === "turn" ? "turn" : "moves", tZoom: 1,
+  tArms: params.get("arms") ? new Set(params.get("arms").split(",").filter(Boolean)) : null,
+  tGoal: params.get("goal") === "1", tNode: startNode, tEdge: null, tPin: null, tHover: null,
+  // the open node panel: open action groups, open traces, open restarted rollouts, the best-path box
+  tOpen: new Set(), tTrace: new Set(), tRoll: new Set(), bestOpen: false,
   // training view: the campaign shown, and whether every sibling group is listed
   camp: params.get("campaign"), campAll: false,
-  // lanes view: the builds picked (null = the default set), the game, x axis (moves | index), lanes or the all-games
-  // grid, the zoom; focusDec: a decision the Decisions view scrolls to once drawn (opened from a lane)
-  lnBuilds: params.get("builds") ? new Set(params.get("builds").split(",").filter(Boolean)) : null,
-  lnGame: params.get("view") === "lanes" ? params.get("game") : null, lnX: params.get("x") === "index" ? "index" : "moves",
-  lnAll: params.get("all") === "1", lnZoom: 1, focusDec: null,
-  // exploration view: the game tab, x axis (moves | index), zoom
-  eGame: params.get("egame"), eX: params.get("ex") === "index" ? "index" : "moves", eZoom: 1,
 };
+if (startNode && !state.tGame) state.tGame = startNode.split(":")[0];
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
 const MODE_COLORS = {
@@ -94,18 +94,13 @@ function syncUrl() {
   if (FIXTURE) q.set("fixture", "1");
   if (state.view !== "builds") q.set("view", state.view);
   if (state.view === "decisions" && state.run) { q.set("run", state.run); if (state.game) q.set("game", state.game); }
-  if (state.view === "lanes") {
-    if (state.lnGame && !state.lnAll) q.set("game", state.lnGame);
-    if (state.lnBuilds && !sameSet(state.lnBuilds, defaultLaneBuilds())) q.set("builds", [...state.lnBuilds].join(","));
-    if (state.lnX === "index") q.set("x", "index");
-    if (state.lnAll) q.set("all", "1");
-  }
-  if (state.view === "explore") { if (state.eGame) q.set("egame", state.eGame); if (state.eX === "index") q.set("ex", "index"); }
-  if (state.view === "sampling" && state.smpBuild) q.set("build", state.smpBuild);
   if (state.view === "tree" && state.tGame) {
     q.set("tgame", state.tGame);
     if (state.tTree !== 1) q.set("ttree", String(state.tTree));
-    if (state.trail.length) q.set("trail", state.trail.join(","));
+    if (state.tX === "turn") q.set("tx", "turn");
+    if (state.tArms) q.set("arms", [...state.tArms].sort().join(","));
+    if (state.tGoal) q.set("goal", "1");
+    if (state.tNode) q.set("node", state.tNode);
   }
   if (state.view === "training" && state.camp) q.set("campaign", state.camp);
   const s = q.toString();
@@ -136,7 +131,7 @@ async function getDoc(name) {
   return doc;
 }
 const allRuns = () => (state.dash.builds || []).flatMap(b => (b.runs || []).map(r => ({ ...r, build: b.id })));
-const modeNames = () => (state.dash.modes || []).map(m => m.name);
+const modeNames = () => ((state.dash && state.dash.modes) || []).map(m => m.name);
 
 /* ------------------------------------------------------------------ view 1: builds tree */
 function renderBuilds() {
@@ -275,11 +270,6 @@ function drawGame(decs) {
       el("div", { class: "legend rl2-small" }, el("span", {}, el("i", { class: "lg-lvl" }), "tick: level up this turn"),
         el("span", {}, el("i", { class: "lg-go" }), "dark base: game over this turn"))),
     filter, table);
-  if (state.focusDec !== null) {
-    const id = state.focusDec;
-    state.focusDec = null;
-    requestAnimationFrame(() => document.getElementById(`dec-${id}`)?.scrollIntoView({ block: "center" }));
-  }
 }
 function detail(d) {
   const mode = (state.dash.modes || []).find(m => m.name === d.mode);
@@ -293,116 +283,9 @@ function detail(d) {
       isNum(d.t) ? el("div", { class: "muted rl2-small" }, new Date(d.t * 1000).toLocaleString()) : null));
 }
 
-/* ------------------------------------------------------------------ view 3: sampling */
-function renderSampling() {
-  const smp = state.dash.sampling || {};
-  const byBuild = smp.by_build || {};
-  const builds = (state.dash.builds || []).filter(b => byBuild[b.id] || (b.policy && b.policy.table));
-  if (!builds.length) {
-    $("smpPickers").replaceChildren();
-    $("smpBody").replaceChildren(el("div", { class: "empty" }, "No sampling data yet."));
-    return;
-  }
-  if (!state.smpBuild || !builds.some(b => b.id === state.smpBuild)) state.smpBuild = builds[0].id;
-  const b = builds.find(x => x.id === state.smpBuild);
-  const sel = el("select", { "aria-label": "build", onchange: e => { state.smpBuild = e.target.value; renderSampling(); } },
-    builds.map(x => el("option", { value: x.id, selected: x.id === state.smpBuild }, `${x.id} · ${x.label || ""}`)));
-  const seg = el("div", { class: "rl2-seg", role: "group", "aria-label": "cell value" },
-    [["share", "share of decisions"], ["lvl30", "level within 30 vs stock"]].map(([k, t]) =>
-      el("button", { type: "button", class: state.metric === k ? "on" : "", onclick: () => { state.metric = k; renderSampling(); } }, t)));
-  $("smpPickers").replaceChildren(el("label", {}, "build ", sel), seg);
-  syncUrl();
-
-  const sits = state.dash.situations || [];
-  const grid = byBuild[b.id];
-  const extra = grid ? [...new Set(Object.values(grid).flatMap(c => Object.keys(c)))].filter(m => !modeNames().includes(m)) : [];
-  const modes = [...modeNames(), ...extra];
-  const parts = [];
-  if (grid) {
-    parts.push(el("h3", { class: "rl2-h3" }, state.metric === "share" ? "What it picked" : "How it went, against stock"),
-      gridTable(sits, modes, (sit, m) => {
-        const c = (grid[sit.key] || {})[m];
-        if (!c) return null;
-        return state.metric === "share" ? shareCell(c.share, c.n) : deltaCell(c, (smp.stock_baseline || {})[sit.key]);
-      }, state.metric === "lvl30" ? sit => {
-        const base = (smp.stock_baseline || {})[sit.key];
-        return base ? `${pct(base.lvl30)} (n ${base.n})` : "–";
-      } : sit => {
-        const n = Object.values(grid[sit.key] || {}).reduce((s, c) => s + (c.n || 0), 0);
-        return String(n);
-      }, state.metric === "lvl30" ? "stock" : "turns"),
-      state.metric === "lvl30" ? diverging() : null);
-  } else {
-    parts.push(el("div", { class: "empty" }, "No decisions sampled for this build yet."));
-  }
-  if (b.policy && b.policy.table) {
-    const t = b.policy.table;
-    parts.push(el("h3", { class: "rl2-h3" }, `What it will pick: policy ${b.policy.version || ""}`),
-      el("p", { class: "sub" }, "The policy's probabilities per situation: what the coach samples from on the next run."),
-      gridTable(sits, modes, (sit, m) => {
-        const p = (t[sit.key] || {})[m];
-        return isNum(p) ? shareCell(p, null) : null;
-      }));
-  }
-  parts.push(el("h3", { class: "rl2-h3" }, "Mode mix per build"), mixBars(byBuild), modesCard());
-  $("smpBody").replaceChildren(...parts.filter(Boolean));
-}
-function gridTable(sits, modes, cell, rowExtra, extraHead, rowHead = "situation") {
-  return el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-grid" },
-    el("thead", {}, el("tr", {}, el("th", { class: "sit" }, rowHead), rowExtra ? el("th", {}, extraHead) : null,
-      modes.map(m => el("th", {}, modeTag(m))))),
-    el("tbody", {}, sits.map(s => el("tr", {},
-      el("th", { class: "sit", scope: "row" }, s.label || s.key, el("small", { class: "mono" }, s.key)),
-      rowExtra ? el("td", { class: "mono muted rl2-extra" }, rowExtra(s)) : null,
-      modes.map(m => cell(s, m) || el("td", { class: "rl2-cell none" }, "·")))))));
-}
-function shareCell(share, n) {
-  const k = Math.max(0, Math.min(1, share / 0.6));
-  const mix = Math.round(6 + k * 80);
-  return el("td", { class: "rl2-cell" + (mix > 52 ? " ink" : ""), style: `background:color-mix(in srgb, var(--rl2-blue) ${mix}%, var(--sh-card))`,
-    title: `${pct(share)}${n !== null && n !== undefined ? ` of decisions, n ${n}` : ""}` },
-    pct(share), n !== null && n !== undefined ? el("small", {}, `n ${n}`) : null);
-}
-function deltaCell(c, base, minN = MIN_N, baseMin = 0) {
-  if (!base || !isNum(c.lvl30) || !isNum(base.lvl30)) return el("td", { class: "rl2-cell none" }, "–");
-  const d = c.lvl30 - base.lvl30;
-  const pts = Math.round(d * 100);
-  const txt = (pts > 0 ? "+" : pts < 0 ? "−" : "±") + Math.abs(pts);
-  const tip = `level within 30 actions: ${pct(c.lvl30)} vs stock ${pct(base.lvl30)} · n ${c.n}` +
-    (isNum(c.acts) ? ` · ${fx(c.acts)} actions per turn` : "") + (isNum(c.go) ? ` · game over ${pct(c.go)}` : "");
-  if ((c.n || 0) < minN || (base.n ?? baseMin) < baseMin) return el("td", { class: "rl2-cell thin", title: tip + " (too few to tell)" }, txt, el("small", {}, `n ${c.n}`));
-  const k = Math.min(1, Math.abs(d) / 0.2);
-  const mix = Math.round(8 + k * 78);
-  const hue = d >= 0 ? "var(--rl2-blue)" : "var(--rl2-red)";
-  return el("td", { class: "rl2-cell" + (mix > 52 ? " ink" : ""), style: `background:color-mix(in srgb, ${hue} ${mix}%, var(--sh-card))`, title: tip },
-    txt, el("small", {}, `n ${c.n}`));
-}
-function diverging(minN = MIN_N) {
-  const sw = (hue, mix) => el("i", { style: `background:color-mix(in srgb, ${hue} ${mix}%, var(--sh-card))` });
-  return el("div", { class: "legend rl2-small" },
-    el("span", {}, sw("var(--rl2-red)", 86), sw("var(--rl2-red)", 40), "worse than stock"),
-    el("span", {}, sw("var(--rl2-blue)", 40), sw("var(--rl2-blue)", 86), "better than stock"),
-    el("span", {}, el("i", { class: "lg-thin" }), `fewer than ${minN} turns`),
-    el("span", {}, "numbers are percentage points"));
-}
-function mixBars(byBuild) {
-  const ids = Object.keys(byBuild);
-  if (!ids.length) return el("div", { class: "empty" }, "No decisions sampled yet.");
-  const modes = modeNames();
-  return el("div", { class: "card rl2-mix" }, ids.map(id => {
-    const tot = {};
-    for (const cell of Object.values(byBuild[id])) for (const [m, c] of Object.entries(cell)) tot[m] = (tot[m] || 0) + (c.n || 0);
-    const n = Object.values(tot).reduce((s, x) => s + x, 0);
-    const order = [...modes.filter(m => tot[m]), ...Object.keys(tot).filter(m => !modes.includes(m))];
-    return el("div", { class: "rl2-mixrow" + (id === state.smpBuild ? " on" : "") },
-      el("button", { type: "button", class: "rl2-mixname mono", onclick: () => { state.smpBuild = id; renderSampling(); } }, id),
-      el("div", { class: "rl2-mixbar", title: order.map(m => `${m} ${pct(tot[m] / n)}`).join("\n") },
-        order.map(m => el("span", { style: `width:${(100 * tot[m] / n).toFixed(2)}%;background:${modeColor(m)}`, title: `${m}: ${pct(tot[m] / n)} (${tot[m]})` }))),
-      el("span", { class: "mono muted rl2-small" }, `${n} turns`));
-  }), el("div", { class: "legend rl2-small" }, modes.map(m => el("span", {}, el("i", { style: `background:${modeColor(m)}` }), m))));
-}
+// The modes and what each adds to the turn (under the Tree view's legend)
 function modesCard() {
-  const modes = state.dash.modes || [];
+  const modes = (state.dash && state.dash.modes) || [];
   if (!modes.length) return null;
   return el("details", { class: "card rl2-modes" }, el("summary", {}, "The modes: what each one adds to the turn"),
     el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table" },
@@ -411,19 +294,7 @@ function modesCard() {
         el("td", { class: "mono" }, val(m.yield_tokens)), el("td", { class: "mono" }, val(m.cap)), el("td", { class: "mono" }, val(m.temperature))))))));
 }
 
-/* ------------------------------------------------------------------ view 4: decision tree (the universal game tree) */
-// Every step of every rollout is stored once and read as five trees: t1 the path of actions (context-aware), t2 screen +
-// moves, t3 level + screen, t4 screen only, t5 level + screen + moves bucketed by 6 (the restart grid). A node's steps are
-// grouped by action (the mode chosen); a step leads to a child node, and plays that reach the same child merge there. Each
-// tree starts at the game's root (the game start). Rollouts can also start in the middle of the tree (restarted from a
-// stored t1 node): their steps carry an origin badge. The objective is game MOVES to clear a level: per action the clear
-// rate and mean moves to clear, the best known path from a node, and per level the shortest path known across all runs.
-const TREES = [1, 2, 3, 4, 5];
-const TREE_NAMES = { 1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only",
-  5: "screen + move bucket (restart grid)" };
-const FRONT_MODES = [["coverage", "nodes short of samples"], ["uncertain", "short of samples, unsure clear rate first"],
-  ["backward", "on the best known paths, nearest the goal first"]];
-const FRONTIER_N = 4;
+/* ------------------------------------------------------------------ the universal game tree: reads and node labels */
 async function getTree(sub) {
   if (state.treeCache[sub]) return state.treeCache[sub];
   let doc;
@@ -461,7 +332,183 @@ function nodeLabel(id) {
 }
 const pctOrDash = x => isNum(x) ? Math.round(x * 100) + "%" : "–";
 
+/* ------------------------------------------------------------------ view 3: the tree (the universal game tree) */
+// Every turn of every run is stored once and read as five trees, each starting at the game start, so every run of a game
+// hangs from the same root (Son 3-Oct: "they should all be one tree starting from the same root"). gtree/tree returns
+// one game's whole tree for one node definition: nodes, edges (all the turns from one node to the next) and each run's
+// path. Drawn on a canvas, left to right in game moves (or turns) since the game start:
+//   layout  each node hangs from its in-edge from the earliest node with the most plays (a spanning tree); a node's
+//           busiest child continues its lane and the others branch below, so a stretch of single-child nodes is one
+//           lane whose turns keep their own colours (the Lanes look, inside the tree). t2..t5 merge plays, so the
+//           graph can be a DAG or have cycles: an edge into a node drawn on another lane is a curve, an edge back to
+//           an earlier node is faint and dashed, a turn that stays on its node a small loop.
+//   edges   thickness = plays, colour = the coach mode of those turns (stock light grey; several modes: stacked bands);
+//           a tick + number where a level clears, a red mark at a game over, a 'restart' badge where an RL rollout
+//           restored from a saved state branches off. Even levels sit on a shaded band.
+//   goal    the trace grader's labels (rl2 doc explore-<game>) joined to the steps by run + harness turn (checked on
+//           3-Oct: 1513 of 1514 checkpoints of the 40 graded run x game pairs land on a step of that turn, all on its
+//           level); a step holds the last goal stated on its level before or during its turn.
+// Hover an edge for its turns, a run for its whole path; click a node for its panel, an edge to list its turns and
+// read each one's trace.
+const TREES = [1, 2, 3, 4, 5];
+const TREE_LABELS = { 1: "exact path", 2: "same screen after the same number of moves", 3: "same screen in the level",
+  4: "same screen anywhere", 5: "restart grid: same screen, moves in bands of 6" };
+const TREE_HELP = {
+  1: "A node is the exact path from the game start: two runs share a node only while they played the same way.",
+  2: "A node is a screen at a number of moves into its level: runs that reach the same screen after the same number of moves merge.",
+  3: "A node is a screen within a level: runs merge whenever they see the same screen on the same level.",
+  4: "A node is a screen, whatever the level or the moves: loops show up as edges back.",
+  5: "A node is a screen on a level, with the moves in bands of 6: the grid restarts are picked from." };
+const GOAL_COLORS = ["#0ca30c", "#fab219", "#d03b3b", null];   // right, partly right, wrong, none stated (status palette)
+const GOAL_NAMES = ["right goal", "partly right", "wrong goal", "no goal stated"];
+const F_CLEARED = 1, F_GO = 2;
+const ZOOMS = [1, 2, 4, 8];
+const AXIS_H = 24, PAD_L = 14, PAD_R = 28, MAX_AREA = 64e6, TIP_TURNS = 6, PANEL_TURNS = 300;
+const treeUi = { token: 0, doc: null, explore: null, ix: new Map(), m: null, paint: null, rlCamps: 0 };
+
+function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); state.tRoll.clear(); state.bestOpen = false; }
+function resetTreeSel() { state.tNode = null; state.tEdge = null; state.tPin = null; state.tHover = null; resetNodeUi(); }
+
+// a run's short name: the run letter for the best combo's runs (with the pass when not the first), the job and try for
+// an RL rollout ('gtr-rl2:bp35_p0.rl2-r001-bp35-root.k0' -> 'r001 root k0', 'rl2 r001 root k0' when several RL
+// campaigns are shown)
+function runShort(r, game) {
+  if (r.arm === "rl") {
+    const tail = String(r.id).split(":").slice(1).join(":").replace(/^[a-z0-9]{4}_p\d+\./, "");
+    const camp = String(r.run).replace(/^gtr-/, "");
+    const short = tail.replace("-" + game, "").replace(camp + "-", "").replace(/\.k(\d+)$/, " k$1").replace(/-/g, " ") || r.id;
+    return treeUi.rlCamps > 1 ? `${camp} ${short}` : short;
+  }
+  const letter = String(r.run).match(/-([a-z])-\d+$/);
+  const pass = String(r.id).match(/_p(\d+)$/);
+  return (letter ? letter[1] : String(r.run).slice(0, 28)) + (pass && pass[1] !== "0" ? ` p${pass[1]}` : "");
+}
+const armOf = (doc, id) => (doc.arms || []).find(a => a.id === id) || { id, label: id };
+// a run's name outside the run list (tooltips, the turns of an edge): its source, then its short name
+const ARM_SHORT = { nocoach: "no coach", random70: "70% stock", random50: "50% stock", random30: "30% stock",
+  grader30: "grader 30%", rl: "RL" };
+const runName = (r, game) => (ARM_SHORT[r.arm] ? ARM_SHORT[r.arm] + " · " : "") + runShort(r, game);
+
+// run index -> per step the goal held (0..3, null where the step has no harness turn); only runs from the game start,
+// one rollout per run and game, with graded checkpoints [turn, moves, level, stated, held, belief, rule errors]
+function goalSteps(doc, explore) {
+  const out = new Map();
+  if (!explore || !Array.isArray(explore.rows)) return out;
+  const cpsOf = new Map(explore.rows.filter(r => r.grades && (r.grades.cps || []).length).map(r => [r.run, r.grades.cps]));
+  const starts = {};
+  for (const r of doc.runs) if (r.origin_kind === "start") starts[r.run] = (starts[r.run] || 0) + 1;
+  doc.runs.forEach((r, i) => {
+    const cps = cpsOf.get(r.run);
+    if (!cps || r.origin_kind !== "start" || starts[r.run] !== 1) return;
+    let p = 0, last = null;
+    out.set(i, r.steps.map(s => {
+      if (!isNum(s[5])) return null;
+      while (p < cps.length && cps[p][0] <= s[5]) last = cps[p++];
+      return last && last[2] === s[4] ? last[4] : 3;
+    }));
+  });
+  return out;
+}
+
+// The drawing's model for the sources shown: node x (the fewest moves / turns any shown play took to get there), the
+// visible edges with their turns, the spanning tree and the lanes.
+function treeModel(doc, goals) {
+  const byMoves = state.tX === "moves";
+  const N = doc.nodes.length;
+  const nx = new Array(N).fill(Infinity), disc = new Array(N).fill(-1), lvl = doc.nodes.map(n => n.level);
+  let dn = 0;
+  const see = n => { if (disc[n] < 0) disc[n] = dn++; };
+  if (isNum(doc.root)) { see(doc.root); nx[doc.root] = 0; }
+  const es = new Map(), runs = [];
+  let turns = 0, maxPlays = 1;
+  doc.runs.forEach((r, i) => {
+    if (state.tArms && !state.tArms.has(r.arm)) return;
+    runs.push(i);
+    const g = goals.get(i);
+    let x = byMoves ? r.x0 || 0 : r.t0 || 0;
+    r.steps.forEach((s, k) => {
+      const E = doc.edges[s[1]], dx = byMoves ? s[3] : 1;
+      see(E.from);
+      nx[E.from] = Math.min(nx[E.from], x);
+      if (!isNum(lvl[E.from])) lvl[E.from] = s[4];
+      if (E.to !== null) { see(E.to); nx[E.to] = Math.min(nx[E.to], x + dx); }
+      let st = es.get(s[1]);
+      if (!st) es.set(s[1], st = { plays: 0, modes: new Map(), runs: new Set(), go: 0, cleared: 0, dx: 0, level: s[4],
+        steps: [], goal: [0, 0, 0, 0] });
+      st.plays++;
+      st.modes.set(s[2], (st.modes.get(s[2]) || 0) + 1);
+      st.runs.add(i);
+      if (s[6] & F_CLEARED) st.cleared++;
+      if (s[6] & F_GO) st.go++;
+      st.dx = Math.max(st.dx, dx);
+      st.steps.push([i, k]);
+      if (g && isNum(g[k])) st.goal[g[k]]++;
+      maxPlays = Math.max(maxPlays, st.plays);
+      turns++;
+      x += dx;
+    });
+  });
+  for (const [e, st] of es) {
+    const to = doc.edges[e].to;
+    if (to !== null && !isNum(lvl[to])) lvl[to] = st.level + (st.cleared ? 1 : 0);
+  }
+  const vis = [];
+  for (let n = 0; n < N; n++) if (disc[n] >= 0) vis.push(n);
+  vis.sort((a, b) => nx[a] - nx[b] || disc[a] - disc[b]);
+  const ord = new Array(N).fill(-1);
+  vis.forEach((n, k) => { ord[n] = k; });
+  const push = (map, k, v) => { const l = map.get(k); if (l) l.push(v); else map.set(k, [v]); };
+  const ins = new Map(), outs = new Map();
+  for (const e of es.keys()) {
+    const E = doc.edges[e];
+    push(outs, E.from, e);
+    if (E.to !== null) push(ins, E.to, e);
+  }
+  const parent = new Array(N).fill(-1);
+  for (const v of vis) {
+    if (v === doc.root) continue;
+    let best = -1;
+    for (const e of ins.get(v) || []) {
+      const u = doc.edges[e].from;
+      if (u === v || ord[u] >= ord[v]) continue;
+      const a = es.get(e).plays, b = best >= 0 ? es.get(best).plays : -1;
+      if (a > b || (a === b && ord[u] < ord[doc.edges[best].from])) best = e;
+    }
+    parent[v] = best;
+  }
+  const endX = e => nx[doc.edges[e].from] + es.get(e).dx;
+  const kids = new Map();
+  for (const v of vis) if (parent[v] >= 0) push(kids, doc.edges[parent[v]].from, { key: v, e: parent[v] });
+  for (const e of es.keys()) if (doc.edges[e].to === null) push(kids, doc.edges[e].from, { key: "e" + e, e });
+  const kx = c => typeof c.key === "number" ? nx[c.key] : endX(c.e);
+  for (const list of kids.values()) list.sort((a, b) => es.get(b.e).plays - es.get(a.e).plays || kx(a) - kx(b));
+  // lanes: leaves in depth-first order; a node sits on its busiest child's lane
+  const lane = new Map();
+  let lanes = 0;
+  for (const top of vis.filter(v => parent[v] < 0)) {
+    const stack = [{ key: top, i: 0 }];
+    while (stack.length) {
+      const f = stack[stack.length - 1];
+      const ch = typeof f.key === "number" ? kids.get(f.key) || [] : [];
+      if (f.i < ch.length) { stack.push({ key: ch[f.i++].key, i: 0 }); continue; }
+      stack.pop();
+      lane.set(f.key, ch.length ? lane.get(ch[0].key) : lanes++);
+    }
+  }
+  let maxX = 1;
+  for (const v of vis) maxX = Math.max(maxX, nx[v]);
+  const kind = new Map();
+  for (const e of es.keys()) {
+    const E = doc.edges[e];
+    if (E.to === null) maxX = Math.max(maxX, endX(e));
+    kind.set(e, E.to === null ? "end" : parent[E.to] === e ? "tree" : E.to === E.from ? "self"
+      : ord[E.to] > ord[E.from] ? "merge" : "back");
+  }
+  return { nx, lvl, vis, es, ins, outs, lane, lanes: Math.max(1, lanes), maxX, kind, endX, runs, turns, maxPlays };
+}
+
 async function renderTree() {
+  const token = ++treeUi.token;
   const body = $("treeBody");
   if (!state.treeGames) {
     body.replaceChildren(el("div", { class: "empty" }, "loading…"));
@@ -477,47 +524,563 @@ async function renderTree() {
         return;
       }
     }
+    if (token !== treeUi.token) return;
   }
-  const games = state.treeGames;
+  const games = state.treeGames.filter(g => g.steps > 0);
   if (!games.length) {
     $("treePickers").replaceChildren();
     body.replaceChildren(el("div", { class: "empty" }, "No tree published yet. It appears here once a run publishes its steps."));
     return;
   }
   let g = games.find(x => x.game === state.tGame);
-  if (!g) { g = games[0]; state.tGame = g.game; state.trail = []; }
+  if (!g) { g = games[0]; state.tGame = g.game; resetTreeSel(); }
   if (!TREES.includes(state.tTree)) state.tTree = 1;
-  const t = (g.trees || {})[String(state.tTree)] || {};
-  const prefix = `${g.game}:t${state.tTree}:`;
-  if (!state.trail.length || !state.trail.every(id => id.startsWith(prefix))) state.trail = t.start ? [t.start] : [];
-  const gameSel = el("select", { "aria-label": "game", onchange: e => { state.tGame = e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
-    games.map(x => el("option", { value: x.game, selected: x.game === g.game },
-      `${x.game} · ${x.rollouts} rollout${x.rollouts === 1 ? "" : "s"}${x.mid_rollouts ? ` (${x.mid_rollouts} mid-tree)` : ""}`)));
-  const treeSel = el("select", { "aria-label": "tree", onchange: e => { state.tTree = +e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
-    TREES.map(k => el("option", { value: k, selected: k === state.tTree },
-      `t${k} · ${TREE_NAMES[k]} · ${((g.trees || {})[String(k)] || {}).nodes ?? 0} nodes`)));
-  $("treePickers").replaceChildren(el("label", {}, "game ", gameSel), el("label", {}, "tree ", treeSel),
-    el("span", { class: "muted rl2-small" }, `${g.steps ?? 0} steps`));
+  if (state.tNode && !state.tNode.startsWith(`${g.game}:t${state.tTree}:`)) state.tNode = null;
+  const seg = (label, opts, cur, set) => el("div", { class: "rl2-seg", role: "group", "aria-label": label }, opts.map(([k, t]) =>
+    el("button", { type: "button", class: cur === k ? "on" : "", "aria-pressed": cur === k ? "true" : "false", onclick: () => set(k) }, t)));
+  const redraw = () => { syncUrl(); if (treeUi.doc) drawTreeView(); };
+  const status = el("span", { class: "muted rl2-small rl2-tstatus" });
+  $("treePickers").replaceChildren(
+    el("div", { class: "rl2-tctl" },
+      el("label", {}, "game ", el("select", { "aria-label": "game",
+        onchange: e => { state.tGame = e.target.value; resetTreeSel(); renderTree(); } },
+        games.map(x => el("option", { value: x.game, selected: x.game === g.game },
+          `${x.game} · ${x.rollouts} run${x.rollouts === 1 ? "" : "s"}${x.mid_rollouts ? ` (${x.mid_rollouts} restarted)` : ""}`)))),
+      el("label", { title: TREE_HELP[state.tTree] }, "node = ", el("select", { "aria-label": "what counts as one node",
+        onchange: e => { state.tTree = +e.target.value; resetTreeSel(); renderTree(); } },
+        TREES.map(k => el("option", { value: k, selected: k === state.tTree, title: TREE_HELP[k] }, `t${k} · ${TREE_LABELS[k]}`)))),
+      seg("x axis", [["moves", "game moves"], ["turn", "turns"]], state.tX, v => { state.tX = v; redraw(); }),
+      seg("zoom", ZOOMS.map(z => [z, z === 1 ? "fit" : z + "×"]), state.tZoom, v => { state.tZoom = v; redraw(); }),
+      status),
+    el("div", { class: "rl2-tsources", id: "treeSources" }));
   syncUrl();
-  if (!state.trail.length) { body.replaceChildren(el("div", { class: "empty" }, "This tree has no nodes for this game yet.")); return; }
-  await drawNode(state.trail[state.trail.length - 1]);
-}
-function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); state.tRoll.clear(); state.bestOpen = false; }
-function goNode(id, { push = true, fromStart = false } = {}) {
-  if (fromStart) {
-    const start = state.trail[0];
-    state.trail = start && start !== id ? [start, id] : [id];
-  } else if (push) {
-    const at = state.trail.indexOf(id);
-    state.trail = at >= 0 ? state.trail.slice(0, at + 1) : [...state.trail, id];
+  const base = `tree?game=${g.game}&tree=${state.tTree}`;
+  if (!state.treeCache[base]) body.replaceChildren(el("div", { class: "empty" }, "loading the tree…"));
+  let doc, explore;
+  try {
+    [doc, explore] = await Promise.all([getTree(base), getDoc("explore-" + g.game).catch(() => null)]);
+    // the server keeps whole runs up to a cap: when it had to leave some out, ask again for the sources shown only
+    if (doc.truncated && state.tArms) doc = await getTree(`${base}&arms=${[...state.tArms].sort().join(",")}`);
+  } catch (e) {
+    if (token !== treeUi.token) return;
+    if (e instanceof NotPublished) { body.replaceChildren(el("div", { class: "empty" }, `No tree for ${g.game} yet.`)); return; }
+    body.replaceChildren(el("div", { class: "empty" }, "Could not load the tree."));
+    console.error(e);
+    return;
   }
-  resetNodeUi();
-  syncUrl();
-  drawNode(id).then(() => $("view-tree").scrollIntoView({ block: "start" }));
+  if (token !== treeUi.token) return;
+  treeUi.doc = doc;
+  treeUi.explore = explore;
+  treeUi.ix = new Map(doc.nodes.map((n, i) => [n.id, i]));
+  treeUi.rlCamps = new Set(doc.runs.filter(r => r.arm === "rl").map(r => r.run)).size;
+  for (const n of doc.nodes) nodeMeta.set(n.id, { level: n.level, moves: n.moves });
+  drawTreeView();
 }
 
-async function drawNode(id) {
-  const body = $("treeBody");
+// (Re)draw the Tree view from the loaded document: sources, the chart, the runs, the edge and node panels.
+function drawTreeView() {
+  const doc = treeUi.doc;
+  const known = new Set(doc.arms.map(a => a.id));
+  if (state.tArms) {
+    state.tArms = new Set([...state.tArms].filter(a => known.has(a)));
+    if (!state.tArms.size || state.tArms.size === known.size) state.tArms = null;
+  }
+  const goals = goalSteps(doc, treeUi.explore);
+  const graded = [...goals.keys()].filter(i => !state.tArms || state.tArms.has(doc.runs[i].arm)).length;
+  const m = treeModel(doc, goals);
+  treeUi.m = m;
+  const status = document.querySelector("#treePickers .rl2-tstatus");
+  if (status) status.textContent = `${m.runs.length} run${m.runs.length === 1 ? "" : "s"} · ${m.turns} turns · ${m.vis.length} nodes`;
+  const on = a => !state.tArms || state.tArms.has(a);
+  const setArms = next => {
+    state.tArms = !next || next.size === known.size ? null : next;
+    state.tEdge = null; state.tPin = null; state.tHover = null;
+    syncUrl();
+    // a tree the server cut short, or one fetched for some sources only, is fetched again
+    if (doc.truncated || doc.arms.some(x => !x.shown)) renderTree(); else drawTreeView();
+  };
+  const toggleArm = a => {
+    const next = new Set(state.tArms || known);
+    if (next.has(a)) { if (next.size === 1) return; next.delete(a); } else next.add(a);
+    setArms(next);
+  };
+  $("treeSources").replaceChildren(...[
+    el("span", { class: "muted rl2-small" }, "sources"),
+    doc.arms.map(a => el("button", { type: "button", class: "rl2-fbtn" + (on(a.id) ? " on" : ""), "aria-pressed": on(a.id) ? "true" : "false",
+      title: `${a.label}: ${a.rollouts} run${a.rollouts === 1 ? "" : "s"} of ${doc.game}` + (a.id === "rl" ? " (RL rollouts, from the game start or restored mid-tree)" : ""),
+      onclick: () => toggleArm(a.id) }, a.label, el("small", { class: "muted" }, a.rollouts))),
+    state.tArms ? el("button", { type: "button", class: "rl2-fbtn", onclick: () => setArms(null) }, "all") : null,
+    el("button", { type: "button", class: "rl2-fbtn rl2-goalbtn" + (state.tGoal && graded ? " on" : ""), disabled: graded ? null : true,
+      "aria-pressed": state.tGoal && graded ? "true" : "false",
+      title: graded ? `Underline each turn with the goal the model held then, as the trace grader judged it (${graded} run${graded === 1 ? "" : "s"} graded in ${doc.game})`
+        : `The trace grader has not judged the runs shown in ${doc.game}.`,
+      onclick: () => { state.tGoal = !state.tGoal; syncUrl(); drawTreeView(); } },
+      el("i", { class: "rl2-egoal", style: `background:${GOAL_COLORS[0]}` }), "goal held")].flat().filter(Boolean));
+  const chart = treeChart(doc, m, goals);
+  $("treeBody").replaceChildren(...[chart.card, runList(doc, m, goals), el("div", { id: "treeEdge" }), el("div", { id: "treeNode" }),
+    modesCard()].filter(Boolean));
+  chart.paint();
+  edgePanel();
+  if (state.tNode) nodePanel(state.tNode);
+}
+
+function treeChart(doc, m, goals) {
+  const modes = doc.modes;
+  const canvas = el("canvas", { class: "rl2-tcanvas", role: "img", "aria-label": `${doc.game}: ${m.runs.length} runs on one tree ` +
+    `from the game start (t${doc.tree}, ${TREE_LABELS[doc.tree]}), each turn coloured by its coach mode` });
+  const scroll = el("div", { class: "rl2-tscroll" }, canvas);
+  const tip = el("div", { class: "rl2-ttip", hidden: true });
+  const chart = el("div", { class: "rl2-tchart" }, scroll, tip);
+  const laneH = m.lanes <= 24 ? 24 : m.lanes <= 60 ? 18 : m.lanes <= 200 ? 12 : m.lanes <= 800 ? 8 : 5;
+  const minT = Math.max(2, Math.round(laneH * 0.3)), maxT = Math.max(minT, Math.round(laneH * 0.72));
+  const thick = n => m.maxPlays > 1 ? minT + (maxT - minT) * Math.log(n) / Math.log(m.maxPlays) : minT;
+  const H = AXIS_H + m.lanes * laneH + 12;
+  const goalOn = state.tGoal && m.runs.some(i => goals.has(i));
+  let hit = { dots: [], bars: [], curves: [] };
+  const paint = () => {
+    if (!canvas.isConnected) return;
+    const css = getComputedStyle(canvas);
+    const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
+    const ink = v("--text", "#111"), muted = v("--muted", "#888"), line = v("--wash-line", "#e5e7eb"), wash = v("--wash", "#f3f4f6"),
+      stock = v("--rl2-stock", "#d3d8e0"), red = v("--rl2-red", "#dc2626"), blue = v("--sh-blue", "#2563eb"),
+      bg = v("--rl2-canvas", "#fff"), edgeLine = v("--border-strong", "#a9b5c9"), font = v("--rl-mono", "monospace");
+    const W = Math.round(Math.max(320, scroll.clientWidth) * state.tZoom);
+    const dpr = Math.max(0.5, Math.min(window.devicePixelRatio || 1, Math.sqrt(MAX_AREA / (W * H))));
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const sx = (W - PAD_L - PAD_R) / m.maxX;
+    const px = x => PAD_L + x * sx;
+    const py = key => AXIS_H + (m.lane.get(key) + 0.5) * laneH;
+    const fill = mi => modes[mi] === "stock" ? stock : modeColor(modes[mi]);
+    // axis: ticks every 1/2/5 x 10^k (about 80 px apart), faint guides through the lanes
+    const raw = m.maxX / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 80));
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const tick = Math.max(1, [1, 2, 5, 10].map(k => k * mag).reduce((a, k) => Math.abs(k - raw) < Math.abs(a - raw) ? k : a));
+    g.font = "10px " + font;
+    g.textBaseline = "alphabetic";
+    for (let x = 0; x <= m.maxX; x += tick) {
+      const p = Math.round(px(x)) + 0.5;
+      g.fillStyle = line;
+      g.fillRect(p - 0.5, AXIS_H - 5, 1, H - AXIS_H);
+      g.fillStyle = muted;
+      g.textAlign = x === 0 ? "left" : "center";
+      g.fillText(String(x), p, AXIS_H - 9);
+    }
+    // lane pieces (tree edges and run ends) and curves (merges, edges back, loops)
+    const pieces = new Map(), curves = new Map();
+    for (const [e, kind] of m.kind) {
+      const E = doc.edges[e], st = m.es.get(e);
+      if (kind === "tree" || kind === "end") {
+        const x0 = px(m.nx[E.from]);
+        const x1 = Math.max(x0 + 2, px(kind === "tree" ? m.nx[E.to] : m.endX(e)));
+        pieces.set(e, { e, x0, x1, y: py(kind === "tree" ? E.to : "e" + e), yf: py(E.from), th: thick(st.plays), st });
+      } else {
+        curves.set(e, { e, kind, xa: px(m.nx[E.from]), ya: py(E.from), xb: px(m.nx[E.to]), yb: py(E.to), st });
+      }
+    }
+    const curvePath = c => {
+      g.beginPath();
+      if (c.kind === "self") { g.arc(c.xa, c.ya - 6, 4, 0, Math.PI * 2); return; }
+      g.moveTo(c.xa, c.ya);
+      if (c.kind === "merge") {
+        const mx = (c.xa + c.xb) / 2;
+        g.bezierCurveTo(mx, c.ya, mx, c.yb, c.xb, c.yb);
+      } else {
+        g.quadraticCurveTo((c.xa + c.xb) / 2, Math.min(c.ya, c.yb) - Math.min(70, 14 + Math.abs(c.xa - c.xb) * 0.08), c.xb, c.yb);
+      }
+    };
+    const curvePoints = c => {
+      const pts = [];
+      if (c.kind === "self") return [[c.xa, c.ya - 6]];
+      for (let k = 0; k <= 16; k++) {
+        const t = k / 16, u = 1 - t;
+        if (c.kind === "merge") {
+          const mx = (c.xa + c.xb) / 2;
+          pts.push([u * u * u * c.xa + 3 * u * u * t * mx + 3 * u * t * t * mx + t * t * t * c.xb,
+            u * u * u * c.ya + 3 * u * u * t * c.ya + 3 * u * t * t * c.yb + t * t * t * c.yb]);
+        } else {
+          const cx = (c.xa + c.xb) / 2, cy = Math.min(c.ya, c.yb) - Math.min(70, 14 + Math.abs(c.xa - c.xb) * 0.08);
+          pts.push([u * u * c.xa + 2 * u * t * cx + t * t * c.xb, u * u * c.ya + 2 * u * t * cy + t * t * c.yb]);
+        }
+      }
+      return pts;
+    };
+    const major = st => [...st.modes].sort((a, b) => b[1] - a[1])[0][0];
+    const strokeCurve = (c, color, width, faint) => {
+      g.setLineDash(c.kind === "merge" ? [] : [3, 3]);
+      g.strokeStyle = color;
+      g.globalAlpha = faint;
+      g.lineWidth = width;
+      curvePath(c);
+      g.stroke();
+      g.setLineDash([]);
+      g.globalAlpha = 1;
+    };
+    const bar = (p, counts, th) => {
+      const list = [...counts].sort((a, b) => b[1] - a[1]);
+      const y0 = p.y - th / 2;
+      if (list.length === 1 || th < 5) { g.fillStyle = fill(list[0][0]); g.fillRect(p.x0, y0, p.x1 - p.x0, th); return; }
+      const tot = list.reduce((s, [, n]) => s + n, 0);
+      let y = y0;
+      list.forEach(([mi, n], k) => {
+        const h = k === list.length - 1 ? y0 + th - y : Math.max(1, th * n / tot);
+        g.fillStyle = fill(mi);
+        g.fillRect(p.x0, y, p.x1 - p.x0, h);
+        y += h;
+      });
+    };
+    const underline = (p, counts, th) => {
+      const tot = counts.reduce((s, n) => s + n, 0);
+      if (!tot) return;
+      let x = p.x0;
+      const y = p.y + th / 2 + 1.5, h = laneH >= 12 ? 3 : 2;
+      counts.forEach((n, k) => {
+        if (!n) return;
+        const w = (p.x1 - p.x0) * n / tot;
+        g.fillStyle = GOAL_COLORS[k] || edgeLine;
+        g.fillRect(x, y, w, h);
+        x += w;
+      });
+    };
+    const marks = (p, cleared, go, level, th) => {
+      if (cleared) {
+        g.fillStyle = ink;
+        g.fillRect(Math.round(p.x1) - 1, p.y - laneH / 2 + 2, 2, laneH - 4);
+        if (laneH >= 12) { g.textAlign = "left"; g.fillText(String(level + 1), Math.round(p.x1) + 3, p.y - th / 2 - 1); }
+      }
+      if (go) {
+        const b = p.y + th / 2 + 1;
+        g.fillStyle = red;
+        g.beginPath();
+        g.moveTo(p.x1, b); g.lineTo(p.x1 + 3.5, b + 5); g.lineTo(p.x1 - 3.5, b + 5);
+        g.closePath();
+        g.fill();
+      }
+    };
+    // even levels on a shaded band; branch connectors; curves; bars; goal underlines; level and game-over marks
+    for (const p of pieces.values()) if (p.st.level % 2 === 0) { g.fillStyle = wash; g.fillRect(p.x0, p.y - laneH / 2 + 1, p.x1 - p.x0, laneH - 2); }
+    g.fillStyle = edgeLine;
+    for (const p of pieces.values()) if (p.y !== p.yf) g.fillRect(Math.round(p.x0) - 0.75, Math.min(p.y, p.yf), 1.5, Math.abs(p.y - p.yf));
+    for (const c of curves.values()) {
+      if (c.kind === "merge") strokeCurve(c, fill(major(c.st)), Math.max(1, Math.min(3, thick(c.st.plays) / 2)), 0.6);
+      else strokeCurve(c, muted, 1, 0.45);
+    }
+    for (const p of pieces.values()) bar(p, p.st.modes, p.th);
+    if (goalOn) for (const p of pieces.values()) underline(p, p.st.goal, p.th);
+    for (const p of pieces.values()) marks(p, p.st.cleared > 0, p.st.go > 0, p.st.level, p.th);
+    for (const c of curves.values()) if (c.kind === "merge") marks({ x1: c.xb, y: c.yb }, c.st.cleared > 0, c.st.go > 0, c.st.level, 2);
+    // nodes: a dot where plays branch, merge or end, the game start in blue, a badge where RL rollouts restarted
+    const dots = [];
+    for (const n of m.vis) {
+      const nOut = (m.outs.get(n) || []).length, nIn = (m.ins.get(n) || []).length;
+      if (n === doc.root || nOut !== 1 || nIn !== 1 || doc.nodes[n].started) dots.push({ n, x: px(m.nx[n]), y: py(n) });
+    }
+    const r0 = laneH >= 12 ? 3 : 2;
+    for (const d of dots) {
+      g.beginPath();
+      g.arc(d.x, d.y, d.n === doc.root ? r0 + 2.5 : r0, 0, Math.PI * 2);
+      g.fillStyle = d.n === doc.root ? blue : ink;
+      g.fill();
+      g.lineWidth = 1;
+      g.strokeStyle = bg;
+      g.stroke();
+    }
+    const restarts = new Map();
+    for (const i of m.runs) {
+      const r = doc.runs[i];
+      if (isNum(r.origin)) restarts.set(r.origin, (restarts.get(r.origin) || 0) + 1);
+    }
+    g.font = "600 9px " + font;
+    for (const [n, k] of restarts) {
+      const x = px(m.nx[n]), y = py(n), atRoot = n === doc.root;
+      if (!atRoot) {
+        g.fillStyle = blue;
+        g.beginPath();
+        g.moveTo(x, y - 5); g.lineTo(x + 5, y); g.lineTo(x, y + 5); g.lineTo(x - 5, y);
+        g.closePath();
+        g.fill();
+      }
+      if (laneH >= 16 || atRoot) {
+        const text = "restart" + (k > 1 ? ` ×${k}` : "");
+        const w = g.measureText(text).width + 8;
+        // at the game start the badge sits under the start dot (nothing lies left of it)
+        const bx = atRoot ? 1 : Math.max(1, x - w - 7), by = atRoot ? Math.min(H - 14, y + 8) : y - 7;
+        g.fillStyle = bg;
+        g.fillRect(bx, by, w, 13);
+        g.strokeStyle = blue;
+        g.lineWidth = 1;
+        g.strokeRect(bx + 0.5, by + 0.5, w - 1, 12);
+        g.fillStyle = blue;
+        g.textAlign = "left";
+        g.fillText(text, bx + 4, by + 9.5);
+      }
+    }
+    g.font = "10px " + font;
+    // a run hovered or picked in the run list: everything else fades, its own turns in their own modes
+    const hl = isNum(state.tHover) ? state.tHover : isNum(state.tPin) ? state.tPin : null;
+    if (hl !== null && m.runs.includes(hl)) {
+      g.globalAlpha = 0.75;
+      g.fillStyle = bg;
+      g.fillRect(0, AXIS_H - 4, W, H);
+      g.globalAlpha = 1;
+      const r = doc.runs[hl], gs = goals.get(hl);
+      r.steps.forEach((s, k) => {
+        const p = pieces.get(s[1]);
+        if (p) {
+          const th = Math.max(p.th, minT + 1);
+          if (p.y !== p.yf) { g.fillStyle = ink; g.fillRect(Math.round(p.x0) - 0.75, Math.min(p.y, p.yf), 1.5, Math.abs(p.y - p.yf)); }
+          g.fillStyle = ink;
+          g.fillRect(p.x0 - 0.5, p.y - th / 2 - 1, p.x1 - p.x0 + 1, th + 2);
+          bar(p, [[s[2], 1]], th);
+          if (goalOn && gs && isNum(gs[k])) underline(p, [0, 1, 2, 3].map(j => j === gs[k] ? 1 : 0), th);
+          marks(p, s[6] & F_CLEARED, s[6] & F_GO, s[4], th);
+        } else {
+          const c = curves.get(s[1]);
+          if (c) strokeCurve(c, c.kind === "merge" ? fill(s[2]) : ink, 2, 1);
+        }
+      });
+      if (isNum(r.origin)) {
+        const x = px(m.nx[r.origin]), y = py(r.origin);
+        g.fillStyle = blue;
+        g.beginPath();
+        g.moveTo(x, y - 6); g.lineTo(x + 6, y); g.lineTo(x, y + 6); g.lineTo(x - 6, y);
+        g.closePath();
+        g.fill();
+      }
+    }
+    // the node whose panel is open
+    const sel = state.tNode && treeUi.ix.has(state.tNode) ? treeUi.ix.get(state.tNode) : null;
+    if (sel !== null && m.lane.has(sel)) {
+      g.beginPath();
+      g.arc(px(m.nx[sel]), py(sel), 7, 0, Math.PI * 2);
+      g.strokeStyle = blue;
+      g.lineWidth = 2.5;
+      g.stroke();
+    }
+    hit = { dots, bars: [...pieces.values()], curves: [...curves.values()].map(c => ({ e: c.e, pts: curvePoints(c) })) };
+  };
+  const find = ev => {
+    const rc = canvas.getBoundingClientRect();
+    const x = ev.clientX - rc.left, y = ev.clientY - rc.top;
+    for (const d of hit.dots) if ((d.x - x) ** 2 + (d.y - y) ** 2 <= 36) return { node: d.n };
+    let best = null;
+    for (const p of hit.bars) {
+      const half = Math.max(p.th / 2, 4);
+      if (x >= p.x0 - 1 && x <= p.x1 + 1 && y >= p.y - half && y <= p.y + half) best = p;
+    }
+    if (best) return { edge: best.e };
+    for (const c of hit.curves) if (c.pts.some(([a, b]) => (a - x) ** 2 + (b - y) ** 2 <= 25)) return { edge: c.e };
+    return null;
+  };
+  const place = ev => {
+    tip.hidden = false;
+    const cr = chart.getBoundingClientRect();
+    tip.style.left = Math.max(0, Math.min(ev.clientX - cr.left + 14, cr.width - tip.offsetWidth - 4)) + "px";
+    tip.style.top = (ev.clientY - cr.top + 16) + "px";
+  };
+  canvas.addEventListener("pointermove", ev => {
+    const h = find(ev);
+    if (!h) { tip.hidden = true; canvas.style.cursor = ""; return; }
+    canvas.style.cursor = "pointer";
+    tip.replaceChildren(...(h.node !== undefined ? nodeTip(doc, m, h.node) : edgeTip(doc, m, goals, h.edge)));
+    place(ev);
+  });
+  canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
+  canvas.addEventListener("click", ev => {
+    const h = find(ev);
+    if (!h) return;
+    if (h.node !== undefined) { selectNode(doc.nodes[h.node].id, { scroll: true }); return; }
+    state.tEdge = h.edge;
+    edgePanel();
+    $("treeEdge")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+  treeUi.paint = paint;
+  // repaint whenever the chart's width changes (window, side panels, a tab drawn while hidden)
+  let lastW = 0;
+  const ro = new ResizeObserver(() => {
+    if (!canvas.isConnected) { ro.disconnect(); return; }
+    const w = scroll.clientWidth;
+    if (w && w !== lastW) { lastW = w; paint(); }
+  });
+  ro.observe(scroll);
+  const present = [...new Set([...m.es.values()].flatMap(st => [...st.modes.keys()]))].map(i => modes[i]);
+  const ordered = [...modeNames().filter(x => present.includes(x)), ...present.filter(x => !modeNames().includes(x)).sort()];
+  const kinds = new Set(m.kind.values());
+  const card = el("div", { class: "card rl2-tcard" },
+    el("div", { class: "rl2-thead" }, el("b", { class: "mono" }, doc.game),
+      el("span", { class: "muted rl2-small", title: TREE_HELP[doc.tree] }, `t${doc.tree} · node = ${TREE_LABELS[doc.tree]} · ` +
+        `left to right: ${state.tX === "moves" ? "game moves" : "turns"} since the game start`),
+      doc.truncated ? el("span", { class: "rl2-bad rl2-small" }, `only the first ${doc.steps} turns are drawn (whole runs, plays from the start first)`) : null),
+    chart,
+    el("div", { class: "legend rl2-small" },
+      ordered.map(x => el("span", { class: "rl2-lgmode", title: modePrompt(x) || null },
+        el("i", { style: `background:${x === "stock" ? "var(--rl2-stock)" : modeColor(x)}` }), x)),
+      el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level cleared (the new level)"),
+      el("span", {}, el("i", { class: "lg-golane" }), "red mark: game over"),
+      el("span", {}, el("i", { class: "lg-restart" }), "restart: an RL rollout restored from a saved state"),
+      el("span", {}, el("i", { class: "lg-band" }), "shaded: even levels"),
+      kinds.has("merge") ? el("span", {}, el("i", { class: "lg-merge" }), "curve: plays merging into a node drawn on another lane") : null,
+      kinds.has("back") || kinds.has("self") ? el("span", {}, el("i", { class: "lg-back" }), "dashed: back to an earlier node (or the same one)") : null,
+      el("span", {}, "thicker: more plays")),
+    goalOn ? el("div", { class: "legend rl2-small" }, el("span", {}, "underline, the goal held:"),
+      GOAL_NAMES.map((n, k) => el("span", {}, el("i", { class: "rl2-egoal" + (GOAL_COLORS[k] ? "" : " none"),
+        style: GOAL_COLORS[k] ? `background:${GOAL_COLORS[k]}` : "" }), n))) : null);
+  return { card, paint };
+}
+
+const xWord = () => state.tX === "moves" ? "moves" : "turns";
+function nodeTip(doc, m, n) {
+  const node = doc.nodes[n];
+  const sum = list => (list || []).reduce((s, e) => s + m.es.get(e).plays, 0);
+  const restarted = m.runs.filter(i => doc.runs[i].origin === n).length;
+  return [el("div", { class: "mono rl2-small" }, n === doc.root ? "the game start" : nodeLabel(node.id)),
+    el("div", { class: "rl2-small" }, (isNum(m.lvl[n]) ? `level ${m.lvl[n]} · ` : "") + (isNum(node.moves) ? `${node.moves} moves into the level · ` : "") +
+      `reached after ${m.nx[n]} ${xWord()}`),
+    el("div", { class: "rl2-small" }, `${sum(m.ins.get(n))} turns arrive · ${sum(m.outs.get(n))} leave` +
+      (restarted ? ` · ${restarted} restart${restarted === 1 ? "" : "s"} here` : "")),
+    el("div", { class: "muted rl2-small" }, "click to open the node")];
+}
+function turnBits(s, status) {
+  const bits = [`L${s[4]}`, `${s[3]} mv`];
+  if (isNum(s[7])) bits.push(`${Math.round(s[7] / 100) / 10}k tok`);
+  return [el("span", { class: "mono" }, bits.join(" · ")),
+    s[6] & F_CLEARED ? el("span", { class: "rl2-yes" }, `cleared L${s[4]}`) : null,
+    s[6] & F_GO ? el("span", { class: "rl2-bad" }, "game over") : null,
+    isNum(status) ? el("span", { class: "rl2-gstat" }, el("i", { class: "rl2-egoal" + (GOAL_COLORS[status] ? "" : " none"),
+      style: GOAL_COLORS[status] ? `background:${GOAL_COLORS[status]}` : "" }), GOAL_NAMES[status]) : null];
+}
+function edgeTip(doc, m, goals, e) {
+  const st = m.es.get(e), E = doc.edges[e], kind = m.kind.get(e);
+  const where = kind === "end" ? `${nodeLabel(doc.nodes[E.from].id)} → the run ended`
+    : kind === "self" ? `stayed on ${nodeLabel(doc.nodes[E.from].id)}`
+      : `${E.from === doc.root ? "start" : nodeLabel(doc.nodes[E.from].id)} → ${nodeLabel(doc.nodes[E.to].id)}` + (kind === "back" ? " (back)" : "");
+  const list = [...st.modes].sort((a, b) => b[1] - a[1]);
+  const rows = st.steps.slice(0, TIP_TURNS).map(([i, k]) => {
+    const r = doc.runs[i], s = r.steps[k], g = goals.get(i);
+    return el("div", { class: "rl2-ttturn rl2-small" }, el("span", { class: "mono" }, runName(r, doc.game)),
+      el("span", { class: "rl2-dot", style: `background:${doc.modes[s[2]] === "stock" ? "var(--rl2-stock)" : modeColor(doc.modes[s[2]])}` }),
+      ...turnBits(s, state.tGoal && g ? g[k] : null));
+  });
+  return [el("div", { class: "rl2-small" }, el("b", {}, `${st.plays} turn${st.plays === 1 ? "" : "s"}`), ` · ${where}`),
+    el("div", { class: "rl2-ttmodes" }, list.map(([mi, n]) => el("span", {}, modeTag(doc.modes[mi]), list.length > 1 ? ` ${n}` : ""))),
+    list.length === 1 ? modePromptLine(doc.modes[list[0][0]]) : null,
+    ...rows,
+    st.steps.length > TIP_TURNS ? el("div", { class: "muted rl2-small" }, `and ${st.steps.length - TIP_TURNS} more`) : null,
+    el("div", { class: "muted rl2-small" }, "click to list every turn and read its trace")].filter(Boolean);
+}
+
+function runList(doc, m, goals) {
+  const groups = doc.arms.map(a => ({ a, runs: m.runs.filter(i => doc.runs[i].arm === a.id) })).filter(x => x.runs.length);
+  const chips = new Map();
+  const mark = () => { for (const [i, c] of chips) c.classList.toggle("on", state.tPin === i); };
+  const chip = i => {
+    const r = doc.runs[i];
+    const restarted = isNum(r.origin);
+    const tip = `${r.id}\nrun ${r.run} · build ${r.build}${r.policy ? " · policy " + r.policy : ""}\n` +
+      `${r.status} · ${val(r.levels)} levels · score ${fx(r.score)} · ${val(r.actions)} moves · ${r.steps.length} turns in this tree` +
+      (r.origin_kind !== "start" ? `\nrestarted (${r.origin_kind}) from ${r.origin === doc.root ? "the game start" : nodeLabel(doc.nodes[r.path[0]].id)}` : "") +
+      (goals.has(i) ? "\ngoal judged by the trace grader" : "") + "\nhover: show its path · click: keep it shown";
+    const b = el("button", { type: "button", class: "rl2-trun" + (state.tPin === i ? " on" : ""), title: tip,
+      onmouseenter: () => { state.tHover = i; treeUi.paint && treeUi.paint(); },
+      onmouseleave: () => { state.tHover = null; treeUi.paint && treeUi.paint(); },
+      onfocus: () => { state.tHover = i; treeUi.paint && treeUi.paint(); },
+      onblur: () => { state.tHover = null; treeUi.paint && treeUi.paint(); },
+      onclick: () => { state.tPin = state.tPin === i ? null : i; mark(); treeUi.paint && treeUi.paint(); } },
+      restarted ? el("span", { class: "rl2-tre", "aria-label": "restarted mid-tree" }, "↻") : null,
+      el("span", { class: "mono" }, runShort(r, doc.game)),
+      el("small", { class: "muted mono" }, `${val(r.levels)} lv` + (isNum(r.score) ? ` · ${fx(r.score, 0)}` : "")),
+      goals.has(i) ? el("i", { class: "rl2-egraded", title: "goal judged" }) : null);
+    chips.set(i, b);
+    return b;
+  };
+  return el("div", { class: "card rl2-truns" },
+    el("div", { class: "rl2-truns-head" }, el("h3", { class: "rl2-subh" }, "Runs"),
+      el("span", { class: "muted rl2-small" }, "hover a run to follow its whole path through the tree; click to keep it shown")),
+    groups.map(x => el("div", { class: "rl2-tgroup" },
+      el("div", { class: "rl2-tarm" }, x.a.label, el("small", { class: "muted" }, ` ${x.runs.length}`)),
+      el("div", { class: "rl2-tchips" }, x.runs.map(chip)))));
+}
+
+// The turns of the edge clicked: one row per turn, its trace on demand.
+function edgePanel() {
+  const box = $("treeEdge"), doc = treeUi.doc, m = treeUi.m;
+  if (!box || !doc || !m) return;
+  const e = state.tEdge;
+  const st = isNum(e) ? m.es.get(e) : null;
+  if (!st) { box.replaceChildren(); return; }
+  const E = doc.edges[e], goals = goalSteps(doc, treeUi.explore);
+  const label = n => n === doc.root ? "the game start" : nodeLabel(doc.nodes[n].id);
+  const rows = st.steps.slice(0, PANEL_TURNS).map(([i, k]) => turnRow(doc, i, k, goals, E));
+  box.replaceChildren(el("div", { class: "card rl2-edge" },
+    el("div", { class: "rl2-edge-head" },
+      el("h3", { class: "rl2-subh" }, `${st.plays} turn${st.plays === 1 ? "" : "s"} · ${label(E.from)} → ${E.to === null ? "the run ended" : label(E.to)}`),
+      el("div", { class: "rl2-bact" },
+        el("button", { type: "button", class: "rl2-btn", onclick: () => selectNode(doc.nodes[E.from].id, { scroll: true }) }, "open where it starts"),
+        E.to !== null ? el("button", { type: "button", class: "rl2-btn", onclick: () => selectNode(doc.nodes[E.to].id, { scroll: true }) }, "open where it leads") : null,
+        el("button", { type: "button", class: "rl2-btn", onclick: () => { state.tEdge = null; edgePanel(); } }, "close"))),
+    el("div", { class: "rl2-eturns" }, rows),
+    st.steps.length > PANEL_TURNS ? el("div", { class: "muted rl2-small" }, `and ${st.steps.length - PANEL_TURNS} more`) : null));
+}
+function turnRow(doc, i, k, goals, E) {
+  const r = doc.runs[i], s = r.steps[k], key = `${r.id}#${s[0]}`;
+  const open = state.tTrace.has(key);
+  const g = goals.get(i);
+  const row = el("div", { class: "rl2-branch" + (open ? " open" : "") },
+    el("div", { class: "rl2-bmain" },
+      el("div", { class: "rl2-bwho" }, el("span", { class: "rl2-chip mono", title: `${r.id}\n${armOf(doc, r.arm).label}` },
+        runName(r, doc.game)), " ", modeTag(doc.modes[s[2]])),
+      el("div", { class: "rl2-bmeta rl2-small" }, el("span", { class: "mono muted" }, `turn ${val(s[5])} · step ${s[0]}`),
+        ...turnBits(s, g ? g[k] : null),
+        isNum(r.origin) && k === 0 ? el("span", { class: "rl2-origin", title: `restored (${r.origin_kind}) at ` +
+          (r.origin === doc.root ? "the game start" : nodeLabel(doc.nodes[r.origin].id)) }, `restart · ${r.origin_kind}`) : null)),
+    el("div", { class: "rl2-bact" },
+      el("button", { type: "button", class: "rl2-btn" + (open ? " on" : ""), "aria-expanded": open ? "true" : "false",
+        onclick: () => { open ? state.tTrace.delete(key) : state.tTrace.add(key); row.replaceWith(turnRow(doc, i, k, goals, E)); } },
+        open ? "hide trace" : "trace"),
+      el("button", { type: "button", class: "rl2-btn", title: "highlight this run's whole path",
+        onclick: () => { state.tPin = i; drawTreeView(); } }, "its path")));
+  if (open) {
+    const box = el("div", { class: "rl2-trace" }, el("div", { class: "muted rl2-small" }, "loading trace…"));
+    row.append(box);
+    (async () => {
+      let sha = E.plays === 1 ? E.trace : null;
+      if (!sha) {
+        const ro = await getTree("rollout/" + r.id);
+        sha = ((ro.steps || []).find(x => x.seq === s[0]) || {}).trace_sha || null;
+      }
+      if (!sha) throw new NotPublished("trace");
+      const content = await getTree("trace/" + sha);
+      const pv = pathView(content, key, null);
+      box.replaceChildren(pv.player.node, pv.list);
+    })().catch(err => {
+      if (!(err instanceof NotPublished)) console.error(err);
+      box.replaceChildren(el("div", { class: "muted rl2-small" }, "This turn's trace is not on the server."));
+    });
+  }
+  return row;
+}
+
+function selectNode(id, { scroll = false } = {}) {
+  state.tNode = id;
+  resetNodeUi();
+  syncUrl();
+  if (treeUi.paint) treeUi.paint();
+  nodePanel(id).then(() => { if (scroll) $("treeNode")?.scrollIntoView({ block: "start", behavior: "smooth" }); });
+}
+const goNode = id => selectNode(id, { scroll: true });
+
+// The node clicked (the Decision tree view's panel): its screen, steps out grouped by mode with clear rate, moves to clear
+// and value, the best known path from it, the rollouts restarted there.
+async function nodePanel(id) {
+  if (!$("treeNode")) return;
+  if (!id) { $("treeNode").replaceChildren(); return; }
+  $("treeNode").replaceChildren(el("div", { class: "card rl2-npanel muted rl2-small" }, "loading the node…"));
+  const close = el("button", { type: "button", class: "rl2-btn", onclick: () => { state.tNode = null; syncUrl(); nodePanel(null); treeUi.paint && treeUi.paint(); } }, "close");
   let view, value;
   try {
     [view, value] = await Promise.all([getTree("node/" + id), getTree("value/" + id).catch(e => {
@@ -525,10 +1088,14 @@ async function drawNode(id) {
       return null;
     })]);
   } catch (e) {
-    if (!(e instanceof NotPublished)) throw e;
-    body.replaceChildren(trailBar(), el("div", { class: "empty" }, `Node ${id} is not published yet.`), frontierPanel());
+    if (state.tNode !== id || !$("treeNode")) return;
+    if (!(e instanceof NotPublished)) console.error(e);
+    $("treeNode").replaceChildren(el("div", { class: "card rl2-npanel" }, el("div", { class: "rl2-edge-head" },
+      el("span", { class: "muted rl2-small" }, e instanceof NotPublished ? `Node ${nodeLabel(id)} is not ${FIXTURE ? "in the fixture" : "published yet"}.`
+        : "Could not load this node."), close)));
     return;
   }
+  if (state.tNode !== id || !$("treeNode")) return;
   const n = view.node;
   nodeMeta.set(n.id, { level: n.level, moves: n.moves });
   for (const s of view.steps || []) if (s.child && s.child_info) nodeMeta.set(s.child, { level: s.child_info.level, moves: s.child_info.moves });
@@ -538,35 +1105,23 @@ async function drawNode(id) {
   const head = el("div", { class: "card rl2-node" },
     canvas || el("div", { class: "rl2-board none" }, "no screen stored"),
     el("div", { class: "rl2-node-info" },
-      el("div", { class: "rl2-node-id mono" }, n.id),
+      el("div", { class: "rl2-edge-head" }, el("div", { class: "rl2-node-id mono" }, n.id), close),
       el("div", { class: "rl2-node-nums" },
         el("div", {}, el("b", { class: "mono" }, n.steps), el("small", {}, n.steps === 1 ? "step out" : "steps out")),
         el("div", {}, el("b", { class: "mono" }, n.arrivals || 0), el("small", {}, "arrived")),
-        el("div", {}, el("b", { class: "mono" }, Object.keys(view.by_action || {}).length), el("small", {}, "actions")),
+        el("div", {}, el("b", { class: "mono" }, Object.keys(view.by_action || {}).length), el("small", {}, "modes")),
         (view.started_here || []).length ? el("div", {}, el("b", { class: "mono" }, view.started_here.length), el("small", {}, "restarts here")) : null),
-      el("div", { class: "muted rl2-small" }, `${where} · t${view.tree} ${view.tree_name || TREE_NAMES[view.tree] || ""}`),
+      el("div", { class: "muted rl2-small" }, `${where} · t${view.tree} ${TREE_LABELS[view.tree] || view.tree_name || ""}`),
       view.parents && view.parents.length ? el("div", { class: "rl2-parents rl2-small" }, el("span", { class: "muted" }, "came from"),
         view.parents.slice(0, 12).map(p => el("button", { type: "button", class: "rl2-chip mono", title: `${p.id} (${p.n})`, onclick: () => goNode(p.id) },
           nodeLabel(p.id), p.n > 1 ? ` ×${p.n}` : ""))) : null,
       bestLine(value),
       view.truncated ? el("div", { class: "rl2-small rl2-bad" }, "Only the first steps are shown.") : null));
-  const level = isNum(n.level) ? n.level : Math.min(...(view.steps || []).map(s => s.level).filter(isNum), Infinity);
-  body.replaceChildren(...[trailBar(), head, startedHere(view), actionGroups(view, value),
-    isFinite(level) ? shortestPanel(level, n.id) : null, frontierPanel()].filter(Boolean));
+  $("treeNode").replaceChildren(...[head, startedHere(view), actionGroups(view, value)].filter(Boolean));
   if (canvas) requestAnimationFrame(() => draw(canvas, n.board));
 }
-function trailBar() {
-  const first = state.trail[0] || "";
-  if (state.trail.length < 2 && first.endsWith(":root")) {
-    return el("div", { class: "rl2-trail muted rl2-small" }, "Game start. Open an action, then follow a step with “next node →”.");
-  }
-  return el("nav", { class: "rl2-trail rl2-small", "aria-label": "nodes visited" }, state.trail.flatMap((id, i) => {
-    const last = i === state.trail.length - 1;
-    return [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
-      last ? el("span", { class: "rl2-chip on mono", "aria-current": "page" }, nodeLabel(id))
-        : el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(id) }, nodeLabel(id))];
-  }));
-}
+
+// Pieces of the node panel: the restart badge, rollouts restarted at the node, the best known path, steps by mode
 function originBadge(kind, origin) {
   if (!kind || kind === "start") return null;
   const tip = `this rollout was restarted mid-tree (${kind}) from ${origin || "?"}`;
@@ -602,7 +1157,7 @@ function startedHere(view) {
       getTree("rollout/" + r.id).then(doc => {
         const k = state.tTree;
         box.replaceChildren(...[...(doc.steps || []).flatMap((s, i) => [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
-          el("button", { type: "button", class: "rl2-stepchip", title: `step ${s.seq}: ${s.action} at ${s["n" + k]}`, onclick: () => goNode(s["n" + k], { fromStart: true }) },
+          el("button", { type: "button", class: "rl2-stepchip", title: `step ${s.seq}: ${s.action} at ${s["n" + k]}`, onclick: () => goNode(s["n" + k]) },
             modeTag(s.action), el("span", { class: "mono muted" }, `L${s.level}`))]),
           doc.truncated ? el("span", { class: "rl2-bad" }, "(first steps only)") : null].filter(Boolean));
       }).catch(e => {
@@ -726,106 +1281,11 @@ function stepItem(b, redraw) {
   }
   return item;
 }
-// Shortest known path to clear one level, merged across every run on the screen graph (t3, t4 or t5; t1 and t2 use t3):
-// its length in moves, its steps (from any rollouts), and this node's own distance when it is on that graph.
-function shortestPanel(level, nodeId) {
-  const game = state.tGame, tree = state.tTree >= 3 ? state.tTree : 3;
-  const box = el("div", { class: "card rl2-short" }, el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level} · t${tree}`),
-    el("div", { class: "muted rl2-small" }, "loading…"));
-  getTree(`shortest?game=${game}&level=${level}&tree=${tree}`).then(doc => {
-    const kids = [el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level} · t${tree}`)];
-    const best = doc.best;
-    if (!best) {
-      kids.push(el("p", { class: "muted rl2-small" }, "No run has cleared this level yet."));
-    } else {
-      const rollouts = new Set(best.steps.map(s => s.rollout_id)).size;
-      kids.push(el("p", { class: "rl2-small" }, el("b", { class: "mono" }, `${best.moves} moves`),
-        ` in ${best.steps.length} step${best.steps.length === 1 ? "" : "s"}` +
-        (rollouts > 1 ? `, joined from ${rollouts} runs (no single run went this way)` : ", one run") +
-        ` · ${doc.goal_steps} clearing step${doc.goal_steps === 1 ? "" : "s"} known`));
-      kids.push(el("div", { class: "rl2-rsteps" }, best.steps.flatMap((s, i) => [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
-        el("button", { type: "button", class: "rl2-stepchip", title: `${s.id}: ${s.action}, ${s.moves_step} moves` +
-            (tree === state.tTree ? "; click to open its node" : ""), disabled: tree === state.tTree ? null : true,
-          onclick: tree === state.tTree ? () => goNode(s.from) : null },
-          modeTag(s.action), el("span", { class: "mono muted" }, `${s.moves_step} mv`))]).filter(Boolean)));
-    }
-    const here = tree === state.tTree ? (doc.nodes || []).find(x => x.id === nodeId) : null;
-    if (here) kids.push(el("p", { class: "rl2-small" }, isNum(here.distance)
-      ? [`From this node: `, el("b", { class: "mono" }, `${here.distance} moves`), ` (next: `, modeTag(here.action), `)`]
-      : el("span", { class: "muted" }, "From this node no known path clears the level.")));
-    if (state.tTree < 3) kids.push(el("p", { class: "muted rl2-small" }, "Paths merge on screens, so this panel reads tree t3 (level + screen)."));
-    if (doc.truncated) kids.push(el("p", { class: "rl2-bad rl2-small" }, `Only the first ${doc.steps_read} steps of this level were read.`));
-    box.replaceChildren(...kids);
-  }).catch(e => {
-    if (!(e instanceof NotPublished)) console.error(e);
-    box.replaceChildren(el("h3", { class: "rl2-subh" }, `Shortest known path · level ${level}`),
-      el("p", { class: "muted rl2-small" }, "No steps of this level are stored yet."));
-  });
-  return box;
-}
-
-// Restart candidates (server ranking), three ways: nodes short of N samples (coverage); the same plus how unsure the
-// clear rate is and a count bonus (uncertain); the nodes on each level's best known path, nearest the goal first
-// (backward: start just before the goal, then move the start back).
-function frontierPanel() {
-  const game = state.tGame, tree = state.tTree, mode = state.frontMode;
-  const key = `${game}|${tree}|${mode}`;
-  const intro = {
-    coverage: `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked by few steps out + depth + `
-      + "the spread between actions' cleared rates + 0.5 when several rollouts meet.",
-    uncertain: `Nodes where some action has fewer than ${FRONTIER_N} samples, ranked as above plus p(1−p) of the clear rate `
-      + "and 1/√(steps out + 1).",
-    backward: "Nodes on each level's shortest known path, nearest the goal first: restart just before the goal, then further back.",
-  }[mode];
-  const box = el("details", { class: "card rl2-front", open: state.frontOpen ? "" : null,
-    ontoggle: e => { state.frontOpen = e.target.open; } },
-    el("summary", {}, `Restart candidates · ${game} · t${tree}`),
-    el("div", { class: "rl2-seg rl2-fmode", role: "group", "aria-label": "ranking" }, FRONT_MODES.map(([m, label]) =>
-      el("button", { type: "button", class: m === mode ? "on" : "", "aria-pressed": m === mode ? "true" : "false", title: label,
-        onclick: () => { state.frontMode = m; state.frontAll = false; box.replaceWith(frontierPanel()); } }, m))),
-    el("p", { class: "muted rl2-small" }, intro + " Click one to open it."));
-  const list = el("div", { class: "rl2-frows" }, el("div", { class: "muted rl2-small" }, "loading…"));
-  box.append(list);
-  getTree(`frontier?game=${game}&tree=${tree}&N=${FRONTIER_N}&limit=50` + (mode === "coverage" ? "" : `&mode=${mode}`)).then(doc => {
-    if (`${state.tGame}|${state.tTree}|${state.frontMode}` !== key) return;
-    const rows = doc.nodes || [];
-    for (const r of rows) nodeMeta.set(r.id, { level: r.level, moves: (nodeMeta.get(r.id) || {}).moves });
-    if (!rows.length) {
-      list.replaceChildren(el("div", { class: "muted rl2-small" }, mode === "backward" ? "No run has cleared a level in this game yet."
-        : "Every node has enough samples."));
-      return;
-    }
-    const shown = state.frontAll ? rows : rows.slice(0, 10);
-    const parts = mode === "uncertain" ? ["few", "depth", "spread", "merge", "uncertain", "explore"] : ["few", "depth", "spread", "merge"];
-    const tip = r => `${r.id}\n${r.out} steps out · ${r.arrivals} arrived from ${r.arrival_rollouts} rollout(s)` +
-      (r.started_here ? ` · ${r.started_here} restart(s) here` : "") +
-      (mode === "backward" ? `\nnext: ${r.action} (${r.step}); restart from t1 node ${r.t1}` : "") +
-      (Object.keys(r.open || {}).length ? `\nshort of ${doc.N}: ` + Object.entries(r.open).map(([a, k]) => `${a} ${k}`).join(", ") : "");
-    list.replaceChildren(
-      mode === "backward"
-        ? el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "to goal"),
-          el("span", { class: "rl2-fparts" }, "next step"), el("span", {}, "level"))
-        : el("div", { class: "rl2-frow head muted" }, el("span", {}, "node"), el("span", {}, "score"),
-          el("span", { class: "rl2-fparts" }, parts.join(" · ")), el("span", {}, "open")),
-      ...shown.map(r => el("button", { type: "button", class: "rl2-frow", title: tip(r), onclick: () => goNode(r.id, { fromStart: true }) },
-        el("span", { class: "mono rl2-fid" }, nodeLabel(r.id)),
-        mode === "backward" ? el("b", { class: "mono" }, movesTxt(r.distance)) : el("b", { class: "mono" }, fx(r.score, 2)),
-        mode === "backward" ? el("span", { class: "rl2-fparts" }, modeTag(r.action))
-          : el("span", { class: "mono muted rl2-fparts" }, parts.map(p => fx((r.parts || {})[p], 2)).join(" · ")),
-        el("span", { class: "mono" }, mode === "backward" ? `L${r.level}` : r.missing))),
-      rows.length > 10 ? el("button", { type: "button", class: "rl2-btn rl2-fmore", onclick: () => { state.frontAll = !state.frontAll; box.replaceWith(frontierPanel()); } },
-        state.frontAll ? "show the top 10" : `show all ${rows.length}`) : "");
-  }).catch(e => {
-    if (!(e instanceof NotPublished)) console.error(e);
-    list.replaceChildren(el("div", { class: "muted rl2-small" }, "No restart candidates for this tree yet."));
-  });
-  return box;
-}
 
 /* ------------------------------------------------------------------ view 5: training (the RL campaign) */
 // One campaign document per RL campaign, written by the learner after every round: the rollout VMs, the rounds, the
 // policy's mode mix at a few typical situations, totals by the first (assigned) mode, and the sibling groups (one row
-// per node of the tree, one chip per try). A node links to the Decision tree view at that node.
+// per node of the tree, one chip per try). A node links to the Tree view at that node.
 const STATUS_TONE = { RUNNING: "run", PROVISIONING: "wait", STAGING: "wait", STOPPING: "wait", SUSPENDING: "wait" };
 const when = t => {
   if (t === null || t === undefined || t === "") return "–";
@@ -959,10 +1419,10 @@ function totalsCard(t, adv) {
       "the mean of its siblings at the same node. Above zero: faster than the other modes there."));
 }
 function openTreeAt(node, game) {
+  resetTreeSel();
   state.tGame = game;
-  state.tTree = 1;
-  state.trail = [node];
-  resetNodeUi();
+  state.tTree = treeOf(node);
+  state.tNode = node;
   state.treeShown = false;
   show("tree");
   $("view-tree").scrollIntoView({ block: "start" });
@@ -975,15 +1435,15 @@ function siblingGroups(doc) {
   const wrap = el("div", { class: "rl2-sibs" });
   wrap.append(el("p", { class: "muted rl2-small" }, `${doc.nodes_total ?? nodes.length} nodes, newest round first. One chip per try, ` +
     "coloured by its first mode: filled ✓ with the moves it took to clear the level, outlined ✗ when it did not, dashed when it was cut short. " +
-    "The ring marks the fastest try. Click a node to open it in the Decision tree."));
+    "The ring marks the fastest try. Click a node to open it in the Tree."));
   for (const n of shown) {
     const tries = n.tries || [];
     const best = n.best_moves;
     let ringed = false;
-    const href = `?${FIXTURE ? "fixture=1&" : ""}view=tree&tgame=${encodeURIComponent(n.game)}&trail=${encodeURIComponent(n.node)}`;
+    const href = `?${FIXTURE ? "fixture=1&" : ""}view=tree&tgame=${encodeURIComponent(n.game)}&node=${encodeURIComponent(n.node)}`;
     wrap.append(el("div", { class: "rl2-sib" },
       el("div", { class: "rl2-sib-head" },
-        el("a", { class: "rl2-sib-node mono", href, title: `${n.node}\nopen in the Decision tree`,
+        el("a", { class: "rl2-sib-node mono", href, title: `${n.node}\nopen in the Tree`,
           onclick: e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); openTreeAt(n.node, n.game); } },
           `${n.game} · L${val(n.level)} · ${nodeHex(n.node)}`),
         n.class ? el("span", { class: "rl2-kind" }, n.class.replace("_", " ")) : null,
@@ -1009,570 +1469,6 @@ function siblingGroups(doc) {
   return wrap;
 }
 
-/* ------------------------------------------------------------------ view 3: lanes (every run's play of one game) */
-// One lane per run for the chosen game: each decision is a segment from its game move (f.actions_total) to the next
-// decision's, coloured by the mode picked (stock light grey so the other modes stand out). A tick + the new level number
-// marks a level-up (o.lvl_turn, at the end of that turn), a red mark a game over (o.go_turn), a thin gap a level boundary.
-// Under the lanes: per mode, how often its turns were followed by a level-up / game over / a level within 30 moves,
-// against stock in the same game. "All games" swaps the lanes for a games × modes grid of that last number.
-const LANE_MIN_N = 15;
-const BEST_COMBO = "sbt06hic11/";
-const LANE_H = 34, LANE_TOP = 13, LANE_BAR = 15, AXIS_H = 22, PAD_L = 4, PAD_R = 16;
-const ZOOMS = [1, 2, 4, 8];
-const lanesUi = { token: 0, missing: new Set(), failed: new Set(), paint: null };
-const sameSet = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
-// builds with at least one run that has decisions; the best combo's coach builds first
-function laneBuilds() {
-  const list = (state.dash.builds || []).filter(b => (b.runs || []).some(r => (r.decisions || 0) > 0));
-  const best = b => b.id.startsWith(BEST_COMBO) ? 0 : 1;
-  return list.map((b, i) => [b, i]).sort((x, y) => best(x[0]) - best(y[0]) || x[1] - y[1]).map(x => x[0]);
-}
-const defaultLaneBuilds = () => state.dash ? new Set(laneBuilds().map(b => b.id)) : new Set();
-function shortNames(ids) {
-  const last = id => String(id).split("/").pop().replace(/^coach-/, "") || String(id);
-  const counts = {};
-  for (const id of ids) counts[last(id)] = (counts[last(id)] || 0) + 1;
-  return Object.fromEntries(ids.map(id => [id, counts[last(id)] > 1 ? id : last(id)]));
-}
-const runLetter = run => { const m = String(run).match(/-([a-z])(?:-\d+)?$/); return m ? m[1] : String(run).slice(-6); };
-// a level-up is drawn at the end of its turn; the level it reached is the next decision's level when that is higher
-const newLevel = (decs, i) => {
-  const now = (decs[i].f || {}).level, next = decs[i + 1] && (decs[i + 1].f || {}).level;
-  return isNum(next) && isNum(now) && next > now ? next : isNum(now) ? now + 1 : "?";
-};
-function segEnd(decs, i) {
-  const d = decs[i], at = (d.f || {}).actions_total || 0;
-  const next = decs[i + 1] && (decs[i + 1].f || {}).actions_total;
-  return isNum(next) && next >= at ? next : at + ((d.o && d.o.acts) || 0);
-}
-async function loadRuns(runs, progress) {
-  const need = runs.filter(r => !state.docs["run-" + r.run] && !lanesUi.missing.has(r.run));
-  let done = 0, i = 0;
-  progress(done, need.length);
-  const worker = async () => {
-    while (i < need.length) {
-      const r = need[i++];
-      try { await getDoc("run-" + r.run); } catch (e) {
-        if (e instanceof NotPublished) lanesUi.missing.add(r.run);
-        else if (e.status === 401 || e.status === 403) throw e;
-        else { console.error(r.run, e); lanesUi.failed.add(r.run); }
-      }
-      progress(++done, need.length);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(6, need.length) }, worker));
-}
-function modeStats(decs) {
-  const s = {};
-  for (const d of decs) {
-    if (!d.o) continue;
-    const c = s[d.mode] || (s[d.mode] = { n: 0, lvl: 0, go: 0, l30: 0 });
-    c.n++;
-    if (d.o.lvl_turn) c.lvl++;
-    if (d.o.go_turn) c.go++;
-    if (d.o.lvl30) c.l30++;
-  }
-  for (const c of Object.values(s)) { c.lvl_rate = c.lvl / c.n; c.go_rate = c.go / c.n; c.lvl30 = c.l30 / c.n; }
-  return s;
-}
-const orderModes = present => [...modeNames().filter(m => present.includes(m)), ...present.filter(m => !modeNames().includes(m)).sort()];
-
-async function renderLanes() {
-  const token = ++lanesUi.token;
-  const builds = laneBuilds();
-  if (!builds.length) {
-    $("lnPickers").replaceChildren();
-    $("lnBody").replaceChildren(el("div", { class: "empty" }, "No run with coach decisions yet."));
-    return;
-  }
-  const known = new Set(builds.map(b => b.id));
-  if (!state.lnBuilds) state.lnBuilds = defaultLaneBuilds();
-  state.lnBuilds = new Set([...state.lnBuilds].filter(id => known.has(id)));
-  const names = shortNames(builds.map(b => b.id));
-  const runsOf = b => (b.runs || []).filter(r => (r.decisions || 0) > 0);
-  const chips = el("div", { class: "rl2-lbuilds", role: "group", "aria-label": "builds" },
-    el("span", { class: "muted rl2-small" }, "builds"),
-    builds.map(b => {
-      const on = state.lnBuilds.has(b.id);
-      return el("button", { type: "button", class: "rl2-fbtn" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false",
-        title: `${b.id}${b.label ? " · " + b.label : ""}\n${runsOf(b).length} run(s) with decisions`,
-        onclick: () => { on ? state.lnBuilds.delete(b.id) : state.lnBuilds.add(b.id); renderLanes(); } },
-        names[b.id], el("small", { class: "muted" }, runsOf(b).length));
-    }),
-    el("button", { type: "button", class: "rl2-fbtn", onclick: () => { state.lnBuilds = defaultLaneBuilds(); renderLanes(); } }, "all"));
-  const seg = (label, opts, cur, set) => el("div", { class: "rl2-seg", role: "group", "aria-label": label }, opts.map(([k, t]) =>
-    el("button", { type: "button", class: cur === k ? "on" : "", "aria-pressed": cur === k ? "true" : "false", onclick: () => { set(k); renderLanes(); } }, t)));
-  const status = el("span", { class: "muted rl2-small" });
-  const gameSlot = el("span", { class: "rl2-lgame" });
-  const controls = el("div", { class: "rl2-lctl" }, gameSlot,
-    seg("show", [[false, "lanes"], [true, "all games"]], state.lnAll, v => { state.lnAll = v; }),
-    state.lnAll ? null : seg("x axis", [["moves", "game moves"], ["index", "decision #"]], state.lnX, v => { state.lnX = v; }),
-    state.lnAll ? null : seg("zoom", ZOOMS.map(z => [z, z === 1 ? "fit" : z + "×"]), state.lnZoom, v => { state.lnZoom = v; }),
-    status);
-  $("lnPickers").replaceChildren(chips, controls);
-  syncUrl();
-
-  const picked = builds.filter(b => state.lnBuilds.has(b.id));
-  const runs = picked.flatMap(b => runsOf(b).map(r => ({ ...r, build: b.id })));
-  if (!runs.length) { $("lnBody").replaceChildren(el("div", { class: "empty" }, "Pick at least one build.")); return; }
-  const body = $("lnBody");
-  if (runs.some(r => !state.docs["run-" + r.run] && !lanesUi.missing.has(r.run))) body.replaceChildren(el("div", { class: "empty" }, "loading…"));
-  await loadRuns(runs, (k, n) => { if (token === lanesUi.token && n) status.textContent = `loading runs ${k} of ${n}…`; });
-  if (token !== lanesUi.token) return;
-  const loaded = runs.filter(r => state.docs["run-" + r.run]).map(r => ({ ...r, doc: state.docs["run-" + r.run] }));
-  const gone = runs.length - loaded.length;
-  status.textContent = `${loaded.length} run${loaded.length === 1 ? "" : "s"}` + (gone ? ` · ${gone} not published` : "");
-  if (!loaded.length) { body.replaceChildren(el("div", { class: "empty" }, "None of these runs' decisions are published yet.")); return; }
-  const games = [...new Set(loaded.flatMap(r => Object.keys(r.doc.games || {})))].sort();
-  if (!games.length) { body.replaceChildren(el("div", { class: "empty" }, "These runs have no decisions.")); return; }
-  // default: the game the most picked runs played (ties: the first by id)
-  const nRuns = g => loaded.filter(r => ((r.doc.games || {})[g] || []).length).length;
-  if (!state.lnGame || !games.includes(state.lnGame)) state.lnGame = games.reduce((a, g) => nRuns(g) > nRuns(a) ? g : a, games[0]);
-  if (!state.lnAll) {
-    gameSlot.replaceChildren(el("label", {}, "game ", el("select", { "aria-label": "game", onchange: e => { state.lnGame = e.target.value; renderLanes(); } },
-      games.map(g => el("option", { value: g, selected: g === state.lnGame },
-        `${g} (${loaded.filter(r => (r.doc.games || {})[g]).length} runs)`)))));
-  }
-  syncUrl();
-  if (state.lnAll) { body.replaceChildren(allGamesGrid(loaded, games)); return; }
-
-  const game = state.lnGame;
-  const lanes = loaded.filter(r => ((r.doc.games || {})[game] || []).length).map(r => {
-    const dash = allRuns().find(x => x.run === r.run) || {};
-    const pg = ((r.doc.score || {}).per_game || {})[game] ?? (dash.per_game || {})[game];
-    const decs = r.doc.games[game];
-    return { run: r.run, build: r.build, decs, name: `${names[r.build]} ${runLetter(r.run)}`,
-      score: isNum(pg) ? fx(pg) : `all-25 ${fx((r.doc.score || {}).all25 ?? r.all25)}`, perGame: isNum(pg),
-      end: segEnd(decs, decs.length - 1) };
-  });
-  if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, `No picked run has decisions in ${game}.`)); return; }
-  const all = lanes.flatMap(l => l.decs);
-  body.replaceChildren(laneChart(lanes, game), el("h3", { class: "rl2-h3" }, `Mode effect for ${game}`), effectTable(all, lanes.length));
-  lanesUi.paint();
-}
-
-function laneChart(lanes, game) {
-  const present = orderModes([...new Set(lanes.flatMap(l => l.decs.map(d => d.mode)))]);
-  const labels = el("div", { class: "rl2-llabels" },
-    el("div", { class: "rl2-laxis muted", style: `height:${AXIS_H}px` }, state.lnX === "moves" ? "moves →" : "decision →"),
-    lanes.map(l => el("div", { class: "rl2-llabel", style: `height:${LANE_H}px`,
-      title: `${l.run}\nbuild ${l.build}\n${l.decs.length} decisions · ${l.perGame ? "score in " + game : "no per-game score; run"} ${l.score}` },
-      el("span", { class: "rl2-lname" }, l.name), el("span", { class: "mono muted" }, l.score))));
-  const canvas = el("canvas", { class: "rl2-lcanvas", role: "img",
-    "aria-label": `${lanes.length} runs of ${game}, one lane each, coloured by the coach mode of each decision` });
-  const scroll = el("div", { class: "rl2-lscroll" }, canvas);
-  const tip = el("div", { class: "rl2-ltip", hidden: true });
-  const chart = el("div", { class: "rl2-lchart" }, labels, scroll, tip);
-  let hits = [];
-  const paint = () => {
-    if (!canvas.isConnected) return;
-    const css = getComputedStyle(canvas);
-    const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
-    const ink = v("--text", "#111"), muted = v("--muted", "#888"), line = v("--wash-line", "#ddd"), card = v("--sh-card", "#fff"),
-      track = v("--wash", "#f3f4f6"), stock = v("--rl2-stock", "#d4d9e1"), red = v("--rl2-red", "#dc2626");
-    const avail = Math.max(160, scroll.clientWidth);
-    const W = Math.round(avail * state.lnZoom);
-    const H = AXIS_H + lanes.length * LANE_H;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
-    const g = canvas.getContext("2d");
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, W, H);
-    const byMoves = state.lnX === "moves";
-    const maxX = Math.max(1, ...lanes.map(l => byMoves ? l.end : l.decs.length));
-    const sx = x => PAD_L + x * (W - PAD_L - PAD_R) / maxX;
-    // axis: ticks every 1/2/5 × 10^k (nearest to ~70 px), faint guides through every lane
-    const raw = maxX / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 70));
-    const mag = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 5, 10].map(k => k * mag).reduce((a, k) => Math.abs(k - raw) < Math.abs(a - raw) ? k : a);
-    g.font = "10px " + v("--rl-mono", "monospace");
-    g.textBaseline = "alphabetic";
-    for (let x = 0; x <= maxX; x += step) {
-      const px = Math.round(sx(x)) + 0.5;
-      g.fillStyle = line;
-      g.fillRect(px - 0.5, AXIS_H - 4, 1, H - AXIS_H + 4);
-      g.fillStyle = muted;
-      g.textAlign = x === 0 ? "left" : "center";
-      g.fillText(String(x), px, AXIS_H - 8);
-    }
-    hits = [];
-    lanes.forEach((l, li) => {
-      const y0 = AXIS_H + li * LANE_H, by = y0 + LANE_TOP;
-      g.fillStyle = track;
-      g.fillRect(sx(0), by, Math.max(2, sx(byMoves ? l.end : l.decs.length) - sx(0)), LANE_BAR);
-      const segs = [];
-      l.decs.forEach((d, i) => {
-        const a = byMoves ? (d.f || {}).actions_total || 0 : i, b = byMoves ? segEnd(l.decs, i) : i + 1;
-        const x0 = sx(a), w = Math.max(2, sx(b) - x0);
-        g.fillStyle = d.mode === "stock" ? stock : modeColor(d.mode);
-        g.fillRect(x0, by, w, LANE_BAR);
-        segs.push([x0, x0 + w, i]);
-      });
-      // level boundaries: a thin gap where the level changes; level-ups: a tick above the lane + the new level
-      g.textAlign = "left";
-      l.decs.forEach((d, i) => {
-        const [x0, x1] = segs[i];
-        if (i && (d.f || {}).level !== (l.decs[i - 1].f || {}).level) { g.fillStyle = card; g.fillRect(x0 - 1, by, 2, LANE_BAR); }
-        if (d.o && d.o.lvl_turn) {
-          g.fillStyle = ink;
-          g.fillRect(Math.round(x1) - 1, y0 + 2, 2, LANE_TOP - 2 + LANE_BAR);
-          g.fillText(String(newLevel(l.decs, i)), Math.round(x1) + 2, y0 + 10);
-        }
-        if (d.o && d.o.go_turn) {
-          g.fillStyle = red;
-          g.beginPath();
-          g.moveTo(x1 - 1, by + LANE_BAR + 1); g.lineTo(x1 + 3, by + LANE_BAR + 6); g.lineTo(x1 - 5, by + LANE_BAR + 6);
-          g.closePath(); g.fill();
-        }
-      });
-      hits.push(segs);
-    });
-  };
-  const find = e => {
-    const r = canvas.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
-    const li = Math.floor((y - AXIS_H) / LANE_H);
-    if (li < 0 || li >= lanes.length || y - AXIS_H - li * LANE_H < LANE_TOP - 4) return null;
-    const segs = hits[li] || [];
-    let best = null;
-    for (const s of segs) if (x >= s[0] - 1 && x <= s[1] + 1) best = s; // later segments win on overlap
-    return best ? { lane: lanes[li], d: lanes[li].decs[best[2]], i: best[2] } : null;
-  };
-  canvas.addEventListener("pointermove", e => {
-    const h = find(e);
-    if (!h) { tip.hidden = true; canvas.style.cursor = ""; return; }
-    canvas.style.cursor = "pointer";
-    const { lane, d, i } = h, f = d.f || {}, o = d.o;
-    const out = !o ? "last decision of the game" : [o.lvl_turn ? `level up this turn (to ${newLevel(lane.decs, i)})` : null,
-      o.go_turn ? "game over this turn" : null, !o.lvl_turn && o.lvl30 ? "level within 30 moves" : null].filter(Boolean).join(" · ") || "no level within 30 moves";
-    tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `${lane.name} · #${d.d}`), modeTag(d.mode), modePromptLine(d.mode),
-      el("div", { class: "rl2-small" }, `level ${val(f.level)} · moves ${val(f.actions_total)}→${segEnd(lane.decs, i)}` +
-        (o && isNum(o.acts) ? ` (${o.acts})` : "") + ` · cap ${val(d.cap)}`),
-      el("div", { class: "rl2-small " + (o && o.go_turn ? "rl2-bad" : o && (o.lvl_turn || o.lvl30) ? "rl2-yes" : "muted") }, out),
-      el("div", { class: "muted rl2-small" }, "click to open in Decisions")].filter(Boolean));
-    tip.hidden = false;
-    const cr = chart.getBoundingClientRect();
-    const left = Math.min(e.clientX - cr.left + 12, cr.width - tip.offsetWidth - 4);
-    tip.style.left = Math.max(0, left) + "px";
-    tip.style.top = (e.clientY - cr.top + 14) + "px";
-  });
-  canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
-  canvas.addEventListener("click", e => {
-    const h = find(e);
-    if (h) openDecision(h.lane.run, game, h.d.d);
-  });
-  lanesUi.paint = paint; // renderLanes paints once the chart is in the page (it needs the container's width)
-  return el("div", { class: "card rl2-lanes" }, chart,
-    el("div", { class: "legend rl2-small" }, present.map(m => el("span", { class: "rl2-lgmode", title: modePrompt(m) || null },
-      el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
-      el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level up (the new level)"),
-      el("span", {}, el("i", { class: "lg-golane" }), "red mark: game over"),
-      el("span", {}, el("i", { class: "lg-gap" }), "gap: level boundary")));
-}
-function openDecision(run, game, d) {
-  state.run = run;
-  state.game = game;
-  state.modeFilter.clear();
-  state.open = new Set([d]);
-  state.focusDec = d;
-  show("decisions");
-  $("view-decisions").scrollIntoView({ block: "start" });
-}
-function effectTable(decs, nLanes) {
-  const s = modeStats(decs);
-  const modes = orderModes(Object.keys(s));
-  if (!modes.length) return el("div", { class: "empty" }, "No decision with an outcome yet.");
-  const base = s.stock ? { lvl30: s.stock.lvl30, n: s.stock.n } : null;
-  const bar = x => el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${(100 * x).toFixed(1)}%` })),
-    el("b", { class: "mono" }, pct(x)));
-  return el("div", {},
-    el("p", { class: "sub" }, `Every decision with an outcome in the ${nLanes} lane${nLanes === 1 ? "" : "s"} above (a game's last decision has none). ` +
-      `"vs stock" is level within 30 moves minus stock's in this game, in percentage points: blue better, red worse, grey under ${LANE_MIN_N} turns.`),
-    el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table rl2-effect" },
-      el("thead", {}, el("tr", {}, ["mode", "n", "level up this turn", "game over this turn", "level within 30", "vs stock"].map(h => el("th", {}, h)))),
-      el("tbody", {}, modes.map(m => {
-        const c = s[m];
-        return el("tr", {}, el("td", {}, modeTag(m)), el("td", { class: "mono" }, c.n), el("td", {}, bar(c.lvl_rate)),
-          el("td", { class: c.go ? "mono rl2-bad" : "mono muted" }, pct(c.go_rate)), el("td", {}, bar(c.lvl30)),
-          m === "stock" ? el("td", { class: "rl2-cell none" }, "base")
-            : base ? deltaCell({ n: c.n, lvl30: c.lvl30, go: c.go_rate }, base, LANE_MIN_N, LANE_MIN_N) : el("td", { class: "rl2-cell none" }, "no stock"));
-      })))));
-}
-function allGamesGrid(loaded, games) {
-  const stats = Object.fromEntries(games.map(g => [g, modeStats(loaded.flatMap(r => (r.doc.games || {})[g] || []))]));
-  const modes = orderModes([...new Set(Object.values(stats).flatMap(s => Object.keys(s)))]).filter(m => m !== "stock");
-  const rows = games.map(g => ({ game: g, key: `${Object.values(stats[g]).reduce((t, c) => t + c.n, 0)} turns`,
-    label: el("button", { type: "button", class: "rl2-glink mono", title: `show the lanes of ${g}`,
-      onclick: () => { state.lnGame = g; state.lnAll = false; renderLanes(); } }, g) }));
-  return el("div", {},
-    el("p", { class: "sub" }, `Each cell: level within 30 moves after that mode's turns minus the same after stock turns, in the same game, ` +
-      `over the ${loaded.length} loaded runs. Click a game for its lanes.`),
-    gridTable(rows, modes, (row, m) => {
-      const c = stats[row.game][m], st = stats[row.game].stock;
-      if (!c) return null;
-      if (!st) return el("td", { class: "rl2-cell none", title: "no stock turn in this game" }, "–");
-      return deltaCell({ n: c.n, lvl30: c.lvl30, go: c.go_rate }, { lvl30: st.lvl30, n: st.n }, LANE_MIN_N, LANE_MIN_N);
-    }, row => { const st = stats[row.game].stock; return st ? `${pct(st.lvl30)} (n ${st.n})` : "–"; }, "stock ≤30", "game"),
-    diverging(LANE_MIN_N));
-}
-let lanesResize = 0;
-window.addEventListener("resize", () => {
-  clearTimeout(lanesResize);
-  lanesResize = setTimeout(() => {
-    if (state.view === "lanes" && lanesUi.paint) lanesUi.paint();
-    if (state.view === "explore" && exUi.paint) exUi.paint();
-  }, 120);
-});
-new MutationObserver(() => {
-  if (state.view === "lanes" && lanesUi.paint) requestAnimationFrame(lanesUi.paint);
-  if (state.view === "explore" && exUi.paint) requestAnimationFrame(exUi.paint);
-})
-  .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-
-/* ------------------------------------------------------------------ view 4: exploration */
-// One tab per game; one row per run of the best combo (no coach, then each coach arm). Each row is the play left to right:
-// a thick line coloured by the coach mode of every turn (no-coach runs: stock throughout) and, on games the trace grader
-// judged, a thin line under it with the goal the model held (status colours: right / partly right / wrong / none stated).
-// Data: explore-index and explore-<game>, written by grader/explore_publish.py (D:/codex-work/daniel-base-20261001).
-// A turn row is [decision #, moves at its start, level, mode index]; a checkpoint [decision #, moves, level, stated label,
-// held label, belief, rule errors] (held = the last stated goal on the same level, as the grader's scoring counts it).
-const GOAL_COLORS = ["#0ca30c", "#fab219", "#d03b3b", null];   // correct, partial, wrong, unstated (status palette)
-const GOAL_NAMES = ["right goal", "partly right", "wrong goal", "no goal stated"];
-const EX_ARM_H = 24, EX_ROW_H = 40, EX_TOP = 12, EX_MODE = 13, EX_GAP = 3, EX_GOAL = 7;
-const exUi = { token: 0, paint: null };
-const exTurnEnd = (row, i) => i + 1 < row.turns.length ? row.turns[i + 1][1] : Math.max(row.end, row.turns[i][1] + 1);
-
-async function renderExplore() {
-  const token = ++exUi.token;
-  let idx;
-  try { idx = await getDoc("explore-index"); } catch (e) {
-    if (e instanceof NotPublished) {
-      $("exPickers").replaceChildren();
-      $("exBody").replaceChildren(el("div", { class: "empty" }, "The exploration data is not published yet."));
-      return;
-    }
-    throw e;
-  }
-  if (token !== exUi.token) return;
-  const games = [...idx.games].sort((a, b) => (b.graded - a.graded) || a.game.localeCompare(b.game));
-  if (!state.eGame || !games.some(g => g.game === state.eGame)) state.eGame = games[0] && games[0].game;
-  const tab = g => el("button", { type: "button", role: "tab", class: "rl2-fbtn" + (g.game === state.eGame ? " on" : ""),
-    "aria-selected": g.game === state.eGame ? "true" : "false", title: g.graded ? "goal judged by the trace grader" : "modes only",
-    onclick: () => { state.eGame = g.game; renderExplore(); } },
-    g.game, g.graded ? el("i", { class: "rl2-egraded", "aria-hidden": "true" }) : null);
-  const seg = (label, opts, cur, set) => el("div", { class: "rl2-seg", role: "group", "aria-label": label }, opts.map(([k, t]) =>
-    el("button", { type: "button", class: cur === k ? "on" : "", "aria-pressed": cur === k ? "true" : "false",
-      onclick: () => { set(k); renderExplore(); } }, t)));
-  $("exPickers").replaceChildren(
-    el("div", { class: "rl2-etabs", role: "tablist", "aria-label": "game" },
-      el("span", { class: "muted rl2-small" }, "goal judged"), games.filter(g => g.graded).map(tab),
-      el("span", { class: "muted rl2-small rl2-esep" }, "modes only"), games.filter(g => !g.graded).map(tab)),
-    el("div", { class: "rl2-lctl" },
-      seg("x axis", [["moves", "game moves"], ["index", "turn #"]], state.eX, v => { state.eX = v; }),
-      seg("zoom", ZOOMS.map(z => [z, z === 1 ? "fit" : z + "×"]), state.eZoom, v => { state.eZoom = v; })));
-  syncUrl();
-  const body = $("exBody");
-  let doc;
-  if (!state.docs["explore-" + state.eGame]) body.replaceChildren(el("div", { class: "empty" }, "loading…"));
-  try { doc = await getDoc("explore-" + state.eGame); } catch (e) {
-    if (e instanceof NotPublished) { body.replaceChildren(el("div", { class: "empty" }, `No exploration data for ${state.eGame}.`)); return; }
-    throw e;
-  }
-  if (token !== exUi.token) return;
-  const arms = idx.arms.filter(a => doc.rows.some(r => r.arm === a.id));
-  const groups = arms.map(a => ({ arm: a, rows: doc.rows.filter(r => r.arm === a.id && r.turns.length) })).filter(g => g.rows.length);
-  if (!groups.length) { body.replaceChildren(el("div", { class: "empty" }, `No run has turns in ${state.eGame}.`)); return; }
-  body.replaceChildren(...[exploreChart(doc, groups), el("h3", { class: "rl2-h3" }, `By arm in ${doc.game}`), exploreTable(doc, arms),
-    doc.graded ? exploreSummaries(doc, groups) : null].filter(Boolean));
-  exUi.paint();
-}
-
-function exploreChart(doc, groups) {
-  const modes = doc.modes;
-  const graded = doc.graded;
-  const ordered = orderModes([...new Set(groups.flatMap(g => g.rows.flatMap(r => r.turns.map(t => modes[t[3]]))))]);
-  const fmtScore = r => isNum(r.score) ? `${fx(r.score, 0)} pts · ${val(r.levels)} lv` : "no score";
-  const labels = el("div", { class: "rl2-llabels" },
-    el("div", { class: "rl2-laxis muted", style: `height:${AXIS_H}px` }, state.eX === "moves" ? "moves →" : "turn →"),
-    groups.flatMap(g => [
-      el("div", { class: "rl2-earm", style: `height:${EX_ARM_H}px` }, g.arm.short),
-      ...g.rows.map(r => el("div", { class: "rl2-llabel", style: `height:${EX_ROW_H}px`,
-        title: `${r.run}\n${r.lost ? "VM lost mid-run: left out of the averages\n" : ""}${fmtScore(r)} in ${doc.game}` },
-        el("span", { class: "rl2-lname" }, `run ${r.letter}`, r.lost ? el("small", { class: "muted" }, " · VM lost") : null),
-        el("span", { class: "mono muted" }, fmtScore(r))))]));
-  const canvas = el("canvas", { class: "rl2-lcanvas", role: "img",
-    "aria-label": `${groups.reduce((t, g) => t + g.rows.length, 0)} runs of ${doc.game}: coach mode per turn` + (graded ? " and the goal held" : "") });
-  const scroll = el("div", { class: "rl2-lscroll" }, canvas);
-  const tip = el("div", { class: "rl2-ltip", hidden: true });
-  const chart = el("div", { class: "rl2-lchart" }, labels, scroll, tip);
-  const layout = [];   // [y of the row top, row]
-  let y = AXIS_H;
-  for (const g of groups) { y += EX_ARM_H; for (const r of g.rows) { layout.push([y, r]); y += EX_ROW_H; } }
-  const H = y;
-  let hits = [];
-  const paint = () => {
-    if (!canvas.isConnected) return;
-    const css = getComputedStyle(canvas);
-    const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
-    const ink = v("--text", "#111"), muted = v("--muted", "#888"), line = v("--wash-line", "#ddd"), card = v("--sh-card", "#fff"),
-      track = v("--wash", "#f3f4f6"), stock = v("--rl2-stock", "#d4d9e1");
-    const W = Math.round(Math.max(160, scroll.clientWidth) * state.eZoom);
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    canvas.style.width = W + "px"; canvas.style.height = H + "px";
-    const g = canvas.getContext("2d");
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, W, H);
-    const byMoves = state.eX === "moves";
-    const rowEnd = r => byMoves ? r.end : r.turns.length;
-    const maxX = Math.max(1, ...layout.map(([, r]) => rowEnd(r)));
-    const sx = x => PAD_L + x * (W - PAD_L - PAD_R) / maxX;
-    const raw = maxX / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 70));
-    const mag = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 5, 10].map(k => k * mag).reduce((a, k) => Math.abs(k - raw) < Math.abs(a - raw) ? k : a);
-    g.font = "10px " + v("--rl-mono", "monospace");
-    for (let x = 0; x <= maxX; x += step) {
-      const px = Math.round(sx(x)) + 0.5;
-      g.fillStyle = line; g.fillRect(px - 0.5, AXIS_H - 4, 1, H - AXIS_H + 4);
-      g.fillStyle = muted; g.textAlign = x === 0 ? "left" : "center"; g.fillText(String(x), px, AXIS_H - 8);
-    }
-    // arm bands: a faint rule through each arm's header
-    let yy = AXIS_H;
-    for (const grp of groups) { g.fillStyle = line; g.fillRect(0, yy + EX_ARM_H / 2, W, 1); yy += EX_ARM_H + grp.rows.length * EX_ROW_H; }
-    hits = layout.map(([y0, r]) => {
-      const mY = y0 + EX_TOP, gY = mY + EX_MODE + EX_GAP;
-      const turnSegs = r.turns.map((t, i) => {
-        const x0 = sx(byMoves ? t[1] : i), x1 = sx(byMoves ? exTurnEnd(r, i) : i + 1);
-        return [x0, Math.max(x0 + 2, x1), i];
-      });
-      g.globalAlpha = r.lost ? 0.55 : 1;
-      g.fillStyle = track;
-      g.fillRect(sx(0), mY, Math.max(2, sx(rowEnd(r)) - sx(0)), EX_MODE);
-      if (graded && r.grades) g.fillRect(sx(0), gY, Math.max(2, sx(rowEnd(r)) - sx(0)), EX_GOAL);
-      for (const [x0, x1, i] of turnSegs) {
-        const m = modes[r.turns[i][3]];
-        g.fillStyle = m === "stock" ? stock : modeColor(m);
-        g.fillRect(x0, mY, x1 - x0, EX_MODE);
-      }
-      // level changes: a thin gap in the line, a tick above it with the new level
-      g.textAlign = "left";
-      for (let i = 1; i < r.turns.length; i++) {
-        if (r.turns[i][2] > r.turns[i - 1][2]) {
-          const x = Math.round(turnSegs[i][0]);
-          g.fillStyle = card; g.fillRect(x - 1, mY, 2, EX_MODE);
-          g.fillStyle = ink; g.fillRect(x - 1, y0 + 2, 2, EX_TOP - 2 + EX_MODE);
-          g.fillText(String(r.turns[i][2]), x + 2, y0 + 10);
-        }
-      }
-      // the goal held, checkpoint to checkpoint (turn axis: the checkpoint's turn position)
-      const goalSegs = [];
-      if (graded && r.grades) {
-        const at = new Map(r.turns.map((t, i) => [t[0], i]));
-        const turnPos = d => at.has(d) ? at.get(d) : Math.max(0, r.turns.findIndex(t => t[0] >= d));
-        const cps = r.grades.cps;
-        const cx = c => sx(byMoves ? c[1] : turnPos(c[0]));
-        cps.forEach((c, k) => {
-          const x0 = cx(c), x1 = k + 1 < cps.length ? cx(cps[k + 1]) : sx(rowEnd(r));
-          const col = GOAL_COLORS[c[4]];
-          if (col) { g.fillStyle = col; g.fillRect(x0, gY, Math.max(1, x1 - x0), EX_GOAL); }
-          goalSegs.push([x0, Math.max(x0 + 2, x1), k]);
-        });
-      }
-      g.globalAlpha = 1;
-      return { y0, mY, gY, r, turnSegs, goalSegs };
-    });
-  };
-  const find = e => {
-    const rc = canvas.getBoundingClientRect();
-    const x = e.clientX - rc.left, y = e.clientY - rc.top;
-    const h = hits.find(h => y >= h.y0 && y < h.y0 + EX_ROW_H);
-    if (!h) return null;
-    const pick = segs => { let best = null; for (const s of segs) if (x >= s[0] - 1 && x <= s[1] + 1) best = s; return best; };
-    if (graded && h.r.grades && y >= h.gY - 1) { const s = pick(h.goalSegs); return s ? { h, kind: "goal", k: s[2] } : null; }
-    if (y >= h.mY - 4) { const s = pick(h.turnSegs); return s ? { h, kind: "turn", i: s[2] } : null; }
-    return null;
-  };
-  canvas.addEventListener("pointermove", e => {
-    const f = find(e);
-    if (!f) { tip.hidden = true; canvas.style.cursor = ""; return; }
-    const r = f.h.r;
-    const coached = r.arm.includes("/");
-    canvas.style.cursor = f.kind === "turn" && coached ? "pointer" : "";
-    if (f.kind === "turn") {
-      const t = r.turns[f.i], m = doc.modes[t[3]];
-      tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${t[0]}`), modeTag(m), modePromptLine(m),
-        el("div", { class: "rl2-small" }, `level ${t[2]} · moves ${t[1]}→${exTurnEnd(r, f.i)}`),
-        el("div", { class: "muted rl2-small" }, coached ? "click to open in Decisions" : "no coach: stock")].filter(Boolean));
-    } else {
-      const cps = r.grades.cps, c = cps[f.k];
-      const held = c[4];
-      // a turn that states no goal keeps the last one stated on its level: quote that turn
-      let src = c;
-      if (c[3] === 3) for (let j = f.k - 1; j >= 0 && cps[j][2] === c[2]; j--) if (cps[j][3] !== 3) { src = cps[j]; break; }
-      tip.replaceChildren(...[el("div", { class: "mono rl2-small" }, `run ${r.letter} · turn #${c[0]} · level ${c[2]} · moves ${c[1]}`),
-        el("div", { class: "rl2-small" },
-          el("i", { class: "rl2-egoal" + (GOAL_COLORS[held] ? "" : " none"), style: GOAL_COLORS[held] ? `background:${GOAL_COLORS[held]}` : "" }),
-          el("b", {}, GOAL_NAMES[held]), src !== c ? el("span", { class: "muted" }, ` (as stated at turn #${src[0]})`) : null),
-        src[5] ? el("div", { class: "rl2-small" }, `“${src[5]}”`) : null,
-        (src[6] || []).length ? el("div", { class: "rl2-small rl2-bad" }, "Wrong rule: " + src[6].join("; ")) : null].filter(Boolean));
-    }
-    tip.hidden = false;
-    const cr = chart.getBoundingClientRect();
-    tip.style.left = Math.max(0, Math.min(e.clientX - cr.left + 12, cr.width - tip.offsetWidth - 4)) + "px";
-    tip.style.top = (e.clientY - cr.top + 14) + "px";
-  });
-  canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
-  canvas.addEventListener("click", e => {
-    const f = find(e);
-    if (f && f.kind === "turn" && f.h.r.arm.includes("/")) openDecision(f.h.r.run, doc.game, f.h.r.turns[f.i][0]);
-  });
-  exUi.paint = paint;
-  return el("div", { class: "card rl2-lanes" }, chart,
-    el("div", { class: "legend rl2-small" },
-      ordered.map(m => el("span", { class: "rl2-lgmode", title: modePrompt(m) || null },
-        el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
-      el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level reached")),
-    graded ? el("div", { class: "legend rl2-small" }, el("span", {}, "thin line, the goal held:"),
-      GOAL_NAMES.map((n, k) => el("span", {}, el("i", { class: "rl2-egoal" + (GOAL_COLORS[k] ? "" : " none"),
-        style: GOAL_COLORS[k] ? `background:${GOAL_COLORS[k]}` : "" }), n))) : null);
-}
-
-function exploreTable(doc, arms) {
-  const base = doc.by_arm[arms[0] && arms[0].id] || {};
-  const head = ["arm", "runs", "score in this game", "levels", ...(doc.graded ? ["time on a wrong goal", "time not on the right goal"] : [])];
-  const diff = (x, b) => isNum(x) && isNum(b) && x !== b
-    ? el("small", { class: x > b ? "rl2-delta up" : "rl2-delta down" }, ` ${x > b ? "+" : ""}${fx(x - b)}`) : null;
-  return el("div", {},
-    el("p", { class: "sub" }, `Averages over each arm's runs in ${doc.game}; a run whose VM was lost is left out. Under a coach arm, ` +
-      `the change against no coach. ` + (doc.graded ? "Time shares are of active play, counted as the grader counts them: a turn that " +
-      "states no goal keeps the last goal stated on that level." : "")),
-    el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table" },
-      el("thead", {}, el("tr", {}, head.map(h => el("th", {}, h)))),
-      el("tbody", {}, arms.map((a, k) => {
-        const s = doc.by_arm[a.id];
-        if (!s) return null;
-        return el("tr", {}, el("td", {}, a.short), el("td", { class: "mono" }, s.n),
-          el("td", { class: "mono" }, fx(s.score), k ? diff(s.score, base.score) : null),
-          el("td", { class: "mono" }, fx(s.levels), k ? diff(s.levels, base.levels) : null),
-          doc.graded ? el("td", { class: "mono" }, s.graded ? pct(s.wrong) : "–") : null,
-          doc.graded ? el("td", { class: "mono" }, s.graded ? pct(s.off) : "–") : null);
-      })))));
-}
-
-function exploreSummaries(doc, groups) {
-  return el("div", {}, el("h3", { class: "rl2-h3" }, "What the judge saw, run by run"),
-    groups.map(g => g.rows.some(r => r.grades) ? el("div", { class: "rl2-esum" },
-      el("div", { class: "rl2-earm" }, g.arm.short),
-      g.rows.filter(r => r.grades).map(r => el("details", {},
-        el("summary", {}, el("b", {}, `run ${r.letter}`), el("span", { class: "mono muted" },
-          ` ${isNum(r.score) ? fx(r.score, 0) + " pts · " : ""}${val(r.levels)} lv · wrong goal ${pct(r.grades.wrong)}` +
-          ` · not the right goal ${pct(r.grades.off)}`)),
-        el("p", {}, r.grades.summary || "–")))) : null));
-}
-
 /* ------------------------------------------------------------------ shell */
 function show(view) {
   state.view = view;
@@ -1589,9 +1485,7 @@ function show(view) {
   if (view === "tree") state.treeShown = true;
   if (view === "training" && state.trainingShown) return;
   if (view === "training") state.trainingShown = true;
-  const fn = { builds: renderBuilds, decisions: renderDecisions, lanes: renderLanes, explore: renderExplore, sampling: renderSampling,
-    tree: renderTree,
-    training: renderTraining }[view];
+  const fn = { builds: renderBuilds, decisions: renderDecisions, tree: renderTree, training: renderTraining }[view];
   Promise.resolve().then(fn).catch(err => {
     console.error(view, err);
     if (err && err.status === 401) notice("Sign in with your team account to see the RL2 page.");
@@ -1615,5 +1509,10 @@ async function load() {
   $("updated").textContent = at ? "updated " + new Date(at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "updated –";
   $("footR").textContent = at ? `Data ${new Date(at).toLocaleString()}` : "";
   show(state.view);
+  // the tree drew before the modes arrived: redraw its legend with their order and prompt lines
+  if (state.view === "tree" && treeUi.doc) drawTreeView();
 }
+// repaint the tree when the theme changes (its colours come from the page's CSS; its width is watched in treeChart)
+new MutationObserver(() => { if (state.view === "tree" && treeUi.paint) requestAnimationFrame(treeUi.paint); })
+  .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 load();

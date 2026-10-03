@@ -248,7 +248,7 @@ CREATE INDEX IF NOT EXISTS rl2_tree_branches_child_idx ON rl2_tree_branches (chi
 --   gt_screens   one board per screen hash, shared by all trees (the first board sent is kept).
 --   gt_rollouts  one play: from the game start (origin_state null, origin_kind 'start') or restarted from a
 --                t1 node in the middle of the tree (Go-Explore style: origin_state the node, origin_kind
---                replay_exact / replay_actions / restore, origin_edge the step it branched after, if any).
+--                replay_exact / replay_actions / restore / snapshot, origin_edge the step it branched after, if any).
 -- Publication is per rollout: a rollout's steps are replaced whole. See rl_review.py.
 CREATE TABLE IF NOT EXISTS gt_screens (
     screen_hash text PRIMARY KEY CHECK (screen_hash ~ '^[0-9a-f]{12}$'),
@@ -284,7 +284,8 @@ CREATE TABLE IF NOT EXISTS gt_rollouts (
     origin_state text REFERENCES gt_nodes (id) CHECK (origin_state ~ ':t1:'),
     origin_edge text,
     origin_kind text NOT NULL DEFAULT 'start'
-        CHECK (origin_kind IN ('start', 'replay_exact', 'replay_actions', 'restore')),
+        CONSTRAINT gt_rollouts_origin_kind_snapshot
+        CHECK (origin_kind IN ('start', 'replay_exact', 'replay_actions', 'restore', 'snapshot')),
     status text NOT NULL CHECK (status ~ '^[A-Za-z0-9_.-]{1,40}$'),
     result jsonb NOT NULL DEFAULT '{}'::jsonb,
     published_at timestamptz NOT NULL DEFAULT now(),
@@ -366,6 +367,12 @@ BEGIN
         ALTER TABLE gt_steps ADD CONSTRAINT gt_steps_children_t5 CHECK (
             ((c1 IS NULL) = (c2 IS NULL) AND (c2 IS NULL) = (c3 IS NULL) AND (c3 IS NULL) = (c4 IS NULL))
             AND (n5 IS NULL OR (c4 IS NULL) = (c5 IS NULL)));
+    END IF;
+    -- the RL rollout server restores a try from a harness state snapshot: origin_kind 'snapshot' (3-Oct-2026)
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_rollouts_origin_kind_snapshot') THEN
+        ALTER TABLE gt_rollouts DROP CONSTRAINT IF EXISTS gt_rollouts_origin_kind_check;
+        ALTER TABLE gt_rollouts ADD CONSTRAINT gt_rollouts_origin_kind_snapshot
+            CHECK (origin_kind IN ('start', 'replay_exact', 'replay_actions', 'restore', 'snapshot'));
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gt_steps_resumable_ctx') THEN
         ALTER TABLE gt_steps ADD CONSTRAINT gt_steps_resumable_ctx CHECK (NOT resumable OR ctx_before IS NOT NULL);

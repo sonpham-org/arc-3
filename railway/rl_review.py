@@ -36,7 +36,8 @@ Who is calling, by route:
                                       tree (one step table read as five trees; rollouts from the game start or
                                       restarted mid-tree). GET .../gtree/games, /stats, /node/<id>, /rollout/<id>,
                                       /trace/<sha>, /frontier?game=&tree=&N=&mode=, /value/<id>?penalty=&pi=,
-                                      /shortest?game=&level=&tree=: the team.
+                                      /shortest?game=&level=&tree=, /tree?game=&tree=&arms= (one game's whole
+                                      tree for drawing, cached per publication): the team.
 
 Held-out games (ARC3_REVIEW_FENCED; default the five test games and as66) are refused at publication: a rating
 on them could leak into training. Game ids only, never titles.
@@ -53,7 +54,7 @@ import re
 import secrets
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import combinations
@@ -930,12 +931,18 @@ def tree_node(cursor: Any, node_id: str) -> dict[str, Any]:
 #            -(moves_to_clear), or -penalty for a step whose rollout never cleared; V = sum_a pi(a) Q(a).
 #   rollout  one play: from the game start (origin_state null, origin_kind 'start') or restarted from a t1 node in
 #            the middle of the tree (Go-Explore style: origin_state the node, origin_kind replay_exact /
-#            replay_actions / restore, origin_edge the step it branched after, if any).
+#            replay_actions / restore / snapshot, origin_edge the step it branched after, if any). The RL rollout
+#            server (gtree-rollout/rollout_core.py, arc3-sglang-parking) writes its tries under run gtr-<campaign>
+#            with origin_kind = the job's mode (replay_exact, replay_actions or snapshot: restored from a harness state
+#            snapshot) and policy = '<coach spec>@<policy version>' ('policy@rl2-v3'), or the spec alone.
 # Traces are on the volume, <data root>/_gtree/traces/<sha>.json, named like the RL2 traces (rl2_trace_bytes).
 GT_TREES = (1, 2, 3, 4, 5)
 GT_TREE_NAMES = {1: "path (context-aware)", 2: "screen + moves", 3: "level + screen", 4: "screen only",
                  5: "screen + move bucket (restart grid)"}
-GT_ORIGINS = ("start", "replay_exact", "replay_actions", "restore")
+GT_ORIGINS = ("start", "replay_exact", "replay_actions", "restore", "snapshot")
+# a rollout's policy: the coach spec ('policy', 'rules', 'force:probe', 'random:0.5'), optionally '@' + the policy
+# version the try played ('policy@rl1-v0'); lowercase in practice, but any case is kept
+GT_POLICY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~-]{0,159}(@[A-Za-z0-9][A-Za-z0-9:._~-]{0,79})?$")
 GT_NODE_RE = re.compile(r"^([a-z0-9]{4}):t([1-5]):([0-9a-f]{16}|root)$")
 GT_NODE_HELP = "a node id is '<game>:t<1-5>:<16 hex>' or '<game>:t<1-5>:root'"
 GT_SCREEN_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -1141,7 +1148,7 @@ def clean_gtree_bundle(bundle: Any) -> dict[str, Any]:
         rollouts[rid] = {
             "id": rid, "game": game, "run": _id(ro.get("run"), "run"), "build": _id(ro.get("build"), "build", BUILD_RE),
             "model": _id(ro.get("model"), "model"), "harness": _id(ro.get("harness"), "harness"),
-            "policy": None if policy in (None, "") else _id(policy, "policy"), "origin_state": origin_state,
+            "policy": None if policy in (None, "") else _id(policy, "policy", GT_POLICY_RE), "origin_state": origin_state,
             "origin_edge": origin_edge, "origin_kind": origin_kind, "status": status,
             "result": _small(ro.get("result"), "result", where, MAX_GT_RESULT),
         }
@@ -1328,7 +1335,10 @@ def gtree_games(cursor: Any) -> list[dict[str, Any]]:
                 row = cursor.fetchone()
                 slot["start"] = row[0] if row else None
     out = []
+    fenced = fenced_games()
     for game in sorted(set(trees) | set(rollouts)):
+        if game in fenced:                               # never stored (refused at publication); never listed
+            continue
         n, mid = rollouts.get(game, (0, 0))
         out.append({"game": game, "rollouts": n, "mid_rollouts": mid, "steps": steps.get(game, 0),
                     "trees": {str(k): {**trees.get(game, {}).get(k, {"nodes": 0, "deepest": None, "root": None,
@@ -1732,6 +1742,208 @@ def gtree_frontier(cursor: Any, game: str, tree: int = 1, n: int = 4, limit: int
             "score": score + "; only nodes where some action has < N samples", "nodes": out[:limit]}
 
 
+# The sources the RL2 page's Tree view filters by, derived from the run name (Son 3-Oct: the best combo's plain runs,
+# its four coach arms, the RL rollouts: every try of the RL rollout server, run gtr-<campaign> such as gtr-rl1 and
+# gtr-rl2). Anything else is 'other'.
+GT_ARMS = (("nocoach", "Best combo, no coach", re.compile(r"^daniel-hicache-sbt06-")),
+           ("random70", "Coach, 70% stock", re.compile(r"^daniel-hicache-best-random70-")),
+           ("random50", "Coach, 50% stock", re.compile(r"^daniel-hicache-best-random50-")),
+           ("random30", "Coach, 30% stock", re.compile(r"^daniel-hicache-best-random30-")),
+           ("grader30", "Grader modes, 30% stock", re.compile(r"^daniel-hicache-best-grader30-")),
+           ("rl", "RL rollouts", re.compile(r"^gtr-")))
+GT_OTHER_ARM = ("other", "Other runs")
+GT_ARM_IDS = tuple(a for a, _, _ in GT_ARMS) + (GT_OTHER_ARM[0],)
+GT_STEP_FIELDS = ("seq", "edge", "mode", "moves_step", "level", "turn", "flags", "tokens")
+GT_FLAG_CLEARED, GT_FLAG_GAME_OVER = 1, 2
+MAX_GT_TREE_STEPS = 60_000                  # steps per whole-game tree response (whole rollouts; more: truncated)
+GT_TREE_CACHE = 24                          # whole-game tree responses kept in memory (per server process)
+
+
+def gt_arm(run: str) -> str:
+    return next((a for a, _, pattern in GT_ARMS if pattern.match(run or "")), GT_OTHER_ARM[0])
+
+
+def _whole(value: Any) -> int | None:
+    """An integer from a JSON value (int, or a float that is whole); None otherwise."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return None
+    return int(value) if float(value).is_integer() else None
+
+
+def gtree_fingerprint(cursor: Any, game: str) -> tuple:
+    """Changes whenever a rollout of the game is (re)published: the cache key of its whole-game trees."""
+
+    cursor.execute("SELECT count(*), max(published_at) FROM gt_rollouts WHERE game = %s", (game,))
+    n, last = cursor.fetchone()
+    return n, iso(last)
+
+
+def gtree_tree(cursor: Any, game: str, tree: int = 1, arms: list[str] | None = None,
+               cap: int = MAX_GT_TREE_STEPS) -> dict[str, Any]:
+    """One game's whole tree for one node definition (t1..t5), in one response, for drawing: every node the plays
+    touch, every edge between two nodes with the turns that took it aggregated, and every rollout's path.
+
+      nodes  [{id, level, moves, out, in, started}]: out / in = steps leaving / arriving, started = rollouts whose
+             first step is here and that were restarted (origin_kind other than 'start'). Edges and paths refer to
+             nodes by their index in this list. A rollout's end has no node: its last edge goes 'to' null.
+      edges  [{from, to, plays, modes {mode: n}, runs [run index], trace (a sample trace sha), go (steps with a game
+             over), cleared (steps that cleared their level), moves (mean game moves of the step), tokens (mean)}]:
+             all the steps from one node to the next, whatever mode they used.
+      runs   [{id (rollout), run, build, arm, policy, origin_kind, origin (index of the node it was restarted from;
+             null from the game start), status, levels, score, actions, x0, t0 (game moves and turns before its first
+             step: 0 from the game start; for a restart, where its origin sits in the play it came from), path (node
+             indices), steps [[seq, edge, mode, moves_step, level, turn, flags, tokens]]}]: mode indexes 'modes',
+             turn is the harness turn (detail.turn; null when unknown), flags 1 = cleared the level, 2 = game over.
+      arms   [{id, label, rollouts, shown}]: every source of this game (derived from the run name), and whether the
+             arms filter kept it.
+
+    Rollouts are read whole, plays from the game start first, until cap steps (truncated: true when some were left
+    out). Held-out games are never stored, so never served."""
+
+    if game in fenced_games():
+        raise ReviewProblem(404, "fenced_game", f"{game} is a held-out game: it has no tree")
+    cursor.execute("SELECT id, run, build, policy, origin_state, origin_kind, status, result FROM gt_rollouts "
+                   "WHERE game = %s ORDER BY (origin_kind <> 'start'), id", (game,))
+    rollouts = _rows(cursor)
+    if not rollouts:
+        raise ReviewProblem(404, "unknown_game", "nothing stored for this game")
+    counts: dict[str, int] = {}
+    for r in rollouts:
+        r["arm"] = gt_arm(r["run"])
+        counts[r["arm"]] = counts.get(r["arm"], 0) + 1
+    shown = set(arms) if arms is not None else set(GT_ARM_IDS)
+    cursor.execute("SELECT rollout_id, count(*) FROM gt_steps WHERE game = %s GROUP BY rollout_id", (game,))
+    sizes = dict(cursor.fetchall())
+    picked, total, truncated = [], 0, False
+    for r in rollouts:
+        n = sizes.get(r["id"], 0)
+        if r["arm"] not in shown or not n:
+            continue
+        if total + n > cap:
+            truncated = True
+            continue
+        picked.append(r)
+        total += n
+    cursor.execute(
+        f"""
+        SELECT s.rollout_id, s.seq, s.n{tree}, s.c{tree}, s.action, s.level, s.next_level, s.moves_step, s.tokens,
+               s.trace_sha, s.detail -> 'turn', s.outcome -> 'go_turn', {_MTC_SQL}, {_CLEARED_SQL}
+        FROM gt_steps s WHERE s.rollout_id = ANY(%s) ORDER BY s.rollout_id, s.seq
+        """,
+        ([r["id"] for r in picked],))
+    by_rollout: dict[str, list[tuple]] = {}
+    for row in cursor.fetchall():
+        by_rollout.setdefault(row[0], []).append(row)
+    # where a restart's origin sits in the play it came from: (moves, steps) before it, from the plays from the start
+    restarts = sorted({r["origin_state"] for r in picked if r["origin_kind"] != "start" and r["origin_state"]
+                       and not r["origin_state"].endswith(":root")})
+    before: dict[str, tuple[int, int]] = {}
+    if restarts:
+        cursor.execute(
+            """
+            SELECT q.c1, min(q.moves), min(q.steps) FROM (
+              SELECT s.c1, sum(s.moves_step) OVER w AS moves, row_number() OVER w AS steps, r.origin_kind
+              FROM gt_steps s JOIN gt_rollouts r ON r.id = s.rollout_id WHERE s.game = %s
+              WINDOW w AS (PARTITION BY s.rollout_id ORDER BY s.seq)) q
+            WHERE q.c1 = ANY(%s) AND q.origin_kind = 'start' GROUP BY q.c1
+            """,
+            (game, restarts))
+        before = {c1: (int(m), int(k)) for c1, m, k in cursor.fetchall()}
+
+    modes = sorted({row[4] for rows in by_rollout.values() for row in rows}, key=lambda m: (m != "stock", m))
+    mode_ix = {m: i for i, m in enumerate(modes)}
+    node_ix: dict[str, int] = {}
+    root = f"{game}:t{tree}:root"
+
+    def nix(nid: str) -> int:
+        if nid not in node_ix:
+            node_ix[nid] = len(node_ix)
+        return node_ix[nid]
+
+    edge_ix: dict[tuple[int, int | None], int] = {}
+    edges: list[dict[str, Any]] = []
+    runs: list[dict[str, Any]] = []
+    started: dict[int, int] = {}
+    for r in picked:
+        rows = by_rollout.get(r["id"]) or []
+        # a rollout stored before t5 existed has no t5 nodes: it is not in that tree
+        cut = next((i for i, row in enumerate(rows) if row[2] is None), len(rows))
+        rows = rows[:cut]
+        if not rows:
+            continue
+        result = r["result"] or {}
+        run_i = len(runs)
+        restarted = r["origin_kind"] != "start"
+        x0, t0 = 0, 0
+        if restarted and r["origin_state"] in before:
+            x0, t0 = before[r["origin_state"]]
+        elif restarted and not str(r["origin_state"] or "").endswith(":root"):
+            x0 = _whole(result.get("origin_actions_before")) or 0
+            seq = _whole(result.get("origin_seq"))
+            t0 = max(0, seq - 1) if seq else 0
+        path = [nix(rows[0][2])]
+        steps = []
+        for (_rid, seq, n, c, action, level, next_level, moves_step, tokens, trace, turn, go, mtc, cleared) in rows:
+            a, b = nix(n), (nix(c) if c is not None else None)
+            key = (a, b)
+            if key not in edge_ix:
+                edge_ix[key] = len(edges)
+                edges.append({"from": a, "to": b, "plays": 0, "modes": {}, "runs": [], "trace": None, "go": 0,
+                              "cleared": 0, "_moves": 0, "_tokens": 0, "_tn": 0})
+            e = edges[edge_ix[key]]
+            clear = ((next_level is not None and next_level > level)
+                     or (cleared == 1 and mtc is not None and int(mtc) == moves_step))
+            over = go is True or _whole(go) == 1
+            e["plays"] += 1
+            e["modes"][action] = e["modes"].get(action, 0) + 1
+            if not e["runs"] or e["runs"][-1] != run_i:
+                e["runs"].append(run_i)
+            e["trace"] = e["trace"] or trace
+            e["go"] += int(over)
+            e["cleared"] += int(clear)
+            e["_moves"] += moves_step
+            if tokens is not None:
+                e["_tokens"] += tokens
+                e["_tn"] += 1
+            if b is not None:
+                path.append(b)
+            steps.append([seq, edge_ix[key], mode_ix[action], moves_step, level, _whole(turn),
+                          (GT_FLAG_CLEARED if clear else 0) | (GT_FLAG_GAME_OVER if over else 0), tokens])
+        origin = path[0] if restarted else None
+        if restarted:
+            started[path[0]] = started.get(path[0], 0) + 1
+        runs.append({"id": r["id"], "run": r["run"], "build": r["build"], "arm": r["arm"], "policy": r["policy"],
+                     "origin_kind": r["origin_kind"], "origin": origin, "status": r["status"],
+                     "levels": result.get("levels"), "score": result.get("score"), "actions": result.get("actions"),
+                     "x0": x0, "t0": t0, "path": path, "steps": steps})
+    if root not in node_ix and runs:
+        nix(root)
+    ids = list(node_ix)
+    meta: dict[str, tuple] = {}
+    if ids:
+        cursor.execute("SELECT id, level, moves FROM gt_nodes WHERE id = ANY(%s)", (ids,))
+        meta = {nid: (level, moves) for nid, level, moves in cursor.fetchall()}
+    out_n, in_n = [0] * len(ids), [0] * len(ids)
+    for e in edges:
+        out_n[e["from"]] += e["plays"]
+        if e["to"] is not None:
+            in_n[e["to"]] += e["plays"]
+        n = e["plays"]
+        e["moves"] = round(e.pop("_moves") / n, 2)
+        tn = e.pop("_tn")
+        e["tokens"] = round(e.pop("_tokens") / tn) if tn else None
+    nodes = [{"id": nid, "level": meta.get(nid, (None, None))[0], "moves": meta.get(nid, (None, None))[1],
+              "out": out_n[i], "in": in_n[i], "started": started.get(i, 0)} for i, nid in enumerate(ids)]
+    return {"apiVersion": 1, "game": game, "tree": tree, "tree_name": GT_TREE_NAMES[tree],
+            "root": node_ix.get(root), "modes": modes,
+            "arms": [{"id": a, "label": label, "rollouts": counts[a], "shown": a in shown}
+                     for a, label in [(a, label) for a, label, _ in GT_ARMS] + [GT_OTHER_ARM] if counts.get(a)],
+            "step_fields": list(GT_STEP_FIELDS), "flags": {str(GT_FLAG_CLEARED): "cleared the level",
+                                                           str(GT_FLAG_GAME_OVER): "game over"},
+            "nodes": nodes, "edges": edges, "runs": runs, "steps": total, "cap": cap, "truncated": truncated}
+
+
 def _pi(raw: str | None) -> dict[str, float] | None:
     """The pi query parameter: JSON {action: probability >= 0}, at most 50 actions; None when absent."""
 
@@ -1785,6 +1997,9 @@ class RlReviewApi:
         self.publish_token = publish_token
         self.posts = _Limiter(*PUBLIC_POSTS)
         self.gets = _Limiter(*PUBLIC_GETS)
+        # whole-game trees (GET /api/v1/gtree/tree): (game, tree, arms) -> (fingerprint, body), newest last
+        self.tree_cache: OrderedDict[tuple, tuple[tuple, bytes]] = OrderedDict()
+        self.tree_lock = threading.Lock()
 
     @classmethod
     def owns(cls, path: str) -> bool:
@@ -2000,6 +2215,32 @@ class RlReviewApi:
                 tree = _gt_tree(query, default=3)
                 with self._cursor() as cursor:
                     return _json(200, gtree_shortest(cursor, game, int(raw_level), tree))
+            if sub == "tree":
+                game = _id(arg("game"), "game", GAME_RE)
+                tree = _gt_tree(query)
+                raw_arms = arg("arms")
+                arms = None
+                if raw_arms is not None:
+                    arms = sorted(set(raw_arms.split(",")))
+                    if not arms or not all(a in GT_ARM_IDS for a in arms):
+                        raise ReviewProblem(400, "invalid_arms", f"arms is a comma list of {', '.join(GT_ARM_IDS)}")
+                if game in fenced_games():
+                    raise ReviewProblem(404, "fenced_game", f"{game} is a held-out game: it has no tree")
+                key = (game, tree, tuple(arms) if arms is not None else None)
+                with self._cursor() as cursor:
+                    fingerprint = gtree_fingerprint(cursor, game)
+                    with self.tree_lock:
+                        hit = self.tree_cache.get(key)
+                        if hit and hit[0] == fingerprint:
+                            self.tree_cache.move_to_end(key)
+                            return Response(200, hit[1])
+                    body = _json(200, gtree_tree(cursor, game, tree, arms)).body
+                with self.tree_lock:
+                    self.tree_cache[key] = (fingerprint, body)
+                    self.tree_cache.move_to_end(key)
+                    while len(self.tree_cache) > GT_TREE_CACHE:
+                        self.tree_cache.popitem(last=False)
+                return Response(200, body)
             raise ReviewProblem(404, "not_found", "not found")
         # RL2 (turn coach): named documents, published by machines and read by the team.
         if path.startswith(f"{self.RL2}/publication/"):
