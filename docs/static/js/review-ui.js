@@ -98,7 +98,7 @@ export function player(content, onTurn) {
 export function turnList(content, pathId, marks) {
   const items = content.turns.map((t, ti) => {
     const mark = marks ? (marks[pathId] || {})[t.step] || {} : {};
-    const note = el("textarea", { class: "rv-note", placeholder: "Why? (optional)", maxlength: 2000, hidden: !mark.note && !mark.verdict });
+    const note = el("textarea", { class: "rv-note", placeholder: "Why? (optional)", maxlength: 2000 });
     note.value = mark.note || "";
     const slot = () => ((marks[pathId] = marks[pathId] || {})[t.step] = marks[pathId][t.step] || {});
     const setMark = verdict => {
@@ -106,7 +106,6 @@ export function turnList(content, pathId, marks) {
       m.verdict = m.verdict === verdict ? null : verdict;
       good.classList.toggle("on", m.verdict === "up");
       bad.classList.toggle("on", m.verdict === "down");
-      note.hidden = false;
       if (m.verdict) note.focus();
     };
     const good = el("button", { type: "button", class: "good" + (mark.verdict === "up" ? " on" : ""), title: "this turn was right",
@@ -127,11 +126,11 @@ export function turnList(content, pathId, marks) {
           class: "rv-move" + (m.level_up ? " up" : "") + (m.changed ? "" : " still"),
           title: m.level_up ? "cleared the level" : m.changed ? "" : "board did not change" }, moveLabel(m)))
           : el("span", { class: "muted" }, "no move this turn")),
-        marks ? el("span", { class: "rv-thumbs" }, good, bad) : null),
+        null),
       think,
       code.length ? el("details", { class: "rv-code" }, el("summary", {}, `code it ran (${code.length})`),
         ...code.map(c => el("pre", {}, c))) : null,
-      marks ? note : null);
+      marks ? el("div", { class: "rv-rate" }, el("span", { class: "rv-thumbs" }, good, bad), note) : null);
   });
   return el("ol", { class: "rv-turns" }, ...items);
 }
