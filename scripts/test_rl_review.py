@@ -224,7 +224,7 @@ MID = "ka59:L1:bbbbbbbbbbbb"
 NEXT = "ka59:L2:cccccccccccc"
 
 
-def tree_bundle(run: str = "run-a", modes=("probe", "stock"), build: str = "coach1", with_traces: bool = True) -> dict:
+def tree_bundle(run: str = "run-a", modes=("probe", "stock"), build: str = "animft/coach1", with_traces: bool = True) -> dict:
     """One run, one play per mode: START --mode--> MID --execute--> NEXT (level 2) --stock--> end."""
 
     nodes = [{"id": START, "game": "ka59", "level": 1, "board_hash": "a" * 12, "board": ["0" * 64] * 64},
@@ -266,7 +266,7 @@ class Rl2Tree(unittest.TestCase):
         item = clean_tree_bundle(tree_bundle())
         self.assertEqual((item["run"], len(item["nodes"]), len(item["branches"]), len(item["traces"])),
                          ("run-a", 3, 6, 2))
-        self.assertEqual(item["branches"][0]["build"], "coach1")
+        self.assertEqual(item["branches"][0]["build"], "animft/coach1")
         sha, raw = next(iter(item["traces"].items()))
         self.assertEqual(hashlib.sha256(raw).hexdigest(), sha)
 

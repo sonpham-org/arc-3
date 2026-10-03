@@ -59,6 +59,8 @@ from urllib.parse import parse_qs, urlparse
 # test (the railway package).
 EMAIL_RE = re.compile(r"^[^\s@]{1,200}@[^\s@]{1,200}$")
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~-]{0,199}$")
+# RL2 build ids are paths in the build tree ("animft/coach-random50")
+BUILD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~/-]{0,199}$")
 SPLIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._~-]{0,254}$")
 GAME_RE = re.compile(r"^[a-z0-9]{4}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
@@ -685,7 +687,7 @@ def clean_tree_bundle(bundle: Any) -> dict[str, Any]:
     if not isinstance(bundle, dict):
         raise ReviewProblem(400, "invalid_body", "send a JSON object")
     run = _id(bundle.get("run"), "run")
-    build = _id(bundle.get("build"), "build")
+    build = _id(bundle.get("build"), "build", BUILD_RE)
     policy = None if bundle.get("policy") in (None, "") else _id(bundle.get("policy"), "policy")
     nodes, branches, traces = bundle.get("nodes") or [], bundle.get("branches") or [], bundle.get("traces") or {}
     if not isinstance(nodes, list) or not isinstance(branches, list) or not isinstance(traces, dict):
@@ -751,7 +753,7 @@ def clean_tree_bundle(bundle: Any) -> dict[str, Any]:
         b_policy = branch.get("policy", policy)
         clean_branches.append({
             "id": bid, "node": node_id, "child": child, "run": run, "play": _id(branch.get("play"), "play"),
-            "build": _id(branch.get("build") or build, "build"),
+            "build": _id(branch.get("build") or build, "build", BUILD_RE),
             "policy": None if b_policy in (None, "") else _id(b_policy, "policy"),
             "decision": _int(branch.get("decision"), "decision"), "mode": mode,
             "cap": _int(branch.get("cap"), "cap", null=True), "prob": None if prob is None else float(prob),
