@@ -91,7 +91,7 @@ export function player(content, onTurn) {
       range, pos));
   const jumpToTurn = ti => { const k = fs.findIndex(f => f.turn === ti); if (k >= 0) show(k); };
   requestAnimationFrame(() => show(0));
-  return { node, jumpToTurn, redraw: () => show(i) };
+  return { node, jumpToTurn, last: () => show(fs.length - 1), redraw: () => show(i) };
 }
 
 // marks: null (read only) or the page's store {pathId: {step: {verdict, note}}}, written as the rater clicks
@@ -137,10 +137,11 @@ export function turnList(content, pathId, marks) {
 }
 
 // a player and its turn list kept in step: the board follows the turn clicked, the list follows the board
-export function pathView(content, pathId, marks) {
+// onTurn (optional): called with the turn index whenever the board lands on a turn (the review page steps both paths with it)
+export function pathView(content, pathId, marks, onTurn) {
   const list = turnList(content, pathId, marks);
   const lis = [...list.children];
-  const pl = player(content, ti => lis.forEach((li, k) => li.classList.toggle("now", k === ti)));
+  const pl = player(content, ti => { lis.forEach((li, k) => li.classList.toggle("now", k === ti)); if (onTurn && ti >= 0) onTurn(ti); });
   list.addEventListener("click", e => {
     const head = e.target.closest(".rv-turn-head");
     if (head && !e.target.closest("button")) pl.jumpToTurn(+head.dataset.ti);

@@ -13,7 +13,7 @@ const $ = id => document.getElementById(id);
 
 const state = {
   mode: null, key: null, me: null, view: null, contents: {}, skip: [],
-  marks: {}, scores: {}, choice: null, confidence: null, started: 0, players: [],
+  marks: {}, scores: {}, choice: null, confidence: null, started: 0, players: [], lists: [], step: 0,
 };
 
 /* ------------------------------------------------------------------ talking to the server */
@@ -96,12 +96,13 @@ async function renderSplit(view) {
   requestAnimationFrame(() => draw(ctxCanvas, startRows));
 
   // the options
-  state.players = [];
+  state.players = []; state.lists = []; state.step = 0;
   const opts = $("options");
   opts.className = `rv-options n${paths.length}`;
   opts.replaceChildren(...paths.map((p, i) => {
-    const { player: pl, list } = pathView(contents[i], p.id, state.marks);
+    const { player: pl, list } = pathView(contents[i], p.id, state.marks, ti => { if (ti !== state.step) setStep(ti, i); });
     state.players.push(pl);
+    state.lists.push(list);
     const stars = el("div", { class: "rv-stars" }, el("span", { class: "muted" }, "this path, 1-5:"),
       ...[1, 2, 3, 4, 5].map(n => el("button", { type: "button", class: state.scores[p.id] === n ? "on" : "",
         onclick: e => {
@@ -113,8 +114,12 @@ async function renderSplit(view) {
         el("span", { class: "rv-letter" }, LETTERS[i]),
         el("span", { class: "rv-outcome" + (p.cleared ? " ok" : "") }, outcomeText(p)),
         el("span", { class: "rv-model rv-tag", hidden: true }, p.model)),
-      pl.node, list, stars);
+      pl.node, list, el("div", { class: "rv-ended", hidden: true }, `${LETTERS[i]} had no turn here: its play was already over.`), stars);
   }));
+  const longest = Math.max(...contents.map(c => c.turns.length));
+  $("stepper").hidden = false;
+  $("stepbar").max = Math.max(0, longest - 1);
+  setStep(0);
 
   // the verdict
   const choices = [...paths.map((p, i) => [p.id, LETTERS[i], String(i + 1)]), ["tie", "about the same", "T"], ["neither", "both bad", "N"]];
@@ -123,6 +128,23 @@ async function renderSplit(view) {
     onclick: () => pick(value) }, label, " ", el("kbd", {}, hint))));
   [...$("conf").querySelectorAll("button")].forEach(b => b.classList.toggle("on", +b.dataset.conf === state.confidence));
   pick(state.choice, true);
+}
+
+// one turn at a time, the same turn of every path side by side; a path that is shorter shows its last board and a note
+function setStep(k, from) {
+  const turns = state.view ? state.view.paths.map((p, i) => state.lists[i] ? state.lists[i].children.length : 0) : [];
+  const longest = Math.max(0, ...turns);
+  k = Math.max(0, Math.min(longest - 1, k));
+  state.step = k;
+  $("stepbar").value = k;
+  $("steplabel").textContent = `Turn ${k + 1} of ${turns.join(" / ")}`;
+  state.lists.forEach((list, i) => {
+    const over = k >= list.children.length;
+    [...list.children].forEach((li, j) => { li.hidden = j !== k; });
+    list.parentNode.querySelector(".rv-ended").hidden = !over;
+    if (i === from) return;
+    if (over) state.players[i].last(); else state.players[i].jumpToTurn(k);
+  });
 }
 
 function pick(value, quiet) {
@@ -155,7 +177,7 @@ async function loadNext() {
   try {
     const view = await api(`/next?skip=${encodeURIComponent(state.skip.join(","))}`);
     if (view.done) {
-      $("deck").hidden = true; $("options").replaceChildren();
+      $("deck").hidden = true; $("stepper").hidden = true; $("options").replaceChildren();
       $("empty").hidden = false;
       $("empty").textContent = `You have rated every pair in the pool (${view.rated} so far). New pairs arrive as runs finish; come back later.`;
       return;
@@ -274,7 +296,9 @@ function keys(e) {
   if (e.target.closest("input, textarea")) return;
   const v = state.view;
   if (!v || $("deck").hidden) return;
-  if (/^[1-4]$/.test(e.key) && v.paths[+e.key - 1]) pick(v.paths[+e.key - 1].id);
+  if (e.key === "ArrowRight" || e.key === "l") { setStep(state.step + 1); e.preventDefault(); }
+  else if (e.key === "ArrowLeft" || e.key === "h") { setStep(state.step - 1); e.preventDefault(); }
+  else if (/^[1-4]$/.test(e.key) && v.paths[+e.key - 1]) pick(v.paths[+e.key - 1].id);
   else if (e.key === "t") pick("tie");
   else if (e.key === "n") pick("neither");
   else if (e.key === "Enter" && state.choice) submit();
@@ -291,6 +315,9 @@ async function main() {
     state.confidence = state.confidence === +b.dataset.conf ? null : +b.dataset.conf;
     [...$("conf").querySelectorAll("button")].forEach(x => x.classList.toggle("on", +x.dataset.conf === state.confidence));
   });
+  $("stepbar").addEventListener("input", () => setStep(+$("stepbar").value));
+  $("stepprev").addEventListener("click", () => setStep(state.step - 1));
+  $("stepnext").addEventListener("click", () => setStep(state.step + 1));
   document.addEventListener("keydown", keys);
   window.addEventListener("resize", () => state.players.forEach(p => p.redraw()));
   const direct = new URLSearchParams(location.search).get("split");
