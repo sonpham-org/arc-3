@@ -58,6 +58,8 @@ function assignColors(live) {
 }
 const colorOf = (r) => (gridS(r.arm) !== null ? state.colors["grid:" + gridS(r.arm)] : state.colors[r.arm]);
 const stroke = (c) => (c === "fold" ? "var(--c-fold)" : c);
+// Reference averages are all drawn in ink and told apart by dash pattern plus a direct label at the line's end.
+const REF_DASH = { kaggle_2894: "", best_t06_ram: "10 5", daniel_original: "2 4", border_off: "8 3 2 3" };
 
 function render() {
   const d = state.data;
@@ -73,6 +75,11 @@ function render() {
   const bl = d.baselines[state.baseline] || { label: "–", n: 0, points: [], points_actions: [] };
   const base = baseSeries(bl);
   const baseAt = (x) => (base.length ? at(base, x, ax) : null);
+  // reference averages: the always-on ones plus the picked baseline (the picked one is drawn heavier)
+  const refs = Object.entries(d.baselines)
+    .filter(([k, b]) => (b.always || k === state.baseline) && baseSeries(b).length >= 2)
+    .map(([k, b]) => ({ key: k, short: b.short || b.label, label: b.label, n: byActions() ? (b.n_actions ?? b.n) : b.n,
+                        pts: baseSeries(b), dash: REF_DASH[k] ?? "6 3", selected: k === state.baseline }));
 
   const best = finishedAll.reduce((b, r) => (!b || r.points[r.points.length - 1][1] > b.points[b.points.length - 1][1] ? r : b), null);
   const gaps = live.map((r) => { const p = lastOf(r), b = baseAt(p[ax]); return { r, p, gap: b !== null ? p[1] - b : null }; })
@@ -90,8 +97,8 @@ function render() {
   ].join("");
   $("liveTitle").textContent = `Playing now, against the baseline at the same ${xName()}`;
   $("chartTitle").textContent = byActions() ? "Score over actions (action efficiency)" : "Score over time";
-  drawChart(finished, live, base, suite);
-  drawLegend(live, bl, finishedAll.length - finished.length);
+  drawChart(finished, live, refs, suite);
+  drawLegend(live, refs, finishedAll.length - finished.length);
   drawLive(live, baseAt);
   drawFinished(finishedAll);
 }
@@ -106,17 +113,17 @@ function niceStep(max) {
 }
 
 let geom = null;
-function drawChart(finished, live, base, suite) {
+function drawChart(finished, live, refs, suite) {
   const host = $("chart"), tip = $("tip"), ax = AX();
   const W = Math.max(320, host.clientWidth), H = Math.round(Math.min(560, Math.max(300, W * 0.46)));
   const pad = { l: 40, r: 16, t: 10, b: 34 };
   const runsShown = [...finished, ...live];
-  const vals = runsShown.flatMap((r) => series(r).map((p) => p[1])).concat(base.map((p) => p[1]));
+  const vals = runsShown.flatMap((r) => series(r).map((p) => p[1])).concat(refs.flatMap((f) => f.pts.map((p) => p[1])));
   const ymax = Math.max(10, Math.ceil((Math.max(0, ...vals) + 2) / 10) * 10);
   const xmax = byActions() ? Math.max(100, ...runsShown.flatMap((r) => series(r).map((p) => p[2]))) : suite;
   const x = (v) => pad.l + (W - pad.l - pad.r) * v / xmax;
   const y = (s) => H - pad.b - (H - pad.t - pad.b) * s / ymax;
-  geom = { x, y, pad, W, H, ymax, xmax, ax, finished, live, base };
+  geom = { x, y, pad, W, H, ymax, xmax, ax, finished, live, refs };
   const path = (pts) => pts.map((p, i) => `${i ? "L" : "M"}${x(p[ax]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Score over ${xName()}s for every run">`;
   for (let v = 0; v <= ymax; v += 10) {
@@ -133,9 +140,12 @@ function drawChart(finished, live, base, suite) {
   for (const r of finished) {
     s += `<path d="${path(series(r))}" fill="none" stroke="var(--c-history)" stroke-width="1" stroke-opacity=".6" stroke-linejoin="round"/>`;
   }
-  if (base.length) {
-    s += `<path d="${path(base)}" fill="none" stroke="var(--c-ring)" stroke-width="6" stroke-linejoin="round"/>`;
-    s += `<path d="${path(base)}" fill="none" stroke="var(--c-baseline)" stroke-width="3" stroke-linejoin="round"/>`;
+  // hover layer for "same config" runs sits above the grey history, under the averages and live lines
+  s += `<g id="sameCfg"></g>`;
+  for (const f of refs) {
+    const dash = f.dash ? ` stroke-dasharray="${f.dash}"` : "";
+    s += `<path d="${path(f.pts)}" fill="none" stroke="var(--c-ring)" stroke-width="${f.selected ? 6.5 : 5}" stroke-linejoin="round"/>`;
+    s += `<path d="${path(f.pts)}" fill="none" stroke="var(--c-baseline)" stroke-width="${f.selected ? 3.5 : 2.5}"${dash} stroke-linejoin="round"/>`;
   }
   for (const r of live) {
     const c = colorOf(r), dash = c === "fold" ? ' stroke-dasharray="6 4"' : "", pts = series(r);
@@ -144,8 +154,16 @@ function drawChart(finished, live, base, suite) {
     const p = pts[pts.length - 1];
     s += `<circle cx="${x(p[ax])}" cy="${y(p[1])}" r="4.5" fill="${stroke(c)}" stroke="var(--c-ring)" stroke-width="2"/>`;
   }
+  // direct labels at each average's end, nudged apart so they never overlap
+  const labels = refs.map((f) => { const e = f.pts[f.pts.length - 1]; return { f, x: x(e[ax]), y: y(e[1]) - 7, v: e[1] }; })
+    .sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 14);
+  for (const l of labels) {
+    const t = `${esc(l.f.short)} ${fmt(l.v)}`;
+    s += `<text x="${l.x - 4}" y="${l.y}" text-anchor="end" font-size="11.5" font-weight="${l.f.selected ? 700 : 600}" `
+       + `fill="var(--c-text)" stroke="var(--c-ring)" stroke-width="4" paint-order="stroke">${t}</text>`;
+  }
   s += `<line id="cross" x1="0" x2="0" y1="${pad.t}" y2="${H - pad.b}" stroke="var(--c-muted)" stroke-dasharray="3 3" visibility="hidden"/>`;
-  s += `<path id="hilite" d="" fill="none" stroke="var(--c-hilite)" stroke-width="2" stroke-dasharray="5 3" visibility="hidden"/>`;
   s += `<rect id="hit" x="${pad.l}" y="${pad.t}" width="${W - pad.l - pad.r}" height="${H - pad.t - pad.b}" fill="transparent"/></svg>`;
   host.innerHTML = s;
   host.appendChild(tip);
@@ -154,7 +172,7 @@ function drawChart(finished, live, base, suite) {
   $("hit").addEventListener("mouseleave", () => {
     tip.style.display = "none";
     $("cross").setAttribute("visibility", "hidden");
-    $("hilite").setAttribute("visibility", "hidden");
+    $("sameCfg").innerHTML = "";
   });
 }
 
@@ -166,35 +184,50 @@ function hover(ev, svg) {
   xv = byActions() ? Math.round(xv / 10) * 10 : Math.round(xv);
   $("cross").setAttribute("x1", g.x(xv)); $("cross").setAttribute("x2", g.x(xv));
   $("cross").setAttribute("visibility", "visible");
-  const b = g.base.length ? at(g.base, xv, g.ax) : null;
+  const sel = g.refs.find((f) => f.selected);
+  const b = sel ? at(sel.pts, xv, g.ax) : null;
   const rows = g.live.map((r) => ({ r, v: at(series(r), xv, g.ax) }))
     .filter((x) => x.v !== null && lastOf(x.r)[g.ax] >= xv).sort((a, z) => z.v - a.v);
+  // the run line nearest the pointer (finished or live) picks the config to highlight: every run of that arm
   let near = null, nd = Infinity;
-  for (const r of g.finished) {
+  for (const r of [...g.finished, ...g.live]) {
     const v = at(series(r), xv, g.ax);
     if (v === null) continue;
     const dpx = Math.abs(g.y(v) - p.y);
     if (dpx < nd) { nd = dpx; near = { r, v }; }
   }
-  const hil = $("hilite");
-  if (near && nd < 10) {
-    hil.setAttribute("d", series(near.r).map((q, i) => `${i ? "L" : "M"}${g.x(q[g.ax])},${g.y(q[1])}`).join(""));
-    hil.setAttribute("visibility", "visible");
-  } else { hil.setAttribute("visibility", "hidden"); near = null; }
+  const same = near && nd < 10 ? [...g.finished, ...g.live].filter((r) => r.arm === near.r.arm) : [];
+  $("sameCfg").innerHTML = same.map((r) => {
+    const d = series(r).map((q, i) => `${i ? "L" : "M"}${g.x(q[g.ax]).toFixed(1)},${g.y(q[1]).toFixed(1)}`).join("");
+    return `<path d="${d}" fill="none" stroke="var(--c-ring)" stroke-width="5"/>`
+         + `<path d="${d}" fill="none" stroke="var(--c-hilite)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  }).join("");
   const head = byActions() ? `${xv.toLocaleString()} actions` : `Minute ${xv}`;
   let h = `<div class="h">${head}</div><table>`;
-  if (b !== null) h += `<tr><td><span class="sw2" style="border-color:var(--c-baseline)"></span></td><td class="n">Baseline average</td><td>${fmt(b)}</td><td></td></tr>`;
-  for (const { r, v } of rows.slice(0, 14)) {
+  for (const f of g.refs) {
+    const v = at(f.pts, xv, g.ax);
+    if (v === null) continue;
+    h += `<tr><td><span class="sw2" style="border-color:var(--c-baseline);${f.dash ? "border-top-style:dashed" : ""}"></span></td>`
+       + `<td class="n">${esc(f.short)} <span class="m">avg of ${f.n}</span></td><td>${fmt(v)}</td>`
+       + `<td class="m">${f.selected ? "baseline" : ""}</td></tr>`;
+  }
+  if (same.length) {
+    const vals = same.map((r) => ({ r, v: at(series(r), xv, g.ax) })).filter((x) => x.v !== null);
+    const avg = vals.length ? vals.reduce((a, x) => a + x.v, 0) / vals.length : null;
+    h += `<tr><td colspan="4" class="m" style="padding-top:6px">Same config: <b style="color:var(--c-text)">${esc(near.r.name)}</b>, ${same.length} run${same.length > 1 ? "s" : ""}${avg !== null ? `, avg ${fmt(avg)}` : ""}</td></tr>`;
+    for (const { r, v } of vals.sort((a, z) => z.v - a.v)) {
+      h += `<tr><td><span class="sw2" style="border-color:var(--c-hilite)"></span></td><td class="n">${esc(letter(r.run_id))}`
+         + ` <span class="m">${r.state === "live" ? "playing" : "final " + fmt(r.points[r.points.length - 1][1])}</span></td>`
+         + `<td>${fmt(v)}</td><td class="${b !== null && v - b >= 0 ? "pos" : "neg"}">${b !== null ? signed(v - b) : ""}</td></tr>`;
+    }
+  }
+  if (rows.length) h += `<tr><td colspan="4" class="m" style="padding-top:6px">Playing now</td></tr>`;
+  for (const { r, v } of rows.slice(0, 12)) {
     h += `<tr><td><span class="sw2" style="border-color:${stroke(colorOf(r))}"></span></td>`
       + `<td class="n">${esc(r.name)} <span class="m">${esc(letter(r.run_id))}</span></td><td>${fmt(v)}</td>`
       + `<td class="${b !== null && v - b >= 0 ? "pos" : "neg"}">${b !== null ? signed(v - b) : ""}</td></tr>`;
   }
-  if (rows.length > 14) h += `<tr><td></td><td class="n m">+${rows.length - 14} more (see the table)</td><td></td><td></td></tr>`;
-  if (near) {
-    h += `<tr><td><span class="sw2" style="border-color:var(--c-hilite);border-top-style:dashed"></span></td>`
-      + `<td class="n">${esc(near.r.name)} <span class="m">${esc(letter(near.r.run_id))} · finished ${fmt(near.r.points[near.r.points.length - 1][1])}</span></td>`
-      + `<td>${fmt(near.v)}</td><td></td></tr>`;
-  }
+  if (rows.length > 12) h += `<tr><td></td><td class="n m">+${rows.length - 12} more (see the table)</td><td></td><td></td></tr>`;
   const tip = $("tip");
   tip.innerHTML = h + "</table>";
   tip.style.display = "block";
@@ -205,7 +238,7 @@ function hover(ev, svg) {
   tip.style.left = Math.max(0, left) + "px"; tip.style.top = top + "px";
 }
 
-function drawLegend(live, bl, hidden) {
+function drawLegend(live, refs, hidden) {
   const seen = new Map();
   for (const r of live) {
     const key = gridS(r.arm) !== null ? "grid:" + gridS(r.arm) : r.arm;
@@ -214,9 +247,12 @@ function drawLegend(live, bl, hidden) {
   }
   const items = [...seen.values()].sort((a, b) => (a.s ?? 99) - (b.s ?? 99) || a.name.localeCompare(b.name));
   const folded = items.filter((i) => i.color === "fold");
-  const nb = byActions() ? (bl.n_actions ?? bl.n) : bl.n;
-  let h = `<span><span class="sw" style="border-color:var(--c-baseline)"></span>Baseline: ${esc(bl.label)} (${nb})</span>`;
-  h += `<span><span class="sw" style="border-color:var(--c-history);border-top-width:2px"></span>Finished runs${hidden ? ` (${hidden} without action counts not drawn)` : ""}</span>`;
+  let h = "";
+  for (const f of refs) {
+    h += `<span title="${esc(f.label)}"><span class="sw" style="border-color:var(--c-baseline);${f.dash ? "border-top-style:dashed" : ""}${f.selected ? "border-top-width:4px" : ""}"></span>`
+       + `${f.selected ? "<b>" : ""}${esc(f.short)}${f.selected ? "</b> (baseline)" : ""}: avg of ${f.n}</span>`;
+  }
+  h += `<span><span class="sw" style="border-color:var(--c-history);border-top-width:2px"></span>Finished runs (hover one to see its whole config)${hidden ? `, ${hidden} without action counts not drawn` : ""}</span>`;
   for (const i of items.filter((i) => i.color !== "fold")) h += `<span><span class="sw" style="border-color:${i.color}"></span>${esc(i.name)} ×${i.n}</span>`;
   if (folded.length) h += `<span><span class="sw" style="border-color:var(--c-fold);border-top-style:dashed"></span>Other live (${folded.length} versions; see the table)</span>`;
   $("legend").innerHTML = h;
