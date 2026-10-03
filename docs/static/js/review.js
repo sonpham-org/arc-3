@@ -5,7 +5,7 @@
 // Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server; models stay hidden until
 // the rating is in.
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261002-tree";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-coach";
 
 const LETTERS = ["LEFT", "RIGHT", "C", "D"];
 const KEY_STORE = "arc3-review-key";

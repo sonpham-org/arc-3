@@ -120,6 +120,9 @@ export function turnList(content, pathId, marks) {
     return el("li", { class: "rv-turn", "data-ti": ti },
       el("div", { class: "rv-turn-head", "data-ti": ti },
         el("span", { class: "rv-t" }, `T${t.step}`),
+        // RL v2 turn coach: the mode this turn was played in (only coached runs carry it)
+        t.coach ? el("span", { class: "rv-tag rv-coach" + (t.coach === "stock" ? " stock" : ""),
+          title: "turn coach mode for this turn" }, t.coach) : null,
         el("span", { class: "rv-moves" }, t.moves.length ? t.moves.map(m => el("span", {
           class: "rv-move" + (m.level_up ? " up" : "") + (m.changed ? "" : " still"),
           title: m.level_up ? "cleared the level" : m.changed ? "" : "board did not change" }, moveLabel(m)))

@@ -49,6 +49,24 @@ def sections(transcript: str) -> dict[str, str]:
     return out
 
 
+# RL v2 turn coach (daniel-base-20261001/variants/coach/arc3_coach.py): a coached turn's user prompt ends with
+# "Focus for this turn: <mode text>". The opening words name the mode; a coached play's other turns are stock.
+COACH_LINE = "Focus for this turn: "
+COACH_MODES = (("learn one thing", "probe"), ("step back before acting", "rethink"),
+               ("the rules and the goal are established", "execute"), ("keep your thinking short", "brief"),
+               ("your last attempt ended in a game over", "recover"), ("this is a new level", "transfer"),
+               ("write a small simulator", "search"), ("use UNDO to return", "backtrack"))
+
+
+def coach_mode(user_prompt: str) -> str | None:
+    """The coach mode named by the last focus line of a turn's user prompt, or None if it has none."""
+    i = (user_prompt or "").rfind(COACH_LINE)
+    if i < 0:
+        return None
+    text = user_prompt[i + len(COACH_LINE):]
+    return next((mode for start, mode in COACH_MODES if text.startswith(start)), "other")
+
+
 def tool_code(meta: str) -> list[str]:
     """The code of each python tool call in a [MODEL RESPONSE META] block (raw_tool_calls JSON)."""
     i = meta.find("raw_tool_calls:")
@@ -99,8 +117,9 @@ def segments(initial, actions):
     return out
 
 
-def path_content(level, start, acts, turns):
-    """Turn-by-turn content of one level segment: thinking, code, actions with board diffs."""
+def path_content(level, start, acts, turns, coached=False):
+    """Turn-by-turn content of one level segment: thinking, code, actions with board diffs. coached: the play ran
+    with the turn coach, so each turn carries its mode ("stock" when its prompt has no focus line)."""
     steps = []
     for a in acts:
         s = int(a.get("analysis_step") or 0)
@@ -118,8 +137,11 @@ def path_content(level, start, acts, turns):
                           "level_up": str(a.get("level_completed")).lower() == "true",
                           "diff": {str(r): cur[r] for r in range(len(cur)) if cur[r] != prev[r]}})
             prev = cur
-        out_turns.append({"step": s, "thinking": sec.get("THINKING", ""), "said": sec.get("ASSISTANT", ""),
-                          "code": tool_code(sec.get("MODEL RESPONSE META", "")), "moves": moves})
+        turn = {"step": s, "thinking": sec.get("THINKING", ""), "said": sec.get("ASSISTANT", ""),
+                "code": tool_code(sec.get("MODEL RESPONSE META", "")), "moves": moves}
+        if coached:
+            turn["coach"] = coach_mode(sec.get("USER PROMPT", "")) or "stock"
+        out_turns.append(turn)
     return {"level": level, "start": rows(start), "turns": out_turns}
 
 
@@ -140,6 +162,7 @@ def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool, fini
         if initial is None:
             continue
         earlier = []
+        coached = any(COACH_LINE in t for t in turns.values())
         segs = segments(initial, actions)
         running = finished is not None and not finished.get(f"{game}_p{ps}", False)
         for k, (level, start, acts, cleared) in enumerate(segs):
@@ -157,7 +180,7 @@ def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool, fini
                           # this play's earlier levels: what the rater opens under "how they got here"
                           "meta": {"earlier": list(earlier)}})
             nodes[nid]["paths"].append(pid)
-            contents[pid] = path_content(level, start, acts, turns)
+            contents[pid] = path_content(level, start, acts, turns, coached)
             earlier.append(pid)
     return nodes, paths, contents
 
