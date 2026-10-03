@@ -1,19 +1,27 @@
-// RL2 page (docs/rl2.html): the turn coach. Three views over two kinds of published document:
+// RL2 page (docs/rl2.html): the turn coach. Four views over published documents and the decision tree:
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
 //   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened)
+//   GET /api/v1/rl2/tree/games        the decision tree: games, levels and their start nodes
+//   GET /api/v1/rl2/tree/node/<id>    one node (a game state where the coach decided): its branches, a summary per mode
+//   GET /api/v1/rl2/tree/trace/<sha>  one branch's turn: thinking, code, moves
 // Server: railway/rl_review.py. With ?fixture=1 the page reads docs/static/data/rl2-fixture.json instead (fake data, for
 // checking the page locally). Chrome from theme.css and rl-shell.css; every colour is solid (no gradients).
+
+import { draw, pathView } from "./review-ui.js?v=20261003-coach";
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const FIXTURE = params.get("fixture") === "1";
-const VIEWS = ["builds", "decisions", "sampling"];
+const VIEWS = ["builds", "decisions", "sampling", "tree"];
 const MIN_N = 20;
 
 const state = {
   dash: null, fixture: null, view: VIEWS.includes(params.get("view")) ? params.get("view") : "builds",
   run: params.get("run"), game: params.get("game"), modeFilter: new Set(), open: new Set(), docs: {},
   smpBuild: params.get("build"), metric: "share",
+  // tree view: the game and level picked, the trail of nodes walked (last = shown), open mode groups and traces
+  treeGames: null, tGame: params.get("tgame"), tLevel: params.get("tlevel") ? +params.get("tlevel") : null,
+  trail: (params.get("trail") || "").split(",").filter(Boolean), tOpen: new Set(), tTrace: new Set(), treeCache: {},
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
@@ -53,20 +61,25 @@ function syncUrl() {
   if (state.view !== "builds") q.set("view", state.view);
   if (state.view === "decisions" && state.run) { q.set("run", state.run); if (state.game) q.set("game", state.game); }
   if (state.view === "sampling" && state.smpBuild) q.set("build", state.smpBuild);
+  if (state.view === "tree" && state.tGame) {
+    q.set("tgame", state.tGame);
+    if (state.tLevel !== null) q.set("tlevel", String(state.tLevel));
+    if (state.trail.length) q.set("trail", state.trail.join(","));
+  }
   const s = q.toString();
   history.replaceState(null, "", location.pathname + (s ? "?" + s : ""));
 }
 
 /* ------------------------------------------------------------------ data */
 class NotPublished extends Error {}
+let fixtureLoad = null;
+const loadFixture = () => fixtureLoad || (fixtureLoad = fetch("./static/data/rl2-fixture.json", { cache: "no-store" })
+  .then(r => r.json()).then(f => (state.fixture = f)));
 async function getDoc(name) {
   if (state.docs[name]) return state.docs[name];
   let doc;
   if (FIXTURE) {
-    if (!state.fixture) {
-      const r = await fetch("./static/data/rl2-fixture.json", { cache: "no-store" });
-      state.fixture = await r.json();
-    }
+    await loadFixture();
     doc = name === "dashboard" ? state.fixture.dashboard : (state.fixture.docs || {})[name];
     if (!doc) throw new NotPublished(name);
   } else {
@@ -351,6 +364,186 @@ function modesCard() {
         el("td", { class: "mono" }, val(m.yield_tokens)), el("td", { class: "mono" }, val(m.cap)), el("td", { class: "mono" }, val(m.temperature))))))));
 }
 
+/* ------------------------------------------------------------------ view 4: decision tree */
+// A node is a game state where the coach decided; plays that reach the same state share it (merges, no forks).
+// A branch is one decision there: its mode, what followed, the turn's trace and the node of that play's next decision.
+async function getTree(sub) {
+  if (state.treeCache[sub]) return state.treeCache[sub];
+  let doc;
+  if (FIXTURE) {
+    await loadFixture();
+    const t = state.fixture.tree || {};
+    if (sub === "games") doc = t.games || { games: [] };
+    else if (sub.startsWith("node/")) doc = (t.nodes || {})[sub.slice(5)];
+    else if (sub.startsWith("trace/")) doc = (t.traces || {})[sub.slice(6)];
+    if (!doc) throw new NotPublished(sub);
+  } else {
+    const r = await fetch("/api/v1/rl2/tree/" + sub.split("/").map(encodeURIComponent).join("/"),
+      { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    if (r.type === "opaqueredirect" || r.status === 0 || r.status === 401) throw Object.assign(new Error("sign in"), { status: 401 });
+    if (r.status === 403) throw Object.assign(new Error("not on team"), { status: 403 });
+    if (r.status === 404) throw new NotPublished(sub);
+    if (!r.ok) throw Object.assign(new Error("HTTP " + r.status), { status: r.status });
+    doc = await r.json();
+  }
+  state.treeCache[sub] = doc;
+  return doc;
+}
+const nodeLabel = id => { const [g, l, h] = String(id).split(":"); return `${g} · ${l} · ${h ? h.slice(0, 6) : "?"}`; };
+const pctOrDash = x => isNum(x) ? Math.round(x * 100) + "%" : "–";
+
+async function renderTree() {
+  const body = $("treeBody");
+  if (!state.treeGames) {
+    body.replaceChildren(el("div", { class: "empty" }, "loading…"));
+    try {
+      state.treeGames = (await getTree("games")).games || [];
+    } catch (e) {
+      if (e instanceof NotPublished) state.treeGames = [];
+      else {
+        $("treePickers").replaceChildren();
+        body.replaceChildren(el("div", { class: "empty" }, e.status === 401 ? "Sign in with your team account to see the tree."
+          : e.status === 403 ? "This Google account is not on the team list." : "Could not load the tree."));
+        if (!e.status) console.error(e);
+        return;
+      }
+    }
+  }
+  const games = state.treeGames;
+  if (!games.length) {
+    $("treePickers").replaceChildren();
+    body.replaceChildren(el("div", { class: "empty" }, "No tree published yet. It appears here once a coached run publishes its decisions."));
+    return;
+  }
+  let g = games.find(x => x.game === state.tGame);
+  if (!g) { g = games[0]; state.tGame = g.game; state.tLevel = null; state.trail = []; }
+  let lv = g.levels.find(x => x.level === state.tLevel);
+  if (!lv) { lv = g.levels[0]; state.tLevel = lv.level; state.trail = []; }
+  if (!state.trail.length || !state.trail[0].startsWith(g.game + ":")) state.trail = [lv.start_nodes[0]];
+  const gameSel = el("select", { "aria-label": "game", onchange: e => { state.tGame = e.target.value; state.tLevel = null; state.trail = []; resetNodeUi(); renderTree(); } },
+    games.map(x => el("option", { value: x.game, selected: x.game === g.game }, `${x.game} (${x.levels.reduce((s, l) => s + l.branches, 0)})`)));
+  const levelSel = el("select", { "aria-label": "level", onchange: e => { state.tLevel = +e.target.value; state.trail = []; resetNodeUi(); renderTree(); } },
+    g.levels.map(l => el("option", { value: l.level, selected: l.level === lv.level }, `level ${l.level} · ${l.branches} branch${l.branches === 1 ? "" : "es"} at ${l.nodes} node${l.nodes === 1 ? "" : "s"}`)));
+  const pick = [el("label", {}, "game ", gameSel), el("label", {}, "level ", levelSel)];
+  if (lv.start_nodes.length > 1) {
+    pick.push(el("label", {}, "start ", el("select", { "aria-label": "start node", onchange: e => { state.trail = [e.target.value]; resetNodeUi(); renderTree(); } },
+      lv.start_nodes.map(id => el("option", { value: id, selected: id === state.trail[0] }, nodeLabel(id))))));
+  }
+  $("treePickers").replaceChildren(...pick);
+  syncUrl();
+  await drawNode(state.trail[state.trail.length - 1]);
+}
+function resetNodeUi() { state.tOpen.clear(); state.tTrace.clear(); }
+function goNode(id, { push = true } = {}) {
+  if (push) {
+    const at = state.trail.indexOf(id);
+    state.trail = at >= 0 ? state.trail.slice(0, at + 1) : [...state.trail, id];
+  }
+  resetNodeUi();
+  syncUrl();
+  drawNode(id).then(() => $("view-tree").scrollIntoView({ block: "start" }));
+}
+
+async function drawNode(id) {
+  const body = $("treeBody");
+  let view;
+  try {
+    view = await getTree("node/" + id);
+  } catch (e) {
+    if (!(e instanceof NotPublished)) throw e;
+    body.replaceChildren(trailBar(), el("div", { class: "empty" }, `Node ${id} is not published yet.`));
+    return;
+  }
+  const n = view.node;
+  const canvas = n.board ? el("canvas", { class: "rl2-board", width: 160, height: 160, "aria-label": "board at this node" }) : null;
+  const head = el("div", { class: "card rl2-node" },
+    canvas || el("div", { class: "rl2-board none" }, "no board stored"),
+    el("div", { class: "rl2-node-info" },
+      el("div", { class: "rl2-node-id mono" }, n.id),
+      el("div", { class: "rl2-node-nums" },
+        el("div", {}, el("b", { class: "mono" }, n.branches), el("small", {}, n.branches === 1 ? "branch" : "branches")),
+        el("div", {}, el("b", { class: "mono" }, n.arrivals || 0), el("small", {}, "plays arrived")),
+        el("div", {}, el("b", { class: "mono" }, Object.keys(view.by_mode || {}).length), el("small", {}, "modes"))),
+      el("div", { class: "muted rl2-small" }, `game ${n.game} · level ${n.level}` + (n.first_run ? ` · first seen in ${n.first_run}` : "")),
+      view.parents && view.parents.length ? el("div", { class: "rl2-parents rl2-small" }, el("span", { class: "muted" }, "came from"),
+        view.parents.slice(0, 12).map(p => el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(p) }, nodeLabel(p)))) : null,
+      view.truncated ? el("div", { class: "rl2-small rl2-bad" }, "Only the first branches are shown.") : null));
+  body.replaceChildren(trailBar(), head, modeGroups(view));
+  if (canvas) requestAnimationFrame(() => draw(canvas, n.board));
+}
+function trailBar() {
+  if (state.trail.length < 2) return el("div", { class: "rl2-trail muted rl2-small" }, "Level start. Open a mode, then follow a branch with “next node →”.");
+  return el("nav", { class: "rl2-trail rl2-small", "aria-label": "nodes visited" }, state.trail.flatMap((id, i) => {
+    const last = i === state.trail.length - 1;
+    return [i ? el("span", { class: "muted", "aria-hidden": "true" }, "›") : null,
+      last ? el("span", { class: "rl2-chip on mono", "aria-current": "page" }, nodeLabel(id))
+        : el("button", { type: "button", class: "rl2-chip mono", onclick: () => goNode(id) }, i === 0 ? "start" : nodeLabel(id))];
+  }));
+}
+function modeGroups(view) {
+  const modes = Object.entries(view.by_mode || {}).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]));
+  if (!modes.length) return el("div", { class: "empty" }, "No branch leaves this node: the plays ended here.");
+  const wrap = el("div", { class: "rl2-groups" });
+  const redraw = () => wrap.replaceWith(modeGroups(view));
+  wrap.append(el("div", { class: "rl2-ghead muted rl2-small" }, el("span", {}, "mode"), el("span", {}, "n"),
+    el("span", {}, "level within 30 actions"), el("span", { class: "rl2-gmore" }, "also")));
+  for (const [mode, s] of modes) {
+    const open = state.tOpen.has(mode);
+    const row = el("button", { type: "button", class: "rl2-grow" + (open ? " open" : ""), "aria-expanded": open ? "true" : "false",
+      onclick: () => { open ? state.tOpen.delete(mode) : state.tOpen.add(mode); redraw(); } },
+      el("span", { class: "rl2-gmode" }, el("span", { class: "rl2-caret", "aria-hidden": "true" }, open ? "▾" : "▸"), modeTag(mode)),
+      el("span", { class: "mono" }, s.n),
+      el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${isNum(s.lvl30) ? (100 * s.lvl30).toFixed(1) : 0}%` })),
+        el("b", { class: "mono" }, pctOrDash(s.lvl30))),
+      el("span", { class: "rl2-gmore mono muted", title: "cleared this level · mean actions · game over" },
+        `cleared ${pctOrDash(s.cleared)} · ${fx(s.acts)} acts · over ${pctOrDash(s.go)}`));
+    wrap.append(row);
+    if (open) wrap.append(el("div", { class: "rl2-blist" }, view.branches.filter(b => b.mode === mode).map(b => branchItem(b, redraw))));
+  }
+  return wrap;
+}
+function outcomeBits(o) {
+  if (!o || !Object.keys(o).length) return [el("span", { class: "muted" }, "no outcome")];
+  const bits = [];
+  if (o.acts !== undefined && o.acts !== null) bits.push(el("span", {}, `${val(o.acts)} actions`));
+  if (o.cleared_level) bits.push(el("span", { class: "rl2-yes" }, "cleared the level"));
+  else if (o.lvl30) bits.push(el("span", { class: "rl2-yes" }, "level within 30"));
+  if (o.go_turn) bits.push(el("span", { class: "rl2-bad" }, "game over"));
+  return bits;
+}
+function branchItem(b, redraw) {
+  const tOpen = state.tTrace.has(b.id);
+  const ci = b.child_info;
+  let next;
+  if (!b.child) next = el("span", { class: "muted rl2-small" }, "play ended");
+  else if (ci && ci.published === false) next = el("span", { class: "muted rl2-small", title: b.child }, "next node not published");
+  else next = el("button", { type: "button", class: "rl2-btn primary", title: b.child, onclick: () => goNode(b.child) }, "next node →",
+    ci && ci.arrivals > 1 ? el("span", { class: "rl2-merge", title: `${ci.arrivals} plays reached this node (${ci.branches} branches leave it)` }, `${ci.arrivals} plays`) : null);
+  const traceBtn = b.trace_sha ? el("button", { type: "button", class: "rl2-btn" + (tOpen ? " on" : ""), "aria-expanded": tOpen ? "true" : "false",
+    onclick: () => { tOpen ? state.tTrace.delete(b.id) : state.tTrace.add(b.id); redraw(); } }, tOpen ? "hide trace" : "trace")
+    : el("span", { class: "muted rl2-small" }, "no trace");
+  const item = el("div", { class: "rl2-branch" + (tOpen ? " open" : "") },
+    el("div", { class: "rl2-bmain" },
+      el("div", { class: "rl2-bwho mono" }, el("b", {}, `#${b.decision}`), ` ${b.run}`, el("span", { class: "muted" }, ` · ${b.play}`)),
+      el("div", { class: "rl2-bmeta rl2-small" },
+        el("span", { class: "rl2-chip mono" }, b.build), b.policy ? el("span", { class: "muted mono" }, b.policy) : null,
+        el("span", { class: "mono" }, `cap ${val(b.cap)}`), el("span", { class: "mono" }, `p ${val(b.prob)}`),
+        ...outcomeBits(b.outcome))),
+    el("div", { class: "rl2-bact" }, traceBtn, next));
+  if (tOpen) {
+    const box = el("div", { class: "rl2-trace" }, el("div", { class: "muted rl2-small" }, "loading trace…"));
+    item.append(box);
+    getTree("trace/" + b.trace_sha).then(content => {
+      const pv = pathView(content, b.id, null);
+      box.replaceChildren(pv.player.node, pv.list);
+    }).catch(e => {
+      if (!(e instanceof NotPublished)) console.error(e);
+      box.replaceChildren(el("div", { class: "muted rl2-small" }, "This trace is not on the server."));
+    });
+  }
+  return item;
+}
+
 /* ------------------------------------------------------------------ shell */
 function show(view) {
   state.view = view;
@@ -361,8 +554,11 @@ function show(view) {
   }
   for (const v of VIEWS) $("view-" + v).hidden = v !== view;
   syncUrl();
-  if (!state.dash) return;
-  const fn = { builds: renderBuilds, decisions: renderDecisions, sampling: renderSampling }[view];
+  // the tree has its own data; it does not wait for the dashboard
+  if (!state.dash && view !== "tree") return;
+  if (view === "tree" && state.treeShown) return;
+  if (view === "tree") state.treeShown = true;
+  const fn = { builds: renderBuilds, decisions: renderDecisions, sampling: renderSampling, tree: renderTree }[view];
   Promise.resolve().then(fn).catch(err => {
     console.error(view, err);
     if (err && err.status === 401) notice("Sign in with your team account to see the RL2 page.");

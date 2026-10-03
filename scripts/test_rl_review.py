@@ -11,6 +11,7 @@ tables there, so never point it at a real catalog.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,7 @@ from railway.rl_review import (
     ReviewProblem,
     _order,
     clean_rating,
+    clean_tree_bundle,
     pair_priority,
 )
 
@@ -206,18 +208,145 @@ class Rl2Documents(unittest.TestCase):
                          ["dashboard.json", "run-daniel-coach-a.json"], "no temp files left behind")
 
 
+def tree_trace(tag: str, steps: int = 2) -> dict:
+    return {"start": ["0" * 64] * 64,
+            "turns": [{"step": s, "thinking": f"{tag} thinks {s}", "said": "", "code": [f"move('UP')  # {s}"],
+                       "moves": [{"n": s, "action": "UP", "changed": True, "level_up": s == steps,
+                                  "diff": {"3": "1" * 64}}]} for s in range(1, steps + 1)]}
+
+
+def tree_sha(content: dict) -> str:
+    return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+START = "ka59:L1:aaaaaaaaaaaa"
+MID = "ka59:L1:bbbbbbbbbbbb"
+NEXT = "ka59:L2:cccccccccccc"
+
+
+def tree_bundle(run: str = "run-a", modes=("probe", "stock"), build: str = "coach1", with_traces: bool = True) -> dict:
+    """One run, one play per mode: START --mode--> MID --execute--> NEXT (level 2) --stock--> end."""
+
+    nodes = [{"id": START, "game": "ka59", "level": 1, "board_hash": "a" * 12, "board": ["0" * 64] * 64},
+             {"id": MID, "game": "ka59", "level": 1, "board_hash": "b" * 12, "board": None},
+             {"id": NEXT, "game": "ka59", "level": 2, "board_hash": "c" * 12, "board": ["5" * 64] * 64}]
+    branches, traces = [], {}
+    for p, mode in enumerate(modes):
+        content = tree_trace(f"{run}-{mode}")
+        sha = tree_sha(content)
+        traces[sha] = content
+        play = f"ka59_p{p}"
+        common = {"run": run, "play": play, "build": build, "policy": None}
+        branches += [
+            {**common, "id": f"{run}:{play}:d1", "node": START, "child": MID, "decision": 1, "mode": mode, "cap": 6,
+             "prob": 0.5, "features": {"level": 1, "actions_in_level": 0}, "trace_sha": sha,
+             "outcome": {"acts": 6, "lvl30": p == 0, "cleared_level": p == 0, "go_turn": False}},
+            {**common, "id": f"{run}:{play}:d2", "node": MID, "child": NEXT, "decision": 2, "mode": "execute",
+             "cap": 20, "prob": 0.9, "features": {"level": 1, "actions_in_level": 6}, "trace_sha": sha,
+             "outcome": {"acts": 12, "lvl30": True, "cleared_level": True, "go_turn": False}},
+            {**common, "id": f"{run}:{play}:d3", "node": NEXT, "child": None, "decision": 3, "mode": "stock",
+             "cap": None, "prob": None, "features": {"level": 2, "actions_in_level": 0}, "trace_sha": None,
+             "outcome": {"acts": 3, "lvl30": False, "cleared_level": None, "go_turn": True}},
+        ]
+    return {"run": run, "build": build, "policy": None, "nodes": nodes, "branches": branches,
+            "traces": traces if with_traces else {}}
+
+
+class Rl2Tree(unittest.TestCase):
+    """RL2 decision tree: validation and who may call what, before any database work."""
+
+    def setUp(self) -> None:
+        os.environ["ALLOWED_EMAILS"] = TEAM
+        self.root = Path(tempfile.mkdtemp())
+        self.api = RlReviewApi(no_db, self.root, "secret-token")
+        self.machine = {"Authorization": "Bearer secret-token"}
+        self.team = {"X-Forwarded-Email": TEAM}
+
+    def test_a_good_bundle_is_kept(self) -> None:
+        item = clean_tree_bundle(tree_bundle())
+        self.assertEqual((item["run"], len(item["nodes"]), len(item["branches"]), len(item["traces"])),
+                         ("run-a", 3, 6, 2))
+        self.assertEqual(item["branches"][0]["build"], "coach1")
+        sha, raw = next(iter(item["traces"].items()))
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), sha)
+
+    def test_bad_bundles_are_refused(self) -> None:
+        def mutate(fn):
+            b = tree_bundle()
+            fn(b)
+            return b
+        first_sha = lambda b: next(iter(b["traces"]))  # noqa: E731
+        bad = {
+            "invalid_body": [],
+            "invalid_run": mutate(lambda b: b.update(run="../x")),
+            "invalid_node": mutate(lambda b: b["nodes"][0].update(id="KA59:L1:aaaaaaaaaaaa")),
+            "invalid_board": mutate(lambda b: b["nodes"][0].update(board=["zz"] * 64)),
+            "invalid_child": mutate(lambda b: b["branches"][0].update(child="nowhere")),
+            "invalid_mode": mutate(lambda b: b["branches"][0].update(mode="Probe!")),
+            "invalid_prob": mutate(lambda b: b["branches"][0].update(prob=1.5)),
+            "invalid_decision": mutate(lambda b: b["branches"][0].update(decision=-1)),
+            "invalid_cap": mutate(lambda b: b["branches"][0].update(cap=True)),
+            "invalid_features": mutate(lambda b: b["branches"][0].update(features={"x": "y" * 9000})),
+            "invalid_branch": mutate(lambda b: b["branches"][0].update(id="run-b:ka59_p0:d1")),
+            "duplicate_branch": mutate(lambda b: b["branches"].append(dict(b["branches"][0]))),
+            "trace_sha_mismatch": mutate(lambda b: b["traces"][first_sha(b)]["turns"].append({"step": 9})),
+            "invalid_trace": mutate(lambda b: b["traces"].update({first_sha(b): {"no": "turns"}})),
+            "invalid_trace_sha": mutate(lambda b: b["branches"][0].update(trace_sha="abc")),
+        }
+        # the node id must agree with its game, level and board hash (key padded: same code as above)
+        bad["invalid_node "] = mutate(lambda b: b["nodes"][0].update(level=2))
+        for code, bundle in bad.items():
+            with self.assertRaises(ReviewProblem, msg=code) as ctx:
+                clean_tree_bundle(bundle)
+            self.assertEqual(ctx.exception.code, code.strip(), code)
+
+    def test_the_routes_are_claimed_and_guarded(self) -> None:
+        for path in ("/api/v1/rl2/tree/games", "/api/v1/rl2/tree/publication", f"/api/v1/rl2/tree/node/{START}"):
+            self.assertTrue(RlReviewApi.owns(path), path)
+        pub = "/api/v1/rl2/tree/publication"
+        self.assertEqual(call(self.api, "PUT", pub, {"Authorization": "Bearer nope"}, tree_bundle())[0], 401)
+        self.assertEqual(call(self.api, "PUT", pub, self.team, tree_bundle())[0], 401)
+        self.assertEqual(call(self.api, "GET", pub, self.machine)[0], 405)
+        status, payload = call(self.api, "PUT", pub, self.machine, gzip.compress(json.dumps([1]).encode()))
+        self.assertEqual((status, payload["error"]), (400, "invalid_body"))
+        bad = tree_bundle()
+        bad["branches"][0]["mode"] = "NOPE"
+        self.assertEqual(call(self.api, "PUT", pub, self.machine, bad)[1]["error"], "invalid_mode",
+                         "a bad body is refused before the database")
+        for path in ("/api/v1/rl2/tree/games", f"/api/v1/rl2/tree/node/{START}", "/api/v1/rl2/tree/trace/" + "a" * 64):
+            self.assertEqual(call(self.api, "GET", path)[0], 401, path)
+            self.assertEqual(call(self.api, "GET", path, self.machine)[0], 401, path)
+            self.assertEqual(call(self.api, "GET", path, {"X-Forwarded-Email": "x@gmail.com"})[0], 403, path)
+            self.assertEqual(call(self.api, "PUT", path, self.team, {"x": 1})[0], 405, path)
+        for path in ("/api/v1/rl2/tree/node/ka59:L1:short", "/api/v1/rl2/tree/node/../x",
+                     "/api/v1/rl2/tree/trace/../../etc", "/api/v1/rl2/tree/trace/" + "A" * 64):
+            self.assertEqual(call(self.api, "GET", path, self.team)[0], 400, path)
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/tree/trace/" + "a" * 64, self.team)[0], 404)
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/tree/nothing", self.team)[0], 404)
+
+    def test_a_stored_trace_is_served(self) -> None:
+        content = tree_trace("x")
+        sha = tree_sha(content)
+        (self.root / "_rl2" / "traces").mkdir(parents=True)
+        (self.root / "_rl2" / "traces" / f"{sha}.json").write_bytes(json.dumps(content).encode())
+        self.assertEqual(call(self.api, "GET", f"/api/v1/rl2/tree/trace/{sha}", self.team), (200, content))
+
+
 class ShippedFiles(unittest.TestCase):
     def test_skip_auth_routes_are_exact(self) -> None:
         entry = (ROOT / "railway" / "entrypoint.sh").read_text(encoding="utf-8")
         for route in ("^/review\\.html$", "^/api/v1/review/publication$", "^/api/v1/review/export$",
-                      "^/api/v1/rl/dashboard-publication$", "^/api/v1/rl2/publication/[a-z0-9][a-z0-9._-]*$"):
+                      "^/api/v1/rl/dashboard-publication$", "^/api/v1/rl2/publication/[a-z0-9][a-z0-9._-]*$",
+                      "^/api/v1/rl2/tree/publication$"):
             self.assertIn(f'--skip-auth-route="{route}"', entry)
         # nothing that would open the team routes or the RL data
         for pattern in re.findall(r'--skip-auth-route="([^"]+)"', entry):
             self.assertFalse(pattern.startswith("^/api/v1/review/") and not pattern.endswith("$"), pattern)
             self.assertNotIn(pattern, ("^/api/v1/review/", "^/api/v1/rl/", "^/api/v1/rl/dashboard$", "^/api/v1/rl2/",
-                                       "^/api/v1/rl2/doc/"))
+                                       "^/api/v1/rl2/doc/", "^/api/v1/rl2/tree/"))
             self.assertFalse(pattern.startswith("^/api/v1/rl2/doc"), pattern)
+            self.assertFalse(pattern.startswith("^/api/v1/rl2/tree/") and pattern != "^/api/v1/rl2/tree/publication$",
+                             pattern)
 
     def test_image_ships_the_module_and_pages(self) -> None:
         docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -389,6 +518,102 @@ class DatabaseTests(unittest.TestCase):
         status, stats = call(self.api, "GET", "/api/v1/review/stats", self.team)
         self.assertEqual((status, stats["nodes"], stats["paths"], stats["splits"], stats["ratings"]), (200, 1, 3, 3, 0))
         self.assertEqual(stats["games"][0]["game"], "ka59")
+
+
+@unittest.skipUnless(os.environ.get("ARC3_TEST_DATABASE_URL"), "set ARC3_TEST_DATABASE_URL to a disposable Postgres")
+class Rl2TreeDatabase(unittest.TestCase):
+    """The RL2 tree round trip: publish runs, merge at shared nodes, read games, nodes and traces back."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import psycopg2
+
+        cls.url = os.environ["ARC3_TEST_DATABASE_URL"]
+        cls.connect = staticmethod(lambda: psycopg2.connect(cls.url))
+        schema = (ROOT / "railway" / "catalog_schema.sql").read_text(encoding="utf-8")
+        with cls.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS rl2_tree_branches, rl2_tree_nodes CASCADE")
+            cursor.execute(schema)
+            cursor.execute(schema)  # the server re-runs the schema on every start
+
+    def setUp(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("TRUNCATE rl2_tree_branches, rl2_tree_nodes")
+        os.environ["ALLOWED_EMAILS"] = TEAM
+        self.root = Path(tempfile.mkdtemp())
+        self.api = RlReviewApi(self.connect, self.root, "secret-token")
+        self.machine = {"Authorization": "Bearer secret-token"}
+        self.team = {"X-Forwarded-Email": TEAM}
+
+    def publish(self, bundle: dict, gz: bool = True):
+        raw = json.dumps(bundle).encode()
+        return call(self.api, "PUT", "/api/v1/rl2/tree/publication", self.machine, gzip.compress(raw) if gz else raw)
+
+    def test_runs_merge_at_shared_nodes(self) -> None:
+        status, result = self.publish(tree_bundle())
+        self.assertEqual((status, result["nodes"], result["branches"], result["tracesWritten"]), (200, 3, 6, 2))
+        # republishing the run replaces its branches; nothing doubles
+        status, result = self.publish(tree_bundle(), gz=False)
+        self.assertEqual((status, result["branches"], result["branchesReplaced"], result["tracesWritten"]),
+                         (200, 6, 6, 0))
+        # a second run, another build, reaches the same states: one start node, more branches
+        self.assertEqual(self.publish(tree_bundle(run="run-b", modes=("rethink",), build="coach2"))[0], 200)
+        status, games = call(self.api, "GET", "/api/v1/rl2/tree/games", self.team)
+        self.assertEqual(status, 200)
+        self.assertEqual([g["game"] for g in games["games"]], ["ka59"])
+        levels = {lv["level"]: lv for lv in games["games"][0]["levels"]}
+        self.assertEqual((levels[1]["nodes"], levels[1]["branches"], levels[1]["start_nodes"]), (2, 6, [START]))
+        self.assertEqual(levels[2]["start_nodes"], [NEXT])
+
+        status, view = call(self.api, "GET", f"/api/v1/rl2/tree/node/{START}", self.team)
+        self.assertEqual(status, 200)
+        self.assertEqual((view["node"]["branches"], view["node"]["arrivals"], view["parents"]), (3, 0, []))
+        self.assertEqual(len(view["node"]["board"]), 64, "the first board is kept")
+        self.assertEqual(view["by_mode"]["probe"], {"n": 1, "lvl30": 1.0, "cleared": 1.0, "acts": 6.0, "go": 0.0})
+        self.assertEqual(view["by_mode"]["stock"]["lvl30"], 0.0)
+        self.assertEqual(sorted(view["by_mode"]), ["probe", "rethink", "stock"])
+        first = view["branches"][0]
+        self.assertNotIn("content", first)
+        self.assertEqual((first["child"], first["child_info"]["arrivals"], first["child_info"]["published"]),
+                         (MID, 3, True), "three plays merged into the next node")
+
+        status, mid = call(self.api, "GET", f"/api/v1/rl2/tree/node/{MID}", self.team)
+        self.assertEqual((mid["node"]["arrivals"], mid["parents"], mid["by_mode"]["execute"]["n"]), (3, [START], 3))
+        self.assertIsNone(mid["node"]["board"])
+        _, last = call(self.api, "GET", f"/api/v1/rl2/tree/node/{NEXT}", self.team)
+        self.assertIsNone(last["by_mode"]["stock"]["cleared"], "null outcomes are ignored")
+        self.assertEqual(last["by_mode"]["stock"]["go"], 1.0)
+
+        status, trace = call(self.api, "GET", f"/api/v1/rl2/tree/trace/{first['trace_sha']}", self.team)
+        self.assertEqual((status, trace["turns"][0]["thinking"][-8:]), (200, "thinks 1"))
+        self.assertEqual(call(self.api, "GET", "/api/v1/rl2/tree/node/zz99:L1:000000000000", self.team)[0], 404)
+
+    def test_a_smaller_republication_drops_the_old_branches(self) -> None:
+        self.publish(tree_bundle(modes=("probe", "stock", "search")))
+        self.publish(tree_bundle(modes=("probe",)))
+        _, view = call(self.api, "GET", f"/api/v1/rl2/tree/node/{START}", self.team)
+        self.assertEqual([b["mode"] for b in view["branches"]], ["probe"])
+
+    def test_branches_need_published_nodes_and_traces(self) -> None:
+        orphan = tree_bundle()
+        orphan["nodes"] = []
+        status, payload = self.publish(orphan)
+        self.assertEqual((status, payload["error"]), (400, "unknown_node"))
+        base = tree_bundle()
+        self.publish(base)
+        # once the nodes and traces are stored, a later publication may refer to them without resending
+        again = tree_bundle(run="run-c", with_traces=False)
+        again["nodes"] = []
+        for mine, stored in zip(again["branches"], base["branches"]):
+            mine["trace_sha"] = stored["trace_sha"]
+        status, result = self.publish(again)
+        self.assertEqual((status, result["branches"]), (200, 6), result)
+        missing = tree_bundle(run="run-d", modes=("brief",), with_traces=False)
+        status, payload = self.publish(missing)
+        self.assertEqual((status, payload["error"]), (400, "unknown_trace"))
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM rl2_tree_branches WHERE run = 'run-d'")
+            self.assertEqual(cursor.fetchone()[0], 0, "a refused publication changes nothing")
 
 
 if __name__ == "__main__":

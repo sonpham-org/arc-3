@@ -28,6 +28,9 @@ Who is calling, by route:
   /api/v1/review/export               GET, machines with ARC3_PUBLISH_TOKEN: every rating as JSON lines.
   /api/v1/rl/dashboard                GET, the signed-in team: the RL page's data (one JSON document).
   /api/v1/rl/dashboard-publication    PUT, machines with ARC3_PUBLISH_TOKEN: replaces that document.
+  /api/v1/rl2/publication/<name>      PUT, machines: an RL2 (turn coach) named document. GET .../rl2/doc/<name>, team.
+  /api/v1/rl2/tree/publication        PUT, machines: one run's part of the RL2 decision tree (nodes, branches,
+                                      traces). GET .../rl2/tree/games, /node/<id>, /trace/<sha>: the team.
 
 Held-out games (ARC3_REVIEW_FENCED; default the five test games and as66) are refused at publication: a rating
 on them could leak into training. Game ids only, never titles.
@@ -635,6 +638,270 @@ def export_ratings(cursor: Any, query: dict[str, list[str]]) -> list[dict[str, A
     return out
 
 
+# ------------------------------------------------------------------------------------------------ RL2 decision tree
+# The turn coach's decisions as a tree that merges: a node is the game state where the coach decided
+# ('<game>:L<level>:<board_hash>'), a branch is one decision taken there (mode, cap, probability, what the coach saw,
+# what followed, the turn's trace) and points at the node of that play's next decision. Every run starts level L
+# from the same board, so a level's start node collects branches from every run, mode and build. Tables
+# rl2_tree_nodes / rl2_tree_branches (catalog_schema.sql); traces on the volume, <data root>/_rl2/traces/<sha>.json,
+# named by the sha256 of their canonical JSON (rl2_trace_bytes).
+RL2_NODE_RE = re.compile(r"^([a-z0-9]{4}):L([0-9]{1,4}):([0-9a-f]{12})$")
+RL2_MODE_RE = re.compile(r"^[a-z_]{1,20}$")
+HEX_ROW_RE = re.compile(r"^[0-9a-fA-F]{1,64}$")
+MAX_TREE_NODES = 100_000
+MAX_TREE_BRANCHES = 200_000
+MAX_TREE_TRACES = 200_000
+MAX_TREE_JSON = 8 * 1024                    # one branch's features or outcome, as JSON
+MAX_NODE_BRANCHES = 20_000                  # branches returned for one node
+
+
+def rl2_trace_bytes(content: Any) -> bytes:
+    """A trace's canonical bytes; its name is their sha256 (the publisher computes the same)."""
+
+    return json.dumps(content, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _int(value: Any, field: str, low: int = 0, null: bool = False) -> int | None:
+    if value is None and null:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < low:
+        raise ReviewProblem(400, f"invalid_{field}", f"{field} must be an integer >= {low}")
+    return value
+
+
+def _small_object(value: Any, field: str, where: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(json.dumps(value)) > MAX_TREE_JSON:
+        raise ReviewProblem(400, f"invalid_{field}", f"{where}: {field} must be an object under {MAX_TREE_JSON} bytes")
+    return value
+
+
+def clean_tree_bundle(bundle: Any) -> dict[str, Any]:
+    """Validate one run's tree publication (no database, no disk). Returns {run, build, policy, nodes, branches,
+    traces} ready for SQL: nodes {id, game, level, board_hash, board}, branches with every column, traces
+    {sha: canonical bytes}. Node references outside the bundle are checked against the database by publish_tree."""
+
+    if not isinstance(bundle, dict):
+        raise ReviewProblem(400, "invalid_body", "send a JSON object")
+    run = _id(bundle.get("run"), "run")
+    build = _id(bundle.get("build"), "build")
+    policy = None if bundle.get("policy") in (None, "") else _id(bundle.get("policy"), "policy")
+    nodes, branches, traces = bundle.get("nodes") or [], bundle.get("branches") or [], bundle.get("traces") or {}
+    if not isinstance(nodes, list) or not isinstance(branches, list) or not isinstance(traces, dict):
+        raise ReviewProblem(400, "invalid_body", "nodes and branches are lists, traces an object")
+    if len(nodes) > MAX_TREE_NODES or len(branches) > MAX_TREE_BRANCHES or len(traces) > MAX_TREE_TRACES:
+        raise ReviewProblem(413, "too_many", f"at most {MAX_TREE_NODES} nodes, {MAX_TREE_BRANCHES} branches, "
+                                             f"{MAX_TREE_TRACES} traces per publication")
+    clean_traces: dict[str, bytes] = {}
+    for sha, content in traces.items():
+        _id(sha, "trace_sha", SHA_RE)
+        if not isinstance(content, dict) or not isinstance(content.get("turns"), list):
+            raise ReviewProblem(400, "invalid_trace", f"trace {sha[:12]} has no turns")
+        raw = rl2_trace_bytes(content)
+        if hashlib.sha256(raw).hexdigest() != sha:
+            raise ReviewProblem(400, "trace_sha_mismatch", f"trace {sha[:12]} does not match the sha256 of its "
+                                                           "canonical JSON (sort_keys, no spaces)")
+        clean_traces[sha] = raw
+    clean_nodes: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ReviewProblem(400, "invalid_node", "each node is an object")
+        nid = node.get("id")
+        match = RL2_NODE_RE.fullmatch(nid) if isinstance(nid, str) else None
+        if not match:
+            raise ReviewProblem(400, "invalid_node", "a node id is '<game>:L<level>:<12 hex board hash>'")
+        game, level, board_hash = match.group(1), int(match.group(2)), match.group(3)
+        if (node.get("game"), node.get("level"), node.get("board_hash")) != (game, level, board_hash):
+            raise ReviewProblem(400, "invalid_node", f"node {nid}: game, level and board_hash must match its id")
+        board = node.get("board")
+        if board is not None and (not isinstance(board, list) or not 1 <= len(board) <= 64 or any(
+                not isinstance(row, str) or not HEX_ROW_RE.fullmatch(row) for row in board)):
+            raise ReviewProblem(400, "invalid_board", f"node {nid}: board is up to 64 rows of hex digits, or null")
+        if nid in clean_nodes and clean_nodes[nid]["board"] is not None:
+            continue
+        clean_nodes[nid] = {"id": nid, "game": game, "level": level, "board_hash": board_hash, "board": board}
+    clean_branches: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for branch in branches:
+        if not isinstance(branch, dict):
+            raise ReviewProblem(400, "invalid_branch", "each branch is an object")
+        bid = _id(branch.get("id"), "branch")
+        if not bid.startswith(run + ":"):
+            raise ReviewProblem(400, "invalid_branch", f"branch {bid} must start with its run id '{run}:'")
+        if bid in seen:
+            raise ReviewProblem(400, "duplicate_branch", f"branch {bid} appears twice")
+        seen.add(bid)
+        if branch.get("run", run) != run:
+            raise ReviewProblem(400, "invalid_run", f"branch {bid} belongs to another run")
+        node_id, child = branch.get("node"), branch.get("child")
+        if not isinstance(node_id, str) or not RL2_NODE_RE.fullmatch(node_id):
+            raise ReviewProblem(400, "invalid_node", f"branch {bid}: node is not a node id")
+        if child is not None and (not isinstance(child, str) or not RL2_NODE_RE.fullmatch(child)):
+            raise ReviewProblem(400, "invalid_child", f"branch {bid}: child is a node id or null")
+        mode = branch.get("mode")
+        if not isinstance(mode, str) or not RL2_MODE_RE.fullmatch(mode):
+            raise ReviewProblem(400, "invalid_mode", f"branch {bid}: mode is 1-20 lowercase letters or '_'")
+        prob = branch.get("prob")
+        if prob is not None and (isinstance(prob, bool) or not isinstance(prob, (int, float)) or not 0 <= prob <= 1):
+            raise ReviewProblem(400, "invalid_prob", f"branch {bid}: prob is a number in 0..1 or null")
+        trace_sha = branch.get("trace_sha")
+        if trace_sha is not None:
+            _id(trace_sha, "trace_sha", SHA_RE)
+        b_policy = branch.get("policy", policy)
+        clean_branches.append({
+            "id": bid, "node": node_id, "child": child, "run": run, "play": _id(branch.get("play"), "play"),
+            "build": _id(branch.get("build") or build, "build"),
+            "policy": None if b_policy in (None, "") else _id(b_policy, "policy"),
+            "decision": _int(branch.get("decision"), "decision"), "mode": mode,
+            "cap": _int(branch.get("cap"), "cap", null=True), "prob": None if prob is None else float(prob),
+            "features": _small_object(branch.get("features"), "features", bid),
+            "outcome": _small_object(branch.get("outcome"), "outcome", bid), "trace_sha": trace_sha,
+        })
+    return {"run": run, "build": build, "policy": policy, "nodes": list(clean_nodes.values()),
+            "branches": clean_branches, "traces": clean_traces}
+
+
+def publish_tree(cursor: Any, data_root: Path, bundle: Any) -> dict[str, Any]:
+    """Store one run's part of the tree. Idempotent per run: nodes are upserted (the first board is kept), the run's
+    branches are deleted and the new ones inserted, traces are written once by sha."""
+
+    item = clean_tree_bundle(bundle)
+    store = data_root / "_rl2" / "traces"
+    in_bundle = {n["id"] for n in item["nodes"]}
+    outside = sorted({b["node"] for b in item["branches"]} - in_bundle)
+    if outside:
+        cursor.execute("SELECT id FROM rl2_tree_nodes WHERE id = ANY(%s)", (outside,))
+        missing = set(outside) - {row[0] for row in cursor.fetchall()}
+        if missing:
+            raise ReviewProblem(400, "unknown_node", f"branches name nodes that are not published: "
+                                                     f"{', '.join(sorted(missing)[:5])}")
+    for sha in sorted({b["trace_sha"] for b in item["branches"] if b["trace_sha"]} - set(item["traces"])):
+        if not (store / f"{sha}.json").exists():
+            raise ReviewProblem(400, "unknown_trace", f"trace {sha[:12]} is neither in this publication nor stored")
+    if item["nodes"]:
+        cursor.executemany(
+            "INSERT INTO rl2_tree_nodes (id, game, level, board_hash, board, first_run) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s) "
+            "ON CONFLICT (id) DO UPDATE SET board = COALESCE(rl2_tree_nodes.board, EXCLUDED.board)",
+            [(n["id"], n["game"], n["level"], n["board_hash"], None if n["board"] is None else json.dumps(n["board"]),
+              item["run"]) for n in item["nodes"]])
+    cursor.execute("DELETE FROM rl2_tree_branches WHERE run = %s", (item["run"],))
+    replaced = cursor.rowcount
+    if item["branches"]:
+        cursor.executemany(
+            "INSERT INTO rl2_tree_branches (id, node_id, child_id, run, play, build, policy, decision, mode, cap, prob, "
+            "features, outcome, trace_sha) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)",
+            [(b["id"], b["node"], b["child"], b["run"], b["play"], b["build"], b["policy"], b["decision"], b["mode"],
+              b["cap"], b["prob"], json.dumps(b["features"]), json.dumps(b["outcome"]), b["trace_sha"])
+             for b in item["branches"]])
+    written = 0
+    if item["traces"]:
+        store.mkdir(parents=True, exist_ok=True)
+        for sha, raw in item["traces"].items():
+            target = store / f"{sha}.json"
+            if target.exists():
+                continue
+            tmp = store / f".{sha}.{secrets.token_hex(4)}.tmp"
+            tmp.write_bytes(raw)
+            os.replace(tmp, target)
+            written += 1
+    return {"apiVersion": 1, "status": "published", "run": item["run"], "nodes": len(item["nodes"]),
+            "branches": len(item["branches"]), "branchesReplaced": replaced, "traces": len(item["traces"]),
+            "tracesWritten": written}
+
+
+def tree_games(cursor: Any) -> list[dict[str, Any]]:
+    """Every game and level in the tree, with its start nodes: nodes where some branch was decided with 0 actions
+    into the level, most-visited first; a level with none falls back to its most-visited node."""
+
+    cursor.execute(
+        """
+        SELECT n.game, n.level, n.id, count(b.id) AS branches,
+               COALESCE(bool_or(b.features -> 'actions_in_level' = '0'::jsonb), false) AS start
+        FROM rl2_tree_nodes n LEFT JOIN rl2_tree_branches b ON b.node_id = n.id
+        GROUP BY n.game, n.level, n.id
+        ORDER BY n.game, n.level, count(b.id) DESC, n.id
+        """
+    )
+    games: dict[str, dict[int, dict[str, Any]]] = {}
+    for game, level, nid, count, start in cursor.fetchall():
+        slot = games.setdefault(game, {}).setdefault(level, {"level": level, "nodes": 0, "branches": 0,
+                                                             "start_nodes": [], "_top": nid})
+        slot["nodes"] += 1
+        slot["branches"] += count
+        if start and len(slot["start_nodes"]) < 20:
+            slot["start_nodes"].append(nid)
+    out = []
+    for game in sorted(games):
+        levels = []
+        for level in sorted(games[game]):
+            slot = games[game][level]
+            top = slot.pop("_top")
+            if not slot["start_nodes"]:
+                slot["start_nodes"] = [top]
+            levels.append(slot)
+        out.append({"game": game, "levels": levels})
+    return out
+
+
+def _mean(values: list[Any]) -> float | None:
+    nums = [float(v) for v in values if isinstance(v, (int, float)) and not (isinstance(v, float) and v != v)]
+    return round(sum(nums) / len(nums), 4) if nums else None
+
+
+def tree_node(cursor: Any, node_id: str) -> dict[str, Any]:
+    """One node: its branches (no trace content), a summary per mode, the nodes that lead here and, per child, how
+    many plays reached it (a child more than one play reached is a merge)."""
+
+    if not RL2_NODE_RE.fullmatch(node_id or ""):
+        raise ReviewProblem(400, "invalid_node", "a node id is '<game>:L<level>:<12 hex board hash>'")
+    cursor.execute("SELECT id, game, level, board_hash, board, first_run, created_at FROM rl2_tree_nodes WHERE id = %s",
+                   (node_id,))
+    rows = _rows(cursor)
+    if not rows:
+        raise ReviewProblem(404, "unknown_node", "no such node")
+    node = {**rows[0], "created_at": iso(rows[0]["created_at"])}
+    cursor.execute(
+        f"""
+        SELECT id, node_id AS node, child_id AS child, run, play, build, policy, decision, mode, cap, prob, features,
+               outcome, trace_sha, published_at
+        FROM rl2_tree_branches WHERE node_id = %s ORDER BY run, play, decision LIMIT {MAX_NODE_BRANCHES + 1}
+        """,
+        (node_id,))
+    branches = [{**b, "published_at": iso(b["published_at"])} for b in _rows(cursor)]
+    truncated = len(branches) > MAX_NODE_BRANCHES
+    branches = branches[:MAX_NODE_BRANCHES]
+    cursor.execute("SELECT count(*) FROM rl2_tree_branches WHERE child_id = %s", (node_id,))
+    arrivals = cursor.fetchone()[0]
+    cursor.execute("SELECT node_id, count(*) FROM rl2_tree_branches WHERE child_id = %s GROUP BY node_id "
+                   "ORDER BY count(*) DESC, node_id LIMIT 200", (node_id,))
+    parents = [row[0] for row in cursor.fetchall()]
+    children = sorted({b["child"] for b in branches if b["child"]})
+    child_info: dict[str, dict[str, Any]] = {}
+    if children:
+        cursor.execute(
+            """
+            SELECT c.id, (SELECT count(*) FROM rl2_tree_branches x WHERE x.node_id = c.id) AS branches,
+                   (SELECT count(*) FROM rl2_tree_branches y WHERE y.child_id = c.id) AS arrivals,
+                   EXISTS (SELECT 1 FROM rl2_tree_nodes z WHERE z.id = c.id) AS published
+            FROM unnest(%s::text[]) AS c(id)
+            """,
+            (children,))
+        child_info = {r["id"]: {"branches": r["branches"], "arrivals": r["arrivals"], "published": r["published"]}
+                      for r in _rows(cursor)}
+    for b in branches:
+        b["child_info"] = child_info.get(b["child"]) if b["child"] else None
+    by_mode: dict[str, dict[str, Any]] = {}
+    for mode in sorted({b["mode"] for b in branches}):
+        outs = [b["outcome"] or {} for b in branches if b["mode"] == mode]
+        by_mode[mode] = {"n": len(outs), "lvl30": _mean([o.get("lvl30") for o in outs]),
+                         "cleared": _mean([o.get("cleared_level") for o in outs]),
+                         "acts": _mean([o.get("acts") for o in outs]), "go": _mean([o.get("go_turn") for o in outs])}
+    return {"apiVersion": 1, "node": {**node, "branches": len(branches), "arrivals": arrivals},
+            "branches": branches, "truncated": truncated, "by_mode": by_mode, "parents": parents}
+
+
 # ------------------------------------------------------------------------------------------------ the API
 class _Limiter:
     """Per-key sliding window, in memory (one server process)."""
@@ -767,6 +1034,39 @@ class RlReviewApi:
             if not target.exists():
                 raise ReviewProblem(404, "no_dashboard", "nothing published yet")
             return Response(200, target.read_bytes())
+        # RL2 decision tree: one run's nodes, branches and traces (machines); games, nodes and traces (team).
+        if path == f"{self.RL2}/tree/publication":
+            self.require_token(headers)
+            if method != "PUT":
+                raise ReviewProblem(405, "method_not_allowed", "use PUT")
+            bundle = self._read_json(read_body, headers, MAX_PUBLICATION)
+            clean_tree_bundle(bundle)                      # refuse a bad body before opening a connection
+            with self._cursor(commit=True) as cursor:
+                result = publish_tree(cursor, self.data_root, bundle)
+            print(f"rl2 tree: {result['run']} published {result['branches']} branches at {result['nodes']} nodes",
+                  flush=True)
+            return _json(200, result)
+        if path.startswith(f"{self.RL2}/tree/"):
+            self.team_email(headers)
+            if method != "GET":
+                raise ReviewProblem(405, "method_not_allowed", "use GET")
+            sub = path[len(f"{self.RL2}/tree/"):]
+            if sub == "games":
+                with self._cursor() as cursor:
+                    return _json(200, {"apiVersion": 1, "games": tree_games(cursor)})
+            if sub.startswith("node/"):
+                node_id = sub[len("node/"):]
+                if not RL2_NODE_RE.fullmatch(node_id):
+                    raise ReviewProblem(400, "invalid_node", "a node id is '<game>:L<level>:<12 hex board hash>'")
+                with self._cursor() as cursor:
+                    return _json(200, tree_node(cursor, node_id))
+            if sub.startswith("trace/"):
+                sha = _id(sub[len("trace/"):], "trace_sha", SHA_RE)
+                target = self.data_root / "_rl2" / "traces" / f"{sha}.json"
+                if not target.exists():
+                    raise ReviewProblem(404, "missing_trace", "this trace is not on the server")
+                return Response(200, target.read_bytes())
+            raise ReviewProblem(404, "not_found", "not found")
         # RL2 (turn coach): named documents, published by machines and read by the team.
         if path.startswith(f"{self.RL2}/publication/"):
             name = self._rl2_name(path[len(f"{self.RL2}/publication/"):])

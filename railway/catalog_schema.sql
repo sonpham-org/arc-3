@@ -189,6 +189,46 @@ CREATE TABLE IF NOT EXISTS rl_review_ratings (
 
 CREATE INDEX IF NOT EXISTS rl_review_ratings_updated_idx ON rl_review_ratings (updated_at, rating_id);
 
+-- RL2 decision tree (turn coach). A node is the game state where the coach made a decision
+-- ('<game>:L<level>:<board_hash>'); plays that reach the same state merge into one node (no forks).
+-- A branch is one decision taken there: mode, cap, probability, what the coach saw (features), what
+-- followed (outcome), the turn's trace (on the volume under /srv/data/_rl2/traces/<sha256>.json) and
+-- the node of that play's next decision (child_id, no FK: the child may be published later; null at
+-- the play's end). Publication is per run: a run's branches are replaced whole. See rl_review.py.
+CREATE TABLE IF NOT EXISTS rl2_tree_nodes (
+    id text PRIMARY KEY CHECK (id ~ '^[a-z0-9]{4}:L[0-9]{1,4}:[0-9a-f]{12}$'),
+    game text NOT NULL,
+    level integer NOT NULL CHECK (level >= 0),
+    board_hash text NOT NULL CHECK (board_hash ~ '^[0-9a-f]{12}$'),
+    board jsonb,
+    first_run text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS rl2_tree_nodes_game_idx ON rl2_tree_nodes (game, level);
+
+CREATE TABLE IF NOT EXISTS rl2_tree_branches (
+    id text PRIMARY KEY CHECK (id ~ '^[A-Za-z0-9][A-Za-z0-9:._~-]{0,199}$'),
+    node_id text NOT NULL REFERENCES rl2_tree_nodes (id),
+    child_id text,
+    run text NOT NULL,
+    play text NOT NULL,
+    build text NOT NULL,
+    policy text,
+    decision integer NOT NULL CHECK (decision >= 0),
+    mode text NOT NULL CHECK (mode ~ '^[a-z_]{1,20}$'),
+    cap integer CHECK (cap >= 0),
+    prob double precision,
+    features jsonb NOT NULL DEFAULT '{}'::jsonb,
+    outcome jsonb NOT NULL DEFAULT '{}'::jsonb,
+    trace_sha text CHECK (trace_sha ~ '^[0-9a-f]{64}$'),
+    published_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS rl2_tree_branches_node_idx ON rl2_tree_branches (node_id);
+CREATE INDEX IF NOT EXISTS rl2_tree_branches_run_idx ON rl2_tree_branches (run);
+CREATE INDEX IF NOT EXISTS rl2_tree_branches_child_idx ON rl2_tree_branches (child_id);
+
 CREATE OR REPLACE FUNCTION arc3_refresh_catalog_snapshot()
 RETURNS void
 LANGUAGE sql
