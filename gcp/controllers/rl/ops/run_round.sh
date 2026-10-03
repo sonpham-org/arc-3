@@ -14,7 +14,7 @@ set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
 OPS=$(cd "$(dirname "$0")" && pwd)
 SITE=$(cd "$OPS/../site" && pwd)
-VM=arc3-rl-train4-20261002 ZONE=us-south1-b
+VM=${TRAINER_VM:-arc3-rl-train4-20261002} ZONE=${TRAINER_ZONE:-us-south1-b}   # moved trainer: TRAINER_VM, TRAINER_ZONE
 B=gs://cellens-ai-artifacts/arc3-rl/trainer/train4-1002
 RUNS=gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs
 WORK=/d/codex-work/rl-20261001
@@ -110,7 +110,7 @@ while true; do
       if out=$(g compute instances start $VM --zone $ZONE 2>&1); then
         say "trainer VM was $st; started (jobs resume from their checkpoints)"
       else   # 3-Oct: QUOTA_EXCEEDED (other sessions' G4s in us-south1) was logged as "started"
-        say "trainer start refused ($(echo "$out" | grep -oiE 'QUOTA_EXCEEDED|STOCKOUT|ZONE_RESOURCE_POOL_EXHAUSTED|not enough resources|timed out' | head -n 1)); retrying"
+        say "trainer start refused ($(echo "$out" | grep -oiE "QUOTA_EXCEEDED|Quota '[A-Z0-9_]*' exceeded|STOCKOUT|ZONE_RESOURCE_POOL_EXHAUSTED|not enough resources|timed out" | head -n 1)); retrying"
       fi ;;
     "") say "could not read the trainer's status (gcloud login?)" ;;
   esac
