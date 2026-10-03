@@ -1,6 +1,7 @@
-// RL2 page (docs/rl2.html): the turn coach. Five views over published documents and the decision tree:
+// RL2 page (docs/rl2.html): the turn coach. Six views over published documents and the decision tree:
 //   GET /api/v1/rl2/doc/dashboard     builds (a tree), modes, situations, sampling tables
-//   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened)
+//   GET /api/v1/rl2/doc/run-<run id>  one run's decisions, game by game (loaded when a run is opened, and by Lanes for
+//                                     every run of the builds picked there)
 //   GET /api/v1/rl2/doc/rl-campaigns  the RL training campaigns ({campaigns: [{name, updated}]})
 //   GET /api/v1/rl2/doc/rl-campaign-<name>  one campaign: VMs, rounds, policy, totals, sibling groups
 //                                     (gcp/controllers/gtree-rollout/rl_loop.py publish-status, arc3-sglang-parking repo)
@@ -19,7 +20,7 @@ import { draw, pathView } from "./review-ui.js?v=20261003-coach";
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const FIXTURE = params.get("fixture") === "1";
-const VIEWS = ["builds", "decisions", "sampling", "tree", "training"];
+const VIEWS = ["builds", "decisions", "lanes", "sampling", "tree", "training"];
 const MIN_N = 20;
 
 const state = {
@@ -33,12 +34,19 @@ const state = {
   treeCache: {}, frontOpen: true, frontAll: false, frontMode: "coverage", bestOpen: false,
   // training view: the campaign shown, and whether every sibling group is listed
   camp: params.get("campaign"), campAll: false,
+  // lanes view: the builds picked (null = the default set), the game, x axis (moves | index), lanes or the all-games
+  // grid, the zoom; focusDec: a decision the Decisions view scrolls to once drawn (opened from a lane)
+  lnBuilds: params.get("builds") ? new Set(params.get("builds").split(",").filter(Boolean)) : null,
+  lnGame: params.get("view") === "lanes" ? params.get("game") : null, lnX: params.get("x") === "index" ? "index" : "moves",
+  lnAll: params.get("all") === "1", lnZoom: 1, focusDec: null,
 };
 
 // One solid colour per mode; stock is grey. Unknown modes take the spare colours in order.
 const MODE_COLORS = {
   stock: "#8792a2", probe: "#2563eb", rethink: "#7c3aed", execute: "#059669", brief: "#0891b2", recover: "#d97706",
-  transfer: "#db2777", search: "#65a30d", backtrack: "#9a3412",
+  transfer: "#db2777", search: "#65a30d", backtrack: "#9a3412", assumption_check: "#0f766e", role_audit: "#a21caf",
+  untried_element: "#ca8a04", why_won: "#1e3a8a", requirement_audit: "#be123c", action_coverage: "#4d7c0f",
+  look_around: "#0369a1", budget_measure: "#854d0e", commit_test: "#14b8a6",
 };
 const SPARE = ["#0f766e", "#a21caf", "#b45309", "#1e40af", "#be123c", "#4d7c0f"];
 function modeColor(name) {
@@ -71,6 +79,12 @@ function syncUrl() {
   if (FIXTURE) q.set("fixture", "1");
   if (state.view !== "builds") q.set("view", state.view);
   if (state.view === "decisions" && state.run) { q.set("run", state.run); if (state.game) q.set("game", state.game); }
+  if (state.view === "lanes") {
+    if (state.lnGame && !state.lnAll) q.set("game", state.lnGame);
+    if (state.lnBuilds && !sameSet(state.lnBuilds, defaultLaneBuilds())) q.set("builds", [...state.lnBuilds].join(","));
+    if (state.lnX === "index") q.set("x", "index");
+    if (state.lnAll) q.set("all", "1");
+  }
   if (state.view === "sampling" && state.smpBuild) q.set("build", state.smpBuild);
   if (state.view === "tree" && state.tGame) {
     q.set("tgame", state.tGame);
@@ -245,6 +259,11 @@ function drawGame(decs) {
       el("div", { class: "legend rl2-small" }, el("span", {}, el("i", { class: "lg-lvl" }), "tick: level up this turn"),
         el("span", {}, el("i", { class: "lg-go" }), "dark base: game over this turn"))),
     filter, table);
+  if (state.focusDec !== null) {
+    const id = state.focusDec;
+    state.focusDec = null;
+    requestAnimationFrame(() => document.getElementById(`dec-${id}`)?.scrollIntoView({ block: "center" }));
+  }
 }
 function detail(d) {
   const mode = (state.dash.modes || []).find(m => m.name === d.mode);
@@ -312,9 +331,9 @@ function renderSampling() {
   parts.push(el("h3", { class: "rl2-h3" }, "Mode mix per build"), mixBars(byBuild), modesCard());
   $("smpBody").replaceChildren(...parts.filter(Boolean));
 }
-function gridTable(sits, modes, cell, rowExtra, extraHead) {
+function gridTable(sits, modes, cell, rowExtra, extraHead, rowHead = "situation") {
   return el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-grid" },
-    el("thead", {}, el("tr", {}, el("th", { class: "sit" }, "situation"), rowExtra ? el("th", {}, extraHead) : null,
+    el("thead", {}, el("tr", {}, el("th", { class: "sit" }, rowHead), rowExtra ? el("th", {}, extraHead) : null,
       modes.map(m => el("th", {}, modeTag(m))))),
     el("tbody", {}, sits.map(s => el("tr", {},
       el("th", { class: "sit", scope: "row" }, s.label || s.key, el("small", { class: "mono" }, s.key)),
@@ -328,26 +347,26 @@ function shareCell(share, n) {
     title: `${pct(share)}${n !== null && n !== undefined ? ` of decisions, n ${n}` : ""}` },
     pct(share), n !== null && n !== undefined ? el("small", {}, `n ${n}`) : null);
 }
-function deltaCell(c, base) {
+function deltaCell(c, base, minN = MIN_N, baseMin = 0) {
   if (!base || !isNum(c.lvl30) || !isNum(base.lvl30)) return el("td", { class: "rl2-cell none" }, "–");
   const d = c.lvl30 - base.lvl30;
   const pts = Math.round(d * 100);
   const txt = (pts > 0 ? "+" : pts < 0 ? "−" : "±") + Math.abs(pts);
   const tip = `level within 30 actions: ${pct(c.lvl30)} vs stock ${pct(base.lvl30)} · n ${c.n}` +
     (isNum(c.acts) ? ` · ${fx(c.acts)} actions per turn` : "") + (isNum(c.go) ? ` · game over ${pct(c.go)}` : "");
-  if ((c.n || 0) < MIN_N) return el("td", { class: "rl2-cell thin", title: tip + " (too few to tell)" }, txt, el("small", {}, `n ${c.n}`));
+  if ((c.n || 0) < minN || (base.n ?? baseMin) < baseMin) return el("td", { class: "rl2-cell thin", title: tip + " (too few to tell)" }, txt, el("small", {}, `n ${c.n}`));
   const k = Math.min(1, Math.abs(d) / 0.2);
   const mix = Math.round(8 + k * 78);
   const hue = d >= 0 ? "var(--rl2-blue)" : "var(--rl2-red)";
   return el("td", { class: "rl2-cell" + (mix > 52 ? " ink" : ""), style: `background:color-mix(in srgb, ${hue} ${mix}%, var(--sh-card))`, title: tip },
     txt, el("small", {}, `n ${c.n}`));
 }
-function diverging() {
+function diverging(minN = MIN_N) {
   const sw = (hue, mix) => el("i", { style: `background:color-mix(in srgb, ${hue} ${mix}%, var(--sh-card))` });
   return el("div", { class: "legend rl2-small" },
     el("span", {}, sw("var(--rl2-red)", 86), sw("var(--rl2-red)", 40), "worse than stock"),
     el("span", {}, sw("var(--rl2-blue)", 40), sw("var(--rl2-blue)", 86), "better than stock"),
-    el("span", {}, el("i", { class: "lg-thin" }), `fewer than ${MIN_N} turns`),
+    el("span", {}, el("i", { class: "lg-thin" }), `fewer than ${minN} turns`),
     el("span", {}, "numbers are percentage points"));
 }
 function mixBars(byBuild) {
@@ -974,6 +993,323 @@ function siblingGroups(doc) {
   return wrap;
 }
 
+/* ------------------------------------------------------------------ view 3: lanes (every run's play of one game) */
+// One lane per run for the chosen game: each decision is a segment from its game move (f.actions_total) to the next
+// decision's, coloured by the mode picked (stock light grey so the other modes stand out). A tick + the new level number
+// marks a level-up (o.lvl_turn, at the end of that turn), a red mark a game over (o.go_turn), a thin gap a level boundary.
+// Under the lanes: per mode, how often its turns were followed by a level-up / game over / a level within 30 moves,
+// against stock in the same game. "All games" swaps the lanes for a games × modes grid of that last number.
+const LANE_MIN_N = 15;
+const BEST_COMBO = "sbt06hic11/";
+const LANE_H = 34, LANE_TOP = 13, LANE_BAR = 15, AXIS_H = 22, PAD_L = 4, PAD_R = 16;
+const ZOOMS = [1, 2, 4, 8];
+const lanesUi = { token: 0, missing: new Set(), failed: new Set(), paint: null };
+const sameSet = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
+// builds with at least one run that has decisions; the best combo's coach builds first
+function laneBuilds() {
+  const list = (state.dash.builds || []).filter(b => (b.runs || []).some(r => (r.decisions || 0) > 0));
+  const best = b => b.id.startsWith(BEST_COMBO) ? 0 : 1;
+  return list.map((b, i) => [b, i]).sort((x, y) => best(x[0]) - best(y[0]) || x[1] - y[1]).map(x => x[0]);
+}
+const defaultLaneBuilds = () => state.dash ? new Set(laneBuilds().map(b => b.id)) : new Set();
+function shortNames(ids) {
+  const last = id => String(id).split("/").pop().replace(/^coach-/, "") || String(id);
+  const counts = {};
+  for (const id of ids) counts[last(id)] = (counts[last(id)] || 0) + 1;
+  return Object.fromEntries(ids.map(id => [id, counts[last(id)] > 1 ? id : last(id)]));
+}
+const runLetter = run => { const m = String(run).match(/-([a-z])(?:-\d+)?$/); return m ? m[1] : String(run).slice(-6); };
+// a level-up is drawn at the end of its turn; the level it reached is the next decision's level when that is higher
+const newLevel = (decs, i) => {
+  const now = (decs[i].f || {}).level, next = decs[i + 1] && (decs[i + 1].f || {}).level;
+  return isNum(next) && isNum(now) && next > now ? next : isNum(now) ? now + 1 : "?";
+};
+function segEnd(decs, i) {
+  const d = decs[i], at = (d.f || {}).actions_total || 0;
+  const next = decs[i + 1] && (decs[i + 1].f || {}).actions_total;
+  return isNum(next) && next >= at ? next : at + ((d.o && d.o.acts) || 0);
+}
+async function loadRuns(runs, progress) {
+  const need = runs.filter(r => !state.docs["run-" + r.run] && !lanesUi.missing.has(r.run));
+  let done = 0, i = 0;
+  progress(done, need.length);
+  const worker = async () => {
+    while (i < need.length) {
+      const r = need[i++];
+      try { await getDoc("run-" + r.run); } catch (e) {
+        if (e instanceof NotPublished) lanesUi.missing.add(r.run);
+        else if (e.status === 401 || e.status === 403) throw e;
+        else { console.error(r.run, e); lanesUi.failed.add(r.run); }
+      }
+      progress(++done, need.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, need.length) }, worker));
+}
+function modeStats(decs) {
+  const s = {};
+  for (const d of decs) {
+    if (!d.o) continue;
+    const c = s[d.mode] || (s[d.mode] = { n: 0, lvl: 0, go: 0, l30: 0 });
+    c.n++;
+    if (d.o.lvl_turn) c.lvl++;
+    if (d.o.go_turn) c.go++;
+    if (d.o.lvl30) c.l30++;
+  }
+  for (const c of Object.values(s)) { c.lvl_rate = c.lvl / c.n; c.go_rate = c.go / c.n; c.lvl30 = c.l30 / c.n; }
+  return s;
+}
+const orderModes = present => [...modeNames().filter(m => present.includes(m)), ...present.filter(m => !modeNames().includes(m)).sort()];
+
+async function renderLanes() {
+  const token = ++lanesUi.token;
+  const builds = laneBuilds();
+  if (!builds.length) {
+    $("lnPickers").replaceChildren();
+    $("lnBody").replaceChildren(el("div", { class: "empty" }, "No run with coach decisions yet."));
+    return;
+  }
+  const known = new Set(builds.map(b => b.id));
+  if (!state.lnBuilds) state.lnBuilds = defaultLaneBuilds();
+  state.lnBuilds = new Set([...state.lnBuilds].filter(id => known.has(id)));
+  const names = shortNames(builds.map(b => b.id));
+  const runsOf = b => (b.runs || []).filter(r => (r.decisions || 0) > 0);
+  const chips = el("div", { class: "rl2-lbuilds", role: "group", "aria-label": "builds" },
+    el("span", { class: "muted rl2-small" }, "builds"),
+    builds.map(b => {
+      const on = state.lnBuilds.has(b.id);
+      return el("button", { type: "button", class: "rl2-fbtn" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false",
+        title: `${b.id}${b.label ? " · " + b.label : ""}\n${runsOf(b).length} run(s) with decisions`,
+        onclick: () => { on ? state.lnBuilds.delete(b.id) : state.lnBuilds.add(b.id); renderLanes(); } },
+        names[b.id], el("small", { class: "muted" }, runsOf(b).length));
+    }),
+    el("button", { type: "button", class: "rl2-fbtn", onclick: () => { state.lnBuilds = defaultLaneBuilds(); renderLanes(); } }, "all"));
+  const seg = (label, opts, cur, set) => el("div", { class: "rl2-seg", role: "group", "aria-label": label }, opts.map(([k, t]) =>
+    el("button", { type: "button", class: cur === k ? "on" : "", "aria-pressed": cur === k ? "true" : "false", onclick: () => { set(k); renderLanes(); } }, t)));
+  const status = el("span", { class: "muted rl2-small" });
+  const gameSlot = el("span", { class: "rl2-lgame" });
+  const controls = el("div", { class: "rl2-lctl" }, gameSlot,
+    seg("show", [[false, "lanes"], [true, "all games"]], state.lnAll, v => { state.lnAll = v; }),
+    state.lnAll ? null : seg("x axis", [["moves", "game moves"], ["index", "decision #"]], state.lnX, v => { state.lnX = v; }),
+    state.lnAll ? null : seg("zoom", ZOOMS.map(z => [z, z === 1 ? "fit" : z + "×"]), state.lnZoom, v => { state.lnZoom = v; }),
+    status);
+  $("lnPickers").replaceChildren(chips, controls);
+  syncUrl();
+
+  const picked = builds.filter(b => state.lnBuilds.has(b.id));
+  const runs = picked.flatMap(b => runsOf(b).map(r => ({ ...r, build: b.id })));
+  if (!runs.length) { $("lnBody").replaceChildren(el("div", { class: "empty" }, "Pick at least one build.")); return; }
+  const body = $("lnBody");
+  if (runs.some(r => !state.docs["run-" + r.run] && !lanesUi.missing.has(r.run))) body.replaceChildren(el("div", { class: "empty" }, "loading…"));
+  await loadRuns(runs, (k, n) => { if (token === lanesUi.token && n) status.textContent = `loading runs ${k} of ${n}…`; });
+  if (token !== lanesUi.token) return;
+  const loaded = runs.filter(r => state.docs["run-" + r.run]).map(r => ({ ...r, doc: state.docs["run-" + r.run] }));
+  const gone = runs.length - loaded.length;
+  status.textContent = `${loaded.length} run${loaded.length === 1 ? "" : "s"}` + (gone ? ` · ${gone} not published` : "");
+  if (!loaded.length) { body.replaceChildren(el("div", { class: "empty" }, "None of these runs' decisions are published yet.")); return; }
+  const games = [...new Set(loaded.flatMap(r => Object.keys(r.doc.games || {})))].sort();
+  if (!games.length) { body.replaceChildren(el("div", { class: "empty" }, "These runs have no decisions.")); return; }
+  // default: the game the most picked runs played (ties: the first by id)
+  const nRuns = g => loaded.filter(r => ((r.doc.games || {})[g] || []).length).length;
+  if (!state.lnGame || !games.includes(state.lnGame)) state.lnGame = games.reduce((a, g) => nRuns(g) > nRuns(a) ? g : a, games[0]);
+  if (!state.lnAll) {
+    gameSlot.replaceChildren(el("label", {}, "game ", el("select", { "aria-label": "game", onchange: e => { state.lnGame = e.target.value; renderLanes(); } },
+      games.map(g => el("option", { value: g, selected: g === state.lnGame },
+        `${g} (${loaded.filter(r => (r.doc.games || {})[g]).length} runs)`)))));
+  }
+  syncUrl();
+  if (state.lnAll) { body.replaceChildren(allGamesGrid(loaded, games)); return; }
+
+  const game = state.lnGame;
+  const lanes = loaded.filter(r => ((r.doc.games || {})[game] || []).length).map(r => {
+    const dash = allRuns().find(x => x.run === r.run) || {};
+    const pg = ((r.doc.score || {}).per_game || {})[game] ?? (dash.per_game || {})[game];
+    const decs = r.doc.games[game];
+    return { run: r.run, build: r.build, decs, name: `${names[r.build]} ${runLetter(r.run)}`,
+      score: isNum(pg) ? fx(pg) : `all-25 ${fx((r.doc.score || {}).all25 ?? r.all25)}`, perGame: isNum(pg),
+      end: segEnd(decs, decs.length - 1) };
+  });
+  if (!lanes.length) { body.replaceChildren(el("div", { class: "empty" }, `No picked run has decisions in ${game}.`)); return; }
+  const all = lanes.flatMap(l => l.decs);
+  body.replaceChildren(laneChart(lanes, game), el("h3", { class: "rl2-h3" }, `Mode effect for ${game}`), effectTable(all, lanes.length));
+  lanesUi.paint();
+}
+
+function laneChart(lanes, game) {
+  const present = orderModes([...new Set(lanes.flatMap(l => l.decs.map(d => d.mode)))]);
+  const labels = el("div", { class: "rl2-llabels" },
+    el("div", { class: "rl2-laxis muted", style: `height:${AXIS_H}px` }, state.lnX === "moves" ? "moves →" : "decision →"),
+    lanes.map(l => el("div", { class: "rl2-llabel", style: `height:${LANE_H}px`,
+      title: `${l.run}\nbuild ${l.build}\n${l.decs.length} decisions · ${l.perGame ? "score in " + game : "no per-game score; run"} ${l.score}` },
+      el("span", { class: "rl2-lname" }, l.name), el("span", { class: "mono muted" }, l.score))));
+  const canvas = el("canvas", { class: "rl2-lcanvas", role: "img",
+    "aria-label": `${lanes.length} runs of ${game}, one lane each, coloured by the coach mode of each decision` });
+  const scroll = el("div", { class: "rl2-lscroll" }, canvas);
+  const tip = el("div", { class: "rl2-ltip", hidden: true });
+  const chart = el("div", { class: "rl2-lchart" }, labels, scroll, tip);
+  let hits = [];
+  const paint = () => {
+    if (!canvas.isConnected) return;
+    const css = getComputedStyle(canvas);
+    const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
+    const ink = v("--text", "#111"), muted = v("--muted", "#888"), line = v("--wash-line", "#ddd"), card = v("--sh-card", "#fff"),
+      track = v("--wash", "#f3f4f6"), stock = v("--rl2-stock", "#d4d9e1"), red = v("--rl2-red", "#dc2626");
+    const avail = Math.max(160, scroll.clientWidth);
+    const W = Math.round(avail * state.lnZoom);
+    const H = AXIS_H + lanes.length * LANE_H;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const byMoves = state.lnX === "moves";
+    const maxX = Math.max(1, ...lanes.map(l => byMoves ? l.end : l.decs.length));
+    const sx = x => PAD_L + x * (W - PAD_L - PAD_R) / maxX;
+    // axis: ticks every 1/2/5 × 10^k (nearest to ~70 px), faint guides through every lane
+    const raw = maxX / Math.max(2, Math.floor((W - PAD_L - PAD_R) / 70));
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 5, 10].map(k => k * mag).reduce((a, k) => Math.abs(k - raw) < Math.abs(a - raw) ? k : a);
+    g.font = "10px " + v("--rl-mono", "monospace");
+    g.textBaseline = "alphabetic";
+    for (let x = 0; x <= maxX; x += step) {
+      const px = Math.round(sx(x)) + 0.5;
+      g.fillStyle = line;
+      g.fillRect(px - 0.5, AXIS_H - 4, 1, H - AXIS_H + 4);
+      g.fillStyle = muted;
+      g.textAlign = x === 0 ? "left" : "center";
+      g.fillText(String(x), px, AXIS_H - 8);
+    }
+    hits = [];
+    lanes.forEach((l, li) => {
+      const y0 = AXIS_H + li * LANE_H, by = y0 + LANE_TOP;
+      g.fillStyle = track;
+      g.fillRect(sx(0), by, Math.max(2, sx(byMoves ? l.end : l.decs.length) - sx(0)), LANE_BAR);
+      const segs = [];
+      l.decs.forEach((d, i) => {
+        const a = byMoves ? (d.f || {}).actions_total || 0 : i, b = byMoves ? segEnd(l.decs, i) : i + 1;
+        const x0 = sx(a), w = Math.max(2, sx(b) - x0);
+        g.fillStyle = d.mode === "stock" ? stock : modeColor(d.mode);
+        g.fillRect(x0, by, w, LANE_BAR);
+        segs.push([x0, x0 + w, i]);
+      });
+      // level boundaries: a thin gap where the level changes; level-ups: a tick above the lane + the new level
+      g.textAlign = "left";
+      l.decs.forEach((d, i) => {
+        const [x0, x1] = segs[i];
+        if (i && (d.f || {}).level !== (l.decs[i - 1].f || {}).level) { g.fillStyle = card; g.fillRect(x0 - 1, by, 2, LANE_BAR); }
+        if (d.o && d.o.lvl_turn) {
+          g.fillStyle = ink;
+          g.fillRect(Math.round(x1) - 1, y0 + 2, 2, LANE_TOP - 2 + LANE_BAR);
+          g.fillText(String(newLevel(l.decs, i)), Math.round(x1) + 2, y0 + 10);
+        }
+        if (d.o && d.o.go_turn) {
+          g.fillStyle = red;
+          g.beginPath();
+          g.moveTo(x1 - 1, by + LANE_BAR + 1); g.lineTo(x1 + 3, by + LANE_BAR + 6); g.lineTo(x1 - 5, by + LANE_BAR + 6);
+          g.closePath(); g.fill();
+        }
+      });
+      hits.push(segs);
+    });
+  };
+  const find = e => {
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const li = Math.floor((y - AXIS_H) / LANE_H);
+    if (li < 0 || li >= lanes.length || y - AXIS_H - li * LANE_H < LANE_TOP - 4) return null;
+    const segs = hits[li] || [];
+    let best = null;
+    for (const s of segs) if (x >= s[0] - 1 && x <= s[1] + 1) best = s; // later segments win on overlap
+    return best ? { lane: lanes[li], d: lanes[li].decs[best[2]], i: best[2] } : null;
+  };
+  canvas.addEventListener("pointermove", e => {
+    const h = find(e);
+    if (!h) { tip.hidden = true; canvas.style.cursor = ""; return; }
+    canvas.style.cursor = "pointer";
+    const { lane, d, i } = h, f = d.f || {}, o = d.o;
+    const out = !o ? "last decision of the game" : [o.lvl_turn ? `level up this turn (to ${newLevel(lane.decs, i)})` : null,
+      o.go_turn ? "game over this turn" : null, !o.lvl_turn && o.lvl30 ? "level within 30 moves" : null].filter(Boolean).join(" · ") || "no level within 30 moves";
+    tip.replaceChildren(el("div", { class: "mono rl2-small" }, `${lane.name} · #${d.d}`), modeTag(d.mode),
+      el("div", { class: "rl2-small" }, `level ${val(f.level)} · moves ${val(f.actions_total)}→${segEnd(lane.decs, i)}` +
+        (o && isNum(o.acts) ? ` (${o.acts})` : "") + ` · cap ${val(d.cap)}`),
+      el("div", { class: "rl2-small " + (o && o.go_turn ? "rl2-bad" : o && (o.lvl_turn || o.lvl30) ? "rl2-yes" : "muted") }, out),
+      el("div", { class: "muted rl2-small" }, "click to open in Decisions"));
+    tip.hidden = false;
+    const cr = chart.getBoundingClientRect();
+    const left = Math.min(e.clientX - cr.left + 12, cr.width - tip.offsetWidth - 4);
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = (e.clientY - cr.top + 14) + "px";
+  });
+  canvas.addEventListener("pointerleave", () => { tip.hidden = true; });
+  canvas.addEventListener("click", e => {
+    const h = find(e);
+    if (h) openDecision(h.lane.run, game, h.d.d);
+  });
+  lanesUi.paint = paint; // renderLanes paints once the chart is in the page (it needs the container's width)
+  return el("div", { class: "card rl2-lanes" }, chart,
+    el("div", { class: "legend rl2-small" }, present.map(m => el("span", {},
+      el("i", { style: `background:${m === "stock" ? "var(--rl2-stock)" : modeColor(m)}` }), m)),
+      el("span", {}, el("i", { class: "lg-lvl" }), "tick + number: level up (the new level)"),
+      el("span", {}, el("i", { class: "lg-golane" }), "red mark: game over"),
+      el("span", {}, el("i", { class: "lg-gap" }), "gap: level boundary")));
+}
+function openDecision(run, game, d) {
+  state.run = run;
+  state.game = game;
+  state.modeFilter.clear();
+  state.open = new Set([d]);
+  state.focusDec = d;
+  show("decisions");
+  $("view-decisions").scrollIntoView({ block: "start" });
+}
+function effectTable(decs, nLanes) {
+  const s = modeStats(decs);
+  const modes = orderModes(Object.keys(s));
+  if (!modes.length) return el("div", { class: "empty" }, "No decision with an outcome yet.");
+  const base = s.stock ? { lvl30: s.stock.lvl30, n: s.stock.n } : null;
+  const bar = x => el("span", { class: "rl2-gbar" }, el("span", { class: "rl2-bar" }, el("i", { style: `width:${(100 * x).toFixed(1)}%` })),
+    el("b", { class: "mono" }, pct(x)));
+  return el("div", {},
+    el("p", { class: "sub" }, `Every decision with an outcome in the ${nLanes} lane${nLanes === 1 ? "" : "s"} above (a game's last decision has none). ` +
+      `"vs stock" is level within 30 moves minus stock's in this game, in percentage points: blue better, red worse, grey under ${LANE_MIN_N} turns.`),
+    el("div", { class: "rl2-scroll" }, el("table", { class: "rl2-table rl2-effect" },
+      el("thead", {}, el("tr", {}, ["mode", "n", "level up this turn", "game over this turn", "level within 30", "vs stock"].map(h => el("th", {}, h)))),
+      el("tbody", {}, modes.map(m => {
+        const c = s[m];
+        return el("tr", {}, el("td", {}, modeTag(m)), el("td", { class: "mono" }, c.n), el("td", {}, bar(c.lvl_rate)),
+          el("td", { class: c.go ? "mono rl2-bad" : "mono muted" }, pct(c.go_rate)), el("td", {}, bar(c.lvl30)),
+          m === "stock" ? el("td", { class: "rl2-cell none" }, "base")
+            : base ? deltaCell({ n: c.n, lvl30: c.lvl30, go: c.go_rate }, base, LANE_MIN_N, LANE_MIN_N) : el("td", { class: "rl2-cell none" }, "no stock"));
+      })))));
+}
+function allGamesGrid(loaded, games) {
+  const stats = Object.fromEntries(games.map(g => [g, modeStats(loaded.flatMap(r => (r.doc.games || {})[g] || []))]));
+  const modes = orderModes([...new Set(Object.values(stats).flatMap(s => Object.keys(s)))]).filter(m => m !== "stock");
+  const rows = games.map(g => ({ game: g, key: `${Object.values(stats[g]).reduce((t, c) => t + c.n, 0)} turns`,
+    label: el("button", { type: "button", class: "rl2-glink mono", title: `show the lanes of ${g}`,
+      onclick: () => { state.lnGame = g; state.lnAll = false; renderLanes(); } }, g) }));
+  return el("div", {},
+    el("p", { class: "sub" }, `Each cell: level within 30 moves after that mode's turns minus the same after stock turns, in the same game, ` +
+      `over the ${loaded.length} loaded runs. Click a game for its lanes.`),
+    gridTable(rows, modes, (row, m) => {
+      const c = stats[row.game][m], st = stats[row.game].stock;
+      if (!c) return null;
+      if (!st) return el("td", { class: "rl2-cell none", title: "no stock turn in this game" }, "–");
+      return deltaCell({ n: c.n, lvl30: c.lvl30, go: c.go_rate }, { lvl30: st.lvl30, n: st.n }, LANE_MIN_N, LANE_MIN_N);
+    }, row => { const st = stats[row.game].stock; return st ? `${pct(st.lvl30)} (n ${st.n})` : "–"; }, "stock ≤30", "game"),
+    diverging(LANE_MIN_N));
+}
+let lanesResize = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(lanesResize);
+  lanesResize = setTimeout(() => { if (state.view === "lanes" && lanesUi.paint) lanesUi.paint(); }, 120);
+});
+new MutationObserver(() => { if (state.view === "lanes" && lanesUi.paint) requestAnimationFrame(lanesUi.paint); })
+  .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
 /* ------------------------------------------------------------------ shell */
 function show(view) {
   state.view = view;
@@ -990,7 +1326,7 @@ function show(view) {
   if (view === "tree") state.treeShown = true;
   if (view === "training" && state.trainingShown) return;
   if (view === "training") state.trainingShown = true;
-  const fn = { builds: renderBuilds, decisions: renderDecisions, sampling: renderSampling, tree: renderTree,
+  const fn = { builds: renderBuilds, decisions: renderDecisions, lanes: renderLanes, sampling: renderSampling, tree: renderTree,
     training: renderTraining }[view];
   Promise.resolve().then(fn).catch(err => {
     console.error(view, err);

@@ -701,13 +701,18 @@ class ShippedFiles(unittest.TestCase):
         page = (ROOT / "docs" / "rl2.html").read_text(encoding="utf-8")
         script = (ROOT / "docs" / "static" / "js" / "rl2.js").read_text(encoding="utf-8")
         views = re.search(r"const VIEWS = \[([^\]]*)\]", script).group(1)
-        for view in ("builds", "decisions", "sampling", "tree", "training"):
+        for view in ("builds", "decisions", "lanes", "sampling", "tree", "training"):
             self.assertIn(f'data-view="{view}"', page, view)
             self.assertIn(f'id="view-{view}"', page, view)
             self.assertIn(f'"{view}"', views, view)
         fixture = json.loads((ROOT / "docs" / "static" / "data" / "rl2-fixture.json").read_text(encoding="utf-8"))
         names = [c["name"] for c in fixture["docs"]["rl-campaigns"]["campaigns"]]
         self.assertTrue(any(f"rl-campaign-{n}" in fixture["docs"] for n in names), "a fake campaign for ?fixture=1")
+        # Lanes puts runs of several builds side by side: the fixture has run docs for 3+ builds sharing 2+ games
+        runs = [d for name, d in fixture["docs"].items() if name.startswith("run-")]
+        self.assertGreaterEqual(len({d["build"] for d in runs}), 3, "fake run docs for 3 builds")
+        shared = set.intersection(*(set(d["games"]) for d in runs))
+        self.assertGreaterEqual(len(shared), 2, "games every fake run played")
 
     def test_site_nav_has_rl_and_review_not_harness_lab(self) -> None:
         pages = [p for p in (ROOT / "docs").glob("*.html") if 'class="sitetabs"' in p.read_text(encoding="utf-8")]
