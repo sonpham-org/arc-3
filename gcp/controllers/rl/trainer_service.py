@@ -146,8 +146,11 @@ def _run_job(job_id: str, job: dict, a, out: Path, log: Path) -> int:
         rc = sh(args["command"], log)
     else:
         raise ValueError(job["cmd"])
-    (out / "EXIT").write_text(str(rc))
+    # everything the job wrote first (a merge's shards are ~72 GB), EXIT last: watchers act on EXIT, so it must not
+    # reach GCS before the files it vouches for (3-Oct: EXIT used to go up inside the same copy, in any order)
     gput(out, f"{ROOT}/{a.service}/out/")
+    (out / "EXIT").write_text(str(rc))
+    gput(out / "EXIT", f"{ROOT}/{a.service}/out/{job_id}/EXIT")
     return rc
 
 

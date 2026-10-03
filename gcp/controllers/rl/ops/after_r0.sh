@@ -18,6 +18,10 @@ TAG=$(date -u +%m%d)
 say() { echo "$(date -u +%H:%M) $*"; }
 
 until timeout 120 gcloud storage cat "$OUT/$MJ/EXIT" >/dev/null 2>&1; do sleep 120; done
+# the service's heartbeat leaves "running <merge job>" only once the merged shards are uploaded (older service code
+# uploads EXIT inside the same copy as the shards, in any order)
+while hb=$(timeout 120 gcloud storage cat "${OUT%/out}/status.json" 2>/dev/null); [ -z "$hb" ] || \
+      { echo "$hb" | grep -q '"state": "running"' && echo "$hb" | grep -q "\"job\": \"$MJ\""; }; do sleep 60; done
 code=$(timeout 120 gcloud storage cat "$OUT/$MJ/EXIT" | tr -d '\r\n ')
 if [ "$code" != "0" ]; then
   say "merge failed (exit $code); last log lines:"; timeout 120 gcloud storage cat "$OUT/$MJ/job.log" | tail -n 30; exit 1
