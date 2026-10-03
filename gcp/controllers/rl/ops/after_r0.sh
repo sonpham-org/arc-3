@@ -15,6 +15,7 @@ NBDIR=/d/codex-work/daniel-base-20261001/build
 IN=gs://cellens-ai-artifacts/arc3-duck/daniel-base/kaggle-input-r0
 RUNS_TXT=/d/codex-work/rl-20261001/review-runs.txt
 TAG=$(date -u +%m%d)
+LETTER=${LETTER:-a}          # a rerun of the panels gets the next letter (3-Oct: b, after the runner killed the a runs)
 say() { echo "$(date -u +%H:%M) $*"; }
 
 until timeout 120 gcloud storage cat "$OUT/$MJ/EXIT" >/dev/null 2>&1; do sleep 120; done
@@ -40,9 +41,9 @@ launch() {   # <label> <notebook build name>: first zone with capacity
   say "$label: no zone had capacity ($(grep -o -E 'STOCKOUT|QUOTA[A-Z_]*' "/tmp/after_r0_$label.log" | head -1))" >&2
   return 1
 }
-H=$(launch "p5held-r0-a-$TAG" noborder-panel-held5x5-v1)
-T=$(launch "p5train-r0-a-$TAG" noborder-panel-train5x5-v1)
-K=$(launch "p4hard-r0-a-$TAG" noborder-panel-hard4x6-v1)
+H=$(launch "p5held-r0-$LETTER-$TAG" noborder-panel-held5x5-v1)
+T=$(launch "p5train-r0-$LETTER-$TAG" noborder-panel-train5x5-v1)
+K=$(launch "p4hard-r0-$LETTER-$TAG" noborder-panel-hard4x6-v1)
 say "launched: $H $T $K"
 
 bash "$OPS/make_eval_mirror.sh" r0 "$OUT/$MJ/merged" || { say "LoRA input copy failed"; exit 1; }
