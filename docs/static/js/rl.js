@@ -280,6 +280,86 @@ function niceMax(v) {
   const steps = [4, 8, 12, 16, 20, 24, 32, 40, 48, 60, 80];   // quarters stay whole numbers
   return steps.find(s => s >= v) || Math.ceil(v / 20) * 20;
 }
+
+/* ------------------------------------------------------------------ score per play, round by round (Son 3-Oct) */
+// One small chart per panel: the mean Kaggle-style score per play (0-100) of each model, in round order, with its
+// standard error. The panel's score is the mean over its games of each game's mean score, so every game counts the
+// same; its error is sqrt(sum over games of variance / plays) / games, like the panel totals of levels.
+function panelScore(data) {
+  if (!data || !data.plays.length) return null;
+  const by = {};
+  data.plays.forEach(q => { if (q.score !== null && q.score !== undefined) (by[q.game] = by[q.game] || []).push(q.score); });
+  const games = Object.values(by);
+  if (!games.length) return null;
+  const varn = games.map(v => { const m = mean(v); return v.length > 1 ? v.reduce((s, x) => s + (x - m) ** 2, 0) / (v.length - 1) / v.length : 0; });
+  return { score: mean(games.map(mean)), se: Math.sqrt(varn.reduce((s, x) => s + x, 0)) / games.length,
+           n: data.plays.length, playing: data.playing > 0 };
+}
+function trendChart(d, p, box) {
+  const cols = d.models.map((m, i) => ({ m, i, s: panelScore(p.models[m.key]) }));
+  const pts = cols.filter(c => c.s);
+  const W = 360, H = 190, L = 34, R = 18, T = 22, B = 30, pw = W - L - R, ph = H - T - B;
+  const ymax = niceMax(Math.max(8, ...pts.map(c => c.s.score + c.s.se)) * 1.12);
+  const pad = 28;                    // keeps the end columns' labels off the y axis and the card edge
+  const x = i => L + pad + (cols.length > 1 ? (pw - 2 * pad) * i / (cols.length - 1) : (pw - 2 * pad) / 2),
+        y = v => T + ph * (1 - v / ymax);
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend", role: "img",
+    "aria-label": `${p.label}: score per play by round, ` + pts.map(c => `${c.m.short} ${c.s.score.toFixed(1)}`).join(", ") });
+  for (let k = 0; k <= 4; k++) {
+    const v = ymax * k / 4;
+    svg.append(sv("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "gridl" }));
+    svg.append(sv("text", { x: L - 7, y: y(v) + 4, class: "axis", "text-anchor": "end" }, Math.round(v)));
+  }
+  cols.forEach(c => svg.append(sv("text", { x: x(c.i), y: H - 8, class: "colh" + (c.s ? "" : " ghost"), "text-anchor": "middle" }, c.m.short)));
+  pts.forEach(c => {
+    if (!(c.s.se > 0) || c.s.playing) return;      // a run still playing has no meaningful error yet
+    const lo = y(Math.max(0, c.s.score - c.s.se)), hi = y(c.s.score + c.s.se);
+    svg.append(sv("line", { x1: x(c.i), x2: x(c.i), y1: lo, y2: hi, class: "wh" }));
+    for (const yy of [lo, hi]) svg.append(sv("line", { x1: x(c.i) - 4, x2: x(c.i) + 4, y1: yy, y2: yy, class: "wh" }));
+  });
+  // the line joins finished models only: a run still playing has partial scores (its games are not over), so it is
+  // drawn as a hollow point marked "playing", off the line
+  const done = pts.filter(c => !c.s.playing);
+  if (done.length > 1) svg.append(sv("path", { d: done.map((c, k) => (k ? "L" : "M") + x(c.i).toFixed(1) + "," + y(c.s.score).toFixed(1)).join(""), class: "tl" }));
+  // direct labels on the first and the latest finished point only
+  const labelled = [...new Set([done[0], done[done.length - 1]])].filter(Boolean);
+  labelled.forEach(c => svg.append(sv("text", { x: x(c.i), y: y(c.s.score + c.s.se) - 7, class: "tv", "text-anchor": "middle" }, c.s.score.toFixed(1))));
+  pts.filter(c => c.s.playing).forEach(c => svg.append(sv("text", { x: x(c.i), y: y(c.s.score) + 18, class: "tp", "text-anchor": "middle" }, "playing")));
+  const tip = el("div", { class: "tip" });
+  pts.forEach(c => {
+    svg.append(sv("circle", { cx: x(c.i), cy: y(c.s.score), r: 5, class: "tm" + (c.s.playing ? " open" : "") }));
+    const hit = sv("circle", { cx: x(c.i), cy: y(c.s.score), r: 16, class: "hit" });
+    hit.addEventListener("mouseenter", () => {
+      tip.replaceChildren(el("div", {}, el("b", {}, c.m.label)),
+        el("div", {}, "score per play ", el("b", { class: "mono" }, c.s.score.toFixed(1)), ` ± ${c.s.se.toFixed(1)}`),
+        el("div", {}, `${c.s.n} plays${c.s.playing ? ", still playing" : ""}`));
+      const sp = svg.getBoundingClientRect(), bb = box.getBoundingClientRect();
+      tip.style.left = (sp.left - bb.left + (x(c.i) / W) * sp.width) + "px";
+      tip.style.top = (sp.top - bb.top + (y(c.s.score) / H) * sp.height) + "px";
+      tip.style.opacity = 1;
+    });
+    hit.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+    svg.append(hit);
+  });
+  return [svg, tip];
+}
+function renderTrends(d) {
+  document.getElementById("betterTrends").replaceChildren(...d.panels.map(p => {
+    const base = panelScore(p.models.base);
+    const later = d.models.slice(1).map(m => ({ m, s: panelScore(p.models[m.key]) })).filter(x => x.s);
+    const fin = later.filter(x => !x.s.playing), last = fin[fin.length - 1], running = later.find(x => x.s.playing);
+    let chip = el("span", { class: running ? "chip active" : "chip" }, running ? `${running.m.short} playing` : "before only, so far");
+    if (base && !base.playing && last) {
+      const dv = last.s.score - base.score, se = Math.hypot(base.se, last.s.se), clear = Math.abs(dv) > 2 * se;
+      chip = el("span", { class: "chip " + (clear ? (dv > 0 ? "done" : "failed") : "") },
+        `${last.m.short}: ${dv >= 0 ? "+" : ""}${dv.toFixed(1)} ± ${se.toFixed(1)}` + (clear ? "" : " · noise"));
+    }
+    const card = el("div", { class: "card trendcard" });
+    card.append(el("div", { class: "th" }, el("h3", {}, p.label), chip),
+      el("div", { class: "tsub" }, "score per play (0-100), round by round"), ...trendChart(d, p, card));
+    return card;
+  }));
+}
 function roundsChart(d, p) {
   const cols = d.models.map((m, i) => ({ m, i, data: p.models[m.key] }));
   if (d.next_model) cols.push({ m: d.next_model, i: cols.length, data: null, ghost: true });
@@ -429,7 +509,7 @@ function render(d) {
   DATA = d;
   document.getElementById("updated").textContent = "updated " + ago(d.updated);
   document.getElementById("footR").textContent = `Data ${new Date(d.updated).toLocaleString()} · refreshes every 5 min`;
-  for (const [name, fn] of [["hero", renderHero], ["better", renderBetter], ["loop", renderLoop], ["training", renderTraining], ["games", renderGames], ["panels", renderPanels]]) {
+  for (const [name, fn] of [["hero", renderHero], ["trends", renderTrends], ["better", renderBetter], ["loop", renderLoop], ["training", renderTraining], ["games", renderGames], ["panels", renderPanels]]) {
     try { fn(d); } catch (e) { console.error(name, e); }
   }
 }
