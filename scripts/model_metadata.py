@@ -11,6 +11,10 @@ from typing import Any
 
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+KAGGLE_VERSION_RE = re.compile(r"^[1-9][0-9]{0,5}$")
+# A Kaggle Model handle pins the files Kaggle serves (owner/model + version number) but has no git commit
+# (Son 2-Oct-2026: "allow the Kaggle handle", for runs of Daniel Franzen's notebook on his Kaggle models).
+KAGGLE_SOURCE = "kaggle-model"
 
 
 class ModelMetadataError(ValueError):
@@ -43,6 +47,22 @@ def validate_model_metadata(value: Any, *, require_revision: bool = True) -> dic
     revision = value.get("revision")
     if not isinstance(model_id, str) or not MODEL_ID_RE.fullmatch(model_id):
         raise ModelMetadataError("model.id must be a non-empty repository/model identifier")
+    if value.get("source") == KAGGLE_SOURCE:
+        version = str(value.get("kaggle_version") or "")
+        if not KAGGLE_VERSION_RE.fullmatch(version):
+            raise ModelMetadataError("model.kaggle_version must be the Kaggle model version number")
+        if revision not in (None, ""):
+            raise ModelMetadataError("a Kaggle-model entry is pinned by kaggle_version, not a git revision")
+        normalized = dict(value)
+        normalized["id"] = model_id.strip()
+        normalized["kaggle_version"] = version
+        normalized.pop("revision", None)
+        normalized["display"] = f"{normalized['id']}@kaggle-v{version}"
+        if normalized.get("quantization") is not None and not isinstance(normalized["quantization"], str):
+            raise ModelMetadataError("model.quantization must be a string when present")
+        if normalized.get("evidence") is not None and not isinstance(normalized["evidence"], list):
+            raise ModelMetadataError("model.evidence must be a list when present")
+        return normalized
     if require_revision and (not isinstance(revision, str) or not REVISION_RE.fullmatch(revision)):
         raise ModelMetadataError("model.revision must be the full 40-character lowercase commit SHA")
     if revision not in (None, "") and (
@@ -87,6 +107,7 @@ def extract_model_metadata(run_dir: Path, *, require_revision: bool = True) -> d
     revision: Any = None
     quantization: Any = None
     evidence: list[dict[str, str]] = []
+    kaggle: dict[str, Any] | None = None
     if launch_path.is_file():
         launch = _read_object(launch_path)
         model = launch.get("model") or {}
@@ -108,12 +129,18 @@ def extract_model_metadata(run_dir: Path, *, require_revision: bool = True) -> d
         revision = revision or info_revision
         quantization = info.get("quantization") or quantization
         evidence.append(_file_evidence(info_path))
+        if info.get("source") == KAGGLE_SOURCE:
+            kaggle = {"source": KAGGLE_SOURCE, "kaggle_version": info.get("kaggle_version")}
+            if info.get("draft_model"):
+                kaggle["draft_model"] = str(info["draft_model"])
 
     value: dict[str, Any] = {
         "id": model_id,
         "revision": revision,
         "evidence": evidence,
     }
+    if info_path.is_file() and kaggle:
+        value.update(kaggle)
     if quantization:
         value["quantization"] = str(quantization)
     return validate_model_metadata(value, require_revision=require_revision)
