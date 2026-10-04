@@ -289,6 +289,70 @@ class TestRecords(unittest.TestCase):
         self.assertEqual(br.kept_levels(sp, [1, 1, 5], mode="cleared", min_level_score=0.25), set())
         self.assertEqual(br.kept_levels(sp, [1, 1, 5], mode="cleared", min_level_score=0.25, frontier=[2]), {2})
 
+    def test_best_clears_across_passes(self):
+        """3-Oct: every pass of a run is read; per level the fastest qualifying clear trains."""
+        fast = sm.level_spans(_events())                   # L1 in 4 actions, L2 in 3
+        slow = {"start": {1: 1, 2: 7, 3: 9}, "clear": {1: 6, 2: 8}}   # L1 in 6, L2 in 2
+        only1 = {"start": {1: 1, 2: 4}, "clear": {1: 3}}   # L1 in 3, never cleared L2
+        human = [3, 4, 5]
+        self.assertEqual(br.best_clears({0: slow, 1: fast}, human, min_level_score=0.25), {1: {1}, 0: {2}})
+        self.assertEqual(br.best_clears({0: slow, 1: fast, 2: only1}, human, min_level_score=0.25),
+                         {2: {1}, 0: {2}})
+        self.assertEqual(br.best_clears({0: slow, 1: fast, 2: only1}, human, min_level_score=0.25, n_best=2),
+                         {2: {1}, 1: {1, 2}, 0: {2}})
+        # a clear below the efficiency bar trains only on a frontier level, as with kept_levels
+        self.assertEqual(br.best_clears({0: fast}, [1, 1, 5], min_level_score=0.25), {})
+        self.assertEqual(br.best_clears({0: fast}, [1, 1, 5], min_level_score=0.25, frontier=[2]), {0: {2}})
+        self.assertEqual(br.best_clears({}, human, min_level_score=0.25), {})
+
+    def test_level_advantages(self):
+        """4-Oct relative credit: reward - mean over the game's attempts, per level; stuck levels count 0."""
+        fast = sm.level_spans(_events())                   # L1 in 4, L2 in 3, ends on L3
+        slow = {"start": {1: 1, 2: 7, 3: 9}, "clear": {1: 6, 2: 8}}   # L1 in 6, L2 in 2, ends on L3
+        only1 = {"start": {1: 1, 2: 4}, "clear": {1: 3}}   # L1 in 3, stuck on L2
+        adv = br.level_advantages({0: fast, 1: slow, 2: only1}, [3, 4, 5])
+        m1 = ((3 / 4) ** 2 + (3 / 6) ** 2 + 1.0) / 3       # level-1 rewards: 0.5625, 0.25, 1.0
+        m2 = (1.15 + 1.15 + 0.0) / 3                       # level 2: both clears capped at 1.15, only1 stuck = 0
+        self.assertEqual(set(adv), {0, 1, 2})
+        self.assertAlmostEqual(adv[0][1], 0.5625 - m1)
+        self.assertAlmostEqual(adv[0][2], 1.15 - m2)
+        self.assertAlmostEqual(adv[1][1], 0.25 - m1)
+        self.assertAlmostEqual(adv[2][1], 1.0 - m1)
+        self.assertAlmostEqual(adv[2][2], 0.0 - m2)        # stuck where two others cleared: negative
+        self.assertNotIn(3, adv[0])                        # nobody cleared level 3: no signal there
+        cut = br.level_advantages({0: fast, 1: slow, 2: only1}, [3, 4, 5], min_abs=0.05)
+        self.assertNotIn(1, cut[0])                        # |0.5625 - 0.604| < 0.05
+        self.assertEqual(br.level_advantages({}, [3]), {})
+
+    def test_advantage_weights_on_records(self):
+        sp = sm.level_spans(_events())
+        msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+        rows = []
+        for step in range(1, 6):
+            rows.append(_req(step, list(msgs)))
+            msgs += [{"role": "assistant", "reasoning_content": f"r{step}", "tool_calls": [step]},
+                     {"role": "tool", "content": f"T{step}"}]
+        r = br.records_for_game(rows, sp, {1, 2}, {"run": "x"}, human=[3, 4, 5], level_weight={1: -0.4, 2: 0.7})[0]
+        got = {m["reasoning_content"]: w for m, w, t in zip(r["messages"], r["weights"], r["train"]) if t}
+        self.assertEqual(got, {"r1": -0.4, "r2": -0.4, "r3": 0.7, "r4": 0.7})
+        self.assertEqual(r["meta"]["weighting"], "advantage")
+
+    def test_select_records_balances_signs(self):
+        import select_records as sr
+
+        def rec(game, p, w):
+            return {"train": [False, True, True], "weights": [0.0, w, w], "meta": {"run": "x", "game": game, "pass": p}}
+        recs = ([rec("aaaa", 0, 0.9)] * 5 + [rec("bbbb", 1, 0.5), rec("cccc", 2, 0.2)]
+                + [rec("aaaa", 3, -0.8)] * 6 + [rec("dddd", 0, -0.1)])
+        got = sr.select(recs, budget=6, neg_share=0.5, per_attempt=2)
+        sizes = [(sr.record_sign_and_size(r)[0], r["meta"]["game"], r["meta"]["pass"]) for r in got]
+        self.assertEqual(sizes[:3], [(1, "aaaa", 0), (1, "aaaa", 0), (1, "bbbb", 1)])    # cap 2 per attempt
+        self.assertEqual(sizes[3:], [(-1, "aaaa", 3), (-1, "aaaa", 3), (-1, "dddd", 0)])
+        short = sr.select([rec("aaaa", 0, 0.9), rec("bbbb", 0, -0.3)] + [rec("cccc", p, 0.4) for p in range(4)],
+                          budget=4, neg_share=0.5, per_attempt=3)
+        self.assertEqual(len(short), 4)                     # one negative only: positives fill the budget
+        self.assertEqual(sum(sr.record_sign_and_size(r)[0] < 0 for r in short), 1)
+
     @unittest.skipUnless((REAL / f"{RE86}_p0_requests.jsonl").exists(), "re86 logs not on this box")
     def test_real_records(self):
         sp = sm.level_spans(sm.iter_jsonl(REAL / "artifacts" / f"{RE86}_p0_events.jsonl"))

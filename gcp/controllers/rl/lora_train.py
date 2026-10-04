@@ -180,20 +180,33 @@ def run_table_on_cpu(model) -> list[str]:
 
 
 def load_model(model_dir: str, n_gpus: int, gpu_gib: int, rank: int, alpha: int, adapter: str = "",
-               attn: str = "", fast: bool = True, offload: bool = True, nvfp4: str = "", seed: int = 0):
+               attn: str = "", fast: bool = True, offload: bool = True, nvfp4: str = "", seed: int = 0,
+               experts_source: str = "", experts_stacked: str = "", ple_cache_dir: str = "", view_dir: str = ""):
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForImageTextToText
     if nvfp4:
         # the served NVFP4 experts (nvfp4_experts.py): the BF16 expert keys are skipped, the packed ones load after
         import nvfp4_experts
         nvfp4_experts.install_placeholder()
+    if ple_cache_dir:
+        # 4-Oct: the n-gram table is never loaded; its per-record output comes from ple_cache.precompute
+        import ple_cache
+        ple_cache.install(ple_cache_dir)
+    if nvfp4 or ple_cache_dir:
+        # 4-Oct: read neither the BF16 routed experts (the packed ones load separately) nor, with the cache, the table
+        import ple_cache
+        dt, de = bool(ple_cache_dir), bool(nvfp4)
+        model_dir = str(ple_cache.model_view(model_dir, view_dir or ple_cache.default_view_dir(model_dir, dt, de),
+                                             drop_table=dt, drop_experts=de))
     dmap = device_map_for(model_dir, n_gpus, gpu_gib, even_layers=bool(nvfp4))
     extra = {"attn_implementation": attn} if attn else {}
     model = AutoModelForImageTextToText.from_pretrained(model_dir, dtype=torch.bfloat16, device_map=dmap, **extra)
     print("attention implementation:", getattr(model.config, "_attn_implementation", None), flush=True)
     if nvfp4:
-        print("nvfp4 experts:", nvfp4_experts.load_packed(model, nvfp4), flush=True)
-    run_table_on_cpu(model)
+        print("nvfp4 experts:", nvfp4_experts.load_packed(model, nvfp4, source=experts_source or None,
+                                                          stacked_dir=experts_stacked or None), flush=True)
+    if not ple_cache_dir:
+        run_table_on_cpu(model)
     model.config.use_cache = False
     for p in model.parameters():
         p.requires_grad_(False)
@@ -312,6 +325,68 @@ def _copies_agree(params) -> tuple[float, float]:
     dist.all_reduce(lo, op=dist.ReduceOp.MIN)
     dist.all_reduce(hi, op=dist.ReduceOp.MAX)
     return lo.item(), hi.item()
+
+
+# ------------------------------------------------------------------------------------------------ relative credit
+# 4-Oct restart (Son: "if a trace is better than average then it is positive", and worse is negative): records carry
+# per-reply advantages that can be negative (build_records.level_advantages). Pushing a sequence's probability down
+# has no floor, so the update is PPO's: per token, the ratio to the probability at the START of the round is clipped
+# to [1 - clip, 1 + clip] in the direction the advantage pushes, plus a k3 KL penalty to that same start.
+def id_of(rec: dict) -> str:
+    return hashlib.sha256(json.dumps(rec.get("meta", {}), sort_keys=True).encode()).hexdigest()[:20]
+
+
+def clipped_loss(lp: torch.Tensor, old: torch.Tensor, adv: torch.Tensor, clip: float, kl_coef: float):
+    """-(mean over trained tokens of min(r A, clip(r) A) - kl_coef * k3), r = exp(lp - old). Returns (loss, stats)."""
+    ratio = torch.exp(lp - old)
+    obj = torch.minimum(ratio * adv, ratio.clamp(1 - clip, 1 + clip) * adv)
+    d = old - lp
+    kl = torch.exp(d) - d - 1
+    n = max(1, lp.numel())
+    loss = -(obj - kl_coef * kl).sum() / n
+    with torch.no_grad():
+        stats = {"ratio_mean": round(ratio.mean().item(), 5),
+                 "clip_frac": round(((ratio - ratio.clamp(1 - clip, 1 + clip)).abs() > 0).float().mean().item(), 4),
+                 "kl": round(kl.mean().item(), 6), "adv_mean": round(adv.mean().item(), 4)}
+    return loss, stats
+
+
+def _ple_record(args, rec: dict) -> None:
+    """With --ple-cache, the record whose cached n-gram embedding the next forward reads."""
+    if getattr(args, "ple_cache", ""):
+        import ple_cache
+        ple_cache.set_record(id_of(rec))
+
+
+def old_logprobs(model, processor, recs: list[dict], rank: int, world: int, args, out: Path, dev) -> dict:
+    """Every record's trained-token log-probs under the round's STARTING adapter (no grad), computed once before the
+    first update and saved, so a resumed run keeps the same reference. Each copy computes every world-th record;
+    all copies then read every copy's file (same VM, same --out)."""
+    mine = out / f"old_logprobs_rank{rank}.pt"
+    if not mine.exists():
+        cache, t0 = {}, time.time()
+        for i, r in enumerate(recs):
+            if i % world != rank:
+                continue
+            b = to_batch(processor, r, dev)
+            if not b["spans_ok"] or b["n_loss"] == 0 or b["input_ids"].shape[1] > args.max_tokens:
+                continue
+            _ple_record(args, r)
+            try:
+                with torch.no_grad():
+                    cache[id_of(r)] = token_logprobs(model, b).float().cpu()
+            except torch.OutOfMemoryError:
+                torch.cuda.empty_cache()          # the training step will skip this record too
+            print(f"old log-probs {len(cache)} ({time.time() - t0:.0f}s)", flush=True)
+        torch.save(cache, mine)
+    if world > 1:
+        import torch.distributed as dist
+        dist.barrier()
+    merged = {}
+    for f in sorted(out.glob("old_logprobs_rank*.pt")):
+        merged.update(torch.load(f, map_location="cpu"))
+    print(f"old log-probs ready: {len(merged)} records", flush=True)
+    return merged
 
 
 def spawn_dp(args) -> int:
@@ -458,14 +533,22 @@ def mode_train(args) -> int:
           + (f"; resuming at step {step}: epoch {ep0}, {done0} records done" if ck else ""), flush=True)
     model = load_model(args.model, args.gpus // world, args.gpu_gib, args.rank, args.alpha,
                        str(out / ck["dir"]) if ck else args.init_adapter,
-                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4, seed=args.seed)
+                       args.attn, fast=bool(args.fast), offload=bool(args.offload), nvfp4=args.nvfp4, seed=args.seed,
+                       experts_source=args.experts_source, experts_stacked=args.experts_stacked,
+                       ple_cache_dir=args.ple_cache)
     params = [p for p in model.parameters() if p.requires_grad]
     if world > 1:
         _broadcast_params(params)
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     if ck:
         opt.load_state_dict(torch.load(out / ck["dir"] / "optim.pt", map_location="cpu"))
+    elif args.init_optim:
+        # 4-Oct: rounds continue the previous round's optimizer too. R1 (3-Oct) restarted Adam on R0's adapter: its
+        # first steps move every LoRA entry by ~lr whatever the gradient, and the copy-paste looping began there.
+        opt.load_state_dict(torch.load(args.init_optim, map_location="cpu"))
+        print(f"optimizer state loaded from {args.init_optim}", flush=True)
     dev = next(model.parameters()).device
+    old_lp = old_logprobs(model, processor, recs, rank, world, args, out, dev) if args.clip > 0 else {}
     log = (out / "train_log.jsonl").open("a", encoding="utf-8")
     stopped = False
     for ep in range(ep0, args.epochs):
@@ -485,13 +568,24 @@ def mode_train(args) -> int:
                     log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
                                           "spans_ok": b["spans_ok"], "n_loss": b["n_loss"], "rank": rank}) + "\n")
                     rec = None
+            if rec is not None and args.clip > 0 and id_of(rec) not in old_lp:
+                # no starting log-probs (it ran out of memory there): it would here too
+                log.write(json.dumps({"skip": rec["meta"].get("game"), "tokens": b["input_ids"].shape[1],
+                                      "no_old_logprobs": True, "rank": rank}) + "\n")
+                rec = None
             if rec is not None:
                 w = float(rec.get("meta", {}).get("weight", 1.0))
+                _ple_record(args, rec)
                 try:
                     lp = token_logprobs(model, b, grad=True)
                     tw = trained_weights(b).to(lp.device)
-                    # per-sequence mean over trained tokens, each token weighted by its reply's weight
-                    loss = -((tw * lp).sum() / max(1, lp.numel())) * w
+                    if args.clip > 0:
+                        loss, stats = clipped_loss(lp, old_lp[id_of(rec)].to(lp.device), tw, args.clip, args.kl)
+                        loss = loss * w
+                    else:
+                        # per-sequence mean over trained tokens, each token weighted by its reply's weight
+                        loss = -((tw * lp).sum() / max(1, lp.numel())) * w
+                        stats = {}
                     (loss / accum).backward()
                 except torch.OutOfMemoryError as exc:
                     # a record that does not fit is skipped, not fatal (multi-hour rounds); this copy drops its
@@ -529,6 +623,7 @@ def mode_train(args) -> int:
                 stopped = bool(args.stop_after and step >= args.stop_after)
             if rec is not None:
                 log.write(json.dumps({"epoch": ep, "step": step, "game": rec["meta"].get("game"), "loss": loss.item(),
+                                      "pass": rec["meta"].get("pass"), "adv": rec["meta"].get("advantage"), **stats,
                                       "tokens": b["input_ids"].shape[1], "n_loss": b["n_loss"], "w": w,
                                       "sec": round(time.time() - t0, 1), "rank": rank,
                                       "mem_gib": [round(torch.cuda.max_memory_allocated(k) / 2**30, 1)
@@ -544,9 +639,12 @@ def mode_train(args) -> int:
         print(f"stopped after step {step} (--stop-after); rerun into {out} to resume", flush=True)
     elif rank == 0:
         model.save_pretrained(out)
+        torch.save(opt.state_dict(), out / "optim.pt")        # the next round continues it (--init-optim)
         sha = adapter_sha(out)
         (out / "ADAPTER.json").write_text(json.dumps({"sha": sha, "rank": args.rank, "alpha": args.alpha,
                                                       "lr": args.lr, "records": len(recs), "steps": step, "dp": world,
+                                                      "clip": args.clip, "kl": args.kl,
+                                                      "init_adapter": args.init_adapter, "init_optim": args.init_optim,
                                                       "target_regex": TARGET_REGEX, "model": args.model}, indent=1))
         print("saved adapter", sha, flush=True)
         clear_ckpt(out)
@@ -696,6 +794,10 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="train on the first N shuffled records (0 = all)")
     ap.add_argument("--init-adapter", default="", help="continue from this adapter (the previous round)")
+    ap.add_argument("--init-optim", default="", help="train: continue the previous round's optimizer (its optim.pt)")
+    ap.add_argument("--clip", type=float, default=0.0, help="train: > 0 = clipped relative-credit update (PPO ratio "
+                    "to the round's starting adapter, e.g. 0.2); records' weights are advantages and may be negative")
+    ap.add_argument("--kl", type=float, default=0.0, help="train: k3 KL penalty to the round's starting adapter")
     ap.add_argument("--dp", type=int, default=1, help="train: copies of the model on gpus/dp cards each "
                     "(every dp-th record each, gradients averaged per step)")
     ap.add_argument("--longest", action="store_true", help="train: longest records first (memory tests)")
@@ -706,6 +808,12 @@ def main() -> int:
     ap.add_argument("--fast", type=int, default=1, help="1 = fast_qsa.py long-sequence path (0 = reference code)")
     ap.add_argument("--offload", type=int, default=1, help="1 = decoder-layer inputs wait in host RAM")
     ap.add_argument("--nvfp4", default="", help="served NVFP4 checkpoint dir: train through its experts (plan §3)")
+    ap.add_argument("--experts-source", default="", choices=["", "gpu", "host", "mmap"],
+                    help="train: where packed experts wait between uses (nvfp4_experts.SOURCE; mmap = one shared page-"
+                         "cache copy for every --dp copy, from --experts-stacked)")
+    ap.add_argument("--experts-stacked", default="", help="nvfp4_experts.py stack output dir (for --experts-source mmap)")
+    ap.add_argument("--ple-cache", default="", help="train: n-gram embeddings per record in this dir (computed first by "
+                                                     "ple_cache.precompute if missing); the 51B table is never loaded")
     ap.add_argument("--ref-logprobs", default="", help="check: trained_logprobs.json of the same record to compare")
     ap.add_argument("--min-tokens", type=int, default=0, help="check: use the shortest record of at least N tokens")
     ap.add_argument("--profile-step", type=int, default=-1, help="check: profile this overfit step (-1 = none)")
@@ -714,6 +822,17 @@ def main() -> int:
     args = ap.parse_args()
     if args.mode == "train" and "ARC3_DP_RANK" not in os.environ:
         prepare_out(args)
+        if args.ple_cache:
+            # the n-gram embeddings first, in their own process: the ~95 GiB table it holds is gone before any
+            # training process starts
+            import subprocess
+            subprocess.run([sys.executable, str(HERE / "ple_cache.py"), "precompute", "--model", args.model,
+                            "--hf", args.hf, "--records", args.records, "--out", args.ple_cache], check=True)
+        if args.ple_cache or args.nvfp4:
+            import ple_cache
+            dt, de = bool(args.ple_cache), bool(args.nvfp4)
+            ple_cache.model_view(args.model, ple_cache.default_view_dir(args.model, dt, de), drop_table=dt,
+                                 drop_experts=de)                                 # once per box, before the copies
         if args.dp > 1:
             return spawn_dp(args)
     return mode_train(args) if args.mode == "train" else mode_check(args)

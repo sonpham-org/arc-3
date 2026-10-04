@@ -159,10 +159,59 @@ def part_two(env: dict, root: Path) -> None:
         check("one copy resumes the two-copy checkpoint: the one-copy adapter", ok, detail)
 
 
+def write_adv_records(path: Path) -> None:
+    """The 4-Oct relative-credit records: every trained reply carries its level's advantage, some negative."""
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        for k in range(N_RECS):
+            r = tt.conversation()
+            r["messages"][1]["content"][0]["text"] = f"Frame {k + 1}: what do you do?" + " Look again." * k
+            r["messages"][2]["reasoning_content"] = f"Try {k}: I should test UP alone first."
+            a = 0.6 if k % 2 == 0 else -0.4
+            r["weights"] = [a if t else 0.0 for t in r["train"]]
+            r["meta"] = {"game": f"tiny{k}", "pass": k, "advantage": {"1": a}}
+            fh.write(json.dumps(r) + "\n")
+
+
+def part_three(env: dict, root: Path) -> None:
+    """--clip/--kl (relative credit, negative advantages) and --init-optim (rounds continue the optimizer)."""
+    recs = root / "adv.jsonl.gz"
+    write_adv_records(recs)
+    e = dict(env, recs=str(recs))
+    a, b, c = root / "adv_a", root / "adv_b", root / "adv_c"
+    clip = ("--clip", "0.2", "--kl", "0.05")
+    check("clipped run: exit 0", train(e, a, *clip) == 0)
+    olds = torch.load(a / "old_logprobs_rank0.pt") if (a / "old_logprobs_rank0.pt").exists() else {}
+    check("clipped run: starting log-probs saved for every record", len(olds) == N_RECS, str(len(olds)))
+    ra = [r for r in rows(a) if "loss" in r]
+    check("clipped run: rows carry ratio / clip / kl", len(ra) == N_RECS and all("ratio_mean" in r for r in ra),
+          json.dumps(ra[:1]))
+    first = ra[:2]       # accum 2: both are computed before the first optimizer step
+    if len(first) == 2:
+        check("clipped run: before any update the ratio is 1 and the KL 0",
+              all(abs(r["ratio_mean"] - 1) < 2e-3 and r["kl"] < 1e-4 for r in first), json.dumps(first))
+        check("clipped run: at the start the loss is -advantage (negative records push down)",
+              all(abs(r["loss"] + r["adv"]["1"]) < 5e-3 for r in first),
+              str([(r["adv"]["1"], round(r["loss"], 4)) for r in first]))
+    meta = json.loads((a / "ADAPTER.json").read_text()) if (a / "ADAPTER.json").exists() else {}
+    check("clipped run: ADAPTER.json records clip and kl; optimizer saved",
+          meta.get("clip") == 0.2 and meta.get("kl") == 0.05 and (a / "optim.pt").exists(), json.dumps(meta)[:200])
+    check("next round: continues the adapter and the optimizer, exit 0",
+          train(e, c, *clip, "--init-adapter", str(a), "--init-optim", str(a / "optim.pt")) == 0)
+    check("stopped clipped run: exit 0", train(e, b, *clip, "--stop-after", "1") == 0)
+    t0 = (b / "old_logprobs_rank0.pt").stat().st_mtime if (b / "old_logprobs_rank0.pt").exists() else None
+    check("resumed clipped run: exit 0", train(e, b, *clip) == 0)
+    t1 = (b / "old_logprobs_rank0.pt").stat().st_mtime if (b / "old_logprobs_rank0.pt").exists() else None
+    check("resumed clipped run: kept the round's starting log-probs (not recomputed from the checkpoint)",
+          t0 is not None and t0 == t1)
+    if (b / "adapter_model.safetensors").exists() and (a / "adapter_model.safetensors").exists():
+        ok, detail = same_adapter(adapter(a), adapter(b))
+        check("resumed clipped run: the unbroken run's adapter", ok, detail)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hf", required=True)
-    ap.add_argument("--part", choices=["one", "two", "both"], default="one")
+    ap.add_argument("--part", choices=["one", "two", "three", "both"], default="one")
     args = ap.parse_args()
     root = Path(tempfile.mkdtemp(prefix="ckpt-tiny-"))
     write_records(root / "recs.jsonl.gz")
@@ -171,6 +220,8 @@ def main() -> int:
         part_one(env, root)
     if args.part in ("two", "both"):
         part_two(env, root)
+    if args.part == "three":
+        part_three(env, root)
     print(f"{'ALL PASS' if not FAILS else 'FAILED: ' + '; '.join(FAILS)} ({root})", flush=True)
     return 1 if FAILS else 0
 

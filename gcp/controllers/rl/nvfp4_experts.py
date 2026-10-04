@@ -33,6 +33,11 @@ from torch.utils.checkpoint import checkpoint
 FP4_VALUES = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0]
 CHUNK = int(os.environ.get("ARC3_NVFP4_CHUNK", "32"))          # experts unpacked per step (bounds the fp32 scratch)
 TOKEN_CHUNK = int(os.environ.get("ARC3_MOE_TOKEN_CHUNK", "16384"))   # tokens per expert pass (bounds activations)
+# Where the packed experts live between uses (4-Oct, one model copy per card):
+#   gpu   on the layer's GPU (the 2-Oct layout: ~67 GB of packed experts spread over the cards)
+#   host  pinned host RAM per process; each use copies the layer's ~1.4 GB to the GPU first (~50 ms on PCIe 5)
+#   mmap  stacked raw files (stack_layers) mapped read-only: every process on the box shares one page-cache copy
+SOURCE = os.environ.get("ARC3_EXPERTS_SOURCE", "gpu")
 _STATE = {"orig": None}
 
 
@@ -141,20 +146,30 @@ class NVFP4Experts(nn.Module):
                   "g_qw", "g_qz", "g_s", "u_qw", "u_qz", "u_s", "d_qw", "d_qz", "d_s"):               # gptq
             self.register_buffer(n, None, persistent=False)
 
-    def weights(self) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.fmt == "gptq":
-            n_i = self.g_qw.shape[2]                                  # gate rows, then up rows (fused gate_up layout)
-            gate_up = torch.empty(self.g_qw.shape[0], 2 * n_i, self.g_qw.shape[1] * 8, dtype=torch.bfloat16,
-                                  device=self.g_qw.device)
-            dequant_gptq(self.g_qw, self.g_qz, self.g_s, out=gate_up[:, :n_i])
-            dequant_gptq(self.u_qw, self.u_qz, self.u_s, out=gate_up[:, n_i:])
-            return gate_up, dequant_gptq(self.d_qw, self.d_qz, self.d_s)
-        if self.gu_q is None:
+    def packed(self, device=None) -> dict:
+        """This layer's packed tensors on `device` (copied there first when they live in host RAM or a mapped file)."""
+        names = (("g_qw", "g_qz", "g_s", "u_qw", "u_qz", "u_s", "d_qw", "d_qz", "d_s") if self.fmt == "gptq"
+                 else ("gu_q", "gu_s", "gu_s2", "dn_q", "dn_s", "dn_s2"))
+        got = {n: getattr(self, n) for n in names}
+        if any(v is None for v in got.values()):
             raise RuntimeError("NVFP4Experts: packed weights not loaded (call nvfp4_experts.load_packed)")
-        return dequant(self.gu_q, self.gu_s, self.gu_s2), dequant(self.dn_q, self.dn_s, self.dn_s2)
+        if device is None:
+            return got
+        return {n: (v if v.device == torch.device(device) else v.to(device, non_blocking=True)) for n, v in got.items()}
+
+    def weights(self, device=None) -> tuple[torch.Tensor, torch.Tensor]:
+        p = self.packed(device)
+        if self.fmt == "gptq":
+            n_i = p["g_qw"].shape[2]                                  # gate rows, then up rows (fused gate_up layout)
+            gate_up = torch.empty(p["g_qw"].shape[0], 2 * n_i, p["g_qw"].shape[1] * 8, dtype=torch.bfloat16,
+                                  device=p["g_qw"].device)
+            dequant_gptq(p["g_qw"], p["g_qz"], p["g_s"], out=gate_up[:, :n_i])
+            dequant_gptq(p["u_qw"], p["u_qz"], p["u_s"], out=gate_up[:, n_i:])
+            return gate_up, dequant_gptq(p["d_qw"], p["d_qz"], p["d_s"])
+        return dequant(p["gu_q"], p["gu_s"], p["gu_s2"]), dequant(p["dn_q"], p["dn_s"], p["dn_s2"])
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
-        gate_up, down = self.weights()
+        gate_up, down = self.weights(hidden_states.device)
         t = hidden_states.shape[0]
         if t <= TOKEN_CHUNK:
             return _grouped(gate_up, down, hidden_states, top_k_index, top_k_weights, self.num_experts, self.act_fn)
@@ -258,12 +273,61 @@ def read_layer_gptq(ckpt_dir: str | Path, layer: int, num_experts: int, weight_m
     return out
 
 
-def load_packed(model, nvfp4_dir: str | Path) -> dict:
+_TORCH_DTYPES = {str(d): d for d in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64, torch.float16,
+                                      torch.bfloat16, torch.float32, torch.float8_e4m3fn)}
+
+
+def stack_layers(ckpt_dir: str | Path, out_dir: str | Path, num_experts: int = 0) -> dict:
+    """Write every layer's stacked packed tensors (read_layer / read_layer_gptq output) as raw files + index.json,
+    once per box, so that load_packed(source="mmap") maps them read-only: one page-cache copy for every process."""
+    d, out = Path(ckpt_dir), Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    wm = json.loads((d / "model.safetensors.index.json").read_text())["weight_map"]
+    fmt = checkpoint_format(wm)
+    cfg = json.loads((d / "config.json").read_text())
+    tc = cfg.get("text_config", cfg)
+    n_exp = num_experts or tc["num_experts"]
+    layers = sorted({int(k.split(".")[3]) for k in wm if k.startswith("model.language_model.layers.") and ".mlp.experts." in k})
+    index = {"format": fmt, "num_experts": n_exp, "layers": {}}
+    reader = read_layer_gptq if fmt == "gptq" else read_layer
+    for layer in layers:
+        packed = reader(d, layer, n_exp, wm)
+        index["layers"][str(layer)] = {}
+        for k, v in packed.items():
+            v = v.contiguous()
+            f = out / f"L{layer:02d}.{k}.bin"
+            (v if v.dtype == torch.uint8 else v.view(torch.uint8)).reshape(-1).numpy().tofile(f)
+            index["layers"][str(layer)][k] = {"file": f.name, "dtype": str(v.dtype), "shape": list(v.shape)}
+        print(f"stacked layer {layer}", flush=True)
+    (out / "index.json").write_text(json.dumps(index, indent=1))
+    return {"format": fmt, "layers": len(layers), "dir": str(out)}
+
+
+def _mapped(out_dir: Path, meta: dict) -> torch.Tensor:
+    import numpy as np
+    arr = np.memmap(out_dir / meta["file"], dtype=np.uint8, mode="r")
+    import warnings
+    with warnings.catch_warnings():                       # read-only mapping: torch warns that it is not writable
+        warnings.simplefilter("ignore")
+        t = torch.from_numpy(arr)
+    return t.view(_TORCH_DTYPES[meta["dtype"]]).view(meta["shape"])
+
+
+def load_packed(model, nvfp4_dir: str | Path, source: str | None = None, stacked_dir: str | Path | None = None) -> dict:
     """Fill every decoder layer's packed experts from the served checkpoint (RadixArk NVFP4 or Daniel's Intel GPTQ
-    int4, detected from the tensor names), on the device of that layer's router."""
+    int4, detected from the tensor names). source (default ARC3_EXPERTS_SOURCE): gpu = on the device of that layer's
+    router; host = pinned host RAM; mmap = the stacked files in stacked_dir (stack_layers), shared by every process."""
     m = _m()
+    source = source or SOURCE
     wm = json.loads((Path(nvfp4_dir) / "model.safetensors.index.json").read_text())["weight_map"]
     fmt = checkpoint_format(wm)
+    index = None
+    if source == "mmap":
+        stacked_dir = Path(stacked_dir or os.environ.get("ARC3_EXPERTS_STACKED", str(Path(nvfp4_dir).with_name(
+            Path(nvfp4_dir).name + "-stacked"))))
+        index = json.loads((stacked_dir / "index.json").read_text())
+        if index["format"] != fmt:
+            raise RuntimeError(f"{stacked_dir} holds {index['format']} experts, the checkpoint is {fmt}")
     n, gib = 0, 0.0
     for name, mod in model.named_modules():
         if not isinstance(mod, m.Qwen4ExpTextDecoderLayer) or ".mtp." in f".{name}.":
@@ -273,11 +337,24 @@ def load_packed(model, nvfp4_dir: str | Path) -> dict:
             raise RuntimeError(f"{name}: experts are {type(experts).__name__}; call install_placeholder() before loading")
         layer = int(name.rsplit(".", 1)[-1])
         dev = mod.mlp.gate.weight.device
-        reader = read_layer_gptq if fmt == "gptq" else read_layer
-        packed = reader(nvfp4_dir, layer, experts.num_experts, wm)
+        if index is not None:
+            packed = {k: _mapped(stacked_dir, meta) for k, meta in index["layers"][str(layer)].items()}
+        else:
+            reader = read_layer_gptq if fmt == "gptq" else read_layer
+            packed = reader(nvfp4_dir, layer, experts.num_experts, wm)
         for k, v in packed.items():
-            setattr(experts, k, v.to(dev))
+            setattr(experts, k, v.to(dev) if source == "gpu" else (v.pin_memory() if source == "host" else v))
             gib += v.numel() * v.element_size() / 2**30
         experts.fmt = fmt
         n += 1
-    return {"format": fmt, "packed_layers": n, "packed_gib": round(gib, 1)}
+    return {"format": fmt, "packed_layers": n, "packed_gib": round(gib, 1), "source": source}
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("cmd", choices=["stack"])
+    ap.add_argument("--ckpt", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
+    print(stack_layers(a.ckpt, a.out))

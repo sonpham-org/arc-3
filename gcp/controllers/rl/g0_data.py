@@ -39,9 +39,25 @@ def fetch(src: str, dst: Path) -> bool:
     return r.returncode == 0
 
 
+def list_passes(working: str, game_id: str) -> list[int]:
+    """Pass indexes with an events log for this game (a panel plays each game n_passes times; 3-Oct: only pass 0
+    was ever read, so 4 of every 5 attempts never reached training)."""
+    r = subprocess.run(["gcloud", "storage", "ls", f"{working}/artifacts/{game_id}_p*_events.jsonl"],
+                       capture_output=True, text=True)
+    found = set()
+    for line in r.stdout.split():
+        tail = line.rsplit(f"{game_id}_p", 1)[-1]
+        num = tail.split("_", 1)[0]
+        if num.isdigit():
+            found.add(int(num))
+    return sorted(found)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", required=True)
+    ap.add_argument("--run", required=True, action="append",
+                    help="a run id; repeat it to score the attempts of several runs of the same policy as one "
+                         "group per game (4-Oct n0: the base model's two train-panel runs = 10 attempts)")
     ap.add_argument("--root", required=True, help="gs:// folder holding <run>/working/")
     ap.add_argument("--subdir", default="working", help="run folder holding artifacts/ (our runs: runs)")
     ap.add_argument("--frontier", required=True)
@@ -54,6 +70,14 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--write-firestore", action="store_true")
     ap.add_argument("--max-check", type=int, default=6, help="records per game to token-check (the check is slow)")
+    ap.add_argument("--passes", default="all", choices=["all", "0"],
+                    help="all = every pass (repeat) of each game in the run; 0 = pass 0 only (before 4-Oct)")
+    ap.add_argument("--credit", default="advantage", choices=["advantage", "fastest"],
+                    help="advantage = every played level weighted by reward minus the game's mean over passes "
+                         "(negative allowed); fastest = the fastest qualifying clear per level, weighted by its score")
+    ap.add_argument("--min-adv", type=float, default=0.05, help="advantage: drop levels with |advantage| below this")
+    ap.add_argument("--best-per-level", type=int, default=1, help="fastest: clears kept per level")
+    ap.add_argument("--games", default="", help="only these games (comma list of 4-letter ids; tests)")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -66,50 +90,82 @@ def main() -> int:
         import render  # noqa: E402  (needs transformers)
         from transformers import AutoProcessor
         processor = AutoProcessor.from_pretrained(args.hf)
-    working = f"{args.root.rstrip('/')}/{args.run}/{args.subdir}"
-    summary = {"run": args.run, "campaign": args.campaign, "games": {}, "started": time.time()}
+    runs = args.run
+    workings = {r: f"{args.root.rstrip('/')}/{r}/{args.subdir}" for r in runs}
+    summary = {"run": ",".join(runs), "campaign": args.campaign, "games": {}, "started": time.time(),
+               "passes": args.passes, "best_per_level": args.best_per_level}
     moments_all = []
     for game_id, human in obs.BASE_ACTIONS.items():
         g = rt.game4(game_id)
         if rt.is_fenced(game_id):
             continue
-        ev = cache / f"{game_id}_p0_events.jsonl"
-        rq = cache / f"{game_id}_p0_requests.jsonl"
-        if not fetch(f"{working}/artifacts/{game_id}_p0_events.jsonl", ev):
-            summary["games"][g] = {"error": "no events log"}
+        if args.games and g not in args.games.split(","):
             continue
-        has_rq = fetch(f"{working}/{game_id}_p0_requests.jsonl", rq)
-        events = list(sm.iter_jsonl(ev))
-        spans = sm.level_spans(events)
-        rows = list(sm.iter_jsonl(rq)) if has_rq else []
-        tokens = sm.turn_tokens(rows)
-        estimated = bool(tokens) and not any(t["tokens"] for t in tokens.values())
-        if estimated:          # our harness logs no usage: size the turns from their transcripts (seed_moments)
-            est = sm.turn_tokens_from_events(events)
-            for st, t in tokens.items():
-                t["tokens"] = est.get(st, 0)
-        bad = sm.check_turn_starts(spans, tokens)
-        info = {"cleared": sorted(spans["clear"]), "frontier": frontier.get(g, {}).get("frontier", []),
-                "turns": len(spans["turn_start"]), "requests": sum(r.get("event") == "request" for r in rows),
-                "turn_start_mismatch": bad[:10]}
-        if bad:
-            summary["games"][g] = info
+        loaded = {}                 # (run, pass) -> (events, spans, rows, tokens, estimated)
+        info = {"frontier": frontier.get(g, {}).get("frontier", []), "passes": {}}
+        attempts = [(r, p) for r in runs
+                    for p in ([0] if args.passes == "0" else list_passes(workings[r], game_id))]
+        for run, p in attempts:
+            working, tag = workings[run], f"{run}:p{p}"
+            ev = cache / run / f"{game_id}_p{p}_events.jsonl"
+            rq = cache / run / f"{game_id}_p{p}_requests.jsonl"
+            if not fetch(f"{working}/artifacts/{game_id}_p{p}_events.jsonl", ev):
+                info["passes"][tag] = {"error": "no events log"}
+                continue
+            has_rq = fetch(f"{working}/{game_id}_p{p}_requests.jsonl", rq)
+            events = list(sm.iter_jsonl(ev))
+            spans = sm.level_spans(events)
+            rows = list(sm.iter_jsonl(rq)) if has_rq else []
+            tokens = sm.turn_tokens(rows)
+            estimated = bool(tokens) and not any(t["tokens"] for t in tokens.values())
+            if estimated:          # our harness logs no usage: size the turns from their transcripts (seed_moments)
+                est = sm.turn_tokens_from_events(events)
+                for st, t in tokens.items():
+                    t["tokens"] = est.get(st, 0)
+            bad = sm.check_turn_starts(spans, tokens)
+            info["passes"][tag] = {"cleared": sorted(spans["clear"]), "turns": len(spans["turn_start"]),
+                                 "requests": sum(r.get("event") == "request" for r in rows),
+                                 "turn_start_mismatch": bad[:10]}
+            if not bad:
+                loaded[(run, p)] = (events, spans, rows, tokens, estimated)
+        if not loaded:
+            summary["games"][g] = info if attempts else {"error": "no events log"}
             continue
-        ms = sm.moments_for_game(run_id=args.run, game_id=game_id, spans=spans, tokens=tokens,
-                                 levels=info["frontier"], human=list(human), harness=args.harness,
-                                 policy=args.policy, campaign=args.campaign, per_level=args.per_level,
-                                 source_uri=working)
-        for m in ms:
-            m["ref_tokens_estimated"] = estimated
-        moments_all += ms
-        info["moments"] = len(ms)
-        levels = br.kept_levels(spans, list(human), mode="cleared", min_level_score=args.min_level_score,
-                                frontier=info["frontier"])
-        recs = br.records_for_game(rows, spans, levels, {"run": args.run, "game": game_id, "levels": sorted(levels),
-                                                         "harness": args.harness, "policy": args.policy},
-                                   human=list(human))
-        info.update(kept_levels=sorted(levels), records=len(recs),
-                    trained_replies=sum(r["meta"]["n_trained"] for r in recs))
+        if (runs[0], 0) in loaded:  # moments (fork points for tries) stay on the first run's pass 0, as before
+            events, spans, rows, tokens, estimated = loaded[(runs[0], 0)]
+            ms = sm.moments_for_game(run_id=runs[0], game_id=game_id, spans=spans, tokens=tokens,
+                                     levels=info["frontier"], human=list(human), harness=args.harness,
+                                     policy=args.policy, campaign=args.campaign, per_level=args.per_level,
+                                     source_uri=workings[runs[0]])
+            for m in ms:
+                m["ref_tokens_estimated"] = estimated
+            moments_all += ms
+            info["moments"] = len(ms)
+        recs = []
+        if args.credit == "advantage":
+            # 4-Oct: every played level of every pass, weighted by its reward minus the game's mean (may be < 0)
+            # (over every pass of every --run: one group per game)
+            adv = br.level_advantages({k: v[1] for k, v in loaded.items()}, list(human), min_abs=args.min_adv)
+            for run, p in sorted(adv):
+                _, spans, rows, _, _ = loaded[(run, p)]
+                a = adv[(run, p)]
+                recs += br.records_for_game(rows, spans, set(a), {
+                    "run": run, "game": game_id, "pass": p, "levels": sorted(a), "harness": args.harness,
+                    "policy": args.policy, "advantage": {str(k): round(x, 4) for k, x in a.items()}},
+                    level_weight=a)
+            info["advantage"] = {f"{r}:p{p}": {k: round(x, 3) for k, x in v.items()} for (r, p), v in sorted(adv.items())}
+        else:
+            # every level's fastest qualifying clear over all passes trains (best_clears); --passes 0 = the old rule
+            pick = br.best_clears({k: v[1] for k, v in loaded.items()}, list(human),
+                                  min_level_score=args.min_level_score, frontier=info["frontier"],
+                                  n_best=args.best_per_level)
+            for run, p in sorted(pick):
+                _, spans, rows, _, _ = loaded[(run, p)]
+                recs += br.records_for_game(rows, spans, pick[(run, p)], {
+                    "run": run, "game": game_id, "pass": p, "levels": sorted(pick[(run, p)]),
+                    "harness": args.harness, "policy": args.policy}, human=list(human))
+            info["kept_levels"] = {f"{r}:p{p}": sorted(v) for (r, p), v in sorted(pick.items())}
+        info.update(records=len(recs), trained_replies=sum(r["meta"]["n_trained"] for r in recs))
         with gzip.open(out / "records" / f"{game_id}.jsonl.gz", "wt", encoding="utf-8") as fh:
             for r in recs:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")

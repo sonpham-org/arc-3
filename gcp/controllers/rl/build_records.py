@@ -120,6 +120,50 @@ def kept_levels(spans: dict, human: list[int], *, mode: str, min_level_score: fl
     return out
 
 
+def best_clears(spans_by_pass: dict[int, dict], human: list[int], *, min_level_score: float,
+                frontier: list[int] | None = None, n_best: int = 1) -> dict[int, set[int]]:
+    """Which pass trains which level, when a run played each game several times (Son, 3-Oct: g0_data read only
+    pass 0, so 4 of every 5 attempts never reached training). Per level, of the clears that qualify under
+    kept_levels, the n_best with the fewest actions win (ties: lower pass). Returns {pass: levels}.
+    Fewest actions is also the guard against lucky clears: the 3-Oct sc25 audit's level-1 record took 48 of a
+    50-action budget on a wrong story, while another pass of the same run cleared it in 17."""
+    cands: dict[int, list[tuple[int, int]]] = {}
+    for p, spans in spans_by_pass.items():
+        for k in kept_levels(spans, human, mode="cleared", min_level_score=min_level_score, frontier=frontier):
+            cands.setdefault(k, []).append((spans["clear"][k] - spans["start"][k] + 1, p))
+    out: dict[int, set[int]] = {}
+    for k, lst in cands.items():
+        for _, p in sorted(lst)[:n_best]:
+            out.setdefault(p, set()).add(k)
+    return out
+
+
+def level_advantages(spans_by_pass: dict[int, dict], human: list[int], *,
+                     min_abs: float = 0.0) -> dict[int, dict[int, float]]:
+    """Relative credit (Son, 4-Oct: "if a trace is better than average then it is positive"): every attempt (pass)
+    of a game is scored per level, reward = the scorer's level score min(1.15, (human / actions)^2) when cleared, 0
+    when not (whether it got stuck there or never reached it). A level's advantage for an attempt is its reward minus
+    the mean reward of all attempts at that level, so a rare clear is strongly positive, a clear everyone makes in the
+    same moves is ~0, and getting stuck where others cleared is negative. Not divided by the spread: with 5-6
+    attempts it is too noisy (Dr. GRPO).
+    Only levels an attempt PLAYED get a value (it has turns there): every cleared level, plus the level it was
+    stuck on at the end. Returns {pass: {level: advantage}}, dropping |advantage| < min_abs."""
+    if not spans_by_pass:
+        return {}
+    levels = sorted({k for sp in spans_by_pass.values() for k in sp["start"] if k <= len(human)})
+    reward = {p: {k: (rr.level_score(human[k - 1], sp["clear"][k] - sp["start"][k] + 1) if k in sp["clear"] else 0.0)
+                  for k in levels} for p, sp in spans_by_pass.items()}
+    mean = {k: sum(reward[p][k] for p in reward) / len(reward) for k in levels}
+    out: dict[int, dict[int, float]] = {}
+    for p, sp in spans_by_pass.items():
+        played = [k for k in levels if k in sp["clear"] or k == max(sp["start"])]
+        adv = {k: reward[p][k] - mean[k] for k in played}
+        adv = {k: a for k, a in adv.items() if abs(a) >= min_abs and a != 0.0}
+        if adv:
+            out[p] = adv
+    return out
+
+
 def level_scores(spans: dict, human: list[int]) -> dict[int, float]:
     """Scorer's level score of every cleared level: min(1.15, (human / used)^2)."""
     return {k: rr.level_score(human[k - 1], last - spans["start"][k] + 1)
@@ -127,22 +171,27 @@ def level_scores(spans: dict, human: list[int]) -> dict[int, float]:
 
 
 def records_for_game(requests: list[dict], spans: dict, levels: set[int], meta: dict,
-                     human: list[int] | None = None) -> list[dict]:
+                     human: list[int] | None = None, level_weight: dict[int, float] | None = None) -> list[dict]:
     """Records whose trained replies are exactly the turns that START inside one of `levels`.
 
     With `human` (the level baselines), each reply is weighted by its level's score (Son, 1-Oct: winning turns are not
     all equal; the score rewards fewer moves): a level won in the human's moves weighs ~1, in 3x the moves ~0.11.
-    Without it every kept reply weighs 1."""
+    `level_weight` ({level: weight}, e.g. advantages, may be negative) overrides that. Without either every kept
+    reply weighs 1."""
     step_level = {s: lvl for s, (_, lvl) in spans["turn_start"].items()}
     keep_steps = {s for s, lvl in step_level.items() if lvl in levels}
     keep = lambda req: int(req.get("analysis_step") or -1) in keep_steps  # noqa: E731
-    weight = None
-    if human:
+    weight, weighting = None, "uniform"
+    if level_weight is not None:
+        weight = lambda req: level_weight.get(step_level.get(int(req.get("analysis_step") or -1)), 0.0)  # noqa: E731
+        weighting = "advantage"
+    elif human:
         scores = level_scores(spans, human)
         weight = lambda req: scores.get(step_level.get(int(req.get("analysis_step") or -1)), 0.0)  # noqa: E731
+        weighting = "level_score"
     out = []
     for seg in segments(attach_usage(requests)):
-        rec = record_from_segment(seg, keep, dict(meta, weighting="level_score" if human else "uniform"), weight)
+        rec = record_from_segment(seg, keep, dict(meta, weighting=weighting), weight)
         if rec is not None:
             out.append(rec)
     return out
