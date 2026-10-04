@@ -34,7 +34,9 @@ NB=${NB:?set NB to the rollout notebook (build_rl_notebook.py --upload)}
 N=${1:?round number, at least 1}
 [ "$N" -ge 1 ] || { echo "round 0 has no previous model to play: use run_round_v3.sh 0"; exit 1; }
 PREV=n$((N - 1))
-VMS=${VMS:-2} K=${K:-8} LIMIT=${LIMIT:-40} BUDGET=${BUDGET:-48} T=${TAG:-t}
+VMS=${VMS:-4} K=${K:-8} LIMIT=${LIMIT:-40} BUDGET=${BUDGET:-48} T=${TAG:-t}
+PLAY_MIN=${PLAY_MIN:-45} BOOT_MIN=${BOOT_MIN:-12}   # Son 4-Oct, a round in ~2 h: 4 VMs x 45 min of play (same tries as
+                                                 # 2 x 90), then STOP: the servers finish their running nodes and end
 MIX=${MIX:-level_start=0.35,backward=0.25,unresumed=0.15,uncertain=0.25}   # unresumed: never-resumed restart points
 STAGE_K=${STAGE_K:-4} FRONTIER=${FRONTIER:-0.8}   # 4-Oct picker: 4 tries first, a top-up to K where they split; no
 # restarts below each game's first level not mastered (>= 6 plays and a Wilson lower bound >= FRONTIER), counted from
@@ -121,6 +123,7 @@ launch() {   # <label>: first zone with capacity (the zone list again after a fu
 LABELS=""
 for i in $(seq 1 "$VMS"); do LABELS="$LABELS $LBL$(printf "\\x$(printf %x $((96 + i)))")"; done
 for l in $LABELS; do launch "$l" & done; wait
+PLAY_T0=$SECONDS STOPPED=""
 
 # ---------------------------------------------------------------- 3. refills until every VM has finished
 # the refills pick with the same rule as init (4-Oct: run had no --modes/--K/--N, so every refill fell back to
@@ -146,7 +149,11 @@ while true; do
     left=$((left + 1))
   done
   [ "$left" -eq 0 ] && break
-  sleep 300
+  if [ -z "$STOPPED" ] && [ $((SECONDS - PLAY_T0)) -ge $(( (BOOT_MIN + PLAY_MIN) * 60 )) ]; then
+    echo stop | g storage cp - "$STORE/rl/$CAMPAIGN/STOP" > /dev/null 2>&1 && STOPPED=1 && \
+      say "STOP after ~$PLAY_MIN min of play: the servers finish their running nodes and end"
+  fi
+  sleep 120
 done
 kill $LPID 2>/dev/null
 say "tries done: $(g storage ls "$STORE/rl/$CAMPAIGN/tries/**/result.json" 2>/dev/null | wc -l) finished tries uploaded"
@@ -157,7 +164,16 @@ say "tries done: $(g storage ls "$STORE/rl/$CAMPAIGN/tries/**/result.json" 2>/de
 # lost to Spot is relaunched as letter b) and run loop_check.py on them; LOOPING (> 1% of the thinking repeated) stops
 # the round before its records. NO_LOOP_GATE=1 skips the check; LOOP_WAIT_H (8) bounds the wait.
 RUNS=${RUNS:-gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs}
-if [ -z "${NO_LOOP_GATE:-}" ]; then
+# 3a (default, Son 4-Oct "why wait for round 0 testing?"): the same check on this campaign's tries, which the previous
+# model played: ready as soon as the tries end. 3b below (PANEL_GATE=1) waits for its full test games instead.
+if [ -z "${NO_LOOP_GATE:-}" ] && [ -z "${PANEL_GATE:-}" ]; then
+  lc=$(C:/Python312/python.exe "$OPS/loop_check_tries.py" "$CAMPAIGN" | tr -d '\r')
+  echo "$lc" | sed "s/^/$(date -u +%H:%M) loop check $PREV (tries): /"
+  echo "$lc" | tail -n 1 | grep -q "^LOOPING" && { say "$PREV loops: round $N not trained (NO_LOOP_GATE=1 overrides)"; exit 1; }
+  echo "$lc" | tail -n 1 | grep -q "^NO DATA" && { say "no replies logged in the tries: looping unchecked, round $N not trained (NO_LOOP_GATE=1 overrides)"; exit 1; }
+  say "$PREV passed the loop check on its tries: round $N trains"
+fi
+if [ -z "${NO_LOOP_GATE:-}" ] && [ -n "${PANEL_GATE:-}" ]; then
   t0=$SECONDS
   while true; do
     read -r PTR PHR < <(C:/Python312/python.exe - "$SITE/site_config.json" "$PREV" <<'PY' | tr -d '\r'
@@ -193,8 +209,11 @@ say "queued $JR"
 # runs both trainings before the merges) and its own panels (round n<N>v), for a same-data comparison of update rules.
 if [ -n "${VARIANT_EXTRA:-}" ]; then
   say "variant n${N}v: $VARIANT_EXTRA"
-  ROUND_NAME=n${N}v MODEL_LABEL="Round $N variant" MODEL_SHORT="N${N}v" TRAIN_EXTRA="$VARIANT_EXTRA" PREV_TRAIN=$PREV_TRAIN \
-    RECORDS=$REC JOBTAG=${VARIANT_TAG:-u} SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3x.sh" "$N" \
+  MAIN_JM=$(printf '%03d%s-n%s-merge' $((J + 2)) "$T" "$N")
+  # after the main model's merge, so the comparison never delays the main round (the trainer is idle then anyway)
+  ( until g storage ls "$B/out/$MAIN_JM/EXIT" > /dev/null 2>&1; do sleep 120; done
+    ROUND_NAME=n${N}v MODEL_LABEL="Round $N variant" MODEL_SHORT="N${N}v" TRAIN_EXTRA="$VARIANT_EXTRA" PREV_TRAIN=$PREV_TRAIN \
+      RECORDS=$REC JOBTAG=${VARIANT_TAG:-u} SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3x.sh" "$N" ) \
     >> "$WORK/run_n${N}v.log" 2>&1 &
   [ -z "${NO_EXTRA_PANELS:-}" ] && { bash "$OPS/extra_panels.sh" "n${N}v" >> "$WORK/extra_panels_n${N}v.log" 2>&1 & }
 fi
