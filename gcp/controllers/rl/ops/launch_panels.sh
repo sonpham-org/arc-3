@@ -3,6 +3,8 @@
 # that offer RTX PRO 6000 (3-Oct: round 1's panels found no capacity in the 9 usual zones and were never launched),
 # then list them on the RL page and Trace review and watch them to the end.
 #   bash ops/launch_panels.sh r1 a            (round, run letter); PANELS="p5train:noborder-panel-train5x5-v1" for some
+#   EXTRA=1 bash ops/launch_panels.sh n0 x     an extra copy (letters x / y): listed FIRST in the round's runs, so runs[-1]
+#                                              stays the panel run the round scripts follow (ops/extra_panels.sh)
 # Every gcloud poll runs under `timeout 120`: an expired login makes gcloud hang.
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
@@ -43,15 +45,20 @@ for attempt in $(seq 1 36); do                       # up to ~6 hours of retries
 done
 [ ${#GOT[@]} -gt 0 ] || { say "no panel could be launched"; exit 1; }
 H=${GOT[p5held]:-} T=${GOT[p5train]:-} K=${GOT[p4hard]:-}
-C:/Python312/python.exe - "$SITE/site_config.json" "$ROUND" "$H" "$T" "$K" <<'PY'
-import json, sys
-path, rnd, *runs = sys.argv[1:]
+C:/Python312/python.exe - "$SITE/site_config.json" "$ROUND" "${EXTRA:-}" "$H" "$T" "$K" <<'PY'
+import json, re, sys
+path, rnd, extra, *runs = sys.argv[1:]
 cfg = json.load(open(path, encoding="utf-8"))
 ids = {r.split(":")[0].split("-")[0]: "daniel-" + r.split(":")[0] for r in runs if r}
+is_extra = lambda r: re.search(r"-[xy]-\d{4}$", r or "")   # 4-Oct extra copies (letters x, y): 10 attempts a game
 for p in cfg["panels"]:
     key = {"held": "p5held", "train": "p5train", "hard": "p4hard"}[p["key"]]
     if key in ids:
-        p["runs"][rnd] = [ids[key]]
+        old = p["runs"].get(rnd) or []
+        if extra:      # an extra copy goes FIRST: runs[-1] stays the panel run the round scripts follow
+            p["runs"][rnd] = [ids[key]] + [r for r in old if r != ids[key]]
+        else:          # a (re)launch replaces the followed run; extra copies already listed are kept in front
+            p["runs"][rnd] = [r for r in old if is_extra(r)] + [ids[key]]
 open(path, "w", encoding="utf-8", newline="\n").write(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n")
 print("RL page config:", {p["key"]: p["runs"].get(rnd) for p in cfg["panels"]})
 PY

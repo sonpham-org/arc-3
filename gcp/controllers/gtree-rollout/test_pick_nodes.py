@@ -253,6 +253,22 @@ def main() -> int:
     check(not [j for j in g14 if j["origin"]["t1"] == t1] and r14["skipped_settled"] >= 1
           and all(j["tries"] == 4 for j in first), "stage_k: a node whose 4 campaign tries all cleared is settled; "
           "fresh nodes get 4", f"settled {r14['skipped_settled']}, tries {Counter(j['tries'] for j in first)}")
+    # unresumed (Son 4-Oct): a share of the round for restart points no try ever started from
+    mix15 = {"level_start": 0.35, "backward": 0.25, "unresumed": 0.15, "uncertain": 0.25}
+    g15, r15 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=40, K=4, N=4, modes="stock", mix=mix15)
+    un = [j for j in g15 if j["pick"]["class"] == "unresumed"]
+    check(len(un) == 6 and r15["by_class"].get("unresumed") == 6, "unresumed: its share of the round (15% of 40 = 6)",
+          str(r15["by_class"]))
+    hist = Counter({j["origin"]["t1"]: 3 for j in un})
+    g16, r16 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=40, K=4, N=4, modes="stock", mix=mix15,
+                       resumed_before=hist)
+    un16 = [j for j in g16 if j["pick"]["class"] == "unresumed"]
+    check(un16 and not {j["origin"]["t1"] for j in un16} & set(hist),
+          "unresumed: a state resumed in an earlier campaign is not in the class", f"{len(un16)} picked")
+    g17, r17 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=400, per_game=40, K=4, N=4,
+                       modes="stock", mix=mix15, frontier=0.8, level_counts=counts13)
+    check(all(j["origin"]["level"] >= 2 for j in g17 if j["pick"]["class"] == "unresumed")
+          and r17["by_class"].get("unresumed", 0) > 0, "unresumed: never below the frontier", str(r17["by_class"]))
     bad = [n for ok, n in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(bad)}/{len(RESULTS)} checks passed" + (f"; FAILED: {bad}" if bad else ""))
     return 1 if bad else 0

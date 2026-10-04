@@ -403,7 +403,8 @@ def iterate(cfg: argparse.Namespace, *, write: bool = True) -> dict:
                                     blocked_nodes=state.get("blocked_nodes"), token_cap=cfg.token_cap or None,
                                     mix=parse_mix(cfg.mix), games=game_set(cfg) or set(state.get("games") or []) or None,
                                     stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None,
-                                    level_counts=frontier_counts(cfg))
+                                    level_counts=frontier_counts(cfg),
+                                    resumed_before=history_resumes(cfg))
         out["jobs"] = jobs
         lines.append(f"  refill: round {state['round']}: {len(jobs)} jobs / {rep['tries']} tries "
                      f"{rep['by_class']} (skipped: {rep['skipped_full']} full, {rep['skipped_grid']} same t5 cell, "
@@ -785,7 +786,8 @@ def init(cfg: argparse.Namespace) -> None:
                                 store=cfg.store, modes=cfg.modes, token_cap=cfg.token_cap or None,
                                 mix=parse_mix(cfg.mix), games=game_set(cfg),
                                 stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None,
-                                    level_counts=frontier_counts(cfg))
+                                    level_counts=frontier_counts(cfg),
+                                    resumed_before=history_resumes(cfg))
     pick_nodes.write_jobs(jobs, queue=rls.root)
     rc.write_json(rls, "learner/state.json", {"version": 0, "round": 1, "history": [], "created": time.time(),
                                               "games": sorted(game_set(cfg) or [])})
@@ -838,6 +840,8 @@ def args(argv=None) -> argparse.Namespace:
                     "(e.g. 0.8; 0 = every level)")
     ap.add_argument("--frontier-runs", default="", help="full-play runs whose per-level results feed --frontier (comma "
                     "list, read from their viewer files; default: the seed paths only)")
+    ap.add_argument("--history-campaigns", default="", help="earlier rollout campaigns whose tries count as resumes for "
+                    "the 'unresumed' class (comma list of campaign names, e.g. rl1,rl2,speed1,speed2)")
     ap.add_argument("--games", default="", help="only these games (comma list); init saves it, run reuses it "
                     "(4-Oct: RL v1 round 1 plays its 14 training games only)")
     ap.add_argument("--lanes", type=int, default=10, help="server lanes per VM (sizes the refill threshold)")
@@ -863,6 +867,16 @@ def frontier_counts(cfg: argparse.Namespace) -> dict | None:
     if not runs or not getattr(cfg, "frontier", 0):
         return None
     return pick_nodes.level_counts_from_viewers(runs, Path(cfg.cache))
+
+
+def history_resumes(cfg: argparse.Namespace) -> Counter | None:
+    """--history-campaigns: origin t1 -> tries started there in those campaigns (their master files, cached)."""
+    names = [c for c in (getattr(cfg, "history_campaigns", "") or "").split(",") if c and c != cfg.campaign]
+    if not names:
+        return None
+    plays = rc.load_plays(rc.sync_masters(cfg.store, [rc.campaign_run(c) for c in names], Path(cfg.cache)))
+    return Counter(p["rollout"].get("origin_state") for p in plays
+                   if rc.is_rollout(p) and p["rollout"].get("origin_state"))
 
 
 def game_set(cfg: argparse.Namespace) -> set[str] | None:

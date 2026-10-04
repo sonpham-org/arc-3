@@ -293,7 +293,8 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
          store: str = rc.STORE, campaign_restarts: bool = True, modes: str | None = "all",
          pending: list[dict] | None = None, blocked: dict | None = None, blocked_nodes: dict | None = None,
          token_cap: int | None = None, mix: dict[str, float] | None = None, stage_k: int | None = None,
-         frontier: float | None = None, level_counts: dict | None = None) -> tuple[list[dict], dict]:
+         frontier: float | None = None, level_counts: dict | None = None,
+         resumed_before: Counter | None = None) -> tuple[list[dict], dict]:
     """pending: jobs still queued ({game, t1, ...}: their nodes are skipped, their games count as sampled);
     blocked: restart_key(source rollout, seq) -> why (a restore that diverged); blocked_nodes: t1 -> why;
     token_cap: generated tokens per try after the origin (the server stops the try there; None = no cap);
@@ -303,7 +304,10 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
     stage_k: two-stage groups (stage_tries): a node's first job gets stage_k tries, a top-up only where they split;
     frontier: only levels at or above each game's first level not mastered (frontier_levels: the Wilson lower bound of
     its clear rate below `frontier`, or too few plays), counted from level_counts (level_counts_from_viewers) or, without
-    it, the seed paths."""
+    it, the seed paths. resumed_before: origin t1 -> tries started there in earlier campaigns (rl_loop
+    --history-campaigns); with a mix share for 'unresumed', that class takes restart points no try has ever started
+    from (Go-Explore: prefer the least-chosen cells; Son 4-Oct: "do we occasionally revisit old states that have not
+    been resumed before?"), the frontier level first, then the fewest plays through the state."""
     allowed = mode_set(modes)
     blocked, blocked_nodes = blocked or {}, blocked_nodes or {}
     pending_n1 = {str(j.get("t1")) for j in pending or [] if j.get("t1")}
@@ -332,6 +336,24 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
             classes[g][cls] = keep
     run_c = rc.campaign_run(campaign)
     cstats = rc.NodeStats([p for p in plays if p["rollout"].get("run") == run_c]) if stage_k else None
+    resumed = Counter(resumed_before or {})
+    resumed.update(p["rollout"].get("origin_state") for p in plays if rc.is_rollout(p) and p["rollout"].get("origin_state"))
+    if (mix or {}).get("unresumed"):          # 4. restart points no try has started from, frontier level first
+        in_class = {x[1]["n1"] for g in classes for c in ("level_start", "backward") for x in classes[g][c]}
+        seen_un: set[str] = set()
+        for r, rows in list(paths) + list(extra):
+            g = r["game"]
+            f = fronts.get(g, {}).get("level")
+            for s, before in rows:
+                n1 = s["n1"]
+                if (n1 in seen_un or n1 in in_class or resumed[n1] or not restartable(s, r)
+                        or (f is not None and int(s["level"]) < f)):
+                    continue
+                seen_un.add(n1)
+                dist = abs(int(s["level"]) - f) if f is not None else int(s["level"])
+                classes[g]["unresumed"].append(((dist, stats.visits(n1), int(s["seq"])), s, before, r, {}))
+        for g in classes:
+            classes[g]["unresumed"].sort(key=lambda x: x[0])
     gcount = Counter()                       # first-mode assignments campaign-wide: spreads modes across nodes
     for r, rows in extra:
         if rows:
@@ -349,9 +371,9 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
               "by_restore": Counter(), "games": sorted(classes), "game_order": order,
               "frontier": {g: f["level"] for g, f in sorted(fronts.items())}}
     seen_n1.update(pending_n1)
-    share = {c: -(-limit * float((mix or {}).get(c, 0.0)) // 1) for c in ("level_start", "backward", "uncertain")}
-    for capped, cls in ([(True, c) for c in share] if mix else []) + \
-            [(False, c) for c in ("level_start", "backward", "uncertain")]:
+    order_cls = ("level_start", "backward", "unresumed", "uncertain")
+    share = {c: -(-limit * float((mix or {}).get(c, 0.0)) // 1) for c in order_cls}
+    for capped, cls in ([(True, c) for c in share] if mix else []) + [(False, c) for c in order_cls]:
         queues = {g: list(classes[g][cls]) for g in order}
         full = (lambda c=cls, k=capped: k and report["by_class"][c] >= share[c])
         while any(queues.values()) and len(jobs) < limit and not full():

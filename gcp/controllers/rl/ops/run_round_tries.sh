@@ -16,7 +16,8 @@
 #   4. trainer job <J>T-nN-records: try_records.py + select_records.py -> /opt/m/work/records/<J><T>
 #   5. RECORDS=<J><T> run_round_v3.sh N: train from round N-1's adapter, merge, test panels, loop check
 # Env: VMS (2), K (8 = the most siblings a node gets), STAGE_K (4 first), FRONTIER (0.8), FRONTIER_RUNS, LIMIT (40 nodes per
-#      refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>),
+#      refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>), MIX (unresumed 15%), HISTORY (campaigns whose tries
+#      count as resumes: rl1 rl2 speed1 speed2 + earlier v1 rounds, from tries-campaigns.txt), NO_EXTRA_PANELS,
 #      TRAINER_VM / TRAINER_ZONE (passed on), DRYRUN=1 (prints the plan and the records job, launches nothing).
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
@@ -33,6 +34,7 @@ N=${1:?round number, at least 1}
 [ "$N" -ge 1 ] || { echo "round 0 has no previous model to play: use run_round_v3.sh 0"; exit 1; }
 PREV=n$((N - 1))
 VMS=${VMS:-2} K=${K:-8} LIMIT=${LIMIT:-40} BUDGET=${BUDGET:-48} T=${TAG:-t}
+MIX=${MIX:-level_start=0.35,backward=0.25,unresumed=0.15,uncertain=0.25}   # unresumed: never-resumed restart points
 STAGE_K=${STAGE_K:-4} FRONTIER=${FRONTIER:-0.8}   # 4-Oct picker: 4 tries first, a top-up to K where they split; no
 # restarts below each game's first level not mastered (>= 6 plays and a Wilson lower bound >= FRONTIER), counted from
 # FRONTIER_RUNS: round 1 = every full-play run of the base model (pick_nodes.BASE_RUNS, 8-18 plays a game; the 4 seed
@@ -88,11 +90,15 @@ if [ -z "${FRONTIER_RUNS:-}" ]; then
   if [ "$N" -eq 1 ]; then
     FRONTIER_RUNS=$(C:/Python312/python.exe -c "import pick_nodes; print(','.join(pick_nodes.BASE_RUNS))" | tr -d '\r')
   else
-    FRONTIER_RUNS=$(C:/Python312/python.exe -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); print(','.join((p['runs'].get(sys.argv[2]) or [''])[-1] for p in c['panels'] if p['key'] in ('train','hard')))" "$SITE/site_config.json" "$PREV" | tr -d '\r')
+    FRONTIER_RUNS=$(C:/Python312/python.exe -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); print(','.join(r for p in c['panels'] if p['key'] in ('train','hard') for r in (p['runs'].get(sys.argv[2]) or []) if r))" "$SITE/site_config.json" "$PREV" | tr -d '\r')
   fi
 fi
 say "frontier counted from: $FRONTIER_RUNS"
-PICK="--modes stock --K $K --N $K --limit $LIMIT --stage-k $STAGE_K --frontier $FRONTIER --frontier-runs $FRONTIER_RUNS"
+touch "$WORK/tries-campaigns.txt"
+HISTORY=${HISTORY:-$(echo "rl1 rl2 speed1 speed2 $(grep -v "^$CAMPAIGN$" "$WORK/tries-campaigns.txt" | tr '\n' ' ')" | tr -s ' ' ',' | sed 's/^,//; s/,$//')}
+grep -qx "$CAMPAIGN" "$WORK/tries-campaigns.txt" || echo "$CAMPAIGN" >> "$WORK/tries-campaigns.txt"
+say "picker: mix $MIX; resumes counted from campaigns $HISTORY"
+PICK="--modes stock --K $K --N $K --limit $LIMIT --stage-k $STAGE_K --frontier $FRONTIER --frontier-runs $FRONTIER_RUNS --mix $MIX --history-campaigns $HISTORY"
 C:/Python312/python.exe rl_loop.py init --campaign "$CAMPAIGN" $PICK --games "$GAMES" --lanes 16 | tail -n 1 \
     || { say "campaign init failed"; exit 1; }
 g storage cp runner/rl_host_sync.py ../gtree-ingest/gtree_store.py ../gtree-ingest/gtree_ctx.py \
@@ -151,15 +157,17 @@ if [ -z "${NO_LOOP_GATE:-}" ]; then
     read -r PTR PHR < <(C:/Python312/python.exe - "$SITE/site_config.json" "$PREV" <<'PY' | tr -d '\r'
 import json, sys
 cfg = json.load(open(sys.argv[1], encoding="utf-8"))
-runs = {p["key"]: (p["runs"].get(sys.argv[2]) or ["-"])[-1] for p in cfg["panels"]}
-print(runs.get("train", "-") or "-", runs.get("hard", "-") or "-")
+runs = {p["key"]: [r for r in (p["runs"].get(sys.argv[2]) or []) if r] for p in cfg["panels"]}
+print(",".join(runs.get("train") or ["-"]), ",".join(runs.get("hard") or ["-"]))
 PY
 )
-    done_n=0
+    PTR=${PTR//,/ } PHR=${PHR//,/ }
+    want=0 done_n=0
     for r in $PTR $PHR; do
+      want=$((want + 1))
       [ "$r" != "-" ] && g storage cat "$RUNS/$r/phases.tsv" 2>/dev/null | tail -n 1 | grep -q "finish" && done_n=$((done_n + 1))
     done
-    [ "$done_n" -eq 2 ] && break
+    [ "$done_n" -eq "$want" ] && [ "$want" -ge 2 ] && break
     [ $((SECONDS - t0)) -gt $(( ${LOOP_WAIT_H:-8} * 3600 )) ] && { say "$PREV panels not finished after ${LOOP_WAIT_H:-8} h: round $N not trained"; exit 1; }
     sleep 120
   done
@@ -172,4 +180,6 @@ fi
 # ---------------------------------------------------------------- 4. records on the trainer, 5. train + merge + panels
 g storage cp "$WORK/job-$JR.json" "$B/jobs/$JR.json" > /dev/null 2>&1 || { say "could not queue $JR"; exit 1; }
 say "queued $JR"
+# extra copies of this round's train and hard panels (10 attempts a game), launched once run_round_v3.sh lists its own
+[ -z "${NO_EXTRA_PANELS:-}" ] && { bash "$OPS/extra_panels.sh" "n$N" >> "$WORK/extra_panels_n$N.log" 2>&1 & }
 RECORDS=$REC JOBTAG=$T SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3.sh" "$N"
