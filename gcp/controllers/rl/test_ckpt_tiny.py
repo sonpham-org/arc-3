@@ -208,10 +208,35 @@ def part_three(env: dict, root: Path) -> None:
         check("resumed clipped run: the unbroken run's adapter", ok, detail)
 
 
+def part_four(env: dict, root: Path) -> None:
+    """The round-1 comparison variant (Son 4-Oct): --loss cispo --clip-high 0.28 --token-norm token on the same
+    records as the plain clipped run: it trains, records its settings, and ends at a different adapter."""
+    recs = root / "adv.jsonl.gz"
+    if not recs.exists():
+        write_adv_records(recs)
+    e = dict(env, recs=str(recs))
+    a, v = root / "adv_a4", root / "adv_v4"
+    clip = ("--clip", "0.2", "--kl", "0.05")
+    check("plain clipped run: exit 0", train(e, a, *clip) == 0)
+    check("variant run (cispo, clip-high 0.28, token norm): exit 0",
+          train(e, v, *clip, "--loss", "cispo", "--clip-high", "0.28", "--token-norm", "token") == 0)
+    meta = json.loads((v / "ADAPTER.json").read_text()) if (v / "ADAPTER.json").exists() else {}
+    check("variant: ADAPTER.json records loss / clip_high / token_norm",
+          meta.get("loss") == "cispo" and meta.get("clip_high") == 0.28 and meta.get("token_norm") == "token",
+          json.dumps({k: meta.get(k) for k in ("loss", "clip_high", "token_norm")}))
+    rv = [r for r in rows(v) if "loss" in r]
+    check("variant: every record trained, finite losses, ratio 1 before the first update",
+          len(rv) == N_RECS and all(r["loss"] == r["loss"] and abs(r["loss"]) < 1e6 for r in rv)
+          and abs(rv[0]["ratio_mean"] - 1) < 2e-3, json.dumps(rv[:1]))
+    if (a / "adapter_model.safetensors").exists() and (v / "adapter_model.safetensors").exists():
+        ok, detail = same_adapter(adapter(a), adapter(v))
+        check("variant: a different adapter than the plain run (the update rule changed something)", not ok, detail)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hf", required=True)
-    ap.add_argument("--part", choices=["one", "two", "three", "both"], default="one")
+    ap.add_argument("--part", choices=["one", "two", "three", "four", "both"], default="one")
     args = ap.parse_args()
     root = Path(tempfile.mkdtemp(prefix="ckpt-tiny-"))
     write_records(root / "recs.jsonl.gz")
@@ -222,6 +247,8 @@ def main() -> int:
         part_two(env, root)
     if args.part == "three":
         part_three(env, root)
+    if args.part == "four":
+        part_four(env, root)
     print(f"{'ALL PASS' if not FAILS else 'FAILED: ' + '; '.join(FAILS)} ({root})", flush=True)
     return 1 if FAILS else 0
 

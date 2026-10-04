@@ -18,6 +18,7 @@
 # Env: VMS (2), K (8 = the most siblings a node gets), STAGE_K (4 first), FRONTIER (0.8), FRONTIER_RUNS, LIMIT (40 nodes per
 #      refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>), MIX (unresumed 15%), HISTORY (campaigns whose tries
 #      count as resumes: rl1 rl2 speed1 speed2 + earlier v1 rounds, from tries-campaigns.txt), NO_EXTRA_PANELS,
+#      VARIANT_EXTRA (a second model on the same records with these lora_train flags), VARIANT_TAG (u), PREV_TRAIN,
 #      TRAINER_VM / TRAINER_ZONE (passed on), DRYRUN=1 (prints the plan and the records job, launches nothing).
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
@@ -54,6 +55,11 @@ LBL=$(echo "$CAMPAIGN" | tr -cd 'a-z0-9')                                  # VM 
 # ---------------------------------------------------------------- 0. round N-1's merged model
 PJM=${PREV_MERGE:-$(C:/Python312/python.exe -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); m=c.get('merge_job') or ''; print(m if m.endswith('-'+sys.argv[2]+'-merge') else '')" "$SITE/site_config.json" "$PREV" | tr -d '\r')}
 [ -n "$PJM" ] || { say "no $PREV merge job on the RL page (set PREV_MERGE)"; exit 1; }
+# the previous round's training job (its adapter and optimizer): the merge job one number down, e.g. 105k-n0-merge ->
+# 104k-n0-train. Passed explicitly: the RL page's train_job can already name a sibling model of this round.
+PJN=${PJM%%[!0-9]*}
+PREV_TRAIN=${PREV_TRAIN:-$(printf '%03d' $((10#$PJN - 1)))${PJM#$PJN}}
+PREV_TRAIN=${PREV_TRAIN%-merge}; PREV_TRAIN=${PREV_TRAIN%-train}-train
 say "round n$N from tries: campaign $CAMPAIGN, $VMS VMs x 16 lanes, K=$K stock siblings, games $GAMES; plays $PJM; records job $JR (budget $BUDGET)"
 
 # the records job (written now so a dry run shows it)
@@ -180,6 +186,18 @@ fi
 # ---------------------------------------------------------------- 4. records on the trainer, 5. train + merge + panels
 g storage cp "$WORK/job-$JR.json" "$B/jobs/$JR.json" > /dev/null 2>&1 || { say "could not queue $JR"; exit 1; }
 say "queued $JR"
-# extra copies of this round's train and hard panels (10 attempts a game), launched once run_round_v3.sh lists its own
+# extra copies of this round's train and hard panels (10 attempts a game), launched once the round script lists its own
 [ -z "${NO_EXTRA_PANELS:-}" ] && { bash "$OPS/extra_panels.sh" "n$N" >> "$WORK/extra_panels_n$N.log" 2>&1 & }
-RECORDS=$REC JOBTAG=$T SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3.sh" "$N"
+# VARIANT_EXTRA (Son 4-Oct): a second model of this round on the SAME records with these extra lora_train flags (e.g.
+# --loss cispo --clip-high 0.28 --token-norm token), its own jobs (tag u: queued next to this round's, so the trainer
+# runs both trainings before the merges) and its own panels (round n<N>v), for a same-data comparison of update rules.
+if [ -n "${VARIANT_EXTRA:-}" ]; then
+  say "variant n${N}v: $VARIANT_EXTRA"
+  ROUND_NAME=n${N}v MODEL_LABEL="Round $N variant" MODEL_SHORT="N${N}v" TRAIN_EXTRA="$VARIANT_EXTRA" PREV_TRAIN=$PREV_TRAIN \
+    RECORDS=$REC JOBTAG=${VARIANT_TAG:-u} SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3x.sh" "$N" \
+    >> "$WORK/run_n${N}v.log" 2>&1 &
+  [ -z "${NO_EXTRA_PANELS:-}" ] && { bash "$OPS/extra_panels.sh" "n${N}v" >> "$WORK/extra_panels_n${N}v.log" 2>&1 & }
+fi
+# run_round_v3x.sh, not run_round_v3.sh: the latter passed the optimizer's /opt path to Windows Python, which Git Bash
+# rewrote, and refused to write round N >= 1's jobs (4-Oct, found by a dry run before round 1)
+ROUND_NAME=n$N PREV_TRAIN=$PREV_TRAIN RECORDS=$REC JOBTAG=$T SHA=$SHA BUDGET=$BUDGET bash "$OPS/run_round_v3x.sh" "$N"

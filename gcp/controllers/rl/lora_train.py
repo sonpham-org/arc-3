@@ -336,17 +336,29 @@ def id_of(rec: dict) -> str:
     return hashlib.sha256(json.dumps(rec.get("meta", {}), sort_keys=True).encode()).hexdigest()[:20]
 
 
-def clipped_loss(lp: torch.Tensor, old: torch.Tensor, adv: torch.Tensor, clip: float, kl_coef: float):
-    """-(mean over trained tokens of min(r A, clip(r) A) - kl_coef * k3), r = exp(lp - old). Returns (loss, stats)."""
+def clipped_loss(lp: torch.Tensor, old: torch.Tensor, adv: torch.Tensor, clip: float, kl_coef: float,
+                 clip_high: float | None = None, cispo: bool = False, norm_tokens: float | None = None):
+    """-(sum over trained tokens of the objective - kl_coef * k3) / n, r = exp(lp - old). Returns (loss, stats).
+    Objective: PPO's min(r A, clip(r) A) with clip(r) in [1 - clip, 1 + clip_high] (clip_high: DAPO's clip-higher, a
+    larger upper bound so unlikely tokens can rise; default = clip); or with cispo, CISPO's (MiniMax-M1)
+    sg(clip(r)) * A * log p: the ratio is clipped as a WEIGHT and every token keeps its gradient (PPO's clip zeroes the
+    gradient of clipped tokens; 4-Oct n0 had 8.5% of tokens clipped by step 2). n: the record's trained tokens
+    (per-record mean, the default), or norm_tokens (a constant: the dataset's mean trained tokens per record), which
+    weighs every token alike across records (DAPO / Dr. GRPO token-level normalization)."""
+    hi = clip if clip_high is None else clip_high
     ratio = torch.exp(lp - old)
-    obj = torch.minimum(ratio * adv, ratio.clamp(1 - clip, 1 + clip) * adv)
+    clipped = ratio.clamp(1 - clip, 1 + hi)
+    if cispo:
+        obj = clipped.detach() * adv * lp
+    else:
+        obj = torch.minimum(ratio * adv, clipped * adv)
     d = old - lp
     kl = torch.exp(d) - d - 1
-    n = max(1, lp.numel())
+    n = float(norm_tokens) if norm_tokens else max(1, lp.numel())
     loss = -(obj - kl_coef * kl).sum() / n
     with torch.no_grad():
         stats = {"ratio_mean": round(ratio.mean().item(), 5),
-                 "clip_frac": round(((ratio - ratio.clamp(1 - clip, 1 + clip)).abs() > 0).float().mean().item(), 4),
+                 "clip_frac": round(((ratio - clipped).abs() > 0).float().mean().item(), 4),
                  "kl": round(kl.mean().item(), 6), "adv_mean": round(adv.mean().item(), 4)}
     return loss, stats
 
@@ -549,6 +561,8 @@ def mode_train(args) -> int:
         print(f"optimizer state loaded from {args.init_optim}", flush=True)
     dev = next(model.parameters()).device
     old_lp = old_logprobs(model, processor, recs, rank, world, args, out, dev) if args.clip > 0 else {}
+    # --token-norm token: every record's loss is divided by the SAME number, the mean trained tokens per record
+    norm_tokens = (sum(len(v) for v in old_lp.values()) / max(1, len(old_lp))) if args.token_norm == "token" and old_lp else None
     log = (out / "train_log.jsonl").open("a", encoding="utf-8")
     stopped = False
     for ep in range(ep0, args.epochs):
@@ -580,7 +594,9 @@ def mode_train(args) -> int:
                     lp = token_logprobs(model, b, grad=True)
                     tw = trained_weights(b).to(lp.device)
                     if args.clip > 0:
-                        loss, stats = clipped_loss(lp, old_lp[id_of(rec)].to(lp.device), tw, args.clip, args.kl)
+                        loss, stats = clipped_loss(lp, old_lp[id_of(rec)].to(lp.device), tw, args.clip, args.kl,
+                                                   clip_high=args.clip_high, cispo=args.loss == "cispo",
+                                                   norm_tokens=norm_tokens)
                         loss = loss * w
                     else:
                         # per-sequence mean over trained tokens, each token weighted by its reply's weight
@@ -643,7 +659,8 @@ def mode_train(args) -> int:
         sha = adapter_sha(out)
         (out / "ADAPTER.json").write_text(json.dumps({"sha": sha, "rank": args.rank, "alpha": args.alpha,
                                                       "lr": args.lr, "records": len(recs), "steps": step, "dp": world,
-                                                      "clip": args.clip, "kl": args.kl,
+                                                      "clip": args.clip, "kl": args.kl, "clip_high": args.clip_high,
+                                                      "loss": args.loss, "token_norm": args.token_norm,
                                                       "init_adapter": args.init_adapter, "init_optim": args.init_optim,
                                                       "target_regex": TARGET_REGEX, "model": args.model}, indent=1))
         print("saved adapter", sha, flush=True)
@@ -798,6 +815,9 @@ def main() -> int:
     ap.add_argument("--clip", type=float, default=0.0, help="train: > 0 = clipped relative-credit update (PPO ratio "
                     "to the round's starting adapter, e.g. 0.2); records' weights are advantages and may be negative")
     ap.add_argument("--kl", type=float, default=0.0, help="train: k3 KL penalty to the round's starting adapter")
+    ap.add_argument("--clip-high", type=float, default=None, help="train (--clip): upper clip bound 1 + this (DAPO clip-higher, e.g. 0.28; default = --clip)")
+    ap.add_argument("--loss", default="ppo", choices=["ppo", "cispo"], help="train (--clip): ppo = clipped objective; cispo = clipped ratio as a stop-gradient weight on A * log p (every token keeps its gradient)")
+    ap.add_argument("--token-norm", default="record", choices=["record", "token"], help="train (--clip): record = mean over each record's trained tokens; token = divide by the dataset's mean trained tokens per record")
     ap.add_argument("--dp", type=int, default=1, help="train: copies of the model on gpus/dp cards each "
                     "(every dp-th record each, gradients averaged per step)")
     ap.add_argument("--longest", action="store_true", help="train: longest records first (memory tests)")
