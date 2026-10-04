@@ -401,7 +401,8 @@ def iterate(cfg: argparse.Namespace, *, write: bool = True) -> dict:
                                     state_index=rc.load_state_index(cfg.store, Path(cfg.cache)), store=cfg.store,
                                     modes=cfg.modes, pending=pending, blocked=state.get("blocked"),
                                     blocked_nodes=state.get("blocked_nodes"), token_cap=cfg.token_cap or None,
-                                    mix=parse_mix(cfg.mix), games=game_set(cfg) or set(state.get("games") or []) or None)
+                                    mix=parse_mix(cfg.mix), games=game_set(cfg) or set(state.get("games") or []) or None,
+                                    stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None)
         out["jobs"] = jobs
         lines.append(f"  refill: round {state['round']}: {len(jobs)} jobs / {rep['tries']} tries "
                      f"{rep['by_class']} (skipped: {rep['skipped_full']} full, {rep['skipped_grid']} same t5 cell, "
@@ -781,7 +782,8 @@ def init(cfg: argparse.Namespace) -> None:
                                 per_game=cfg.per_game, backward_depth=cfg.backward_depth, turn_cap=cfg.turn_cap,
                                 caps=cfg.caps.split(","), state_index=rc.load_state_index(cfg.store, Path(cfg.cache)),
                                 store=cfg.store, modes=cfg.modes, token_cap=cfg.token_cap or None,
-                                mix=parse_mix(cfg.mix), games=game_set(cfg))
+                                mix=parse_mix(cfg.mix), games=game_set(cfg),
+                                stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None)
     pick_nodes.write_jobs(jobs, queue=rls.root)
     rc.write_json(rls, "learner/state.json", {"version": 0, "round": 1, "history": [], "created": time.time(),
                                               "games": sorted(game_set(cfg) or [])})
@@ -827,6 +829,10 @@ def args(argv=None) -> argparse.Namespace:
     ap.add_argument("--mix", default="level_start=0.4,backward=0.3,uncertain=0.3",
                     help="share of each round per start-state class (first pass); '' = class order only")
     ap.add_argument("--modes", default="all", help="modes the picker assigns: all | original | grader | comma list")
+    ap.add_argument("--stage-k", type=int, default=0, help="two-stage groups: a node's first job gets this many tries, "
+                    "a top-up to --N only where they split (0 = off: every job gets --K)")
+    ap.add_argument("--frontier", type=float, default=0.0, help="restart only levels at or above each game's first level "
+                    "the seed plays clear less than this share of the time (e.g. 0.9; 0 = every level)")
     ap.add_argument("--games", default="", help="only these games (comma list); init saves it, run reuses it "
                     "(4-Oct: RL v1 round 1 plays its 14 training games only)")
     ap.add_argument("--lanes", type=int, default=10, help="server lanes per VM (sizes the refill threshold)")

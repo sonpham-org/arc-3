@@ -208,6 +208,47 @@ def main() -> int:
           and r11["by_class"].get("level_start", 0) > r10["by_class"].get("level_start", 0),
           "mix: each class gets its share of the round (no mix: level starts first)",
           f"mix {r10['by_class']} / none {r11['by_class']}")
+    # 4-Oct: stock-only rounds (RL v1 tries: --modes stock) skipped every node as 'full' (0 jobs)
+    g12, r12 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=10, K=8, N=8, modes="stock")
+    check(len(g12) == 10 and all(a["mode"] == "stock" for j in g12 for a in j["assignments"])
+          and all(2 <= j["tries"] <= 8 for j in g12), "stock-only: jobs of stock tries up to N per node (was 0 jobs)",
+          f"{len(g12)} jobs, tries {Counter(j['tries'] for j in g12)}, skipped_full {r12['skipped_full']}")
+    # frontier: no node below each game's first level the seed plays clear < 90% of the time
+    g13, r13 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=400, per_game=40, K=4, N=4,
+                       modes="stock", frontier=0.9)
+    fr = r13["frontier"]
+    check(g13 and all(j["origin"]["level"] >= fr[j["game_id"][:4]] for j in g13) and r13["skipped_below_frontier"] > 0,
+          "frontier: only levels at or above each game's frontier", f"frontier {fr}, {r13['skipped_below_frontier']} below")
+    paths13 = pn.seed_paths(plays, seed, pn.DEFAULT_BUILD)
+    fl = pn.frontier_levels(paths13, 0.9)
+    ok13 = True
+    for gname, f in fl.items():
+        rates = f["rates"]
+        ok13 &= all(rates[lv][0] >= 0.9 * rates[lv][1] for lv in rates if lv < f["level"])
+        ok13 &= f["level"] == max(rates) or rates[f["level"]][0] < 0.9 * rates[f["level"]][1]
+    check(ok13, "frontier_levels: every level below the frontier is cleared by >= 90% of the plays reaching it")
+    # two-stage groups: first stage_k tries; a top-up to N only where this campaign's tries split
+    def fake(n1, cleared):
+        return {"rollout": {"run": "gtr-pt"}, "steps": [{"n1": n1, "n5": n1, "game": "zz", "level": 1, "action": "stock",
+                                                        "outcome": ({"cleared_level": True, "moves_to_clear": 3}
+                                                                    if cleared else {})}]}
+    cs = rc.NodeStats([fake("a", True)] * 4 + [fake("b", False)] * 4 + [fake("c", True)] * 2 + [fake("c", False)] * 2
+                      + [fake("d", True)] * 5 + [fake("d", False)] * 3)
+    got = {n: pn.stage_tries(cs, n, 4, 8) for n in ("new", "a", "b", "c", "d")}
+    check(got == {"new": 4, "a": 0, "b": 0, "c": 4, "d": 0}, "stage_tries: 4 first; all-clear / all-fail settled; "
+          "a 2/4 split topped up to 8; a node already at 8 done", str(got))
+    camp = copy.deepcopy(g13[0])
+    t1 = camp["origin"]["t1"]
+    src = next(p for p in plays if p["rollout"]["id"] == camp["source"]["rollout_id"])
+    settle = copy.deepcopy(src)
+    settle["rollout"].update(run=rc.campaign_run("pt"), id="gtr-pt:settle", origin_kind="snapshot")
+    settle["steps"] = [dict(s, outcome={"cleared_level": True, "moves_to_clear": 2}) for s in settle["steps"] if s["n1"] == t1]
+    g14, r14 = pn.pick(plays + [settle] * 4, campaign="pt", round_=2, seed_runs=seed, limit=400, per_game=40, K=8, N=8,
+                       modes="stock", frontier=0.9, stage_k=4)
+    first = [j for j in g14 if j["origin"]["t1"] != t1]
+    check(not [j for j in g14 if j["origin"]["t1"] == t1] and r14["skipped_settled"] >= 1
+          and all(j["tries"] == 4 for j in first), "stage_k: a node whose 4 campaign tries all cleared is settled; "
+          "fresh nodes get 4", f"settled {r14['skipped_settled']}, tries {Counter(j['tries'] for j in first)}")
     bad = [n for ok, n in RESULTS if not ok]
     print(f"\n{len(RESULTS) - len(bad)}/{len(RESULTS)} checks passed" + (f"; FAILED: {bad}" if bad else ""))
     return 1 if bad else 0

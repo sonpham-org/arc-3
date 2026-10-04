@@ -143,6 +143,39 @@ def classify(paths, stats: rc.NodeStats, backward_depth: int, extra_paths=()) ->
     return out
 
 
+def frontier_levels(paths, threshold: float) -> dict[str, dict]:
+    """Per game, the first level the seed plays clear less than `threshold` of the time they reach it (4-Oct, Son:
+    sample where the model is not yet sure to win; levels every play clears are re-solved for nothing). Levels below
+    it are not restarted. {game: {"level": L, "rates": {level: [cleared, reached]}}}; a game whose every reached level
+    is always cleared gets its highest level."""
+    seen: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for r, rows in paths:
+        levels: dict[int, bool] = {}
+        for s, _ in rows:
+            lv = int(s["level"])
+            levels[lv] = levels.get(lv, False) or bool((s.get("outcome") or {}).get("cleared_level"))
+        for lv, cleared in levels.items():
+            seen[r["game"]][lv][1] += 1
+            seen[r["game"]][lv][0] += int(cleared)
+    out = {}
+    for g, rates in seen.items():
+        lvls = sorted(rates)
+        f = next((lv for lv in lvls if rates[lv][0] < threshold * rates[lv][1]), lvls[-1])
+        out[g] = {"level": f, "rates": {lv: rates[lv] for lv in lvls}}
+    return out
+
+
+def stage_tries(cstats: rc.NodeStats, n1: str, stage_k: int, N: int) -> int:
+    """Two-stage groups (4-Oct): a node's first job gets stage_k tries; it gets more (up to N in all) only when this
+    campaign's tries there split (some cleared, some not): an all-clear or all-fail group carries no signal, and 6
+    of 20 speed2 nodes had every try at full marks. 0 = settled, do not pick."""
+    v = cstats.visits(n1)
+    if v == 0:
+        return stage_k
+    w = sum(cstats.clears[n1].values())
+    return N - v if 0 < w < v and v < N else 0
+
+
 def mode_set(spec: str | None) -> list[str]:
     """The modes a job may assign: 'all' (every coach mode), 'original', 'grader', or a comma list (stock always)."""
     raw = (spec or "all").strip().lower()
@@ -213,13 +246,16 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
          sources: str = rc.SEED_SOURCES, coach_spec: str = "policy", state_index: dict | None = None,
          store: str = rc.STORE, campaign_restarts: bool = True, modes: str | None = "all",
          pending: list[dict] | None = None, blocked: dict | None = None, blocked_nodes: dict | None = None,
-         token_cap: int | None = None, mix: dict[str, float] | None = None) -> tuple[list[dict], dict]:
+         token_cap: int | None = None, mix: dict[str, float] | None = None, stage_k: int | None = None,
+         frontier: float | None = None) -> tuple[list[dict], dict]:
     """pending: jobs still queued ({game, t1, ...}: their nodes are skipped, their games count as sampled);
     blocked: restart_key(source rollout, seq) -> why (a restore that diverged); blocked_nodes: t1 -> why;
     token_cap: generated tokens per try after the origin (the server stops the try there; None = no cap);
     mix: share of the round per class ({"level_start": .4, "backward": .3, "uncertain": .3}): a first pass fills each
     class up to its share, a second pass fills what is left in class order (None = class order only; rl2 3-Oct:
-    level starts alone filled every round, so no backward or uncertain node, nor any campaign branch, was played)."""
+    level starts alone filled every round, so no backward or uncertain node, nor any campaign branch, was played).
+    stage_k: two-stage groups (stage_tries): a node's first job gets stage_k tries, a top-up only where they split;
+    frontier: only levels at or above each game's first level the seed plays clear < frontier of the time."""
     allowed = mode_set(modes)
     blocked, blocked_nodes = blocked or {}, blocked_nodes or {}
     pending_n1 = {str(j.get("t1")) for j in pending or [] if j.get("t1")}
@@ -239,6 +275,15 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
                     before += int(s.get("moves_step") or 0)
                 extra.append((r, rows))
     classes = classify(paths, stats, backward_depth, extra)
+    fronts = frontier_levels(paths, frontier) if frontier else {}
+    below = Counter()
+    for g, f in fronts.items():              # levels every seed play clears: never restarted
+        for cls in list(classes.get(g, {})):
+            keep = [x for x in classes[g][cls] if int(x[1]["level"]) >= f["level"]]
+            below[g] += len(classes[g][cls]) - len(keep)
+            classes[g][cls] = keep
+    run_c = rc.campaign_run(campaign)
+    cstats = rc.NodeStats([p for p in plays if p["rollout"].get("run") == run_c]) if stage_k else None
     gcount = Counter()                       # first-mode assignments campaign-wide: spreads modes across nodes
     for r, rows in extra:
         if rows:
@@ -251,8 +296,10 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
     per = Counter()
     order = game_order(classes, plays, campaign, pending, round_)
     report = {"plays": len(plays), "seed_plays": len(paths), "campaign_plays": len(extra), "skipped_full": 0,
-              "skipped_grid": 0, "skipped_pending": 0, "skipped_blocked": 0, "by_class": Counter(),
-              "by_restore": Counter(), "games": sorted(classes), "game_order": order}
+              "skipped_grid": 0, "skipped_pending": 0, "skipped_blocked": 0, "skipped_settled": 0,
+              "skipped_below_frontier": sum(below.values()), "by_class": Counter(),
+              "by_restore": Counter(), "games": sorted(classes), "game_order": order,
+              "frontier": {g: f["level"] for g, f in sorted(fronts.items())}}
     seen_n1.update(pending_n1)
     share = {c: -(-limit * float((mix or {}).get(c, 0.0)) // 1) for c in ("level_start", "backward", "uncertain")}
     for capped, cls in ([(True, c) for c in share] if mix else []) + \
@@ -276,12 +323,23 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
                     if s.get("n5") in seen_n5:
                         report["skipped_grid"] += 1
                         continue
-                    counts = stats.n[s["n1"]]
-                    if all(counts[m] >= N for m in allowed if m != "stock"):
+                    k_node = K
+                    if stage_k:                       # this campaign's own tries decide: first stage, top-up, or done
+                        counts = cstats.n[s["n1"]]
+                        k_node = min(K, stage_tries(cstats, s["n1"], stage_k, N))
+                        if k_node <= 0:
+                            report["skipped_settled"] += 1
+                            continue
+                    else:
+                        counts = stats.n[s["n1"]]
+                    # stock-only rounds (--modes stock) count stock itself: 'every non-stock mode at N' was vacuously
+                    # true there and skipped every node (4-Oct: 2792 of 2792 skipped, 0 jobs)
+                    capped_modes = [m for m in allowed if m != "stock"] or ["stock"]
+                    if all(counts[m] >= N for m in capped_modes):
                         report["skipped_full"] += 1
                         continue
                     pdist = rc.mode_dist(pol, s.get("features") or {})
-                    tries = assign(K, counts, pdist, N, caps or ["mode"], allowed, gcount)
+                    tries = assign(k_node, counts, pdist, N, caps or ["mode"], allowed, gcount)
                     if len(tries) < 2:
                         report["skipped_full"] += 1
                         continue

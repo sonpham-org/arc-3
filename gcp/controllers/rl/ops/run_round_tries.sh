@@ -15,7 +15,8 @@
 #      a VM lost before its finish line is relaunched once (its finished tries are already in rl/<C>/tries/)
 #   4. trainer job <J>T-nN-records: try_records.py + select_records.py -> /opt/m/work/records/<J><T>
 #   5. RECORDS=<J><T> run_round_v3.sh N: train from round N-1's adapter, merge, test panels, loop check
-# Env: VMS (2), K (8 siblings), LIMIT (40 nodes per refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>),
+# Env: VMS (2), K (8 = the most siblings a node gets), STAGE_K (4 first), FRONTIER (0.9), LIMIT (40 nodes per
+#      refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>),
 #      TRAINER_VM / TRAINER_ZONE (passed on), DRYRUN=1 (prints the plan and the records job, launches nothing).
 set -uo pipefail
 export CLOUDSDK_PYTHON='C:\python312\python.exe'
@@ -32,6 +33,8 @@ N=${1:?round number, at least 1}
 [ "$N" -ge 1 ] || { echo "round 0 has no previous model to play: use run_round_v3.sh 0"; exit 1; }
 PREV=n$((N - 1))
 VMS=${VMS:-2} K=${K:-8} LIMIT=${LIMIT:-40} BUDGET=${BUDGET:-48} T=${TAG:-t}
+STAGE_K=${STAGE_K:-4} FRONTIER=${FRONTIER:-0.9}   # 4-Oct picker: 4 tries first, a top-up to K where they split;
+                                                  # no restarts on levels the seed plays clear >= 90% of the time
 CAMPAIGN=${CAMPAIGN:-v1r$N-$(date -u +%m%d)}
 GAMES=bp35,cn04,g50t,ka59,ls20,m0r0,r11l,s5i5,sc25,sk48,sp80,tu93,vc33,wa30     # site_config.json split.train
 ZONES="us-east5-a us-east5-b us-east5-c us-central1-a us-central1-b us-central1-c us-central1-f us-east4-a us-east4-b
@@ -78,8 +81,9 @@ say "rollout input $IN"
 
 # ---------------------------------------------------------------- 2. campaign + VMs
 cd "$GT" || exit 1
-C:/Python312/python.exe rl_loop.py init --campaign "$CAMPAIGN" --modes stock --K "$K" --N "$K" --limit "$LIMIT" \
-    --games "$GAMES" --lanes 16 | tail -n 1 || { say "campaign init failed"; exit 1; }
+PICK="--modes stock --K $K --N $K --limit $LIMIT --stage-k $STAGE_K --frontier $FRONTIER"
+C:/Python312/python.exe rl_loop.py init --campaign "$CAMPAIGN" $PICK --games "$GAMES" --lanes 16 | tail -n 1 \
+    || { say "campaign init failed"; exit 1; }
 g storage cp runner/rl_host_sync.py ../gtree-ingest/gtree_store.py ../gtree-ingest/gtree_ctx.py \
     gs://cellens-ai-artifacts/arc3-gtree/rollout-code/ > /dev/null 2>&1 || { say "host code upload failed"; exit 1; }
 launch() {   # <label>: first zone with capacity (the zone list again after a full pass, for up to 30 min)
@@ -96,8 +100,10 @@ for i in $(seq 1 "$VMS"); do LABELS="$LABELS $LBL$(printf "\\x$(printf %x $((96 
 for l in $LABELS; do launch "$l" & done; wait
 
 # ---------------------------------------------------------------- 3. refills until every VM has finished
+# the refills pick with the same rule as init (4-Oct: run had no --modes/--K/--N, so every refill fell back to
+# coached modes, K 5, N 4, and try_records --modes stock would then drop those tries)
 C:/Python312/python.exe rl_loop.py run --campaign "$CAMPAIGN" --every 10 --no-publish --min-steps 99999999 --lanes 16 \
-    > "$WORK/learner-$CAMPAIGN.log" 2>&1 &
+    $PICK > "$WORK/learner-$CAMPAIGN.log" 2>&1 &
 LPID=$!
 declare -A RELAUNCHED=()
 while true; do
@@ -121,6 +127,36 @@ while true; do
 done
 kill $LPID 2>/dev/null
 say "tries done: $(g storage ls "$STORE/rl/$CAMPAIGN/tries/**/result.json" 2>/dev/null | wc -l) finished tries uploaded"
+
+# ---------------------------------------------------------------- 3b. gate: the model that played must not loop
+# (Son 4-Oct: never stack a round on a model that copy-pastes its reasoning, as the first recipe's R1-R3 did.) Round N
+# trains from round N-1's adapter, so wait for N-1's train and hard panels (re-read from the RL page each time: a panel
+# lost to Spot is relaunched as letter b) and run loop_check.py on them; LOOPING (> 1% of the thinking repeated) stops
+# the round before its records. NO_LOOP_GATE=1 skips the check; LOOP_WAIT_H (8) bounds the wait.
+RUNS=${RUNS:-gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs}
+if [ -z "${NO_LOOP_GATE:-}" ]; then
+  t0=$SECONDS
+  while true; do
+    read -r PTR PHR < <(C:/Python312/python.exe - "$SITE/site_config.json" "$PREV" <<'PY' | tr -d '\r'
+import json, sys
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+runs = {p["key"]: (p["runs"].get(sys.argv[2]) or ["-"])[-1] for p in cfg["panels"]}
+print(runs.get("train", "-") or "-", runs.get("hard", "-") or "-")
+PY
+)
+    done_n=0
+    for r in $PTR $PHR; do
+      [ "$r" != "-" ] && g storage cat "$RUNS/$r/phases.tsv" 2>/dev/null | tail -n 1 | grep -q "finish" && done_n=$((done_n + 1))
+    done
+    [ "$done_n" -eq 2 ] && break
+    [ $((SECONDS - t0)) -gt $(( ${LOOP_WAIT_H:-8} * 3600 )) ] && { say "$PREV panels not finished after ${LOOP_WAIT_H:-8} h: round $N not trained"; exit 1; }
+    sleep 120
+  done
+  lc=$(C:/Python312/python.exe "$OPS/loop_check.py" $PTR $PHR | tr -d '\r')
+  echo "$lc" | sed "s/^/$(date -u +%H:%M) loop check $PREV: /"
+  echo "$lc" | tail -n 1 | grep -q "^LOOPING" && { say "$PREV loops: round $N not trained (NO_LOOP_GATE=1 overrides)"; exit 1; }
+  say "$PREV passed the loop check: round $N trains"
+fi
 
 # ---------------------------------------------------------------- 4. records on the trainer, 5. train + merge + panels
 g storage cp "$WORK/job-$JR.json" "$B/jobs/$JR.json" > /dev/null 2>&1 || { say "could not queue $JR"; exit 1; }
