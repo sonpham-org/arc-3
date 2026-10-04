@@ -6,6 +6,7 @@ import json
 import random
 import sys
 import unittest
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -352,6 +353,12 @@ class TestRecords(unittest.TestCase):
                           budget=4, neg_share=0.5, per_attempt=3)
         self.assertEqual(len(short), 4)                     # one negative only: positives fill the budget
         self.assertEqual(sum(sr.record_sign_and_size(r)[0] < 0 for r in short), 1)
+        # 4-Oct: per-game cap per side (n0 had 6 sc25 negatives of 24), held in the fill-up too
+        many = [rec("sc25", p, -0.9) for p in range(6)] + [rec("aaaa", 0, 0.5), rec("bbbb", 1, -0.2)]
+        capped = sr.select(many, budget=8, neg_share=0.75, per_attempt=3, per_game=2)
+        games = Counter((sr.record_sign_and_size(r)[0], r["meta"]["game"]) for r in capped)
+        self.assertEqual(games[(-1, "sc25")], 2)
+        self.assertEqual(len(capped), 4)                    # sc25 x2, bbbb, aaaa: nothing else may fill the budget
 
     @unittest.skipUnless((REAL / f"{RE86}_p0_requests.jsonl").exists(), "re86 logs not on this box")
     def test_real_records(self):

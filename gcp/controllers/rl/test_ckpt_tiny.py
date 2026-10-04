@@ -211,9 +211,18 @@ def part_three(env: dict, root: Path) -> None:
 def part_four(env: dict, root: Path) -> None:
     """The round-1 comparison variant (Son 4-Oct): --loss cispo --clip-high 0.28 --token-norm token on the same
     records as the plain clipped run: it trains, records its settings, and ends at a different adapter."""
-    recs = root / "adv.jsonl.gz"
-    if not recs.exists():
-        write_adv_records(recs)
+    # records of different trained lengths: with equal lengths every switch only rescales the gradient, which Adam
+    # undoes (first run of this part: identical adapters); token-level normalization reweighs unequal records
+    recs = root / "adv4.jsonl.gz"
+    with gzip.open(recs, "wt", encoding="utf-8") as fh:
+        for k in range(N_RECS):
+            r = tt.conversation()
+            r["messages"][1]["content"][0]["text"] = f"Frame {k + 1}: what do you do?"
+            r["messages"][2]["reasoning_content"] = " ".join(f"Try {k}.{j}: I should test UP alone first." for j in range(1 + 6 * k))
+            a_ = 0.6 if k % 2 == 0 else -0.4
+            r["weights"] = [a_ if t else 0.0 for t in r["train"]]
+            r["meta"] = {"game": f"tiny{k}", "pass": k, "advantage": {"1": a_}}
+            fh.write(json.dumps(r) + "\n")
     e = dict(env, recs=str(recs))
     a, v = root / "adv_a4", root / "adv_v4"
     clip = ("--clip", "0.2", "--kl", "0.05")

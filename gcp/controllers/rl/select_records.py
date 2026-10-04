@@ -27,7 +27,9 @@ def record_sign_and_size(rec: dict) -> tuple[int, float]:
     return (1 if mean > 0 else -1 if mean < 0 else 0), max(abs(w) for w in ws)
 
 
-def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int) -> list[dict]:
+def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int, per_game: int = 0) -> list[dict]:
+    """per_game (> 0): at most this many records of one game on each side (4-Oct n0: 6 of its 24 records were sc25
+    negatives; pushed down six times, a few sc25 tokens fell ~e^10 and the KL term exploded)."""
     sides = {1: [], -1: []}
     for i, r in enumerate(recs):
         s, size = record_sign_and_size(r)
@@ -38,20 +40,32 @@ def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int) ->
     picked: list[dict] = []
     for s in (1, -1):
         per: Counter = Counter()
+        per_g: Counter = Counter()
         for _, _, r in sorted(sides[s], key=lambda t: (t[0], t[1])):
             if len([p for p in picked if record_sign_and_size(p)[0] == s]) >= want[s]:
                 break
             key = (r["meta"].get("run"), r["meta"].get("game"), r["meta"].get("pass"))
-            if per[key] >= per_attempt:
+            game = r["meta"].get("game")
+            if per[key] >= per_attempt or (per_game and per_g[game] >= per_game):
                 continue
             per[key] += 1
+            per_g[game] += 1
             picked.append(r)
     # a short side leaves budget the other side can use
     left = budget - len(picked)
     if left > 0:
         chosen = {id(p) for p in picked}
+        side_game = Counter((record_sign_and_size(p)[0], p["meta"].get("game")) for p in picked)
         rest = sorted((t for s in (1, -1) for t in sides[s] if id(t[2]) not in chosen), key=lambda t: (t[0], t[1]))
-        picked += [r for _, _, r in rest[:left]]
+        for _, _, r in rest:                 # the per-game cap holds here too
+            if left <= 0:
+                break
+            k = (record_sign_and_size(r)[0], r["meta"].get("game"))
+            if per_game and side_game[k] >= per_game:
+                continue
+            side_game[k] += 1
+            picked.append(r)
+            left -= 1
     return picked
 
 
@@ -62,12 +76,13 @@ def main() -> int:
     ap.add_argument("--budget", type=int, default=32)
     ap.add_argument("--neg-share", type=float, default=0.5)
     ap.add_argument("--per-attempt", type=int, default=3)
+    ap.add_argument("--per-game", type=int, default=4, help="at most this many records of one game on each side (0 = no cap)")
     args = ap.parse_args()
     recs = []
     for f in sorted(glob.glob(args.src)):
         with gzip.open(f, "rt", encoding="utf-8") as fh:
             recs += [json.loads(line) for line in fh if line.strip()]
-    picked = select(recs, args.budget, args.neg_share, args.per_attempt)
+    picked = select(recs, args.budget, args.neg_share, args.per_attempt, args.per_game)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for i, r in enumerate(picked):

@@ -332,6 +332,9 @@ def _copies_agree(params) -> tuple[float, float]:
 # per-reply advantages that can be negative (build_records.level_advantages). Pushing a sequence's probability down
 # has no floor, so the update is PPO's: per token, the ratio to the probability at the START of the round is clipped
 # to [1 - clip, 1 + clip] in the direction the advantage pushes, plus a k3 KL penalty to that same start.
+KL_CAP = float(os.environ.get("ARC3_KL_CAP", "5"))     # k3 is exact up to d = 5 (a 148x drop), linear past it
+
+
 def id_of(rec: dict) -> str:
     return hashlib.sha256(json.dumps(rec.get("meta", {}), sort_keys=True).encode()).hexdigest()[:20]
 
@@ -353,7 +356,10 @@ def clipped_loss(lp: torch.Tensor, old: torch.Tensor, adv: torch.Tensor, clip: f
     else:
         obj = torch.minimum(ratio * adv, clipped * adv)
     d = old - lp
-    kl = torch.exp(d) - d - 1
+    # k3 = e^d - d - 1, continued linearly past d = KL_CAP (slope e^c - 1): 4-Oct n0, one record whose sc25 tokens had
+    # dropped ~e^10 below the round's start gave k3 = 2402 and a loss of +121; the pull-back stays, the explosion goes
+    c = KL_CAP
+    kl = torch.where(d > c, (math.exp(c) - 1) * (d - c) + (math.exp(c) - c - 1), torch.exp(d.clamp(max=c)) - d.clamp(max=c) - 1)
     n = float(norm_tokens) if norm_tokens else max(1, lp.numel())
     loss = -(obj - kl_coef * kl).sum() / n
     with torch.no_grad():
