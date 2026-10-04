@@ -5,7 +5,7 @@
 // Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server; models stay hidden until
 // the rating is in.
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-live";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-ref";
 
 const LETTERS = ["LEFT", "RIGHT", "C", "D"];
 const KEY_STORE = "arc3-review-key";
@@ -73,6 +73,7 @@ async function renderSplit(view) {
   $("empty").hidden = true;
   const node = view.node, paths = view.paths;
   const contents = await Promise.all(paths.map(p => content(p.id)));
+  const tags = await Promise.all(paths.map(p => tagOf(p.id)));
 
   // the shared point: a small board and one line, kept in the header so the paths start at the top of the screen
   const startRows = (node.meta && node.meta.start) || contents[0].start;
@@ -113,6 +114,13 @@ async function renderSplit(view) {
       el("div", { class: "rv-opt-head" },
         el("span", { class: "rv-letter" }, LETTERS[i]),
         el("span", { class: "rv-outcome" + (p.cleared ? " ok" : "") }, outcomeText(p)),
+        el("span", { class: "rv-ref", title: "blind name of this trace (no model in it); the same for every rater" }, `#${tags[i]}`),
+        el("button", { type: "button", class: "rv-copy", title: "copy a reference to this trace and the turn on screen, to send to someone",
+          onclick: async e => {
+            const t = contents[i].turns[state.step];
+            const text = `${node.game} L${node.level} #${tags[i]}${t ? ` T${t.step}` : ""} (${LETTERS[i]} for me) ${location.origin}/review.html?split=${encodeURIComponent(view.split.id)}`;
+            try { await navigator.clipboard.writeText(text); toast("Copied: " + text); } catch (err) { toast(text); }
+          } }, "copy ref"),
         el("span", { class: "rv-model rv-tag", hidden: true }, p.model)),
       pl.node, list, el("div", { class: "rv-ended", hidden: true }, `${LETTERS[i]} had no turn here: its play was already over.`), stars);
   }));
@@ -155,6 +163,13 @@ function saveMark(pathId) {
     return api("/mark", { method: "POST", body: { split, path: pathId, step, verdict: m.verdict || null, note: (m.note || "").trim() || null } })
       .catch(e => { showError(e); throw e; });
   };
+}
+
+// A blind name for a trace: six hex digits of a hash of its id. The id itself carries the run's name and so the model,
+// which stays hidden until the rating is in; this tag does not, and is the same for every rater whichever side it is on.
+async function tagOf(id) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id));
+  return [...new Uint8Array(h)].slice(0, 3).map(x => x.toString(16).padStart(2, "0")).join("");
 }
 
 function pick(value, quiet) {
