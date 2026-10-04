@@ -2,10 +2,10 @@
 // better; they can mark single turns good or bad with a note. Server: railway/rl_review.py.
 //   team (signed in):  /api/v1/review/*            identity from the sign-in
 //   outside raters:    /api/v1/public/review/*     X-Review-Key from the invite link (review.html#k=...)
-// Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server; models stay hidden until
-// the rating is in.
+// Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server. Each path shows its setup
+// label and run name (Mark, 3-Oct: he wants them while rating).
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-ref";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-run";
 
 const LETTERS = ["LEFT", "RIGHT", "C", "D"];
 const KEY_STORE = "arc3-review-key";
@@ -118,10 +118,11 @@ async function renderSplit(view) {
         el("button", { type: "button", class: "rv-copy", title: "copy a reference to this trace and the turn on screen, to send to someone",
           onclick: async e => {
             const t = contents[i].turns[state.step];
-            const text = `${node.game} L${node.level} #${tags[i]}${t ? ` T${t.step}` : ""} (${LETTERS[i]} for me) ${location.origin}/review.html?split=${encodeURIComponent(view.split.id)}`;
+            const text = `${node.game} L${node.level} ${p.run} ${p.play} (${p.model}) #${tags[i]}${t ? ` T${t.step}` : ""} (${LETTERS[i]} for me) ${location.origin}/review.html?split=${encodeURIComponent(view.split.id)}`;
             try { await navigator.clipboard.writeText(text); toast("Copied: " + text); } catch (err) { toast(text); }
           } }, "copy ref"),
-        el("span", { class: "rv-model rv-tag", hidden: true }, p.model)),
+        el("span", { class: "rv-model rv-tag", title: "setup label" }, p.model),
+        el("span", { class: "rv-run", title: "run name and play" }, `${p.run} · ${p.play}`)),
       pl.node, list, el("div", { class: "rv-ended", hidden: true }, `${LETTERS[i]} had no turn here: its play was already over.`), stars);
   }));
   const longest = Math.max(...contents.map(c => c.turns.length));

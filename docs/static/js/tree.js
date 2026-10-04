@@ -1,7 +1,7 @@
 // Tree explorer (docs/tree.html): every play of a game as a tree of points (level starts; forks later) and the
 // paths between them, with how raters judged each path. Server: GET /api/v1/review/tree?game= (railway/rl_review.py).
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-ref";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-run";
 import { modelColor } from "./model-colors.js?v=20261002-blue";
 
 const NS = "http://www.w3.org/2000/svg";

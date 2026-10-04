@@ -16,7 +16,7 @@
 // Server: railway/rl_review.py. With ?fixture=1 the page reads docs/static/data/rl2-fixture.json instead (fake data, for
 // checking the page locally). Chrome from theme.css and rl-shell.css; every colour is solid (no gradients).
 
-import { draw, pathView } from "./review-ui.js?v=20261003-ref";
+import { draw, pathView } from "./review-ui.js?v=20261003-run";
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
