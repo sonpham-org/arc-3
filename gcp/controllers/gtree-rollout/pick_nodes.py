@@ -143,25 +143,71 @@ def classify(paths, stats: rc.NodeStats, backward_depth: int, extra_paths=()) ->
     return out
 
 
-def frontier_levels(paths, threshold: float) -> dict[str, dict]:
-    """Per game, the first level the seed plays clear less than `threshold` of the time they reach it (4-Oct, Son:
-    sample where the model is not yet sure to win; levels every play clears are re-solved for nothing). Levels below
-    it are not restarted. {game: {"level": L, "rates": {level: [cleared, reached]}}}; a game whose every reached level
-    is always cleared gets its highest level."""
-    seen: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
-    for r, rows in paths:
-        levels: dict[int, bool] = {}
-        for s, _ in rows:
-            lv = int(s["level"])
-            levels[lv] = levels.get(lv, False) or bool((s.get("outcome") or {}).get("cleared_level"))
-        for lv, cleared in levels.items():
-            seen[r["game"]][lv][1] += 1
-            seen[r["game"]][lv][0] += int(cleared)
+# Full plays of the base model whose per-level results feed the frontier for round 1 (4-Oct, Son: "how to measure 90%
+# if we play less than 10 times?" - the 4 seed runs alone give 4 plays a game, where '< 90%' only meant 'not all 4').
+DUCK_RUNS = "gs://cellens-ai-artifacts/arc3-duck/daniel-base/runs"
+BASE_RUNS = (*rc.SEED_RUNS, "daniel-base-a-1001", "daniel-base-b-1001", "daniel-noborder-c-1001",
+             "daniel-noborder-d-1001", "daniel-p5train-base-b-1002", "daniel-p5train-base-s2-1003",
+             "daniel-p4hard-base-a-1002")
+
+
+def level_counts_from_viewers(runs, cache: Path, root: str = DUCK_RUNS) -> dict[str, dict[int, list[int]]]:
+    """{game: {level: [cleared, reached]}} over every pass of these full-play runs, from their small per-game viewer
+    files (levels_completed, total_levels): a pass reached levels 1..completed+1 and cleared 1..completed."""
+    counts: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    bucket = root[5:].split("/", 1)[0]
+    for run in runs:
+        items, _ = rc.gcs_list(f"{root.rstrip('/')}/{run}/working/artifacts/")
+        for it in items:
+            name = it["name"].rsplit("/", 1)[-1]
+            if not name.endswith("_viewer_data.json") or name[:4] in rc.FENCED:
+                continue
+            dest = cache / "viewers" / run / name
+            if not dest.exists() or dest.stat().st_size != int(it["size"]):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                rc.gcs_download(f"gs://{bucket}/{it['name']}", dest)
+            d = json.loads(dest.read_text(encoding="utf-8"))
+            done, total = int(d.get("levels_completed") or 0), int(d.get("total_levels") or 0)
+            for lv in range(1, min(done + 1, total) + 1):
+                counts[name[:4]][lv][1] += 1
+                counts[name[:4]][lv][0] += int(lv <= done)
+    return {g: {lv: list(v) for lv, v in c.items()} for g, c in counts.items()}
+
+
+def wilson_lower(k: int, n: int, z: float) -> float:
+    """Lower end of the Wilson interval for k clears in n plays (0 for n = 0)."""
+    if n <= 0:
+        return 0.0
+    p, z2 = k / n, z * z
+    return (p + z2 / (2 * n) - z * ((p * (1 - p) + z2 / (4 * n)) / n) ** 0.5) / (1 + z2 / n)
+
+
+def frontier_levels(paths, threshold: float, counts: dict | None = None, z: float = 1.28,
+                    min_reached: int = 6) -> dict[str, dict]:
+    """Per game, the first level the base model has not mastered: a level counts as mastered only when at least
+    min_reached plays reached it AND the Wilson lower bound (z 1.28: one-sided 90%) of its clear rate is >= threshold,
+    e.g. 8/8 (0.83), 17/18 (0.83) pass 0.8; 4/4 (0.71), 9/10 (0.72) do not. Levels below the frontier are not
+    restarted (4-Oct, Son: sample where the model is not yet sure to win). counts: {game: {level: [cleared,
+    reached]}} (level_counts_from_viewers); without it, the seed paths are counted. {game: {"level", "rates"}}; a
+    game whose every level is mastered gets its highest level."""
+    seen: dict = counts
+    if seen is None:
+        seen = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+        for r, rows in paths:
+            levels: dict[int, bool] = {}
+            for s, _ in rows:
+                lv = int(s["level"])
+                levels[lv] = levels.get(lv, False) or bool((s.get("outcome") or {}).get("cleared_level"))
+            for lv, cleared in levels.items():
+                seen[r["game"]][lv][1] += 1
+                seen[r["game"]][lv][0] += int(cleared)
     out = {}
     for g, rates in seen.items():
-        lvls = sorted(rates)
-        f = next((lv for lv in lvls if rates[lv][0] < threshold * rates[lv][1]), lvls[-1])
-        out[g] = {"level": f, "rates": {lv: rates[lv] for lv in lvls}}
+        lvls = sorted(int(lv) for lv in rates)
+        rate = {lv: rates.get(lv, rates.get(str(lv))) for lv in lvls}
+        mastered = lambda lv: rate[lv][1] >= min_reached and wilson_lower(rate[lv][0], rate[lv][1], z) >= threshold  # noqa: E731
+        f = next((lv for lv in lvls if not mastered(lv)), lvls[-1])
+        out[g] = {"level": f, "rates": rate}
     return out
 
 
@@ -247,7 +293,7 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
          store: str = rc.STORE, campaign_restarts: bool = True, modes: str | None = "all",
          pending: list[dict] | None = None, blocked: dict | None = None, blocked_nodes: dict | None = None,
          token_cap: int | None = None, mix: dict[str, float] | None = None, stage_k: int | None = None,
-         frontier: float | None = None) -> tuple[list[dict], dict]:
+         frontier: float | None = None, level_counts: dict | None = None) -> tuple[list[dict], dict]:
     """pending: jobs still queued ({game, t1, ...}: their nodes are skipped, their games count as sampled);
     blocked: restart_key(source rollout, seq) -> why (a restore that diverged); blocked_nodes: t1 -> why;
     token_cap: generated tokens per try after the origin (the server stops the try there; None = no cap);
@@ -255,7 +301,9 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
     class up to its share, a second pass fills what is left in class order (None = class order only; rl2 3-Oct:
     level starts alone filled every round, so no backward or uncertain node, nor any campaign branch, was played).
     stage_k: two-stage groups (stage_tries): a node's first job gets stage_k tries, a top-up only where they split;
-    frontier: only levels at or above each game's first level the seed plays clear < frontier of the time."""
+    frontier: only levels at or above each game's first level not mastered (frontier_levels: the Wilson lower bound of
+    its clear rate below `frontier`, or too few plays), counted from level_counts (level_counts_from_viewers) or, without
+    it, the seed paths."""
     allowed = mode_set(modes)
     blocked, blocked_nodes = blocked or {}, blocked_nodes or {}
     pending_n1 = {str(j.get("t1")) for j in pending or [] if j.get("t1")}
@@ -275,7 +323,7 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
                     before += int(s.get("moves_step") or 0)
                 extra.append((r, rows))
     classes = classify(paths, stats, backward_depth, extra)
-    fronts = frontier_levels(paths, frontier) if frontier else {}
+    fronts = frontier_levels(paths, frontier, counts=level_counts) if frontier else {}
     below = Counter()
     for g, f in fronts.items():              # levels every seed play clears: never restarted
         for cls in list(classes.get(g, {})):

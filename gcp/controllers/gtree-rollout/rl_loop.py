@@ -402,7 +402,8 @@ def iterate(cfg: argparse.Namespace, *, write: bool = True) -> dict:
                                     modes=cfg.modes, pending=pending, blocked=state.get("blocked"),
                                     blocked_nodes=state.get("blocked_nodes"), token_cap=cfg.token_cap or None,
                                     mix=parse_mix(cfg.mix), games=game_set(cfg) or set(state.get("games") or []) or None,
-                                    stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None)
+                                    stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None,
+                                    level_counts=frontier_counts(cfg))
         out["jobs"] = jobs
         lines.append(f"  refill: round {state['round']}: {len(jobs)} jobs / {rep['tries']} tries "
                      f"{rep['by_class']} (skipped: {rep['skipped_full']} full, {rep['skipped_grid']} same t5 cell, "
@@ -783,7 +784,8 @@ def init(cfg: argparse.Namespace) -> None:
                                 caps=cfg.caps.split(","), state_index=rc.load_state_index(cfg.store, Path(cfg.cache)),
                                 store=cfg.store, modes=cfg.modes, token_cap=cfg.token_cap or None,
                                 mix=parse_mix(cfg.mix), games=game_set(cfg),
-                                stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None)
+                                stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None,
+                                    level_counts=frontier_counts(cfg))
     pick_nodes.write_jobs(jobs, queue=rls.root)
     rc.write_json(rls, "learner/state.json", {"version": 0, "round": 1, "history": [], "created": time.time(),
                                               "games": sorted(game_set(cfg) or [])})
@@ -832,7 +834,10 @@ def args(argv=None) -> argparse.Namespace:
     ap.add_argument("--stage-k", type=int, default=0, help="two-stage groups: a node's first job gets this many tries, "
                     "a top-up to --N only where they split (0 = off: every job gets --K)")
     ap.add_argument("--frontier", type=float, default=0.0, help="restart only levels at or above each game's first level "
-                    "the seed plays clear less than this share of the time (e.g. 0.9; 0 = every level)")
+                    "not mastered: under 6 plays reached it, or the Wilson lower bound of its clear rate is below this "
+                    "(e.g. 0.8; 0 = every level)")
+    ap.add_argument("--frontier-runs", default="", help="full-play runs whose per-level results feed --frontier (comma "
+                    "list, read from their viewer files; default: the seed paths only)")
     ap.add_argument("--games", default="", help="only these games (comma list); init saves it, run reuses it "
                     "(4-Oct: RL v1 round 1 plays its 14 training games only)")
     ap.add_argument("--lanes", type=int, default=10, help="server lanes per VM (sizes the refill threshold)")
@@ -850,6 +855,14 @@ def args(argv=None) -> argparse.Namespace:
     a = ap.parse_args(argv)
     a.seed_runs = [x for x in a.seed_runs.split(",") if x]
     return a
+
+
+def frontier_counts(cfg: argparse.Namespace) -> dict | None:
+    """--frontier-runs: per-level [cleared, reached] of those runs' passes (pick_nodes.level_counts_from_viewers)."""
+    runs = [r for r in (getattr(cfg, "frontier_runs", "") or "").split(",") if r]
+    if not runs or not getattr(cfg, "frontier", 0):
+        return None
+    return pick_nodes.level_counts_from_viewers(runs, Path(cfg.cache))
 
 
 def game_set(cfg: argparse.Namespace) -> set[str] | None:

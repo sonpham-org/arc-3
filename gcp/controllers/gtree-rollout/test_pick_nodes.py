@@ -213,20 +213,24 @@ def main() -> int:
     check(len(g12) == 10 and all(a["mode"] == "stock" for j in g12 for a in j["assignments"])
           and all(2 <= j["tries"] <= 8 for j in g12), "stock-only: jobs of stock tries up to N per node (was 0 jobs)",
           f"{len(g12)} jobs, tries {Counter(j['tries'] for j in g12)}, skipped_full {r12['skipped_full']}")
-    # frontier: no node below each game's first level the seed plays clear < 90% of the time
-    g13, r13 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=400, per_game=40, K=4, N=4,
-                       modes="stock", frontier=0.9)
-    fr = r13["frontier"]
-    check(g13 and all(j["origin"]["level"] >= fr[j["game_id"][:4]] for j in g13) and r13["skipped_below_frontier"] > 0,
-          "frontier: only levels at or above each game's frontier", f"frontier {fr}, {r13['skipped_below_frontier']} below")
+    # frontier (Son 4-Oct: "how to measure 90% if we play less than 10 times?"): a level is mastered only with >= 6
+    # plays and a Wilson lower bound >= the threshold; 4 seed plays alone never master a level
+    syn = {"aaaa": {1: [8, 8], 2: [9, 10], 3: [1, 4]}, "bbbb": {1: [4, 4], 2: [4, 4]},
+           "cccc": {1: [18, 18], 2: [17, 18], 3: [2, 2]}, "dddd": {1: [8, 8], 2: [7, 7]}}
+    fl = {g: f["level"] for g, f in pn.frontier_levels([], 0.8, counts=syn).items()}
+    check(fl == {"aaaa": 2, "bbbb": 1, "cccc": 3, "dddd": 2}, "frontier_levels: 8/8 and 17/18 mastered at 0.8; 9/10, "
+          "4/4 and under 6 plays not; every level mastered -> the last one", str(fl))
+    check(abs(pn.wilson_lower(8, 8, 1.28) - 8 / (8 + 1.28 ** 2)) < 1e-9 and pn.wilson_lower(0, 0, 1.28) == 0.0,
+          "wilson_lower: k = n gives n / (n + z^2); no plays gives 0")
     paths13 = pn.seed_paths(plays, seed, pn.DEFAULT_BUILD)
-    fl = pn.frontier_levels(paths13, 0.9)
-    ok13 = True
-    for gname, f in fl.items():
-        rates = f["rates"]
-        ok13 &= all(rates[lv][0] >= 0.9 * rates[lv][1] for lv in rates if lv < f["level"])
-        ok13 &= f["level"] == max(rates) or rates[f["level"]][0] < 0.9 * rates[f["level"]][1]
-    check(ok13, "frontier_levels: every level below the frontier is cleared by >= 90% of the plays reaching it")
+    check(all(f["level"] == min(f["rates"]) for f in pn.frontier_levels(paths13, 0.8).values()),
+          "frontier from the 4 seed plays alone: nothing mastered (first level everywhere)")
+    counts13 = {p[0]["game"]: {1: [20, 20], 2: [3, 10]} for p in paths13}
+    g13, r13 = pn.pick(plays, campaign="pt", round_=1, seed_runs=seed, limit=400, per_game=40, K=4, N=4,
+                       modes="stock", frontier=0.8, level_counts=counts13)
+    check(g13 and all(j["origin"]["level"] >= 2 for j in g13) and r13["skipped_below_frontier"] > 0
+          and set(r13["frontier"].values()) == {2}, "frontier: with level 1 at 20/20 no level-1 node is restarted",
+          f"{r13['skipped_below_frontier']} below, frontier {set(r13['frontier'].values())}")
     # two-stage groups: first stage_k tries; a top-up to N only where this campaign's tries split
     def fake(n1, cleared):
         return {"rollout": {"run": "gtr-pt"}, "steps": [{"n1": n1, "n5": n1, "game": "zz", "level": 1, "action": "stock",

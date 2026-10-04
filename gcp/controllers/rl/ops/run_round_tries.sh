@@ -15,7 +15,7 @@
 #      a VM lost before its finish line is relaunched once (its finished tries are already in rl/<C>/tries/)
 #   4. trainer job <J>T-nN-records: try_records.py + select_records.py -> /opt/m/work/records/<J><T>
 #   5. RECORDS=<J><T> run_round_v3.sh N: train from round N-1's adapter, merge, test panels, loop check
-# Env: VMS (2), K (8 = the most siblings a node gets), STAGE_K (4 first), FRONTIER (0.9), LIMIT (40 nodes per
+# Env: VMS (2), K (8 = the most siblings a node gets), STAGE_K (4 first), FRONTIER (0.8), FRONTIER_RUNS, LIMIT (40 nodes per
 #      refill), BUDGET (48 records), TAG (t), CAMPAIGN (v1r<N>-<MMDD>),
 #      TRAINER_VM / TRAINER_ZONE (passed on), DRYRUN=1 (prints the plan and the records job, launches nothing).
 set -uo pipefail
@@ -33,8 +33,11 @@ N=${1:?round number, at least 1}
 [ "$N" -ge 1 ] || { echo "round 0 has no previous model to play: use run_round_v3.sh 0"; exit 1; }
 PREV=n$((N - 1))
 VMS=${VMS:-2} K=${K:-8} LIMIT=${LIMIT:-40} BUDGET=${BUDGET:-48} T=${TAG:-t}
-STAGE_K=${STAGE_K:-4} FRONTIER=${FRONTIER:-0.9}   # 4-Oct picker: 4 tries first, a top-up to K where they split;
-                                                  # no restarts on levels the seed plays clear >= 90% of the time
+STAGE_K=${STAGE_K:-4} FRONTIER=${FRONTIER:-0.8}   # 4-Oct picker: 4 tries first, a top-up to K where they split; no
+# restarts below each game's first level not mastered (>= 6 plays and a Wilson lower bound >= FRONTIER), counted from
+# FRONTIER_RUNS: round 1 = every full-play run of the base model (pick_nodes.BASE_RUNS, 8-18 plays a game; the 4 seed
+# runs alone cannot show 80%, Son: "how to measure 90% if we play less than 10 times?"); later rounds = the previous
+# round's train and hard panels (the current model; 5-6 plays, so little is skipped until more plays exist)
 CAMPAIGN=${CAMPAIGN:-v1r$N-$(date -u +%m%d)}
 GAMES=bp35,cn04,g50t,ka59,ls20,m0r0,r11l,s5i5,sc25,sk48,sp80,tu93,vc33,wa30     # site_config.json split.train
 ZONES="us-east5-a us-east5-b us-east5-c us-central1-a us-central1-b us-central1-c us-central1-f us-east4-a us-east4-b
@@ -81,7 +84,15 @@ say "rollout input $IN"
 
 # ---------------------------------------------------------------- 2. campaign + VMs
 cd "$GT" || exit 1
-PICK="--modes stock --K $K --N $K --limit $LIMIT --stage-k $STAGE_K --frontier $FRONTIER"
+if [ -z "${FRONTIER_RUNS:-}" ]; then
+  if [ "$N" -eq 1 ]; then
+    FRONTIER_RUNS=$(C:/Python312/python.exe -c "import pick_nodes; print(','.join(pick_nodes.BASE_RUNS))" | tr -d '\r')
+  else
+    FRONTIER_RUNS=$(C:/Python312/python.exe -c "import json,sys; c=json.load(open(sys.argv[1],encoding='utf-8')); print(','.join((p['runs'].get(sys.argv[2]) or [''])[-1] for p in c['panels'] if p['key'] in ('train','hard')))" "$SITE/site_config.json" "$PREV" | tr -d '\r')
+  fi
+fi
+say "frontier counted from: $FRONTIER_RUNS"
+PICK="--modes stock --K $K --N $K --limit $LIMIT --stage-k $STAGE_K --frontier $FRONTIER --frontier-runs $FRONTIER_RUNS"
 C:/Python312/python.exe rl_loop.py init --campaign "$CAMPAIGN" $PICK --games "$GAMES" --lanes 16 | tail -n 1 \
     || { say "campaign init failed"; exit 1; }
 g storage cp runner/rl_host_sync.py ../gtree-ingest/gtree_store.py ../gtree-ingest/gtree_ctx.py \
