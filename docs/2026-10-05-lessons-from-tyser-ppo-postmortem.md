@@ -96,3 +96,35 @@ working on top of the Franzen base and still gaining, while we sit at 28.94.
   notebook save-run at competition shape) before they count, not only a Spark run.
 - Expect Keith to move into gold contention late. He is the kind of competitor who turns a post-mortem
   into a plan.
+
+## Forgewright, his public post-training agent swarm (read 5-Oct, repo github.com/keithtyser/forgewright, last commit 9-Jun-2026)
+
+Good ideas in it for Son's training track:
+1. **A gate between every stage, and a regression never moves forward.** Data, adapter, quantised model,
+   serving config and eval are typed artifacts. Each one carries its lineage and gate result in a
+   registry that also serves as the provenance graph. For us: every model Son produces gets a record of
+   what data, what settings, and what held-out score. Keeping or dropping a model then becomes mechanical.
+2. **Repair before giving up, using outcome memory.** When a stage fails its gate, the Director first
+   looks for a past run on the same model family that passed, and retries from those settings. If there
+   is none, it backs off the knob that failed. It halts only when repair is exhausted. For us: when a
+   training round makes the model worse, go back to the last settings that worked instead of nudging
+   at random.
+3. **RL defaults learned from failures.** These are a KL anchor to the reference (beta 0.04; his first
+   GRPO round collapsed to zero without it), PPO clip with DAPO clip-higher (0.2 / 0.28), group-normalised
+   advantages, DAPO loss, masking of truncated completions, and 8 rollouts per prompt. The format reward
+   is kept small so it never swamps correctness. Check: does Son's trainer drop truncated rollouts and
+   zero-variance groups? This matches the multi-harness RL article's dead-batch finding.
+4. **The eval gate fails loud if the adapter did not load** (LoRA B weights still zero). This is the
+   same class of silent bug as his Pokémon thread-local flag. For us: the Kaggle notebook should prove
+   Son's trained weights are actually in use. Otherwise we score the untrained model and call it a
+   result.
+5. **Serving speed-ups must re-pass the quality eval.** Each serving candidate (speculative decoding,
+   batching) is benchmarked and then re-scored against the source model. Only candidates that keep
+   quality qualify, and the fastest of those wins. This is our "a faster model must match the full one"
+   rule made automatic, and it would have caught the 336g pruned line.
+6. **Every session is saved as a replayable transcript**, to be used later for harness review and as
+   training data.
+
+Limits: it is built for short tasks with a checkable answer (numeric match, 256-token completions). ARC-3
+is long multi-turn play, so the useful part is the pattern (gates, lineage, repair from memory), not the
+tool. It predates his PPO post-mortem.
