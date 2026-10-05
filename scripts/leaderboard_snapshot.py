@@ -1,9 +1,13 @@
 #!/usr/bin/env python3.13
 """Pull the public ARC-AGI-3 Kaggle leaderboard and keep our own history of it.
 
-Writes docs/static/data/leaderboard/latest.json (every team, right now) and
-history.json (one line per snapshot, plus a score/rank trail for the top teams and ours).
-Run it on a schedule; the Leaderboard tab on the site reads those two files.
+Writes into docs/static/data/leaderboard/:
+  latest.json   every team right now (+ where each stood at the end of the previous UTC day)
+  history.json  one line per snapshot, plus a score/rank trail for the top teams and ours
+  events.json   who changed score between snapshots (feed on the page)
+  base.json     end-of-previous-day standings, for the "today" columns
+Prints ALERT lines for things worth a notification; leaderboard_publish.sh shows them.
+Run on a schedule; the Leaderboard tab on the site reads these files.
 """
 import csv, io, json, subprocess, sys, tempfile, zipfile
 from datetime import datetime, timezone
@@ -11,14 +15,20 @@ from pathlib import Path
 
 COMP = "arc-prize-2026-arc-agi-3"
 OUR_TEAM_ID = "15605182"          # Son Pham & Mark Barney
-TRAIL_TOP = 100                   # teams with a kept score/rank trail
+TRAIL_TOP = 300                   # teams with a kept score/rank trail
+EVENT_RANK = 500                  # score changes kept in the feed when the team is this high
+EVENT_CAP = 3000
+BIG_JUMP = 3.0                    # a top-20 team gaining this many points raises an alert
 OUT = Path(__file__).resolve().parent.parent / "docs/static/data/leaderboard"
 
 
 def medal_ranks(n):
-    """Kaggle medal cut-offs (competitions with 250+ teams)."""
-    gold = 10 + int(n * 0.002)
-    return {"gold": gold, "silver": int(n * 0.05), "bronze": int(n * 0.10)}
+    """Kaggle medal cut-offs: gold is top ten plus a fifth of a percent, silver 5%, bronze 10%."""
+    return {"gold": 10 + int(n * 0.002), "silver": int(n * 0.05), "bronze": int(n * 0.10)}
+
+
+def medal(rank, cuts):
+    return "gold" if rank <= cuts["gold"] else "silver" if rank <= cuts["silver"] else "bronze" if rank <= cuts["bronze"] else None
 
 
 def fetch_rows():
@@ -28,32 +38,34 @@ def fetch_rows():
         z = next(Path(d).glob("*.zip"))
         with zipfile.ZipFile(z) as zf:
             raw = zf.read(zf.namelist()[0]).decode("utf-8-sig")
-    rows = []
-    for r in csv.DictReader(io.StringIO(raw)):
-        rows.append([int(r["Rank"]), r["TeamId"], r["TeamName"], r["LastSubmissionDate"],
-                     float(r["Score"]), int(r["SubmissionCount"]), r["TeamMemberUserNames"]])
-    return rows
+    return [[int(r["Rank"]), r["TeamId"], r["TeamName"], r["LastSubmissionDate"],
+             float(r["Score"]), int(r["SubmissionCount"]), r["TeamMemberUserNames"]]
+            for r in csv.DictReader(io.StringIO(raw))]
+
+
+def load(p, default):
+    return json.loads(p.read_text()) if p.exists() else default
 
 
 def main():
     rows = fetch_rows()
     if len(rows) < 100:
         sys.exit(f"only {len(rows)} rows came back; refusing to overwrite the leaderboard")
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = [r for r in rows if r[0] > 0]   # rank 0 = host baseline entries, not competitors
     assert [r[0] for r in rows] == list(range(1, len(rows) + 1)), "ranks are not contiguous"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     n = len(rows)
     cuts = medal_ranks(n)
     by_rank = {r[0]: r[4] for r in rows}
     OUT.mkdir(parents=True, exist_ok=True)
+    lp, bp, hp, ep = (OUT / f for f in ("latest.json", "base.json", "history.json", "events.json"))
+    prev = load(lp, None)
+    prev_by_id = {r[1]: r for r in prev["rows"]} if prev else {}
 
-    # "Today" baseline: where everyone stood at the end of the previous UTC day, so the
-    # table can show who moved. Rolls forward once per UTC day.
+    # "Today" baseline: standings at the end of the previous UTC day. Rolls forward once per UTC day.
     today = now[:10]
-    bp, lp = OUT / "base.json", OUT / "latest.json"
-    base = json.loads(bp.read_text()) if bp.exists() else None
+    base = load(bp, None)
     if base is None or base["date"] != today:
-        prev = json.loads(lp.read_text()) if lp.exists() else None
         src = prev["rows"] if prev else rows
         base = {"date": today, "ranks": {r[1]: [r[0], r[4]] for r in src}}
         bp.write_text(json.dumps(base, separators=(",", ":")))
@@ -61,15 +73,34 @@ def main():
         b = base["ranks"].get(r[1])
         r.extend([b[0], b[1]] if b else [None, None])
 
-    (OUT / "latest.json").write_text(json.dumps(
-        {"fetched": now, "teams": n, "medalRanks": cuts, "ourTeamId": OUR_TEAM_ID, "rows": rows},
-        separators=(",", ":")))
+    # Feed: every score change since the last snapshot, for teams high enough to matter.
+    events, alerts = load(ep, []), []
+    if prev:
+        old_cuts = prev["medalRanks"]
+        for r in rows:
+            o = prev_by_id.get(r[1])
+            if o and o[4] == r[4]:
+                continue
+            if not o and r[0] > EVENT_RANK:
+                continue
+            if o and r[0] > EVENT_RANK and o[0] > EVENT_RANK and r[1] != OUR_TEAM_ID:
+                continue
+            events.append({"t": now, "id": r[1], "name": r[2], "from": o[4] if o else None, "to": r[4],
+                           "rankFrom": o[0] if o else None, "rankTo": r[0]})
+            if r[1] == OUR_TEAM_ID and o and medal(o[0], old_cuts) != medal(r[0], cuts):
+                alerts.append(f"We are now {medal(r[0], cuts) or 'outside the medals'} (rank {r[0]}, score {r[4]:.2f})")
+            elif o and r[0] <= 20 and r[4] - o[4] >= BIG_JUMP:
+                alerts.append(f"{r[2]} jumped {o[4]:.2f} -> {r[4]:.2f} (rank {o[0]} -> {r[0]})")
+            elif not o and r[0] <= 50:
+                alerts.append(f"New team {r[2]} enters at rank {r[0]} with {r[4]:.2f}")
+    ep.write_text(json.dumps(events[-EVENT_CAP:], separators=(",", ":")))
 
-    hp = OUT / "history.json"
-    hist = json.loads(hp.read_text()) if hp.exists() else {"snaps": [], "trails": {}}
-    hist["snaps"].append({"t": now, "teams": n, "top": rows[0][4],
-                          "gold": by_rank.get(cuts["gold"]), "silver": by_rank.get(cuts["silver"]),
-                          "bronze": by_rank.get(cuts["bronze"])})
+    lp.write_text(json.dumps({"fetched": now, "teams": n, "medalRanks": cuts, "ourTeamId": OUR_TEAM_ID,
+                              "rows": rows}, separators=(",", ":")))
+
+    hist = load(hp, {"snaps": [], "trails": {}})
+    hist["snaps"].append({"t": now, "teams": n, "top": rows[0][4], "gold": by_rank.get(cuts["gold"]),
+                          "silver": by_rank.get(cuts["silver"]), "bronze": by_rank.get(cuts["bronze"])})
     for r in rows:
         if r[0] <= TRAIL_TOP or r[1] == OUR_TEAM_ID:
             trail = hist["trails"].setdefault(r[1], {"name": r[2], "pts": []})
@@ -78,6 +109,8 @@ def main():
                 trail["pts"].append([now, r[4], r[0]])
     hp.write_text(json.dumps(hist, separators=(",", ":")))
     print(f"{now}: {n} teams, top {rows[0][4]}, gold line {by_rank.get(cuts['gold'])} (rank {cuts['gold']})")
+    for a in alerts:
+        print("ALERT", a)
 
 
 if __name__ == "__main__":
