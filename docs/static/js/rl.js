@@ -505,7 +505,31 @@ function renderPanels(d) {
 }
 
 /* ------------------------------------------------------------------ main */
+// Son, 4-Oct-2026: training happens inside the hard games, so the hard panel and the train panel are one set; show
+// them as a single panel. Games are joined, each model's runs and plays are joined, its level total is the sum of the
+// panel totals and its error the root of the summed squares (the panels share no games). Claude Opus 5.5 for Bubba.
+function mergePanels(d) {
+  if (!Array.isArray(d.panels) || d.panels.length < 2) return d;
+  const ps = d.panels, keys = [...new Set(ps.flatMap(p => Object.keys(p.models || {})))];
+  const models = {};
+  for (const k of keys) {
+    const parts = ps.map(p => p.models[k]).filter(Boolean);
+    const done = parts.filter(a => a.plays && a.plays.length);
+    const ses = done.map(a => a.se);
+    models[k] = {
+      ...parts[0],
+      runs: parts.flatMap(a => a.runs || []),
+      plays: parts.flatMap(a => a.plays || []),
+      playing: parts.reduce((s, a) => s + (a.playing || 0), 0),
+      total: done.reduce((s, a) => s + (a.total || 0), 0),
+      se: ses.length && ses.every(x => x !== null && x !== undefined) ? Math.sqrt(ses.reduce((s, x) => s + x * x, 0)) : null,
+    };
+  }
+  const games = [...new Set(ps.flatMap(p => p.games || []))];
+  return { ...d, panels: [{ ...ps[0], label: "All games", games, passes: Math.max(...ps.map(p => p.passes || 0)), models }] };
+}
 function render(d) {
+  d = mergePanels(d);
   DATA = d;
   document.getElementById("updated").textContent = "updated " + ago(d.updated);
   document.getElementById("footR").textContent = `Data ${new Date(d.updated).toLocaleString()} · refreshes every 5 min`;
