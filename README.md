@@ -306,13 +306,71 @@ disposable Postgres for the round trip).
 
 ### Trace review: which way forward is better (RL)
 
-`review.html` shows a rater one point in a game that several plays reached (a **node**: today
-the start of a level, where every repeat of a game sits on the same board) and two or more
-ways the model went on from there (**paths**: each one's thinking, the code it ran, its moves
-and the board after each). The rater picks the better one (or "about the same" / "both bad"),
-says how sure, can score each path 1-5 and mark single turns good or bad with a note.
-LEFT / RIGHT order is shuffled per rater and the models stay hidden until the rating is in.
-Nothing is trained on these yet.
+`review.html` now opens a focused team queue: one unresolved question, exact trace
+excerpts, matching ARC-Explainer notes, an alternative explanation, and what the answer
+would change. Human sessions contain at most five questions. Known rule conflicts and
+missing evidence go to the assistant queue; low-impact concerns do not become human
+homework. Confirm, mark a reasonable experiment, dismiss, request evidence, or skip.
+Requesting evidence preserves your note and hands the question to assistants.
+
+A GPT-6 Luna worker screens bounded decision episodes, including system/input context,
+ordered reasoning and tool results, and durable memory writes. It uses the existing
+ARC-Explainer importer and requires an exact game build. Held-out/test-only families are
+excluded before screening and again at publication. Notes remain reviewer knowledge;
+they are never inserted into gameplay. Model identity and final outcome are withheld from
+the judge. Omitted history or focal context cannot reach the human queue. Before/after
+boards accompany the focal turn for review.
+
+The server ranks by proposed impact, whether the solver had the contrary evidence,
+recurrence, then reading size. Matching cited claim, support and reference passages are
+grouped; resolved groups stay suppressed. This is a conservative first ranking rule,
+not a calibrated measure of learning value. Model judgments are allegations; neither
+judgments nor human decisions automatically approve training or assign rewards.
+
+**Run the producer after deploying this revision:** Python 3.13, an authenticated Codex
+CLI with GPT-6 Luna access, GCS login (for downloading runs), the existing ARC-Explainer
+token/import, and the Railway publication token are required. No model weights or extra
+worktree are created. Start with preparation, then enable screening on the publisher:
+
+```bash
+python3.13 scripts/trace_review_publish.py --run <run> --model <label> \
+  --cache /path/to/existing-trace-cache --triage --dry-run
+python3.13 scripts/trace_review_publish.py --watch runs.txt \
+  --cache /path/to/existing-trace-cache --triage --triage-max-calls 10
+```
+
+`--triage` enables the worker on each publishing pass; it is opt-in to keep model usage
+explicit. The limit is **per run per pass**, including failed calls. `--triage-notes FILE`
+uses an existing importer export; otherwise each pass fetches current notes. Cached
+judgments (including no issue) avoid repeat calls. The shared cache is capped at 2,000
+entries / 32 MiB. Each run replaces `triage-report.json` with coverage, errors, deferred
+work and findings; existing trace downloads retain the publisher's normal cache policy.
+A fifth screening slot is reserved for an untriggered episode when available; this
+checks the keyword filter, not the judge's false-negative rate.
+
+For already-local logs, run `scripts/trace_triage.py --run-dir <dir> --run <id>
+--fetch-notes --out /path/to/triage-report.json --max-calls 10` (one line). Add
+`--prepare-only` for no model calls, or `--publish` with `ARC3_PUBLISH_TOKEN` to publish.
+The worker uses ephemeral, tool-disabled CLI calls with a 48,000-character packet cap
+and a two-minute timeout. Oversize/malformed sources and mismatched notes are reported,
+not silently treated as clean traces. Incomplete source tails are excluded until finished.
+There is no background worker in the web container: the publishing command must run
+where Codex is authenticated. An empty queue before enabling it does not establish that
+traces were screened.
+
+Triage endpoints under `/api/v1/review/triage/`: `publication` (PUT, machine token),
+`queue?route=human|assistant` and `item?id=...` (GET, team), `decision` (POST, team), and
+`export` (GET, machine token). Export returns JSON `items` with immutable evidence,
+effective route, reviewer decisions and `training_approved: false`; follow `next_cursor`
+with `?after=<cursor>` until null. The deployment applies the two additive tables from
+`railway/catalog_schema.sql`. A training owner can consume reviewed diagnostics to
+prepare recovery experiments; no trainer integration is implied. See the
+[design and evaluation plan](docs/plans/2026-10-05-human-review-for-rl.md).
+
+**Existing pair review** remains at `review.html?view=pairs`, direct split links and
+invite links. It presents paths from a shared start, hides model names until rating,
+and retains turn marks, notes and rating export. Live mark edits now update export too,
+including removal of the last mark, and invite links remain visible after creation.
 
 - **Who rates.** The signed-in team (and only `ALLOWED_EMAILS`, re-checked by the API) at
   `/api/v1/review/*`, which also lists the pool and invites raters. Outside raters get a link

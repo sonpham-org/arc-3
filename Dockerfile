@@ -33,6 +33,8 @@ COPY railway/games_schema.sql /games_schema.sql
 COPY railway/games_store.py /games_store.py
 COPY railway/trace_feedback.py /trace_feedback.py
 COPY railway/rl_review.py /rl_review.py
+COPY railway/trace_triage.py /trace_triage.py
+COPY railway/triage_contract.py /triage_contract.py
 COPY railway/publication_store.py /publication_store.py
 COPY railway/model_backfill.py /model_backfill.py
 COPY scripts/run_catalog.py /run_catalog.py
@@ -56,6 +58,9 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -qF -- '--skip-auth-route="^/api/v1/traces/feedback-export$"' /entrypoint.sh \
     && grep -q "trace-votes.js" /srv/static/js/decision.js \
     && grep -qF -- '--skip-auth-route="^/api/v1/public/"' /entrypoint.sh \
+    && grep -q "TraceTriageApi" /catalog_server.py \
+    && grep -q "trace_triage_items" /catalog_schema.sql \
+    && grep -qF -- '--skip-auth-route="^/api/v1/review/triage/publication$"' /entrypoint.sh \
     && grep -q "RlReviewApi" /catalog_server.py \
     && grep -q "rl_review_ratings" /catalog_schema.sql \
     && grep -qF -- '--skip-auth-route="^/api/v1/review/publication$"' /entrypoint.sh \

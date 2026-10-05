@@ -438,3 +438,31 @@ AS $$
         updated_at = now()
     WHERE singleton = true;
 $$;
+
+-- Human attention is reserved for unresolved clusters. Diagnostic payloads are immutable;
+-- decisions record who reviewed the exact evidence, never an automatic training reward.
+CREATE TABLE IF NOT EXISTS trace_triage_items (
+    id text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
+    cluster_key text NOT NULL,
+    game text NOT NULL,
+    route text NOT NULL CHECK (route IN ('human', 'assistant')),
+    priority integer NOT NULL,
+    status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    payload jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS trace_triage_queue_idx ON trace_triage_items (route, priority DESC) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS trace_triage_cluster_idx ON trace_triage_items (cluster_key, status);
+
+CREATE TABLE IF NOT EXISTS trace_triage_decisions (
+    decision_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id text NOT NULL REFERENCES trace_triage_items(id),
+    cluster_key text NOT NULL,
+    reviewer text NOT NULL,
+    verdict text NOT NULL CHECK (verdict IN ('confirmed', 'reasonable', 'insufficient', 'dismissed')),
+    note text NOT NULL DEFAULT '' CHECK (length(note) <= 4000),
+    seconds integer NOT NULL DEFAULT 0 CHECK (seconds BETWEEN 0 AND 86400),
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS trace_triage_decisions_cluster_idx ON trace_triage_decisions (cluster_key, created_at);

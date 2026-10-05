@@ -119,8 +119,8 @@ def turn_parts(transcript: str) -> tuple[str, list[dict]]:
     return given, parts
 
 
-def tool_code(meta: str) -> list[str]:
-    """The code of each python tool call in a [MODEL RESPONSE META] block (raw_tool_calls JSON)."""
+def tool_arguments(meta: str) -> list:
+    """Preserved arguments, including durable memory writes, from raw tool-call metadata."""
     i = meta.find("raw_tool_calls:")
     if i < 0:
         return []
@@ -136,8 +136,13 @@ def tool_code(meta: str) -> list[str]:
             args = json.loads(args)
         except (ValueError, json.JSONDecodeError):
             pass
-        out.append(args.get("code", json.dumps(args)) if isinstance(args, dict) else str(args))
+        out.append(args)
     return out
+
+
+def tool_code(meta: str) -> list[str]:
+    return [args.get("code", json.dumps(args)) if isinstance(args, dict) else str(args)
+            for args in tool_arguments(meta)]
 
 
 def read_play(lines):
@@ -196,6 +201,10 @@ def path_content(level, start, acts, turns, coached=False):
             prev = cur
         turn = {"step": s, "thinking": sec.get("THINKING", ""), "said": sec.get("ASSISTANT", ""),
                 "code": tool_code(sec.get("MODEL RESPONSE META", "")), "input": given, "parts": parts, "moves": moves}
+        memory = [{k: v for k, v in args.items() if k in ("world_model", "memory")}
+                  for args in tool_arguments(sec.get("MODEL RESPONSE META", "")) if isinstance(args, dict)]
+        if any(memory):
+            turn["memory_writes"] = [m for m in memory if m]
         if coached:
             turn["coach"] = coach_mode(sec.get("USER PROMPT", "")) or "stock"
         out_turns.append(turn)

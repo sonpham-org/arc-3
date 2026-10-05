@@ -2,7 +2,7 @@
 
 **Author:** Codex · **Date:** 5 October 2026  
 **For:** Mark, Son, and assistants working on the RL loop  
-**Status:** Proposal for review, including a limited GPT-6 Luna delegation exercise below. No training or product changes are part of this proposal commit.
+**Status:** Initial notes-first triage implementation included in PR #77. The worker, authenticated queue, human decisions, export, and publisher integration are implemented; activation requires running the publisher with `--triage` after deployment. Recovery experiments, judge calibration, and training consumption remain evaluation work. See the [operator instructions](../../README.md#trace-review-which-way-forward-is-better-rl).
 
 ## Recommendation
 
