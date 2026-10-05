@@ -165,6 +165,24 @@ class PreparationTests(unittest.TestCase):
             self.assertIsNone(json.loads(event["text"])["level_after"])
             self.assertEqual(p["selection"], "trigger")
 
+    def test_clear_ending_run_can_have_complete_win_evidence_without_future_turn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = write_run(Path(tmp), completed=True)
+            p = triage.prepare_packets(Path(tmp), "test", notes())["packets"][0]
+            self.assertTrue(p["context_complete"])
+            self.assertTrue(any("subsequent level awareness is unknown" in o for o in p["omissions"]))
+            assessment = issue(category="ambiguous_win")
+            claim = next(e for e in p["evidence"] if e["kind"] == "thinking")
+            support = next(e for e in p["evidence"] if e["kind"] == "logged_action")
+            reference = p["reference"][0]
+            assessment.update(status="ambiguous", level_awareness="unclear",
+                              claim={"ref": claim["id"], "quote": claim["text"]},
+                              support={"ref": support["id"], "quote": support["text"]},
+                              reference={"ref": reference["id"], "quote": reference["text"]})
+            result = triage.execute([p], lambda p: assessment, Path(tmp) / "cache")
+            self.assertEqual(result["items"][0]["route"], "human")
+            self.assertEqual(result["items"][0]["assessment"]["level_awareness"], "unclear")
+
     def test_mismatched_build_has_visible_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             write_run(Path(tmp))
@@ -220,6 +238,40 @@ class PreparationTests(unittest.TestCase):
             result = triage.prepare_packets(Path(tmp), "test", notes(), max_packet_chars=100)
             self.assertFalse(result["packets"])
             self.assertIn("budget", result["errors"][0]["error"])
+
+
+class QuoteRepairTests(unittest.TestCase):
+    def test_recovers_literal_emphasis_and_bold_from_unique_source(self):
+        self.assertEqual(triage.restore_literal_quote("The pressed (gray) buttons may be *pushable*.",
+                         "pressed (gray) buttons may be pushable"), "pressed (gray) buttons may be *pushable*")
+        self.assertEqual(triage.restore_literal_quote("**Test:** press button next.", "Test: press button"),
+                         "**Test:** press button")
+
+    def test_rejects_semantic_whitespace_case_and_ambiguous_changes(self):
+        for source, quote in (("*Red* blue", "red blue"), ("*red*  blue", "red blue"),
+                              ("*red* blue", "red green"), ("*red* blue then **red** blue", "red blue")):
+            with self.subTest(source=source, quote=quote), self.assertRaises(ValueError):
+                triage.restore_literal_quote(source, quote)
+
+    def test_code_and_unbalanced_markers_are_not_normalized(self):
+        for source in ("`**Test:** press button`", "**Test:* press button", "\\*Test:* press button"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                triage.restore_literal_quote(source, "Test: press button")
+
+    def test_repaired_quotes_validate_and_original_assessment_is_unchanged(self):
+        p, answer = packet(), issue()
+        p["evidence"][0]["text"] = "The exit **must move** independently."
+        repaired = triage.repair_assessment_quotes(p, answer)
+        self.assertEqual(repaired["claim"]["quote"], p["evidence"][0]["text"])
+        self.assertEqual(answer["claim"]["quote"], "The exit must move independently.")
+        triage.validate_assessment(p, repaired)
+
+    def test_no_issue_gets_neutral_status_description_but_issue_needs_real_alternative(self):
+        answer = issue()
+        answer.update(status="no_issue", alternative="", claim=None, support=None, reference=None)
+        self.assertEqual(triage.repair_assessment_quotes(packet(), answer)["alternative"], "No issue was alleged.")
+        answer.update(status="issue")
+        self.assertEqual(triage.repair_assessment_quotes(packet(), answer)["alternative"], "")
 
 
 class ExecutionTests(unittest.TestCase):

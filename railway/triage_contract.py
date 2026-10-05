@@ -153,7 +153,8 @@ def validate_assessment(packet, value):
             raise ValueError("invalid level_awareness")
         out["level_awareness"] = value["level_awareness"]
     for key in ("summary", "alternative", "human_question", "next_action"):
-        out[key] = _text(value.get(key, ""), key, 2000, empty=key in ("human_question", "next_action"))
+        out[key] = _text(value.get(key, ""), key, 2000,
+                         empty=key in ("human_question", "next_action") or (status == "no_issue" and key == "alternative"))
     for key in ("claim", "support"):
         out[key] = _citation(value.get(key), evidence, key, status in ("issue", "ambiguous"))
     out["reference"] = _citation(value.get("reference"), reference, "reference", status in ("issue", "ambiguous"))
