@@ -3,9 +3,10 @@
 //   team (signed in):  /api/v1/review/*            identity from the sign-in
 //   outside raters:    /api/v1/public/review/*     X-Review-Key from the invite link (review.html#k=...)
 // Game ids only, never titles. LEFT / RIGHT order is shuffled per rater on the server. Each path shows its setup
-// label and run name (Mark, 3-Oct: he wants them while rating).
+// label and run name (Mark, 3-Oct: he wants them while rating). Each turn is shown whole: its input (folded), then its
+// thinking, tool calls and tool results in order, all in monospace (Son, 4-Oct; Claude Opus 5.5 for Bubba).
 
-import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261003-run";
+import { draw, el, outcomeText, pathView } from "./review-ui.js?v=20261004-input";
 
 const LETTERS = ["LEFT", "RIGHT", "C", "D"];
 const KEY_STORE = "arc3-review-key";
@@ -101,7 +102,8 @@ async function renderSplit(view) {
   const opts = $("options");
   opts.className = `rv-options n${paths.length}`;
   opts.replaceChildren(...paths.map((p, i) => {
-    const { player: pl, list } = pathView(contents[i], p.id, state.marks, ti => { if (ti !== state.step) setStep(ti, i); }, saveMark(p.id));
+    const { player: pl, list } = pathView(contents[i], p.id, state.marks, ti => { if (ti !== state.step) setStep(ti, i); }, saveMark(p.id),
+      { full: true });
     state.players.push(pl);
     state.lists.push(list);
     const stars = el("div", { class: "rv-stars" }, el("span", { class: "muted" }, "this path, 1-5:"),

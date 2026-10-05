@@ -1,6 +1,11 @@
 // Shared pieces of the RL pages (review.js, tree.js): boards, the move-by-move player, the turn list.
-// A path's content (railway/rl_review.py, scripts/trace_review_index.py): {level, start: 64 hex rows,
-// turns: [{step, thinking, said, code: [...], moves: [{n, action, changed, level_up, diff: {row: hex row}}]}]}.
+// A path's content (railway/rl_review.py, scripts/trace_review_index.py): {level, start: 64 hex rows, system?,
+// turns: [{step, thinking, said, code: [...], input?, parts?: [{kind, text, tool?}],
+//          moves: [{n, action, changed, level_up, diff: {row: hex row}}]}]}.
+// Author: Claude Opus 5.5 for Bubba, 4-Oct-2026 (Son: show each turn's input; all turn text monospace, tool calls
+// and results set apart). turnList(..., {full: true}) draws a turn as its input (folded) then every part in order;
+// paths published before input was kept fall back to their thinking, split at the tool call and result markers.
+// SRP/DRY check: Pass - the review page's one turn reader; the Tree and RL2 pages keep the compact form.
 
 export const PALETTE = ["#FFFFFF", "#CCCCCC", "#999999", "#666666", "#333333", "#000000", "#E53AA3", "#FF7BCC",
   "#F93C31", "#1E93FF", "#88D8F1", "#FFDC00", "#FF851B", "#921231", "#4FCC30", "#A356D6"];
@@ -94,9 +99,64 @@ export function player(content, onTurn) {
   return { node, jumpToTurn, last: () => show(fs.length - 1), redraw: () => show(i) };
 }
 
+/* ------------------------------------------------------------------ a turn in full: input, then what it did */
+const PART_LABEL = { thinking: "thinking", said: "said", call: "tool call", result: "tool result" };
+const TOOL_MARK = /^\[(TOOL CALL|TOOL RESULT)(?::\s*([^\]\n]*))?\]\s*$/m;
+const INPUT_STORE = "arc3-review-input-open";
+
+// the code a tool call ran, out of its <tool_call><function=..><parameter=code> wrapping
+const callCode = text => { const m = text.match(/<parameter=code>\n?([\s\S]*?)\n?<\/parameter>/); return m ? m[1] : text; };
+
+// older paths keep one thinking text that runs on into the first tool call and its result: cut it at those markers
+function legacyParts(t) {
+  const parts = [], bits = (t.thinking || t.said || "").split(TOOL_MARK);
+  // split with two groups: [text, name, tool, text, name, tool, text, ...]
+  if (bits[0].trim()) parts.push({ kind: "thinking", text: bits[0].trim() });
+  for (let k = 1; k < bits.length; k += 3) {
+    const kind = bits[k] === "TOOL CALL" ? "call" : "result", text = (bits[k + 2] || "").trim();
+    parts.push({ kind, tool: (bits[k + 1] || "").trim(), text: kind === "call" ? callCode(text) : text });
+  }
+  return parts;
+}
+
+function partNode(p) {
+  const label = PART_LABEL[p.kind] || p.kind;
+  return el("div", { class: `rv-part rv-p-${p.kind}` },
+    el("div", { class: "rv-part-label" }, p.tool && p.kind !== "thinking" ? `${label} · ${p.tool}` : label),
+    el("pre", { class: "rv-part-text" }, p.text || (p.kind === "result" ? "(no output)" : "")));
+}
+
+// the input folds; opening or closing it does the same on every path on the page and is remembered
+function inputOpen() { try { return localStorage.getItem(INPUT_STORE) === "1"; } catch (e) { return false; } }
+function inputNode(content, t) {
+  const text = (t.input || "").trim();
+  const lines = text.split("\n").filter(l => l.trim());
+  const box = el("details", { class: "rv-input", open: text && inputOpen() || null },
+    el("summary", {}, el("span", { class: "rv-part-label" }, "input"),
+      el("span", { class: "rv-input-peek" }, text ? lines.slice(0, 2).join("  ·  ") : "not in this path's data yet (paths published from now on carry it)")),
+    text ? el("pre", { class: "rv-part-text" }, text) : null,
+    text && content.system ? el("details", { class: "rv-system" }, el("summary", {}, "system prompt (the same every turn)"),
+      el("pre", { class: "rv-part-text" }, content.system)) : null);
+  if (!text) box.addEventListener("click", e => e.preventDefault());
+  box.addEventListener("toggle", () => {
+    if (!text) return;
+    try { localStorage.setItem(INPUT_STORE, box.open ? "1" : "0"); } catch (e) { /* private window */ }
+    document.querySelectorAll(".rv-input.has").forEach(d => { if (d !== box && d.open !== box.open) d.open = box.open; });
+  });
+  if (text) box.classList.add("has");
+  return box;
+}
+
+function fullTurn(content, t) {
+  const parts = Array.isArray(t.parts) && t.parts.length ? t.parts : legacyParts(t);
+  return [inputNode(content, t),
+    el("div", { class: "rv-parts" }, parts.length ? parts.map(partNode) : el("div", { class: "muted" }, "(no thinking text this turn)"))];
+}
+
 // marks: null (read only) or the page's store {pathId: {step: {verdict, note}}}, written as the rater clicks
 // onMark (optional): called as onMark(step) after a good/bad click or a note edit; may return a promise (saved or not)
-export function turnList(content, pathId, marks, onMark) {
+// opts.full: draw each turn whole (input, thinking, tool calls and results); otherwise the compact thinking + code
+export function turnList(content, pathId, marks, onMark, opts = {}) {
   const items = content.turns.map((t, ti) => {
     const mark = marks ? (marks[pathId] || {})[t.step] || {} : {};
     const note = el("textarea", { class: "rv-note", placeholder: "Why? (optional)", maxlength: 2000 });
@@ -138,9 +198,9 @@ export function turnList(content, pathId, marks, onMark) {
           title: m.level_up ? "cleared the level" : m.changed ? "" : "board did not change" }, moveLabel(m)))
           : el("span", { class: "muted" }, "no move this turn")),
         null),
-      think,
-      code.length ? el("details", { class: "rv-code" }, el("summary", {}, `code it ran (${code.length})`),
-        ...code.map(c => el("pre", {}, c))) : null,
+      ...(opts.full ? fullTurn(content, t) : [think,
+        code.length ? el("details", { class: "rv-code" }, el("summary", {}, `code it ran (${code.length})`),
+          ...code.map(c => el("pre", {}, c))) : null]),
       marks ? el("div", { class: "rv-rate" }, el("span", { class: "rv-thumbs" }, good, bad), note, status) : null);
   });
   return el("ol", { class: "rv-turns" }, ...items);
@@ -148,8 +208,8 @@ export function turnList(content, pathId, marks, onMark) {
 
 // a player and its turn list kept in step: the board follows the turn clicked, the list follows the board
 // onTurn (optional): called with the turn index whenever the board lands on a turn (the review page steps both paths with it)
-export function pathView(content, pathId, marks, onTurn, onMark) {
-  const list = turnList(content, pathId, marks, onMark);
+export function pathView(content, pathId, marks, onTurn, onMark, opts) {
+  const list = turnList(content, pathId, marks, onMark, opts);
   const lis = [...list.children];
   const pl = player(content, ti => { lis.forEach((li, k) => li.classList.toggle("now", k === ti)); if (onTurn && ti >= 0) onTurn(ti); });
   list.addEventListener("click", e => {

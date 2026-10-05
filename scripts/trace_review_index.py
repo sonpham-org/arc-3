@@ -17,6 +17,10 @@ one "action" event per action (board after it, level, level_completed, analysis_
 model turn (its transcript: [SYSTEM PROMPT] [USER PROMPT] [MODEL RESPONSE META] (raw tool calls) [THINKING] ...).
 Path content: the start board, then per turn its thinking, its tool call code, and its actions, each with the board
 after it as a diff against the previous board (rows replaced). Game ids only, never titles.
+
+4-Oct-2026 (Claude Opus 5.5 for Bubba, Son's ask): each turn also carries its input (the user prompt) and parts (all
+thinking, tool calls and tool results in order), and the path its system prompt once, for the Trace review page.
+SRP/DRY check: Pass - reuses this file's transcript reading; the page renders whatever the path content carries.
 """
 from __future__ import annotations
 
@@ -77,6 +81,44 @@ def coach_mode(user_prompt: str) -> str | None:
     return next((mode for start, mode in COACH_MODES if text.startswith(start)), "other")
 
 
+# The blocks a turn's transcript is made of, in order. Only these names split it: a tool result can print a line
+# that looks like a header ("[X X X]" was seen in one), and it must stay inside that result.
+BLOCK = re.compile(r"^\[(SYSTEM PROMPT|USER PROMPT|MODEL RESPONSE META|THINKING|ASSISTANT|ANALYZER STATUS"
+                   r"|TOOL CALL|TOOL RESULT)(?::\s*([^\]\n]*))?\]\s*$", re.M)
+CALL_CODE = re.compile(r"<parameter=code>\n?(.*?)\n?</parameter>", re.S)
+PART_KIND = {"THINKING": "thinking", "ASSISTANT": "said", "TOOL CALL": "call", "TOOL RESULT": "result"}
+
+
+def blocks(transcript: str) -> list[tuple[str, str, str]]:
+    """[(name, tool name or "", text)] for every block of a transcript, in order."""
+    marks = list(BLOCK.finditer(transcript or ""))
+    return [(m.group(1), (m.group(2) or "").strip(),
+             transcript[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(transcript)].strip())
+            for i, m in enumerate(marks)]
+
+
+def turn_parts(transcript: str) -> tuple[str, list[dict]]:
+    """What the model was given this turn (its user prompt) and what happened inside the turn, in order:
+    [{kind: thinking | said | call | result, text, tool?}]. A turn can loop several times (think, call a tool,
+    read its result, think again); every round is kept. A tool call's text is the code it ran when the call
+    carries code, else the call as written."""
+    given, parts = "", []
+    for name, tool, text in blocks(transcript):
+        if name == "USER PROMPT" and not given:
+            given = text
+        kind = PART_KIND.get(name)
+        if not kind or (not text and kind != "result"):
+            continue
+        if kind == "call":
+            m = CALL_CODE.search(text)
+            text = m.group(1) if m else text
+        part = {"kind": kind, "text": text}
+        if tool:
+            part["tool"] = tool
+        parts.append(part)
+    return given, parts
+
+
 def tool_code(meta: str) -> list[str]:
     """The code of each python tool call in a [MODEL RESPONSE META] block (raw_tool_calls JSON)."""
     i = meta.find("raw_tool_calls:")
@@ -129,16 +171,21 @@ def segments(initial, actions):
 
 def path_content(level, start, acts, turns, coached=False):
     """Turn-by-turn content of one level segment: thinking, code, actions with board diffs. coached: the play ran
-    with the turn coach, so each turn carries its mode ("stock" when its prompt has no focus line)."""
+    with the turn coach, so each turn carries its mode ("stock" when its prompt has no focus line).
+    Each turn also carries its input (the user prompt it was given) and parts (every thinking, tool call and tool
+    result in order; Son 4-Oct: "input text is very important"). The system prompt is the same every turn, so it
+    is kept once per path as system. thinking / said / code stay as they were for older readers."""
     steps = []
     for a in acts:
         s = int(a.get("analysis_step") or 0)
         if not steps or steps[-1] != s:
             steps.append(s)
     prev = rows(start)
-    out_turns = []
+    out_turns, system = [], ""
     for s in steps:
         sec = sections(turns.get(s, ""))
+        system = system or sec.get("SYSTEM PROMPT", "")
+        given, parts = turn_parts(turns.get(s, ""))
         moves = []
         for a in (x for x in acts if int(x.get("analysis_step") or 0) == s):
             cur = rows(a["board"])
@@ -148,11 +195,14 @@ def path_content(level, start, acts, turns, coached=False):
                           "diff": {str(r): cur[r] for r in range(len(cur)) if cur[r] != prev[r]}})
             prev = cur
         turn = {"step": s, "thinking": sec.get("THINKING", ""), "said": sec.get("ASSISTANT", ""),
-                "code": tool_code(sec.get("MODEL RESPONSE META", "")), "moves": moves}
+                "code": tool_code(sec.get("MODEL RESPONSE META", "")), "input": given, "parts": parts, "moves": moves}
         if coached:
             turn["coach"] = coach_mode(sec.get("USER PROMPT", "")) or "stock"
         out_turns.append(turn)
-    return {"level": level, "start": rows(start), "turns": out_turns}
+    out = {"level": level, "start": rows(start), "turns": out_turns}
+    if system:
+        out["system"] = system
+    return out
 
 
 def index_run(run_dir: Path, run_id: str, model: str, include_fenced: bool, finished: dict | None = None):
