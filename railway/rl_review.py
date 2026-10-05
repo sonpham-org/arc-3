@@ -250,9 +250,10 @@ def save_mark(cursor: Any, split_id: str, rater_id: str, payload: Any) -> dict[s
                                                       "verdict": payload.get("verdict"), "note": payload.get("note")}]},
                          list(split["path_ids"]))["marks"]
     path_id, step = payload["path"], payload["step"]
+    cursor.execute("SELECT marks FROM rl_review_ratings WHERE split_id = %s AND rater_id = %s FOR UPDATE",
+                   (split_id, rater_id))
+    old = _rows(cursor)
     if not saved_marks(cursor, split_id, rater_id):    # first live save for a pair rated before: keep what it had
-        cursor.execute("SELECT marks FROM rl_review_ratings WHERE split_id = %s AND rater_id = %s", (split_id, rater_id))
-        old = _rows(cursor)
         if old:
             _write_marks(cursor, split_id, rater_id, [m for m in old[0]["marks"] if isinstance(m, dict)])
     cursor.execute("DELETE FROM rl_review_marks WHERE split_id = %s AND rater_id = %s AND path_id = %s AND step = %s",
@@ -260,6 +261,12 @@ def save_mark(cursor: Any, split_id: str, rater_id: str, payload: Any) -> dict[s
     for m in clean:
         cursor.execute("INSERT INTO rl_review_marks (split_id, rater_id, path_id, step, verdict, note) "
                        "VALUES (%s, %s, %s, %s, %s, %s)", (split_id, rater_id, m["path"], m["step"], m["verdict"], m["note"]))
+    # Ratings and their export must follow live edits, including deletion of the final mark.
+    # Otherwise an empty live set falls back to the rating's old marks on the next read.
+    if old:
+        cursor.execute("UPDATE rl_review_ratings SET marks = %s::jsonb, updated_at = now() "
+                       "WHERE split_id = %s AND rater_id = %s",
+                       (json.dumps(saved_marks(cursor, split_id, rater_id)), split_id, rater_id))
     return {"apiVersion": 1, "status": "saved", "split": split_id, "path": path_id, "step": step, "kept": bool(clean)}
 
 

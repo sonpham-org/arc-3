@@ -161,10 +161,14 @@ function setStep(k, from) {
 // a good/bad click or a note edit is saved at once (before any verdict); the pair's rating later carries the same marks
 function saveMark(pathId) {
   const split = state.view.split.id;
+  const marks = state.marks;
+  let pending = Promise.resolve();
   return step => {
-    const m = (state.marks[pathId] || {})[step] || {};
-    return api("/mark", { method: "POST", body: { split, path: pathId, step, verdict: m.verdict || null, note: (m.note || "").trim() || null } })
+    const m = (marks[pathId] || {})[step] || {};
+    const body = { split, path: pathId, step, verdict: m.verdict || null, note: (m.note || "").trim() || null };
+    pending = pending.catch(() => {}).then(() => api("/mark", { method: "POST", body }))
       .catch(e => { showError(e); throw e; });
+    return pending;
   };
 }
 
@@ -267,12 +271,14 @@ async function refreshWho() {
 }
 
 /* ------------------------------------------------------------------ team: pool and raters */
-async function renderTeam() {
+async function renderTeam(inviteLink = "") {
   const box = $("team");
   try {
     const [stats, raters] = await Promise.all([api("/stats"), api("/raters")]);
     const open = box.querySelector("details") ? box.querySelector("details").open : false;
     const linkBox = el("div");
+    if (inviteLink) linkBox.append(el("div", { class: "rv-link" }, inviteLink),
+      el("div", { class: "muted" }, "Shown once: copy it now and send it to the rater. They need no sign-in."));
     const nameInput = el("input", { placeholder: "rater's name, e.g. Ada (outside)", maxlength: 80 });
     const invite = async () => {
       const name = nameInput.value.trim();
@@ -284,7 +290,7 @@ async function renderTeam() {
           el("div", { class: "muted" }, "Shown once: copy it now and send it to the rater. They need no sign-in."));
         try { await navigator.clipboard.writeText(link); toast("Invite link copied."); } catch (e) { /* copy by hand */ }
         nameInput.value = "";
-        renderTeam();
+        renderTeam(link);
       } catch (e) { showError(e); }
     };
     box.hidden = false;

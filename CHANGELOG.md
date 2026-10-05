@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.05-notes-first-trace-triage]
+*Author: Codex | 2026-10-05*
+
+- Trace review defaults to a bounded queue of unresolved, evidence-backed questions; existing pair/invite reviews remain available. Notes-settled findings and missing context go to assistants.
+- Added an offline GPT-6 Luna screener using exact-build ARC-Explainer notes, cited reasoning/tool results/memory writes, held-out fences, limited calls and a bounded cache. The existing trace publisher supports `--triage` for one run or continuous publication.
+- Added authenticated publication, ranked duplicate groups, reviewer decisions, assistant handoffs and paginated export. Neither model flags nor human decisions create automatic rewards or training approvals.
+- Fixed legacy review mark edits resurrecting deleted annotations and invite links disappearing after creation.
+
 ## [2026.10.05-sprints-tab] — main
 *Author: Claude Opus 5.5 (Bubba sub-agent) | 2026-10-05*
 

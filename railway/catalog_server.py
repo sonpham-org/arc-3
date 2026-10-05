@@ -33,6 +33,7 @@ from harness_relay import relay as relay_harness
 from games_store import GamesApi
 from trace_feedback import TraceFeedbackApi
 from rl_review import RlReviewApi
+from trace_triage import TraceTriageApi
 
 
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
@@ -270,6 +271,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
     games_api: GamesApi | None = None
     trace_feedback_api: TraceFeedbackApi | None = None
     rl_review_api: RlReviewApi | None = None
+    trace_triage_api: TraceTriageApi | None = None
 
     def handle_games(self, method: str) -> bool:
         """Route /api/v1/games/* and /api/v1/public/games/* to games_store. True if handled."""
@@ -304,6 +306,20 @@ class CatalogHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # Full detail to Railway logs; the client gets a small error.
             print(f"trace feedback request failed for {method} {path}: {exc}", flush=True)
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "trace_feedback_unavailable"})
+            return True
+        self.send_relay_response(response.status, response.content_type, response.body)
+        return True
+
+    def handle_trace_triage(self, method: str) -> bool:
+        """Claim triage before the broader review prefix."""
+        path = urlparse(self.path).path
+        if self.trace_triage_api is None or not TraceTriageApi.owns(path):
+            return False
+        try:
+            response = self.trace_triage_api.handle(method, self.path, self.headers, self.rfile.read)
+        except Exception as exc:
+            print(f"trace triage request failed for {method} {path}: {exc}", flush=True)
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "trace_triage_unavailable"})
             return True
         self.send_relay_response(response.status, response.content_type, response.body)
         return True
@@ -376,6 +392,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if self.handle_games("GET"):
             return
         if self.handle_trace_feedback("GET"):
+            return
+        if self.handle_trace_triage("GET"):
             return
         if self.handle_rl_review("GET"):
             return
@@ -498,6 +516,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:  # noqa: N802
         if self.handle_games("PUT"):
             return
+        if self.handle_trace_triage("PUT"):
+            return
         if self.handle_rl_review("PUT"):
             return
         parsed = urlparse(self.path)
@@ -594,6 +614,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             return
         if self.handle_trace_feedback("POST"):
             return
+        if self.handle_trace_triage("POST"):
+            return
         if self.handle_rl_review("POST"):
             return
         path = urlparse(self.path).path
@@ -643,6 +665,7 @@ def main() -> int:
         args.static_manifest,
     )
     CatalogHandler.trace_feedback_api = TraceFeedbackApi(connect, CatalogHandler.publish_token)
+    CatalogHandler.trace_triage_api = TraceTriageApi(connect, CatalogHandler.publish_token)
     CatalogHandler.rl_review_api = RlReviewApi(connect, args.bootstrap_root, CatalogHandler.publish_token)
     CatalogHandler.max_upload_bytes = int(
         os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))

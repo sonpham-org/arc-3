@@ -109,6 +109,8 @@ def put(site: str, token: str, bundle: dict) -> dict:
 
 
 def publish_run(args, run: str, model: str, token: str | None) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", run):
+        raise ValueError("invalid run id")
     cache = Path(args.cache) / run
     games = set(args.games.split(",")) if args.games else None
     files = [f for f in download_run(run, cache, games) if f.endswith("_events.jsonl")]
@@ -135,6 +137,39 @@ def publish_run(args, run: str, model: str, token: str | None) -> None:
             continue
         result = put(args.site, token, bundle)
         print(f"  {game}: {result['paths']} paths, {result['contentWritten']} new files, {result['splitsMade']} new pairs")
+    if args.triage:
+        publish_triage(args, cache, run, token)
+
+
+def publish_triage(args, run_dir: Path, run: str, token: str | None) -> dict:
+    """Use the same downloaded events; dry-run prepares packets without invoking a judge."""
+    from trace_triage import PROMPT_VERSION, codex_judge, execute, prepare_packets, publish
+    if args.triage_notes:
+        notes = json.loads(Path(args.triage_notes).read_text(encoding="utf-8"))
+    else:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+        from fetch_explainer_games import DEFAULT_BASE_URL, fetch, read_token
+        try:
+            notes = fetch(DEFAULT_BASE_URL, read_token())
+        except SystemExit as exc:
+            raise RuntimeError("Could not fetch ARC-Explainer notes; configure the existing importer or --triage-notes") from exc
+    prepared = prepare_packets(run_dir, run, notes)
+    report = execute(prepared["packets"], lambda p: codex_judge(p, args.triage_model),
+                     Path(args.cache) / "triage-judgments", judge_id=args.triage_model,
+                     max_calls=args.triage_max_calls, prepare_only=args.dry_run)
+    report["counts"] = {**prepared["counts"], **report["counts"]}
+    report["errors"] = prepared["errors"] + report["errors"]
+    report.update(judge=args.triage_model, prompt_version=PROMPT_VERSION)
+    # Replace one bounded report per run; judgments share the worker's bounded cache.
+    output = run_dir / "triage-report.json"
+    temporary = output.with_suffix(".part")
+    temporary.write_text(json.dumps(report, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(output)
+    if not args.dry_run:
+        for offset in range(0, len(report["items"]), 100):
+            publish(args.site, report["items"][offset:offset + 100], token=token)
+    print(f"  triage: {json.dumps(report['counts'])}; {len(report['errors'])} errors (details: {output})")
+    return report
 
 
 def main() -> int:
@@ -147,10 +182,16 @@ def main() -> int:
     ap.add_argument("--site", default="https://arc3.sonpham.net")
     ap.add_argument("--cache", default=r"D:\codex-work\trace-review-cache")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--triage", action="store_true", help="judge notes-matched episodes and publish focused review tasks")
+    ap.add_argument("--triage-notes", help="existing ARC-Explainer importer JSON; otherwise fetch current notes")
+    ap.add_argument("--triage-model", default="gpt-6-luna")
+    ap.add_argument("--triage-max-calls", type=int, default=10, help="maximum new judge calls per run per pass")
     ap.add_argument("--service", default="arc3-viewer")
     ap.add_argument("--environment", default="production")
     ap.add_argument("--railway-cwd", default=str(Path(__file__).resolve().parents[1]))
     args = ap.parse_args()
+    if args.triage_max_calls < 0:
+        ap.error("--triage-max-calls must be nonnegative")
     token = None if args.dry_run else railway_token(args)
     if args.watch:
         while True:
