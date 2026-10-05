@@ -505,7 +505,57 @@ function renderPanels(d) {
 }
 
 /* ------------------------------------------------------------------ main */
+// Son, 4-Oct-2026: training happens inside the hard games, so the hard panel and the train panel are one set; show
+// them as a single panel and keep the held-out panel apart, as before. Games are joined, each model's runs and plays
+// are joined, its level total is the sum of the panel totals and its error the root of the summed squares (the panels
+// share no games). Claude Opus 5.5 for Bubba.
+const MERGED_KEYS = ["train", "hard"];
+function mergePanels(d) {
+  if (!Array.isArray(d.panels)) return d;
+  const ps = d.panels.filter(p => MERGED_KEYS.includes(p.key));
+  if (ps.length < 2) return d;
+  const keys = [...new Set(ps.flatMap(p => Object.keys(p.models || {})))];
+  const models = {};
+  for (const k of keys) {
+    const parts = ps.map(p => p.models[k]).filter(Boolean);
+    const done = parts.filter(a => a.plays && a.plays.length);
+    const ses = done.map(a => a.se);
+    const nGames = a => Object.keys(a.per_game || {}).length;
+    // a panel's score is the mean over its games of each game's mean score, so the joined score weighs each panel
+    // by its number of games
+    const scored = done.filter(a => a.score !== null && a.score !== undefined && nGames(a));
+    const gsum = scored.reduce((s, a) => s + nGames(a), 0);
+    // a rep is one repeat of the whole panel (levels summed over its games); the panels repeat separately, so the
+    // joined rep i is rep i of every panel added together, kept only while every panel has a rep i
+    const nr = done.length ? Math.min(...done.map(a => (a.reps || []).length)) : 0;
+    const reps = Array.from({ length: nr }, (_, i) => {
+      const rs = done.map(a => a.reps[i]), g = rs.reduce((s, r) => s + (r.games || 0), 0);
+      return { ...rs[0], levels: rs.reduce((s, r) => s + (r.levels || 0), 0), games: g,
+        score: g ? rs.reduce((s, r) => s + (r.score || 0) * (r.games || 0), 0) / g : null,
+        complete: rs.every(r => r.complete), playing: rs.some(r => r.playing) };
+    });
+    models[k] = {
+      ...parts[0],
+      per_game: Object.assign({}, ...parts.map(a => a.per_game || {})),
+      reps,
+      score: gsum ? scored.reduce((s, a) => s + a.score * nGames(a), 0) / gsum : null,
+      runs: parts.flatMap(a => a.runs || []),
+      plays: parts.flatMap(a => a.plays || []),
+      playing: parts.reduce((s, a) => s + (a.playing || 0), 0),
+      total: done.reduce((s, a) => s + (a.total || 0), 0),
+      se: ses.length && ses.every(x => x !== null && x !== undefined) ? Math.sqrt(ses.reduce((s, x) => s + x * x, 0)) : null,
+    };
+  }
+  const games = [...new Set(ps.flatMap(p => p.games || []))];
+  const merged = { ...ps[0], key: "train_hard", label: "Train and hard games", note: "Training happens inside these games.",
+    games, levels: Object.assign({}, ...ps.map(p => p.levels || {})), passes: Math.max(...ps.map(p => p.passes || 0)), models };
+  // the merged panel takes the place of the first of the two; every other panel (held-out) stays where it was
+  const out = [];
+  d.panels.forEach(p => { if (!MERGED_KEYS.includes(p.key)) out.push(p); else if (!out.includes(merged)) out.push(merged); });
+  return { ...d, panels: out };
+}
 function render(d) {
+  d = mergePanels(d);
   DATA = d;
   document.getElementById("updated").textContent = "updated " + ago(d.updated);
   document.getElementById("footR").textContent = `Data ${new Date(d.updated).toLocaleString()} · refreshes every 5 min`;

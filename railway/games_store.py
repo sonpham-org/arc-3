@@ -69,8 +69,10 @@ IDEA_STATUSES = ("unexplored", "exploring", "explored", "dropped")
 MAX_IDEAS_PER_UPLOAD = 2000
 MAX_IDEAS_BODY = 8 * 1024 * 1024
 # "synthetic" = everything we generate or build; the official 25 and the imported community
-# catalog are not ours to evolve, so the feedback queue skips them unless asked.
-NOT_SYNTHETIC = ("official", "redbluepill")
+# catalog are not ours to evolve, so the feedback queue skips them unless asked. Copycats
+# (4-Oct-2026) are exact-rule copies of the official games: evolving one would break the copy,
+# so they get their own category and stay out of the synthetic pool too.
+NOT_SYNTHETIC = ("official", "redbluepill", "copycat")
 
 # The first six are arc-explainer's flag names, kept identical so both sites' data joins.
 FEEDBACK_FLAGS = (

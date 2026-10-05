@@ -23,6 +23,33 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 - Added authenticated publication, ranked duplicate groups, reviewer decisions, assistant handoffs and paginated export. Neither model flags nor human decisions create automatic rewards or training approvals.
 - Fixed legacy review mark edits resurrecting deleted annotations and invite links disappearing after creation.
 
+## [2026.10.04-copycats-on-games-page] — main
+*Author: Claude Opus 5.5 (Bubba sub-agent) | 2026-10-04*
+
+### Added
+- **Copycats on the Games page** (Son, 4-Oct-2026): the 30 verified copycats from
+  `datasets/copycat-games/` are playable on arc3.sonpham.net under a new **Copycats** category
+  (family `copycat`). Each row reads "Copycat of <original>" (from the description), so every
+  copy names the game it copies. Sources in `docs/static/games/src/<id>-v1/`, thumbnails and
+  `tile_scale` rendered by the new `scripts/add_copycats_to_site.py` (an append; the full
+  `build_games_manifest.py` needs Son's local sibling repos). Published to the trees with
+  `publish_game_versions.py publish`; params and sprites generated afterwards by
+  `measure_game_params.py` / `measure_game_sprites.py --only` from the published heads.
+- Vetting: every copy passes `vet_game.py`'s load, win-trace, determinism and reset checks;
+  most fail only the new-game design bar (random play loses level 1, as the original does), so
+  they were published with `--no-vet` and that reason recorded. bx35, by35 and tx36 also fail
+  the deep-copy check, so the page's Undo may misbehave on those three.
+
+### Changed
+- `ws04-v1` replaced with the repaired build (levels 5 and 7 were unwinnable), published as v2.
+- Copycats are kept out of the "synthetic" pool (`NOT_SYNTHETIC`, `evolution_loop.pool_of`):
+  they keep an official game's exact rules, so evolving one would break the copy.
+- Cache strings on the Games page bumped to `20261004-copycats`.
+
+### Not added
+- The eight held-out copies in `datasets/test-only-games/` stay off the site: that folder's
+  README forbids copying them into `docs/static/games/` (Boss's test-only fence).
+
 ## [2026.10.02-rl-and-trace-review] — main
 *Author: Claude Opus 5.5 | 2026-10-02*
 

@@ -12,8 +12,8 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20260920-rail";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20260920-rail";
+import * as api from "./games-api.js?v=20261004-copycats";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20261004-copycats";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";

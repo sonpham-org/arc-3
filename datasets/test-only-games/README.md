@@ -1,7 +1,8 @@
 <!--
 Author: Claude Opus 5
-Date: 17-September-2026
-PURPOSE: Operator guide for the test-only games folder. Says what is in it (as66), the rule that
+Date: 17-September-2026 (held-out copycats section added 04-October-2026, held-out recolor section 05-October-2026, Claude Opus 5.5)
+PURPOSE: Operator guide for the test-only games folder. Says what is in it (as66 and the eight
+held-out copycats), the rule that
 it is never trained on, how to point a harness at it, the baselines to compare against, and where
 its canonical source lives. Written so a session joining cold cannot mistake this folder for
 training material.
@@ -21,6 +22,10 @@ Boss's decision, 17-Sep-2026.
 | game id | levels | what it is |
 |---|---|---|
 | `as66-v1` | 9 | The 26th game: one of the July 2025 preview games, no longer in the live 25. ARC Prize never published its source. Recreated from Boss's 27-Dec-2025 nine-level winning recording; every frame of that recording replays exactly, and the level layouts match his screenshots. |
+
+Since 4-Oct-2026 the folder also holds **eight held-out copycats** -- close copies of the seven
+held-out public games and of as66, for testing only. See
+[Held-out copycats](#held-out-copycats-test-only-never-train) below.
 
 As66 is **not** one of the 7 held-out games in
 [`datasets/splits/public25-train-test-split.json`](../splits/public25-train-test-split.json).
@@ -84,3 +89,71 @@ This is a copy. Do not edit it here.
 - Everything about the game (rules, history, all file locations):
   `docs/reference/arc3/AS66_Lost_Game.md` in `82deutschmark/arc-explainer`.
 - To update this copy, overwrite both files from ARCEngine's `environment_files/as66/v1/`.
+
+## Held-out copycats (test only, never train)
+
+Son asked on 4-Oct-2026 for "close copy cats" of the public games, held-out ones included. The
+copies of the **eight held-out games** live here, fenced exactly like as66. The copies of the
+other 17 public games are a separate, trainable package and are never mixed with these.
+
+| copy id | copy of | levels |
+|---|---|---|
+| `vh33-v1` | vc33 | 7 |
+| `ah25-v1` | ar25 | 8 |
+| `sh26-v1` | sb26 | 8 |
+| `rh86-v1` | re86 | 8 |
+| `sh15-v1` | su15 | 9 |
+| `th87-v1` | tr87 | 6 |
+| `th93-v1` | tu93 | 9 |
+| `ah66-v1` | as66 | 9 |
+
+Each copy keeps its original's rules (the original rule code drives every step), actions, win
+and lose conditions, level count and the level on which each mechanic first appears, and changes
+the maps, colours, sprite art, HUD position and, where the code allows, tile size. Every level is
+proven solvable: the stored winning line in `copycats-heldout/solutions/` plays every copy to
+`WIN` through this folder's offline arcade (checked 4-Oct with the arc_agi loader). Per-game
+kept-vs-changed notes, side-by-side previews and the manifest are in `copycats-heldout/`.
+
+**The fence, same as as66:**
+
+- Never copy them into `docs/static/games/` or any training catalog, and never let a record of
+  them into SFT, RL, the decision-step corpus or any mix-in.
+- **Extend the extractor fence:** whenever you extract from a run that played them, the exclude
+  list must also carry the eight copy codes:
+  `--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66,vh33,ah25,sh26,rh86,sh15,th87,th93,ah66`.
+  The ids use second letter `h`; the trainable copies use `x`/`y`, so the codes never collide.
+- Report scores on these on their own lines, never inside a training-set average.
+- Residual risk: a published copy with a full winning line describes the held-out mechanics. The
+  fence is a label, not a lock -- it holds only if every pipeline honours it.
+
+Canonical source: `arc3games/copycats_heldout/` in `sonpham-org/autoresearch-arena` (generators,
+verifier and the same files). Overwrite from its `dist/` to update.
+
+## Held-out recolor copies (test only, never train)
+
+Added 5-Oct-2026: colour-only copies of the seven held-out public games -- same rules, same
+maps, same sprites, same HUD, only the displayed colours permuted. They test whether a model
+survives a colour change and nothing else. Method and proofs: `../copycat-games/recolor/README.md`.
+
+| copy id | copy of | levels |
+|---|---|---|
+| `az25-v1` | ar25 | 8 |
+| `rz86-v1` | re86 | 8 |
+| `sz26-v1` | sb26 | 8 |
+| `sz15-v1` | su15 | 9 |
+| `tz87-v1` | tr87 | 6 |
+| `tz93-v1` | tu93 | 9 |
+| `vz33-v1` | vc33 | 7 |
+
+Game folders sit in this folder like the others; manifest, previews and the fence note are in
+`recolor-heldout/`. **No solution files**: a recolor copy's winning line is the held-out
+original's own line. The manifest records the proof (engine, frame by frame against the
+original, and this folder's offline arcade, all passed for all seven). as66 has no recolor
+copy: it is not one of the 25 public games and has no recorded line.
+
+**Extend the extractor fence again** -- the full list is now
+`--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66,vh33,ah25,sh26,rh86,sh15,th87,th93,ah66,az25,rz86,sz26,sz15,tz87,tz93,vz33`.
+Held-out recolor ids use second letter `z`; the trainable recolor copies of the other 18 games use
+`r`, so the two sets are never one letter apart and none of the trainable ids is in this list.
+
+Every copy is `reviewed: false` until the Boss or Son has played it -- not a yardstick before that.
