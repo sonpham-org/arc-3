@@ -19,6 +19,32 @@ local a108 / DGX Spark experiments.
 The upstream `example-run/` directory was not imported because it is about
 2.8 GB. Pull it separately only if we need the full Tufa trace corpus locally.
 
+## Current Status (5-Oct-2026)
+
+a108 (Cletus) is back up. It went dark 28-Sep-2026 ~21:05 ET with no clean shutdown
+(the NVIDIA driver logged out-of-memory and RAM jumped to ~105 GB minutes before; cause
+unproven: power supply or a hard freeze under load). Son brought it back 5-Oct-2026
+~00:57 ET, and 01:30-02:03 ET it got the full NVIDIA update:
+
+- DGX OS 7.2.3 -> 7.6.0 (OTA meta 26.09.2)
+- kernel 6.17.0-1014 -> 7.0.0-1019-nvidia
+- driver 580.126.09 -> 580.178.04
+- BIOS GX10DGX.0103.2026.0129 -> 0105.2026.0505, EC 0x02000004 -> 0x02000006,
+  UEFI 0x03000007 / 0x00000516
+
+Files, home dir and docker images were untouched; stable since. Log on the box:
+`/home/son/update-logs/2026-10-05-update.log`.
+
+a424 (Jethro) is **not** updated (still 7.2.3 / 580.126.09 / old BIOS) because it is
+serving a live ARC vLLM container.
+
+**Two-box tensor-parallel runs cannot work yet.** The 200G direct cable between a108 and
+a424 is not connected: a424's ConnectX ports show no carrier, and on a108 the new
+`dgx-spark-mlnx-hotplug` package powers the ConnectX card off entirely when no cable is
+present (it does not show in `lspci`). The NVIDIA Spark Mellanox firmware manager will also
+want to update the ConnectX firmware once a cable is connected. Both boxes talk over Wi-Fi
+only.
+
 ## Hardware Check
 
 From a machine with Tailscale access to the DGX Spark:
