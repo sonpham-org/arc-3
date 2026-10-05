@@ -13,6 +13,14 @@ runs every step -- and changes what a player could memorise: **the maps, the col
 drawings, HUD position, and tile size where the game's code allows**. Asked for by Son Pham on
 4-Oct-2026 so a model learns mechanics rather than maps and click positions.
 
+## Not a yardstick until a human has played it
+
+Every entry in `manifest.json` carries `reviewed: false`. A copy is **not** a yardstick -- do not
+report scores on it as evidence of anything -- until a human (the Boss or Son) has played it and
+set `reviewed` to `true`. `verified: true` only means the stored line wins in the engine and the
+loader; it says nothing about whether the copy is fair, readable or as hard as the original.
+Boss's direction, 4-Oct-2026: no quality control, no yardstick.
+
 ## What is in the package
 
 ```
