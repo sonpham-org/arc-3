@@ -71,8 +71,9 @@ def fetch_pool(api_url: str) -> list[dict]:
 def pool_of(trees: list[dict]) -> list[dict]:
     """The loop's pool: family is not official and not retired. Note that a tree's family is
     its root's: the contributed glow-ups hang under ai-generated seeds, so trees rooted in a
-    retired family stay in the pool when a later version belongs to another family."""
-    return [t for t in trees if t["family"] not in {"official", "redbluepill"}]
+    retired family stay in the pool when a later version belongs to another family. Copycats
+    keep an official game's exact rules, so they are never evolved either."""
+    return [t for t in trees if t["family"] not in {"official", "redbluepill", "copycat"}]
 
 
 def improved(tree: dict) -> bool:

@@ -12,16 +12,26 @@ const TEAM = "/api/v1/games";
 // Visible categories. Everything we made and reviewed is one category, "Additional games"
 // (19-Sep-2026): the reviewed arena set, the in-house games, glow-ups and the research
 // collection. The API still keys on the family; ADDITIONAL is what the "synthetic" filter
-// and pool select server-side (every family but official and redbluepill).
+// and pool select server-side (every family but official, redbluepill and copycat).
+// "Copycats" (4-Oct-2026): close copies of the official games -- same rules and level order,
+// new maps, colours and art -- each naming its original; a category of their own.
 export const ADDITIONAL = "synthetic";
-export const CATEGORY_ORDER = [ADDITIONAL, "official", "redbluepill"];
+export const OWN_CATEGORIES = new Set(["official", "copycat", "redbluepill"]);
+export const CATEGORY_ORDER = [ADDITIONAL, "official", "copycat", "redbluepill"];
 export const CATEGORY_LABELS = {
   [ADDITIONAL]: "Additional games",
   official: "Official",
+  copycat: "Copycats",
   redbluepill: "theredbluepill's arc-interactive",
 };
-export const categoryOf = (family) => (family === "official" || family === "redbluepill" ? family : ADDITIONAL);
+export const categoryOf = (family) => (OWN_CATEGORIES.has(family) ? family : ADDITIONAL);
 export const familyLabel = (family) => CATEGORY_LABELS[categoryOf(family)];
+// A copycat names its original in its description ("Copycat of LS20: ..."); rows show that
+// instead of the bare category so every copy says which game it copies.
+export const copycatLabel = (family, description) => {
+  const original = family === "copycat" && /^Copycat of (\S+?):/.exec(description || "");
+  return original ? `Copycat of ${original[1]}` : familyLabel(family);
+};
 // Who primarily drove a version (19-Sep-2026): GPT or Claude as the main driver, or a person
 // actively tuning it. "other" is an import made elsewhere.
 export const AUTHOR_LABELS = {
@@ -172,7 +182,7 @@ export async function staticTrees({ family, q, evolved, offset, limit }) {
   for (const v of all) families[v.family] = (families[v.family] || 0) + 1;
   const matches = all.filter((v) => {
     if (evolved) return false;
-    if (family === "synthetic" && (v.family === "official" || v.family === "redbluepill")) return false;
+    if (family === "synthetic" && OWN_CATEGORIES.has(v.family)) return false;
     if (family && family !== "synthetic" && v.family !== family) return false;
     if (!needle) return true;
     return `${v.gameId} ${v.title} ${(v.tags || []).join(" ")}`.toLowerCase().includes(needle);

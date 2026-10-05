@@ -8,7 +8,7 @@
 // Everything user-written (change notes, reviews) goes into the page with textContent, never
 // innerHTML: public reviews are untrusted input read by the signed-in team.
 
-import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, familyLabel } from "./games-api.js?v=20260920-rail";
+import { AUTHOR_GLYPHS, AUTHOR_LABELS, BLIND_FAMILIES, copycatLabel } from "./games-api.js?v=20261004-copycats";
 
 export const COL_W = 156;
 export const NODE_W = 128;
@@ -238,7 +238,7 @@ function heroBlock(tree, ctx) {
     el(
       "div",
       "hero-sub",
-      `${familyLabel(tree.family)} · current v${head.number || 1} · ${versions} version${versions === 1 ? "" : "s"}${branchText}`
+      `${copycatLabel(tree.family, tree.description)} · current v${head.number || 1} · ${versions} version${versions === 1 ? "" : "s"}${branchText}`
     )
   );
 
@@ -420,7 +420,7 @@ export function openVersionDrawer({ tree, version, detail, notes, team, signInUr
   if (version.extraParentVersionIds && version.extraParentVersionIds.length) {
     row("Also from", version.extraParentVersionIds.join(", "));
   }
-  row("Category", familyLabel(tree.family));
+  row("Category", copycatLabel(tree.family, tree.description));
   if (version.sha256) row("Source", `${version.srcFile} · sha256 ${version.sha256.slice(0, 12)}`);
   body.appendChild(meta);
 
