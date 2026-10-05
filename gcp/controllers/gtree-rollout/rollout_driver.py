@@ -1332,6 +1332,94 @@ def serve(jobs_dir: str | Path, solver_tmpl, spec, out_root: Path, *, lanes: int
     return summary
 
 
+def serve_sessions(solver_tmpl, spec, out_root: Path, *, lanes: int, end: float, ctl: str | Path = "/kaggle/rollout/ctl",
+                   sess_root: str | Path = "/kaggle/rollout/sess", url: str | None = None,
+                   restorers: int | None = None, poll_s: float = 30.0, keep_rounds: int | None = 2) -> dict:
+    """One server for many RL rounds (4-Oct-2026, hot-swap; gcp/controllers/rl/box/README.md). The box host writes
+    ctl/next.json = {"session": <campaign>, "delta": <delta.safetensors path or null>}; this wakes the server
+    (hotswap.py wake), applies the delta when it is new (hotswap.py apply: the round's merged LoRA weights in place),
+    serves the session's jobs (serve(): sess/<campaign>/jobs -> out_root/<campaign>, ends at sess/<campaign>/STOP,
+    which the host mirrors from the campaign's STOP) and writes out_root/_sessions/<campaign>.json (the host's signal
+    that the session is over). The server stays awake for the next session (the box trains on other cards);
+    ARC3_ROLLOUT_SLEEP=1 also puts it to sleep between sessions (hotswap.py sleep: needs --enable-memory-saver). ctl/END or `end` ends the loop. A failed wake or apply ends it too: the weights may be half
+    updated, so the host restarts the container rather than serve a wrong model."""
+    import subprocess
+    url = url or os.environ.get("ARC3_SERVER_URL", "http://127.0.0.1:8001")
+    ctl, sess_root, out_root = Path(ctl), Path(sess_root), Path(out_root)
+    marks = out_root / "_sessions"
+    marks.mkdir(parents=True, exist_ok=True)
+    helper = Path(__file__).with_name("hotswap.py")
+    py = os.environ.get("ARC3_SGL_PYTHON", "/tmp/sgl-intel/venv/bin/python")   # the server's venv: torch, safetensors
+    py = py if Path(py).exists() else sys.executable
+    awake, applied, served = True, None, []
+
+    def hs(*args: str) -> dict:
+        # output to a file, never a pipe: apply starts torch's shm manager, a daemon that inherits the helper's
+        # stdout, so a pipe never reaches EOF and subprocess.run(capture_output=True) waited forever (4-Oct box test)
+        logf = marks / f".hotswap-{args[0]}.log"
+        with open(logf, "w", encoding="utf-8") as fo:
+            p = subprocess.run([py, str(helper), *args], stdout=fo, stderr=subprocess.STDOUT, timeout=3600)
+        text = logf.read_text(encoding="utf-8", errors="replace")
+        lines = [ln for ln in text.splitlines() if ln.startswith("{")]
+        try:
+            res = json.loads(lines[-1]) if lines else {}
+        except ValueError:
+            res = {"ok": False}
+        res["rc"] = p.returncode
+        if p.returncode:
+            res["out"] = text[-800:]
+        log(f"hotswap {args[0]}: {json.dumps(res)[:400]}")
+        return res
+
+    def mark(name: str, doc: dict) -> None:
+        tmp = marks / f"{name}.json.tmp"
+        tmp.write_text(json.dumps(doc, indent=1, default=str), encoding="utf-8")
+        os.replace(tmp, marks / f"{name}.json")
+
+    log(f"sessions: control {ctl}, sessions {sess_root} -> {out_root}, server {url}, "
+        f"until {time.strftime('%H:%M:%S', time.localtime(end))}")
+    while time.time() < end and not (ctl / "END").exists():
+        try:
+            nxt = json.loads((ctl / "next.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            time.sleep(10)
+            continue
+        sess = str(nxt.get("session") or "")
+        if not sess or (marks / f"{sess}.json").exists():
+            time.sleep(10)
+            continue
+        info: dict = {"session": sess, "delta": nxt.get("delta"), "asked_at": time.time()}
+        if not awake:
+            r = hs("wake", url)
+            info["wake"] = r
+            if not r.get("ok"):
+                info["error"] = "wake failed"
+                mark(sess, info)
+                break
+            awake = True
+        delta = nxt.get("delta")
+        if delta and delta != applied:
+            r = hs("apply", str(delta), url)
+            info["apply"] = r
+            if r.get("rc"):
+                info["error"] = "apply failed"
+                mark(sess, info)
+                break
+            applied = delta
+        info.update(model=applied, started_at=time.time())
+        mark(f"{sess}.started", info)
+        summ = serve(sess_root / sess / "jobs", solver_tmpl, spec, out_root / sess, lanes=lanes, deadline=end,
+                     restorers=restorers, poll_s=poll_s, keep_rounds=keep_rounds, stop_file=sess_root / sess / "STOP")
+        info.update(nodes=summ["nodes"], tries=summ["tries"], cleared=summ["cleared"], ended_at=time.time())
+        if os.environ.get("ARC3_ROLLOUT_SLEEP") == "1":   # off by default: the 4-Oct box keeps its play cards awake
+            r = hs("sleep", url)
+            info["sleep"] = r
+            awake = not r.get("ok")
+        served.append(sess)
+        mark(sess, info)
+    return {"sessions": served, "awake": awake, "model": applied}
+
+
 def bind(bm: Any, *, jobs: str | None = None, out: str | None = None, lanes: int | None = None) -> None:
     """Notebook override cell: replace bm.run with the rollout queue (same signature, so his run cell is unchanged:
     it builds bm.games for the spec, then awaits bm.run). Inert unless ARC3_ROLLOUT is set."""
@@ -1359,6 +1447,17 @@ def bind(bm: Any, *, jobs: str | None = None, out: str | None = None, lanes: int
         solver.minimal_diagnostics = False
         spec = bm.games[0].arcade_spec
         deadline = soft_end_time.timestamp() if soft_end_time is not None else None
+        if server and os.environ.get("ARC3_ROLLOUT_SESSIONS") == "1":
+            # hot-swap sessions: one server for many rounds; his run's soft end (his game budget) does not apply
+            end = time.time() + budget_s
+            log(f"rollout sessions: out {out}, lanes {lanes}, budget {budget_s:.0f}s, fork {fork_available()}")
+            res = await asyncio.to_thread(
+                serve_sessions, solver, spec, Path(out), lanes=lanes, end=end,
+                restorers=int(os.environ.get("ARC3_ROLLOUT_RESTORERS", "0") or 0) or None,
+                poll_s=float(os.environ.get("ARC3_ROLLOUT_POLL_S", "30")),
+                keep_rounds=int(os.environ.get("ARC3_ROLLOUT_KEEP_ROUNDS", "2") or 0) or None)
+            log(f"rollout sessions done: {res}")
+            return
         if server:
             deadline = min(x for x in (deadline, time.time() + budget_s) if x is not None)
             log(f"rollout server: jobs {jobs} -> {out}, lanes {lanes}, budget {budget_s:.0f}s, fork "

@@ -46,7 +46,7 @@ def payload_files() -> dict[str, str]:
     """Published path under BUNDLE_DIR/gtree_rollout -> file text (the ingest's vendor/ layout for its deps)."""
     deps = _load(INGEST / "deps.py", "_gtr_deps_probe")
     files = {"rollout_core.py": HERE / "rollout_core.py", "rollout_driver.py": HERE / "rollout_driver.py",
-             "arc3_state.py": HERE / "arc3_state.py"}
+             "arc3_state.py": HERE / "arc3_state.py", "hotswap.py": HERE / "hotswap.py"}
     for f in ("deps.py", "gtree_build.py", "gtree_ctx.py", "gtree_store.py"):
         files[f"ingest/{f}"] = INGEST / f
     for f in ("trace_review_index.py", "fork_replay.py", "rl_reward.py", "arc3_minute_score_observer.py"):

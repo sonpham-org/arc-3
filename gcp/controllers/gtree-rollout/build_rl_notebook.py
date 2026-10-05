@@ -11,7 +11,8 @@ toolfast, rejection sampling, 4-bit QSA KV, 13 slots x 131k; 52.8 over 2 runs, K
 as built (launcher, server patches and its check cells untouched); three cells change:
   port      its port cell -> + the coach hooks (variants/coach/build_early.py COACH_PART) -> + the gtree port
             (build_port.early_cell, same env as the legacy build)
-  launcher  + --enable-cache-report --enable-metrics (RL_LAUNCH_ADD)
+  launcher  + --enable-cache-report --enable-metrics (RL_LAUNCH_ADD); --hotswap (4-Oct RL box) sets
+            ARC3_ROLLOUT_SESSIONS=1 (rollout_driver.serve_sessions: one server, a new model swapped in per session)
   override  the daniel-base override + rollout_driver.bind(bm) (same 25 games / 7920 s as its bench override)
 Lanes default to its server's slot count (ARC3_SRV_MAXREQ, 13). --legacy builds the 3-Oct composition below.
 
@@ -56,6 +57,8 @@ BASE_BUILD = Path(r"D:\codex-work\clkchk\daniel-nb\sbt06tfrskv4s13")
 RL_LAUNCH_ADD = '''
 if os.environ.get("ARC3_ROLLOUT"):  # gtree-rollout: cached tokens in usage + /metrics (proof of prefix sharing)
     args += ["--enable-cache-report", "--enable-metrics"]
+if os.environ.get("ARC3_ROLLOUT_SLEEP") == "1":  # hotswap.py sleep/wake (off: 4-Oct, torch_memory_saver refuses
+    args += ["--enable-memory-saver", "--enable-weights-cpu-backup"]   # this server's expandable_segments allocator)
 '''
 
 
@@ -149,8 +152,13 @@ def main() -> int:
     ap.add_argument("--legacy", action="store_true", help="the 3-Oct composition on f40b168002b8")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="extra env after the base build's (e.g. ARC3_SRV_MAXREQ=16 with --lanes 16)")
+    ap.add_argument("--hotswap", action="store_true",
+                    help="4-Oct RL box: one server for many models (rollout_driver.serve_sessions, hotswap.py apply): "
+                         "ARC3_ROLLOUT_SESSIONS=1; use a long --budget-s (the server lives until ctl/END or its budget)")
     ap.add_argument("--upload", action="store_true")
     a = ap.parse_args()
+    if a.hotswap:
+        a.set.append("ARC3_ROLLOUT_SESSIONS=1")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     H = _load(DRAFT / "make_hicache_notebook.py", "_rl_hicache2")

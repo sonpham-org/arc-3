@@ -12,7 +12,7 @@ fi
 export ARC3_PUBLISH_TOKEN
 while true; do
   if C:/Python312/python.exe build_site.py > .build.log 2>&1; then
-    C:/Python312/python.exe sync_site_page.py > /dev/null 2>&1   # web.app page = the site's rl.html (bright)
+    C:/Python312/python.exe sync_site_page.py --site "${SITE_DOCS:-D:/codex-work/arc3-site-s5i5/docs}" > /dev/null 2>&1   # web.app page = the site's rl.html (5-Oct: the main checkout)
     web=$(firebase.cmd deploy --only hosting:rl --project cellensml -m "data $(date -u +%H:%M)" > .deploy.log 2>&1 && echo ok || echo FAILED)
     site=$(C:/Python312/python.exe -c "
 import gzip, os, urllib.request

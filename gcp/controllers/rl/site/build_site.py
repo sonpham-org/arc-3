@@ -26,6 +26,92 @@ import arc3_firestore_scores as fs  # noqa: E402
 
 API = "https://storage.googleapis.com/storage/v1"
 CFG = json.loads((HERE / "site_config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(HERE.parent / "ops"))
+
+
+def plan_c(cfg):
+    """5-Oct (Son: "use just the new data with this new training regime only"): with "regime": "plan_c" the page
+    follows ops/run_c.py's state file: the models it made (round 0 = the start, then model 1, 2, ...), the training
+    job running now, and the held-out full tests of each model on the box (daniel-p5held-<model>-boxnp-*, found by
+    listing the runs). The older panels stay in site_config.json under "archived"."""
+    st = json.loads(Path(cfg["c_state"]).read_text(encoding="utf-8"))
+    tag = lambda merge: merge.split("-merge")[0].split("-")[-1] if merge.startswith("1") else merge.split("-")[0]  # noqa: E731
+    models = [{"key": tag(m["merge"]), "label": "Round 0 (start)" if m["idx"] == 0 else f"Model {m['idx']}",
+               "short": "R0" if m["idx"] == 0 else f"M{m['idx']}", "merge": m["merge"], "train": m["train"]}
+              for m in st["models"]]
+    inf = st.get("inflight")
+    k = st.get("k", len(models))
+    if inf:
+        cfg.update(train_job=inf["job"], merge_job=inf["merge"],
+                   train_started=datetime.fromtimestamp(inf["queued"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        cfg["round"] = f"Plan C · model {k} training"
+    else:
+        last = st["models"][-1]
+        cfg.update(train_job=last["train"], merge_job=last["merge"])
+        cfg["round"] = f"Plan C · {len(st['models']) - 1} models made"
+    cfg["models"] = models
+    cfg["next_model"] = {"key": f"c{k:03d}", "label": f"Model {k}", "short": f"M{k}"} if inf else None
+    listing = gfiles_names(cfg["runs_prefix"] + "/")
+    for p in cfg["panels"]:
+        skip = set(p.get("exclude") or [])
+        if p.get("discover_re"):        # 5-Oct: box runs (boxnp) and 1-card VM runs (vmnp) of the same no-queue test
+            p["runs"] = {m["key"]: sorted(r for r in listing if r not in skip and
+                                          re.match(p["discover_re"].format(model=m["key"]), r))
+                         for m in models}
+        elif p.get("discover"):
+            p["runs"] = {m["key"]: sorted(r for r in listing if r.startswith(p["discover"].format(model=m["key"]))
+                                          and r not in skip)
+                         for m in models}
+    cfg["campaigns"] = st.get("campaigns", [])
+    return cfg
+
+
+def gfiles_names(prefix):
+    """Top-level 'directory' names under a gs:// prefix (one delimiter listing)."""
+    b, pre = prefix[5:].split("/", 1)
+    out, token = set(), None
+    while True:
+        url = f"{API}/b/{b}/o?prefix={quote(pre)}&delimiter=/&fields=prefixes,nextPageToken" + \
+              (f"&pageToken={token}" if token else "")
+        d = jload(_get(url)) or {}
+        out.update(x[len(pre):].rstrip("/") for x in d.get("prefixes", []))
+        token = d.get("nextPageToken")
+        if not token:
+            return out
+
+
+def inplay():
+    """Each model's in-play test (ops/test_report.py): the test slice of its campaign, per game cleared / tries at the
+    frontier level, next to the base model's rate there; trained games and never-trained games apart."""
+    if CFG.get("regime") != "plan_c":
+        return []
+    import test_report as tr
+    out = []
+    for c in CFG.get("campaigns", []):
+        tests = tr.campaign_tests(c["campaign"], CACHE / "inplay")
+        per = {}
+        for t in tests:
+            if t["level"] != t["frontier"]:
+                continue
+            x = per.setdefault(t["game"], {"cleared": 0, "tries": 0, "base": t["base"], "level": t["level"],
+                                           "trained": t["game"] in tr.TRAIN})
+            x["cleared"] += t["cleared"]
+            x["tries"] += 1
+        groups = {}
+        for g, x in per.items():
+            k = "trained" if x["trained"] else "never"
+            a = groups.setdefault(k, {"cleared": 0, "tries": 0, "base_sum": 0.0})
+            a["cleared"] += x["cleared"]
+            a["tries"] += x["tries"]
+            b = x["base"] or [0, 0]
+            a["base_sum"] += x["tries"] * (b[0] / b[1] if b[1] else 0.0)
+        for a in groups.values():
+            a["rate"] = round(a["cleared"] / a["tries"], 3) if a["tries"] else None
+            a["base_rate"] = round(a.pop("base_sum") / a["tries"], 3) if a["tries"] else None
+        key = c["merge"].split("-merge")[0].split("-")[-1] if c["merge"].startswith("1") else c["merge"].split("-")[0]
+        out.append({"model": key, "campaign": c["campaign"], "tries": len(tests), "groups": groups,
+                    "per_game": per})
+    return out
 CACHE = HERE / "site-cache"
 BASE = {gid.split("-")[0]: base for gid, base in fs.observer.BASE_ACTIONS.items()}   # per-level baseline actions
 LEVELS = {g: len(b) for g, b in BASE.items()}
@@ -244,12 +330,15 @@ def g0_data():
 
 def main():
     t0 = time.time()
+    if CFG.get("regime") == "plan_c":
+        plan_c(CFG)
     with concurrent.futures.ThreadPoolExecutor(2) as outer:
         f_train, f_panels = outer.submit(training), outer.submit(panels)
         data = {"updated": iso(time.time()), "round": CFG["round"], "round_note": CFG["round_note"],
                 "split": CFG["split"], "levels": LEVELS, "g0": g0_data(),
                 "models": CFG["models"], "next_model": CFG.get("next_model"),
-                "train": f_train.result(), "panels": f_panels.result()}
+                "train": f_train.result(), "panels": f_panels.result(),
+                "regime": CFG.get("regime"), "inplay": inplay()}
     data["stages"] = [dict(s, minutes=data["train"]["minutes_est"]) if s["key"] == "train" else s
                       for s in CFG["stages"]]
     data["build_sec"] = round(time.time() - t0, 1)

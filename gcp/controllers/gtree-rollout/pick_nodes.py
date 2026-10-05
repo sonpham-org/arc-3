@@ -457,6 +457,72 @@ def pick(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], 
     return jobs, report
 
 
+def test_jobs(plays: list[dict], *, campaign: str, round_: int, seed_runs: set[str], games: set[str],
+              build: str | None = DEFAULT_BUILD, level_counts: dict | None = None, frontier: float = 0.8,
+              tries_at: tuple[int, ...] = (2, 1), turn_cap: int = 60, token_cap: int | None = None,
+              sources: str = rc.SEED_SOURCES, store: str = rc.STORE, state_index: dict | None = None,
+              coach_spec: str = "policy") -> tuple[list[dict], dict]:
+    """The model's test slice (4-Oct, Son: "every game play once or twice ... so that we have the score right away"):
+    per game, tries_at[0] stock tries from the start of its frontier level (the base model's first level not mastered,
+    frontier_levels on level_counts) and tries_at[1] from the level below. The SAME restart points for every model
+    (per level, the first seed play's level start by seq), so the models' clear rates compare. pick.class 'test':
+    rl/cut_records.py never trains on them. Fenced (held-out) games have no restart points in the store and the server
+    skips them; they stay with the full test panels."""
+    _SNAPS.clear()
+    _SNAPS.update(state_index or {})
+    stats = rc.NodeStats(plays)
+    paths = [p for p in seed_paths(plays, seed_runs, build) if p[0]["game"] in games]
+    classes = classify(paths, stats, 6)
+    fronts = frontier_levels(paths, frontier, counts=level_counts)
+    jobs: list[dict] = []
+    rep: dict = {"games": {}, "missing": []}
+    for g in sorted(games):
+        f = fronts.get(g, {}).get("level")
+        starts: dict[int, tuple] = {}
+        for _, s, before, r, extra in (classes.get(g) or {}).get("level_start", []):
+            starts.setdefault(int(s["level"]), (s, before, r, extra))
+        if f is None or not starts:
+            rep["missing"].append(g)
+            continue
+        got = []
+        for lv, n in zip((int(f), int(f) - 1), tries_at):
+            if n <= 0 or lv not in starts:
+                continue
+            s, before, r, extra = starts[lv]
+            tries = [{"k": k, "mode": "stock", "anchor": k == 0, "cap": None, "design_prob": 1.0,
+                      "cap_design_prob": 1.0, "policy_prob": None, "samples_before": 0} for k in range(n)]
+            b, best_from = budget(stats, s)
+            res = r.get("result") or {}
+            gid, ps, run = res.get("game_id"), int(res.get("pass") or 0), r["run"]
+            snap = snapshot_of(r, s)
+            src = {"run": run, "rollout_id": r["id"], "coach_log": None}
+            if not rc.is_rollout({"rollout": r}):
+                src.update(requests=f"{sources}/{run}/working/{gid}_p{ps}_requests.jsonl",
+                           events=f"{sources}/{run}/working/artifacts/{gid}_p{ps}_events.jsonl")
+            if snap:
+                src.update(state_ref=snap, state=f"{store.rstrip('/')}/state/{snap}.pkl.gz",
+                           ctx_before=s.get("ctx_before"))
+            rate = (fronts[g].get("rates") or {}).get(lv)
+            jobs.append({
+                "job_id": f"{campaign}-test-{g}-L{lv}-{_short(s['n1'])}", "campaign": campaign, "round": round_,
+                "priority": len(jobs), "game_id": gid, "pass": ps, "mode": "snapshot" if snap else "replay_exact",
+                "source": src,
+                "origin": {"seq": s["seq"], "turn": (s.get("detail") or {}).get("turn"), "t1": s["n1"],
+                           "t5": s.get("n5"), "screen_hash": s["screen_hash"], "level": s["level"],
+                           "actions_before": before, "moves": s.get("moves")},
+                "tries": len(tries), "assignments": tries,
+                "policy": {"version": None, "seq": None, "dist": {}},
+                "stop": {"move_budget": b, "turn_cap": turn_cap, "stop_on_game_over": False,
+                         "token_cap": int(token_cap) if token_cap else None},
+                "coach": {"spec": coach_spec, "cap": None},
+                "pick": {"class": "test", "level": lv, "frontier": int(f), "base_rate": rate,
+                         "visits": stats.visits(s["n1"]), "best_from_node": best_from, **extra}})
+            got.append({"level": lv, "tries": n, "base_rate": rate})
+        rep["games"][g] = got
+    rep["jobs"], rep["tries"] = len(jobs), sum(j["tries"] for j in jobs)
+    return jobs, rep
+
+
 def job_name(j: dict) -> str:
     """Sortable file name: round, priority, job id (the server plays its kept rounds oldest first, in priority order)."""
     return f"{int(j['round']):04d}-{int(j['priority']):05d}-{j['job_id']}.json"

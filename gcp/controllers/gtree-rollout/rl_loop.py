@@ -788,6 +788,23 @@ def init(cfg: argparse.Namespace) -> None:
                                 stage_k=getattr(cfg, "stage_k", 0) or None, frontier=getattr(cfg, "frontier", 0) or None,
                                     level_counts=frontier_counts(cfg),
                                     resumed_before=history_resumes(cfg))
+    if getattr(cfg, "test_games", ""):        # the model's test slice first (pick_nodes.test_jobs), then training
+        tg = set(cfg.test_games.split(",")) if cfg.test_games != "all" else set((rep.get("frontier") or {}))
+        tj, trep = pick_nodes.test_jobs(plays, campaign=cfg.campaign, round_=1, seed_runs=set(cfg.seed_runs),
+                                        games=tg, build=cfg.build or None, level_counts=frontier_counts(cfg),
+                                        frontier=getattr(cfg, "frontier", 0) or 0.8,
+                                        tries_at=tuple(int(x) for x in cfg.test_tries.split(",")),
+                                        turn_cap=cfg.turn_cap, token_cap=cfg.token_cap or None,
+                                        state_index=rc.load_state_index(cfg.store, Path(cfg.cache)), store=cfg.store)
+        # interleaved, not first (5-Oct): the test slice's 1-2-try jobs fill a few lanes each, so with the tests first
+        # a server ran ~7 of 16 lanes for half an hour and the next model's training waited for its first records
+        mixed = []
+        for i in range(max(len(tj), len(jobs))):
+            mixed += jobs[i:i + 1] + tj[i:i + 1]
+        for k, j in enumerate(mixed):
+            j["priority"] = k
+        jobs = mixed
+        rep["test"] = trep
     pick_nodes.write_jobs(jobs, queue=rls.root)
     rc.write_json(rls, "learner/state.json", {"version": 0, "round": 1, "history": [], "created": time.time(),
                                               "games": sorted(game_set(cfg) or [])})
@@ -833,6 +850,9 @@ def args(argv=None) -> argparse.Namespace:
     ap.add_argument("--mix", default="level_start=0.4,backward=0.3,uncertain=0.3",
                     help="share of each round per start-state class (first pass); '' = class order only")
     ap.add_argument("--modes", default="all", help="modes the picker assigns: all | original | grader | comma list")
+    ap.add_argument("--test-games", default="", help="init: the model's test slice first (pick_nodes.test_jobs): "
+                    "comma list, or 'all' = every game with a frontier level (4-Oct RL box)")
+    ap.add_argument("--test-tries", default="2,1", help="test slice tries at the frontier level, the level below")
     ap.add_argument("--stage-k", type=int, default=0, help="two-stage groups: a node's first job gets this many tries, "
                     "a top-up to --N only where they split (0 = off: every job gets --K)")
     ap.add_argument("--frontier", type=float, default=0.0, help="restart only levels at or above each game's first level "

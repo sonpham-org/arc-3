@@ -419,9 +419,15 @@ def spawn_dp(args) -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    # the cards this job may use: the parent's CUDA_VISIBLE_DEVICES when set (4-Oct RL box: the trainer has cards
+    # 4-7, the rollout servers 0-3), else 0..gpus-1; copy r gets its own slice of that list
+    vis = [c for c in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if c.strip()] or \
+        [str(g) for g in range(args.gpus)]
+    if len(vis) < args.gpus:
+        raise SystemExit(f"--gpus {args.gpus} but CUDA_VISIBLE_DEVICES lists {len(vis)} cards")
     procs = []
     for r in range(args.dp):
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(str(g) for g in range(r * per, (r + 1) * per)),
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(vis[g] for g in range(r * per, (r + 1) * per)),
                    ARC3_DP_RANK=str(r), ARC3_DP_WORLD=str(args.dp), ARC3_DP_INIT=f"tcp://127.0.0.1:{port}")
         procs.append(subprocess.Popen([sys.executable, str(Path(__file__).resolve())] + sys.argv[1:], env=env))
     codes = [None] * len(procs)

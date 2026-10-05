@@ -103,7 +103,7 @@ class Sync:
             else:                                    # a local file (tests)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(uri, dest)
-        self.fetched[uri] = f"{MOUNT}/src/{rel}"
+        self.fetched[uri] = f"{getattr(self.a, 'mount', MOUNT)}/src/{rel}"
         return self.fetched[uri]
 
     def origin_messages(self, ctx_sha: str) -> str:
@@ -115,7 +115,7 @@ class Sync:
         msgs = gtree_ctx.restore_context(ctx_sha, self.store)
         rel = f"origin/{ctx_sha}.json"
         _atomic(self.root / "src" / rel, json.dumps(msgs).encode("utf-8"))
-        self.fetched[key] = f"{MOUNT}/src/{rel}"
+        self.fetched[key] = f"{getattr(self.a, 'mount', MOUNT)}/src/{rel}"
         return self.fetched[key]
 
     def consumed(self) -> set[str]:
@@ -357,6 +357,8 @@ def main(argv=None) -> int:
     ap.add_argument("--campaign", required=True)
     ap.add_argument("--store", default="gs://cellens-ai-artifacts/arc3-gtree/v1")
     ap.add_argument("--root", required=True, help="host dir mounted read-only at /kaggle/rollout")
+    ap.add_argument("--mount", default=MOUNT, help="where --root appears in the container (4-Oct RL box sessions: "
+                    "/kaggle/rollout/sess/<campaign>; staged sources are rewritten to <mount>/src/...)")
     ap.add_argument("--results", required=True, help="host path of /kaggle/working/gtree-rollout")
     ap.add_argument("--vm", default=os.uname().nodename if hasattr(os, "uname") else "local")
     ap.add_argument("--every", type=float, default=120.0)

@@ -27,6 +27,13 @@ def record_sign_and_size(rec: dict) -> tuple[int, float]:
     return (1 if mean > 0 else -1 if mean < 0 else 0), max(abs(w) for w in ws)
 
 
+def game_key(rec: dict) -> str:
+    """The game for the per-game cap: its 4-letter name. try_records.py's meta "game" is a game id with a suffix
+    ("cn04-<hash>") that differs between plays, so the cap counted every play as its own game (4-Oct plan C's first
+    cut: cn04 got 15 of 48 records under a cap of 4 per side)."""
+    return str(rec["meta"].get("game") or "?")[:4]
+
+
 def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int, per_game: int = 0) -> list[dict]:
     """per_game (> 0): at most this many records of one game on each side (4-Oct n0: 6 of its 24 records were sc25
     negatives; pushed down six times, a few sc25 tokens fell ~e^10 and the KL term exploded)."""
@@ -45,7 +52,7 @@ def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int, pe
             if len([p for p in picked if record_sign_and_size(p)[0] == s]) >= want[s]:
                 break
             key = (r["meta"].get("run"), r["meta"].get("game"), r["meta"].get("pass"))
-            game = r["meta"].get("game")
+            game = game_key(r)
             if per[key] >= per_attempt or (per_game and per_g[game] >= per_game):
                 continue
             per[key] += 1
@@ -55,12 +62,12 @@ def select(recs: list[dict], budget: int, neg_share: float, per_attempt: int, pe
     left = budget - len(picked)
     if left > 0:
         chosen = {id(p) for p in picked}
-        side_game = Counter((record_sign_and_size(p)[0], p["meta"].get("game")) for p in picked)
+        side_game = Counter((record_sign_and_size(p)[0], game_key(p)) for p in picked)
         rest = sorted((t for s in (1, -1) for t in sides[s] if id(t[2]) not in chosen), key=lambda t: (t[0], t[1]))
         for _, _, r in rest:                 # the per-game cap holds here too
             if left <= 0:
                 break
-            k = (record_sign_and_size(r)[0], r["meta"].get("game"))
+            k = (record_sign_and_size(r)[0], game_key(r))
             if per_game and side_game[k] >= per_game:
                 continue
             side_game[k] += 1
