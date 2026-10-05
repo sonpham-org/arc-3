@@ -6,9 +6,9 @@ PURPOSE: Draws the Sprints tab (docs/sprints.html) from docs/static/data/sprints
   sprint by comparing today's local date with each sprint's start/end (ISO date strings, end inclusive), and renders
   one card per track (Son's model track, Boss + Bubba's harness track) with each item's status chip and "done means"
   line. Draft sprints carry a visible Draft chip. A standing tile reads our row from the leaderboard snapshot
-  (docs/static/data/leaderboard/latest.json, positional rows as in leaderboard.js) and is hidden if that fails.
+  (ARC Explainer's /api/kaggle/<competition>/board, positional rows as in its shared/types.ts KaggleBoardRow) and is hidden if that fails.
 SRP/DRY check: Pass — the plan lives only in sprints.json; leaderboard row layout and medal ranks follow
-  leaderboard.js (rows[k-1] for a rank, r[1] team id, r[4] score); layout classes come from rl-shell.css.
+  the Explainer board format (rows[k-1] for a rank, r[1] team id, r[4] score); layout classes come from rl-shell.css.
 */
 
 const $ = (id) => document.getElementById(id);
@@ -73,9 +73,11 @@ function sprint(sp, tracks, today) {
 
 async function standing() {
   try {
-    const r = await fetch('./static/data/leaderboard/latest.json', { cache: 'no-store' });
+    // The leaderboard data moved to ARC Explainer on 05-Oct-2026 (no longer committed here).
+    const r = await fetch('https://arc.markbarney.net/api/kaggle/arc-prize-2026-arc-agi-3/board');
     if (!r.ok) return null;
-    const lb = await r.json();
+    const lb = (await r.json()).latest;
+    if (!lb) return null;
     const us = lb.rows.find((x) => x[1] === lb.ourTeamId);
     const silver = lb.rows[lb.medalRanks.silver - 1];
     if (!us) return null;

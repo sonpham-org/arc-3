@@ -2,16 +2,17 @@
 """One-off: rebuild the leaderboard's past from the public per-team daily history that
 https://arc3.huikang.dev/leaderboard/ publishes (it has polled Kaggle since June).
 
-Writes docs/static/data/leaderboard/backfill.json. The page shows it before our own snapshots begin.
+Writes backfill.json into $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data). The page shows it before our own snapshots begin.
 Per day it works out every team's rank by carrying each team's last known score forward.
 """
+import os
 import bisect, json, urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from leaderboard_snapshot import OUR_TEAM_ID, TRAIL_TOP, EVENT_RANK, medal_ranks
 
 URL = "https://tonghuikang--arc3-leaderboard-monitor-get-history.modal.run"
-OUT = Path(__file__).resolve().parent.parent / "docs/static/data/leaderboard/backfill.json"
+OUT = Path(os.environ.get("LEADERBOARD_DATA_DIR") or Path.home() / ".cache/arc3-leaderboard-data") / "backfill.json"
 
 
 def main():

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3.13
 """Pull the public ARC-AGI-3 Kaggle leaderboard and keep our own history of it.
 
-Writes into docs/static/data/leaderboard/:
+Writes into $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data; kept out of git
+since 05-Oct-2026, when the page moved to ARC Explainer):
   latest.json   every team right now (+ where each stood at the end of the previous UTC day)
   history.json  one line per snapshot, plus a score/rank trail for the top teams and ours
   events.json   who changed score between snapshots (feed on the page)
   base.json     end-of-previous-day standings, for the "today" columns
 Prints ALERT lines for things worth a notification; leaderboard_publish.sh shows them.
-Run on a schedule; the Leaderboard tab on the site reads these files.
+Run on a schedule; leaderboard_push_explainer.py then sends them to the public page at
+https://arc.markbarney.net/kaggle-leaderboard.
 """
-import csv, io, json, subprocess, sys, tempfile, zipfile
+import csv, io, json, os, subprocess, sys, tempfile, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +21,7 @@ TRAIL_TOP = 300                   # teams with a kept score/rank trail
 EVENT_RANK = 500                  # score changes kept in the feed when the team is this high
 EVENT_CAP = 3000
 BIG_JUMP = 3.0                    # a top-20 team gaining this many points raises an alert
-OUT = Path(__file__).resolve().parent.parent / "docs/static/data/leaderboard"
+OUT = Path(os.environ.get("LEADERBOARD_DATA_DIR") or Path.home() / ".cache/arc3-leaderboard-data")
 
 
 def medal_ranks(n):

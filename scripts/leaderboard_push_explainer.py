@@ -2,13 +2,12 @@
 """Send the saved Kaggle leaderboard to ARC Explainer's public leaderboard page.
 
 Run by leaderboard_publish.sh straight after leaderboard_snapshot.py. Reads the files that
-script keeps in docs/static/data/leaderboard/ (latest, history, events, backfill) and POSTs
+script keeps in $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data) (latest, history, events, backfill) and POSTs
 them to arc-explainer's /api/kaggle/board, which serves the public page at
 https://arc.markbarney.net/kaggle-leaderboard (added 05-Oct-2026).
 
-NON-FATAL. The snapshot files are the job's product; the push is a copy for a website.
-If the site is mid-deploy or unreachable, this prints one line and exits 0, so the job
-still saves (and commits) its snapshot. The next run sends the newest files anyway.
+NON-FATAL. If the site is mid-deploy or unreachable, this prints one line and exits 0;
+the snapshot is still saved locally. The next run sends the newest files anyway.
 
 The token is arc-explainer's ARC3_COMMUNITY_ADMIN_TOKEN: from the environment if set,
 otherwise from this Mac's login keychain (service arc3-community-admin-token), the same
@@ -19,7 +18,7 @@ from pathlib import Path
 
 COMP = "arc-prize-2026-arc-agi-3"
 URL = os.environ.get("EXPLAINER_BOARD_URL", "https://arc3.markbarney.net/api/kaggle/board")
-DATA = Path(__file__).resolve().parent.parent / "docs/static/data/leaderboard"
+DATA = Path(os.environ.get("LEADERBOARD_DATA_DIR") or Path.home() / ".cache/arc3-leaderboard-data")
 DOCS = ("latest", "history", "events", "backfill")
 
 
