@@ -10,6 +10,7 @@ echo "$out"
 echo "$out" | grep '^ALERT ' | while read -r _ msg; do
   osascript -e "display notification \"${msg//\"/}\" with title \"ARC-3 leaderboard\"" || true
 done || true   # no ALERT lines makes grep exit 1, which set -e/pipefail turned into a silent stop before the commit
+python3.13 scripts/leaderboard_push_explainer.py || true   # public copy on ARC Explainer; never blocks the save
 git add docs/static/data/leaderboard
 if git diff --cached --quiet; then exit 0; fi
 git commit -q -m "Leaderboard snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
