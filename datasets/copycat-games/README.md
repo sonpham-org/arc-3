@@ -21,6 +21,13 @@ set `reviewed` to `true`. `verified: true` only means the stored line wins in th
 loader; it says nothing about whether the copy is fair, readable or as hard as the original.
 Boss's direction, 4-Oct-2026: no quality control, no yardstick.
 
+## Recolor tier
+
+`recolor/` holds the slightest copies: the same rules, maps, sprites, HUD and winning line as the
+original, with only the displayed colours permuted -- one per public game, the cheapest test of
+whether a model learned colours or mechanics. The held-out seven's recolor copies are test only
+and live in `../test-only-games/`. See `recolor/README.md`.
+
 ## What is in the package
 
 ```

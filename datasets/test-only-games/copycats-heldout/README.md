@@ -12,6 +12,8 @@ set `reviewed` to `true`. `verified: true` only means the stored line wins in th
 loader; it says nothing about whether the copy is fair, readable or as hard as the original.
 Boss's direction, 4-Oct-2026: no quality control, no yardstick.
 
+## Files
+
 - `manifest.json` — one entry per copy: what was kept, what changed, what could not be copied
   faithfully, verified true/false, the loader check result. Every entry says `held_out: true`.
 - `solutions/<id>.json` — the winning line per level (`{id, x?, y?}` in 64×64 display

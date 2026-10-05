@@ -1,6 +1,6 @@
 <!--
 Author: Claude Opus 5
-Date: 17-September-2026 (held-out copycats section added 04-October-2026, Claude Opus 5.5)
+Date: 17-September-2026 (held-out copycats section added 04-October-2026, held-out recolor section 05-October-2026, Claude Opus 5.5)
 PURPOSE: Operator guide for the test-only games folder. Says what is in it (as66 and the eight
 held-out copycats), the rule that
 it is never trained on, how to point a harness at it, the baselines to compare against, and where
@@ -128,3 +128,32 @@ kept-vs-changed notes, side-by-side previews and the manifest are in `copycats-h
 
 Canonical source: `arc3games/copycats_heldout/` in `sonpham-org/autoresearch-arena` (generators,
 verifier and the same files). Overwrite from its `dist/` to update.
+
+## Held-out recolor copies (test only, never train)
+
+Added 5-Oct-2026: colour-only copies of the seven held-out public games -- same rules, same
+maps, same sprites, same HUD, only the displayed colours permuted. They test whether a model
+survives a colour change and nothing else. Method and proofs: `../copycat-games/recolor/README.md`.
+
+| copy id | copy of | levels |
+|---|---|---|
+| `aq25-v1` | ar25 | 8 |
+| `rr86-v1` | re86 | 8 |
+| `sr26-v1` | sb26 | 8 |
+| `sr15-v1` | su15 | 9 |
+| `tq87-v1` | tr87 | 6 |
+| `tr93-v1` | tu93 | 9 |
+| `vr33-v1` | vc33 | 7 |
+
+Game folders sit in this folder like the others; manifest, previews and the fence note are in
+`recolor-heldout/`. **No solution files**: a recolor copy's winning line is the held-out
+original's own line. The manifest records the proof (engine, frame by frame against the
+original, and this folder's offline arcade, all passed for all seven). as66 has no recolor
+copy: it is not one of the 25 public games and has no recorded line.
+
+**Extend the extractor fence again** -- the full list is now
+`--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66,vh33,ah25,sh26,rh86,sh15,th87,th93,ah66,aq25,rr86,sr26,sr15,tq87,tr93,vr33`.
+Recolor ids use second letter `r` (`q` where the original already has `r`); the trainable recolor
+copies of the other 18 games use the same rule, and none of their ids is in this list.
+
+Every copy is `reviewed: false` until the Boss or Son has played it -- not a yardstick before that.
