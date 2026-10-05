@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from railway.trace_triage import (
     MAX_PUBLICATION, TraceTriageApi, TriageProblem, clean_decision, clean_publication,
-    decide, export, publish, queue,
+    decide, export, publish, queue, review_hold,
 )
 from railway.triage_contract import make_item
 
@@ -169,6 +169,36 @@ class PublicationAndDecisions(unittest.TestCase):
         connection.close.assert_called_once()
         connection.commit.assert_not_called()
 
+    def test_hold_dispositions_are_fail_closed_and_never_training_approval(self):
+        item = fixture()
+        cases = [
+            ("open", [], True),
+            ("open", [{"verdict": "insufficient"}], True),
+            ("resolved", [{"verdict": "confirmed"}], True),
+            ("resolved", [], True),
+            ("resolved", [{"verdict": "reasonable"}], False),
+            ("dismissed", [{"verdict": "dismissed"}], False),
+            ("open", [{"verdict": "reasonable"}], True),
+            ("resolved", [{"verdict": "insufficient"}, {"verdict": "reasonable"}], False),
+        ]
+        for status, history, expected in cases:
+            with self.subTest(status=status, history=history):
+                result = review_hold(item, status, history)
+                self.assertEqual(result["review_hold"], expected)
+                self.assertIs(result["training_approved"], False)
+                self.assertEqual(result["review_hold_scope"]["trace_sha256"], item["trace_sha256"])
+                self.assertEqual(result["review_hold_scope"]["step"], item["step"])
+
+    def test_hold_scope_retains_exact_source_and_only_parses_known_path_identity(self):
+        item = fixture()
+        item["path_id"] = "my-run:ka59_p3:L1"
+        scope = review_hold(item, "open", [])["review_hold_scope"]
+        self.assertEqual((scope["run"], scope["play"], scope["pass_index"]), ("my-run", "ka59_p3", 3))
+        item["path_id"] = "opaque-id"
+        scope = review_hold(item, "open", [])["review_hold_scope"]
+        self.assertEqual(scope["path_id"], "opaque-id")
+        self.assertNotIn("run", scope)
+
     def test_export_carries_diagnostic_and_decision_but_never_reward(self):
         item = fixture()
         cursor = Mock()
@@ -178,6 +208,8 @@ class PublicationAndDecisions(unittest.TestCase):
         self.assertEqual(result["items"][0]["packet"], item["packet"])
         self.assertEqual(result["items"][0]["decisions"][0]["reviewer"], TEAM)
         self.assertFalse(result["items"][0]["training_approved"])
+        self.assertTrue(result["items"][0]["review_hold"])
+        self.assertEqual(result["training_enforcement"], "external_consumer_required")
         self.assertIsNone(result["next_cursor"])
 
     def test_queue_response_exposes_recurrence_and_cluster_counts(self):

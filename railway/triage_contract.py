@@ -24,7 +24,8 @@ FENCED = frozenset("lf52 tn36 re86 dc22 su15 vc33 ar25 sb26 tr87 tu93 as66 "
                    "vh33 ah25 sh26 rh86 sh15 th87 th93 ah66 az25 rz86 sz26 sz15 tz87 tz93 vz33 "
                    "aq25 rr86 sr26 sr15 tq87 tr93 vr33".split())
 CATEGORIES = frozenset(("reference_conflict", "contradiction", "unsupported_certainty",
-                        "repeated_experiment", "plan_action_mismatch", "missing_evidence"))
+                        "repeated_experiment", "plan_action_mismatch", "missing_evidence",
+                        "level_confusion", "lucky_win", "ambiguous_win"))
 MAX_PACKET_BYTES = 100_000
 
 
@@ -76,6 +77,14 @@ def validate_packet(value):
     if not isinstance(value.get("context_complete"), bool):
         raise ValueError("context_complete must be explicit")
     out["context_complete"] = value["context_complete"]
+    if value.get("moment") is not None:
+        moment = value["moment"]
+        if not isinstance(moment, dict) or type(moment.get("cleared")) is not bool:
+            raise ValueError("invalid moment")
+        out["moment"] = {"level_before": _integer(moment.get("level_before"), "level_before", 1, 1000),
+                         "level_after": _integer(moment.get("level_after"), "level_after", 1, 1001),
+                         "action_count": _integer(moment.get("action_count"), "action_count"),
+                         "cleared": moment["cleared"]}
     ids = set()
     for key in ("evidence", "reference"):
         rows = value.get(key)
@@ -129,18 +138,26 @@ def validate_assessment(packet, value):
     if not isinstance(value, dict):
         raise ValueError("assessment must be an object")
     status = value.get("status")
-    if status not in ("issue", "no_issue", "insufficient_context"):
+    if status not in ("issue", "ambiguous", "no_issue", "insufficient_context"):
         raise ValueError("invalid assessment status")
     if value.get("category") not in CATEGORIES:
         raise ValueError("invalid category")
     evidence = {r["id"]: r["text"] for r in packet["evidence"]}
     reference = {r["id"]: r["text"] for r in packet["reference"]}
     out = {"status": status, "category": value["category"]}
+    for key in ("intent", "believed_rule", "outcome_explanation", "uncertainty"):
+        if key in value:
+            out[key] = _text(value[key], key, 600)
+    if "level_awareness" in value:
+        if value["level_awareness"] not in ("noticed", "missed", "unclear", "not_applicable"):
+            raise ValueError("invalid level_awareness")
+        out["level_awareness"] = value["level_awareness"]
     for key in ("summary", "alternative", "human_question", "next_action"):
-        out[key] = _text(value.get(key, ""), key, 2000, empty=key in ("human_question", "next_action"))
+        out[key] = _text(value.get(key, ""), key, 2000,
+                         empty=key in ("human_question", "next_action") or (status == "no_issue" and key == "alternative"))
     for key in ("claim", "support"):
-        out[key] = _citation(value.get(key), evidence, key, status == "issue")
-    out["reference"] = _citation(value.get("reference"), reference, "reference", status == "issue")
+        out[key] = _citation(value.get(key), evidence, key, status in ("issue", "ambiguous"))
+    out["reference"] = _citation(value.get("reference"), reference, "reference", status in ("issue", "ambiguous"))
     if value.get("solver_knew") not in ("yes", "no", "unknown"):
         raise ValueError("invalid solver_knew")
     out["solver_knew"] = value["solver_knew"]
@@ -155,7 +172,7 @@ def validate_assessment(packet, value):
     elif status == "insufficient_context" or not packet["context_complete"] or value["category"] in (
             "reference_conflict", "missing_evidence"):
         route = "assistant"
-    elif status == "issue" and (out["claim"]["quote"] == out["support"]["quote"] or
+    elif status in ("issue", "ambiguous") and (out["claim"]["quote"] == out["support"]["quote"] or
                                out["claim"]["ref"] == out["support"]["ref"] or
                                next(r["kind"] for r in packet["evidence"] if r["id"] == out["claim"]["ref"]) == "solver_system"):
         route = "assistant"
@@ -173,6 +190,9 @@ def make_item(packet, assessment, judge, *, created_at=None):
     if not isinstance(judge, dict):
         raise ValueError("judge must identify the model and prompt")
     judge = {k: _text(judge.get(k), k, 120) for k in ("model", "prompt_version")}
+    if judge["prompt_version"].startswith("trace-triage-v2") and any(
+            key not in assessment for key in ("intent", "believed_rule", "outcome_explanation", "uncertainty", "level_awareness")):
+        raise ValueError("v2 requires a plain-language account of the model's idea and uncertainty")
     identity = digest({"packet": packet, "judge": judge})
     # Conservative grouping: identical cited claim and reference, never semantic guesses.
     # Trace identity is omitted so repeat occurrences do not become repeat human homework.

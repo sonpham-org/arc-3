@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.05-trace-moments]
+*Author: Codex | 2026-10-05*
+
+- Review now explains the model's goal, believed rule, level awareness, logged result and uncertainty in plain sentences. Wins and level transitions are screened before generic certainty keywords; reasoning from both sides of a transition is preserved.
+- Explicit ambiguous findings can request judgment without claiming a proven mistake. Winning quickly is not a reasoning-quality signal. Missing focal evidence still goes to assistants.
+- Export includes exact-source review holds for open/confirmed concerns. These require enforcement by the external Plan C training picker; the old 27B extractor is not silently changed.
+- Fixed machine export pagination being intercepted by the sign-in proxy when the URL has query parameters.
+
 ## [2026.10.05-notes-first-trace-triage]
 *Author: Codex | 2026-10-05*
 

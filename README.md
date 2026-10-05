@@ -317,9 +317,12 @@ A GPT-6 Luna worker screens bounded decision episodes, including system/input co
 ordered reasoning and tool results, and durable memory writes. It uses the existing
 ARC-Explainer importer and requires an exact game build. Held-out/test-only families are
 excluded before screening and again at publication. Notes remain reviewer knowledge;
-they are never inserted into gameplay. Model identity and final outcome are withheld from
-the judge. Omitted history or focal context cannot reach the human queue. Before/after
-boards accompany the focal turn for review.
+they are never inserted into gameplay. Model identity is withheld from the judge. Logged clears and level changes are supplied
+as facts, never as proof that its reasoning was right. Winning and transition turns are
+screened first, including reasoning on both sides of a transition. Each card explains
+the model's goal, believed rule, recorded result and uncertainty in short, plain sentences.
+Missing focal or boundary evidence goes to assistants; omitted older history is explicit.
+Before/after boards accompany the focal turn for review.
 
 The server ranks by proposed impact, whether the solver had the contrary evidence,
 recurrence, then reading size. Matching cited claim, support and reference passages are
@@ -362,7 +365,15 @@ Triage endpoints under `/api/v1/review/triage/`: `publication` (PUT, machine tok
 `queue?route=human|assistant` and `item?id=...` (GET, team), `decision` (POST, team), and
 `export` (GET, machine token). Export returns JSON `items` with immutable evidence,
 effective route, reviewer decisions and `training_approved: false`; follow `next_cursor`
-with `?after=<cursor>` until null. The deployment applies the two additive tables from
+with `?after=<cursor>` until null. Each item also has `review_hold` and an exact
+`review_hold_scope`: unresolved and confirmed concerns remain held; a reasonable/dismissed
+resolution releases only that concern. Multiple concerns combine with OR. This is a hold
+request for the training consumer, **not an enforced block in the remote Plan C picker**.
+The deployed dashboard describes Plan C selecting both stronger and weaker sibling
+attempts; that picker is not the older 27B `extract_sft.py` in this checkout. It must match
+source hashes and covered reasoning steps before sampling training records. Do not treat
+a clear, a released concern, or a missing review as training approval.
+The deployment applies the two additive tables from
 `railway/catalog_schema.sql`. A training owner can consume reviewed diagnostics to
 prepare recovery experiments; no trainer integration is implied. See the
 [design and evaluation plan](docs/plans/2026-10-05-human-review-for-rl.md).
