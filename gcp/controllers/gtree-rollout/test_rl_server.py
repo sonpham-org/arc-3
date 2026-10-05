@@ -22,6 +22,9 @@ E. a root whose source play began with the notebook's warmup RESET (testdata/ar2
 F. serve() with a fake run_node: the newest two rounds are played oldest first (a newer round does not drop the older
    round's unstarted jobs), older rounds are dropped; summary rows name the restart point and carry a diverged try's
    (cut) diff; the running jobs are listed.
+H. a session STOP (stop_active_nodes, 5-Oct) moves the deadline of a node already waiting on its siblings: the hung
+   sibling is killed after the grace (one hung try per RL box card had blocked every card for hours).
+I. serve() with a node thread that never returns: after STOP + grace + margin the session ends without it.
 """
 from __future__ import annotations
 
@@ -410,6 +413,65 @@ def main() -> int:
           and summ["running"] == {"nodes": 0, "tries": 0, "jobs": []},
           "F: summary rows name the restart point; a diverged try carries its (cut) diff; running jobs listed",
           json.dumps(dv)[:300])
+
+    # ---- H. a session STOP reaches a node already waiting on its siblings (5-Oct: one hung try per RL box card
+    #         blocked every card for hours: a stopped session waits for its running nodes) ---------------------------
+    import threading as _th
+    hung_killed: list[int] = []
+    gh = rd.Group({"job_id": "hang"}, [0, 1], out, rd.Lanes(2), deadline=time.time() + 3600, grace_s=300,
+                  waitpid=lambda pid, flags: (pid, 0) if (pid == 201 or pid in hung_killed) else (0, 0),
+                  kill=lambda pid: hung_killed.append(pid), real_fork=False)
+    gh.children = {0: 201, 1: 202}
+    ch = rd.TryController({"job_id": "hang", "mode": "replay_actions", "stop": {}, "coach": {"spec": "off"},
+                           "origin": {"turn": 1}}, None, plan=None, facts={"turn": 1})
+    ch.group, ch.deadline = gh, gh.deadline
+    with rd._ACTIVE_LOCK:
+        rd._ACTIVE[id(gh)] = (gh, ch)
+    t0 = time.time()
+    th = _th.Thread(target=ch.wait_children, daemon=True)
+    th.start()
+    time.sleep(0.4)
+    before = list(hung_killed)
+    n_stopped = rd.stop_active_nodes(0.5)
+    th.join(timeout=15)
+    with rd._ACTIVE_LOCK:
+        rd._ACTIVE.pop(id(gh), None)
+    check(not th.is_alive() and before == [] and hung_killed == [202] and n_stopped >= 1
+          and ch.deadline <= time.time() and gh.exit_codes.get(0) == 0,
+          "H: a session STOP moves the deadline of a node already waiting; its hung sibling is killed after the grace",
+          f"alive {th.is_alive()} killed {hung_killed} before {before} n {n_stopped} took {time.time() - t0:.1f}s")
+
+    # ---- I. a node thread that never returns does not hold the session past STOP + grace + margin -------------------
+    jobs_i = work / "serve-hang"
+    shutil.rmtree(jobs_i, ignore_errors=True)
+    pj = jobs_i / "round-0001" / "0001-00000-hang.json"
+    pj.parent.mkdir(parents=True, exist_ok=True)
+    pj.write_text(json.dumps({"job_id": "hang", "game_id": "sb26-x", "round": 1, "tries": 1,
+                              "origin": {"t1": "sb26:t1:hang", "seq": 1}, "source": {"rollout_id": "src:hang"}}),
+                  encoding="utf-8")
+    release = _th.Event()
+
+    def hanging_run_node(job_, *a, **kw):
+        release.wait(60)
+        return []
+    stop_i = work / "serve-hang-STOP"
+    stop_i.unlink(missing_ok=True)
+    rd.run_node = hanging_run_node
+    os.environ["ARC3_ROLLOUT_STOP_GRACE_S"], os.environ["ARC3_ROLLOUT_STOP_ABANDON_S"] = "0.2", "0.3"
+    _th.Timer(0.5, lambda: stop_i.write_text("stop", encoding="utf-8")).start()
+    t0 = time.time()
+    try:
+        summ_i = rd.serve(jobs_i, solver, spec, work / "serve-hang-out", lanes=2, restorers=1, poll_s=0.1,
+                          stop_file=stop_i, fork=False, keep_rounds=2)
+    finally:
+        rd.run_node = real_run_node
+        release.set()
+        os.environ.pop("ARC3_ROLLOUT_STOP_GRACE_S", None)
+        os.environ.pop("ARC3_ROLLOUT_STOP_ABANDON_S", None)
+    took = time.time() - t0
+    check(took < 10 and any("node thread still running" in str(e.get("error")) for e in summ_i["errors"]),
+          "I: a node thread that never returns is left behind: the session ends soon after STOP + grace + margin",
+          f"took {took:.1f}s errors {json.dumps(summ_i['errors'])[:300]}")
     return finish(stub, work)
 
 

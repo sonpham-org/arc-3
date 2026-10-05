@@ -46,8 +46,11 @@ merge_lora.py from their adapters).
    run detached (PowerShell Start-Process) with `c_state.json` as it is. Its `last_train` is `c006-train-1` and `k` is 7.
    Delete `D:\codex-work\rl-20261001\STOP_C` first.
 
-## Fix before the next run
+## The hung-session fix (5-Oct, done)
 
-On a model switch, a stopped session waits for its running tries, and on 5-Oct one hung try per card blocked every card
-from ~08:35 UTC. Kill a stopped session's tries after a grace period (give running Groups a dynamic deadline in
-`gtree-rollout/rollout_driver.serve`), then rebuild the hot-swap notebook.
+On a model switch a stopped session waits for its running tries; on 5-Oct one hung try per card blocked every card from
+~08:35 UTC. Fixed in gtree-rollout/rollout_driver.py: on its STOP file serve() calls stop_active_nodes(), so every node
+in flight gets a deadline of now and its siblings still running after ARC3_ROLLOUT_STOP_GRACE_S (600 s) are killed;
+a node thread that never returns is left behind after ARC3_ROLLOUT_STOP_ABANDON_S more (300 s). Tests H and I in
+test_rl_server.py. The hot-swap notebook was rebuilt with the fix (its gs:// object is in nb_object.txt under D:/codex-work/rl-20261001/hotswap): gs://cellens-ai-artifacts/arc3-duck/daniel-base/notebooks/4b03e09da44e/notebook.ipynb;
+set it as slot-notebook when the box is rebuilt.

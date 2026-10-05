@@ -308,6 +308,28 @@ def assignment_of(job: dict, k: int | None) -> dict | None:
     return dict(a[k]) if k is not None and 0 <= k < len(a) else None
 
 
+_ACTIVE: dict[int, tuple] = {}            # id(group) -> (group, parent controller), nodes in flight (fork path)
+_ACTIVE_LOCK = threading.Lock()
+
+
+def stop_active_nodes(grace_s: float) -> int:
+    """A session's STOP (5-Oct-2026: one hung try per card blocked every RL box card for hours, because a stopped
+    session waits for its running nodes and a try stuck at 0% GPU never ends): every node in flight gets a deadline of
+    now, so no sibling is forked any more and a parent still restoring stops; siblings still running grace_s later are
+    killed (wait_children re-reads the deadline). Killed tries leave no result.json and stopped ones end with status
+    "deadline", so neither is ever scored as a failed attempt (try_records keeps status "done" only)."""
+    now = time.time()
+    with _ACTIVE_LOCK:
+        items = list(_ACTIVE.values())
+    for g, ctl in items:
+        if g.deadline is None or g.deadline > now:
+            g.deadline = now
+        g.grace_s = grace_s
+        if ctl is not None and (ctl.deadline is None or ctl.deadline > now):
+            ctl.deadline = now
+    return len(items)
+
+
 class Group:
     """One node's siblings in the fork path: who forks, who waits, where the children go (all injectable: tests on
     Windows replace fork / waitpid / exit)."""
@@ -597,20 +619,22 @@ class TryController:
     def wait_children(self) -> None:
         """Wait for every child; each exited child's lane goes back at once, not when the slowest sibling ends."""
         g = self.group
-        hard = (g.deadline + g.grace_s) if g.deadline is not None else None
+        killed = False
         while True:
             self.reap_children()
             pending = {k: pid for k, pid in g.children.items() if k not in g.exit_codes}
             if not pending:
                 break
-            if hard is not None and time.time() > hard:
+            # read every pass: a session STOP moves the deadline of a node already waiting here (stop_active_nodes)
+            hard = (g.deadline + g.grace_s) if g.deadline is not None else None
+            if not killed and hard is not None and time.time() > hard:
                 for k, pid in pending.items():
                     try:
                         g.kill(pid)
                     except OSError:
                         pass
                     log(f"{self.job['job_id']}.k{k}: killed (pid {pid}) past the deadline")
-                hard = None
+                killed = True
             if pending:
                 time.sleep(0.5)
 
@@ -1096,6 +1120,8 @@ def _run_node(job: dict, solver_tmpl, spec, out_root: Path, *, lanes: Lanes, for
     ctl = TryController(job, None, plan=plan, facts=facts, source_decisions=decisions)
     ctl.role, ctl.group, ctl.deadline = "parent", g, deadline
     ctl.on_origin = ctl.fork_siblings
+    with _ACTIVE_LOCK:
+        _ACTIVE[id(g)] = (g, ctl)
     try:
         _play_session(ctl, job, out_root / job["job_id"] / "restore", solver_tmpl, spec, 0)
     except BaseException:
@@ -1103,8 +1129,11 @@ def _run_node(job: dict, solver_tmpl, spec, out_root: Path, *, lanes: Lanes, for
             g.exit_fn(3)
         raise
     finally:
-        if ctl.role == "parent" and ctl.lanes_held:
-            lanes.release(ctl.lanes_held)
+        if ctl.role == "parent":
+            with _ACTIVE_LOCK:
+                _ACTIVE.pop(id(g), None)
+            if ctl.lanes_held:
+                lanes.release(ctl.lanes_held)
     if ctl.role == "child":                      # a sibling's play ended: write it down and leave
         code = 0
         try:
@@ -1288,6 +1317,10 @@ def serve(jobs_dir: str | Path, solver_tmpl, spec, out_root: Path, *, lanes: int
 
     pool = ThreadPoolExecutor(max_workers=restorers, thread_name_prefix="gtr-node")
     active: dict = {}
+    stop_grace = float(os.environ.get("ARC3_ROLLOUT_STOP_GRACE_S", "600") or 600)
+    stop_abandon = float(os.environ.get("ARC3_ROLLOUT_STOP_ABANDON_S", "300") or 300)
+    stopped_at: float | None = None
+    abandoned = False
     log(f"server: jobs {jobs_dir} -> {out_root}, lanes {lanes}, restorers {restorers}, fork {use_fork}, "
         f"deadline {time.strftime('%H:%M:%S', time.localtime(deadline)) if deadline else None}")
     try:
@@ -1317,6 +1350,17 @@ def serve(jobs_dir: str | Path, solver_tmpl, spec, out_root: Path, *, lanes: int
                 active[pool.submit(node, job)] = p.name
             if not active and (once or stopping()):
                 break
+            if stopped_at is None and stop_file and Path(stop_file).exists():
+                stopped_at = time.time()
+                n = stop_active_nodes(stop_grace)
+                log(f"server: STOP; {n} nodes in flight get {stop_grace:.0f}s to end, then their tries are killed")
+            if active and stopped_at is not None and time.time() > stopped_at + stop_grace + stop_abandon:
+                # a node whose own thread never returns (not a forked try: those were killed): leave it behind
+                summary["errors"].append({"job": sorted(active.values()), "error": "node thread still running "
+                                          f"{stop_grace + stop_abandon:.0f}s after STOP; session ended without it"})
+                log(f"server: {len(active)} node threads did not end after STOP; leaving them behind")
+                abandoned = True
+                break
             if active:
                 done, _ = wait(list(active), timeout=poll_s, return_when=FIRST_COMPLETED)
                 for f in done:
@@ -1324,7 +1368,7 @@ def serve(jobs_dir: str | Path, solver_tmpl, spec, out_root: Path, *, lanes: int
             else:
                 time.sleep(max(0.1, min(poll_s, (deadline - time.time()) if deadline else poll_s)))
     finally:
-        pool.shutdown(wait=True)
+        pool.shutdown(wait=not abandoned, cancel_futures=abandoned)
         summary["ended_at"] = time.time()
         save()
     log(f"server done: {summary['nodes']} nodes, {summary['tries']} tries, {summary['cleared']} cleared, "
