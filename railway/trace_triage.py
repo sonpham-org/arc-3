@@ -202,6 +202,25 @@ def decide(cursor: Any, item: dict, reviewer: str) -> dict:
     return {"status": "saved", "id": item["id"], "training_approved": False}
 
 
+def review_hold(payload: dict, status: str, history: list[dict]) -> dict:
+    """Describe a diagnostic hold for an external record picker; never claim enforcement.
+
+    A consumer must exclude records containing a held step of this exact source. Match
+    the source digest as well as path/step: a reused run name must not target new bytes.
+    Multiple diagnostics on a record combine with OR; clearing one is not global approval.
+    The deployed Plan C picker is outside this checkout and does not consume this yet.
+    """
+    latest = history[-1]["verdict"] if history else None
+    held = status == "open" or latest not in ("reasonable", "dismissed")
+    scope = {key: payload[key] for key in ("path_id", "trace_sha256", "game", "build", "level", "step")}
+    # Only expose a separate run/play identity when it exactly matches our indexer's
+    # format. Opaque third-party path IDs remain valid but must be matched as supplied.
+    match = re.fullmatch(r"(?P<run>.+):(?P<game>[a-z0-9]{4})_p(?P<pass>\d+):L(?P<level>\d+)", payload["path_id"])
+    if match and match["game"] == payload["game"] and int(match["level"]) == payload["level"]:
+        scope.update(run=match["run"], play=f"{match['game']}_p{match['pass']}", pass_index=int(match["pass"]))
+    return {"review_hold": held, "review_hold_scope": scope, "training_approved": False}
+
+
 def export(cursor: Any, after: str, limit: int) -> dict:
     cursor.execute("SELECT payload, status, cluster_key, route FROM trace_triage_items WHERE id > %s ORDER BY id LIMIT %s",
                    (after, limit + 1))
@@ -211,9 +230,10 @@ def export(cursor: Any, after: str, limit: int) -> dict:
     for payload, status, cluster, route in rows[:limit]:
         if cluster not in cache:
             cache[cluster] = decisions(cursor, cluster)
-        result.append({**payload, "route": route, "status": status, "decisions": cache[cluster], "training_approved": False})
+        result.append({**payload, "route": route, "status": status, "decisions": cache[cluster],
+                       **review_hold(payload, status, cache[cluster])})
     return {"items": result, "next_cursor": result[-1]["id"] if len(rows) > limit else None,
-            "training_approved": False}
+            "training_approved": False, "training_enforcement": "external_consumer_required"}
 
 
 class TraceTriageApi:

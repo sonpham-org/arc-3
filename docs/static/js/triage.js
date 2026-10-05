@@ -45,6 +45,53 @@ export function nextItem(items, seen, route) {
     && (!item.status || item.status === "open") && (item.route || item.assessment?.route) === route) || null;
 }
 
+export function gameRecord(moment) {
+  if (!moment || typeof moment !== "object") return "This review does not include the game's result for this turn.";
+  const facts = [];
+  if (Number.isInteger(moment.level_before) && Number.isInteger(moment.level_after)) {
+    facts.push(moment.level_before === moment.level_after
+      ? `The board stayed on level ${moment.level_before}.`
+      : `The board changed from level ${moment.level_before} to level ${moment.level_after}.`);
+  }
+  if (Number.isInteger(moment.action_count) && moment.action_count >= 0)
+    facts.push(`${moment.action_count} move${moment.action_count === 1 ? "" : "s"} on this turn.`);
+  if (moment.cleared === true) facts.push("The game recorded a level win.");
+  else if (moment.cleared === false) facts.push("No level win was recorded on this turn.");
+  return facts.join(" ") || "This review does not include the game's result for this turn.";
+}
+
+export function levelAwarenessText(value) {
+  return ({
+    noticed: "It noticed the level had changed.",
+    missed: "It seems to have missed the level change.",
+    unclear: "We cannot tell whether it noticed the level change.",
+    not_applicable: "There was no level change to notice here.",
+  })[value] || "Its understanding of the level change has not been checked.";
+}
+
+function simpleSummary(assessment, packet) {
+  if (!["intent", "believed_rule", "outcome_explanation", "uncertainty", "level_awareness"].some(key => assessment[key])) {
+    return el("div", { class: "tq-explanation" },
+      packet.moment ? el("h3", {}, "What actually happened") : null,
+      packet.moment ? el("p", {}, el("strong", {}, "Game record: "), gameRecord(packet.moment)) : null,
+      el("h3", {}, "What is unclear"),
+      el("p", {}, assessment.alternative || "We need more evidence before calling this a mistake."));
+  }
+  return el("div", { class: "tq-explanation" },
+    el("h3", {}, "What it thinks it is doing"),
+    el("p", {}, assessment.intent || "Its plan has not been summarized yet."),
+    el("h3", {}, "The rule it believes"),
+    el("p", {}, assessment.believed_rule || "The rule it believes has not been summarized yet."),
+    el("h3", {}, "What actually happened"),
+    el("p", {}, el("strong", {}, "Game record: "), gameRecord(packet.moment)),
+    el("p", {}, el("strong", {}, "The screening model's explanation: "),
+      assessment.outcome_explanation || "Read the quoted observations below."),
+    assessment.level_awareness ? el("p", {}, el("strong", {}, "Did it notice the new level? "),
+      "The screening model says: ", levelAwarenessText(assessment.level_awareness)) : null,
+    el("h3", {}, "What is unclear"),
+    el("p", {}, assessment.uncertainty || assessment.alternative || "We need more evidence before calling this a mistake."));
+}
+
 function citation(title, cite, records) {
   const entry = records.find(record => record.id === cite?.ref);
   const quote = typeof cite?.quote === "string" && entry?.text?.includes(cite.quote) ? cite.quote : null;
@@ -72,7 +119,7 @@ function sourceDetails(item) {
 
 function previousReview(item) {
   if (!Array.isArray(item.decisions) || !item.decisions.length) return null;
-  const labels = { confirmed: "Issue confirmed", reasonable: "Reasonable experiment", insufficient: "More evidence requested", dismissed: "Concern dismissed" };
+  const labels = { confirmed: "Flagged for training review", reasonable: "Reasoning holds up", insufficient: "More evidence requested", dismissed: "Concern dismissed" };
   return el("section", { class: "tq-review-context" }, el("h3", {}, "Previous review"),
     ...item.decisions.map(decision => el("div", {},
       el("strong", {}, labels[decision.verdict] || "Review recorded"),
@@ -152,7 +199,8 @@ export async function startTriage(request = triageRequest) {
         state.counts[route] = Math.max(0, (state.counts[route] || 0) - 1);
         state.counts.resolved = (state.counts.resolved || 0) + 1;
       }
-      message(verdict === "insufficient" ? "Sent to the assistant queue for more evidence." : "Decision saved. Thank you.");
+      message(verdict === "insufficient" ? "Sent to the assistant queue for more evidence."
+        : verdict === "confirmed" ? "Decision saved. Flagged for training review." : "Decision saved. Thank you.");
       render();
     } catch (error) {
       if (error.status === 409) {
@@ -185,20 +233,21 @@ export async function startTriage(request = triageRequest) {
     const card = el("article", { class: "tq-card", "aria-labelledby": "tq-question" },
       el("div", { class: "tq-card-top" }, el("strong", { class: "tq-game" }, `${item.game} · level ${item.level} · turn ${item.step}`),
         el("span", { class: "tq-chip" }, impact), el("span", { class: "muted" }, `${recurrence} occurrence${recurrence === 1 ? "" : "s"} grouped`)),
-      el("p", { class: "tq-eyebrow" }, route === "human" ? "Why this needs your judgment" : "What to investigate"),
+      el("p", { class: "tq-eyebrow" }, a.status === "ambiguous" ? "The result does not settle the reasoning" : route === "human" ? "Why this needs your judgment" : "What to investigate"),
       el("h2", { id: "tq-question", tabindex: "-1" }, (route === "human" ? a.human_question : a.next_action) || a.summary || "Review the evidence"),
-      el("p", { class: "tq-summary" }, a.summary),
-      el("p", { class: "tq-caution" }, "A screener flagged this concern; it is not yet an established error."),
-      previousReview(item),
-      el("div", { class: "tq-evidence" }, citation("What the solver said", a.claim, evidence), citation("What the evidence says", a.support, evidence)),
-      a.reference ? citation("Applicable human notes", a.reference, reference) :
-        el("p", { class: "muted" }, "No applicable human-note excerpt was cited for this question."),
+      !a.intent ? el("p", { class: "tq-summary" }, a.summary) : null,
+      el("p", { class: "tq-caution" }, "A small model wrote this summary. It may be wrong. A win alone does not prove the reasoning was right."),
+      simpleSummary(a, packet),
       focalBoards(item),
+      previousReview(item),
+      el("details", { class: "tq-details" }, el("summary", {}, "Read the exact quotes and human notes"),
+        el("div", { class: "tq-evidence" }, citation("What the solver said", a.claim, evidence), citation("What the evidence says", a.support, evidence)),
+        a.reference ? citation("Applicable human notes", a.reference, reference) :
+          el("p", { class: "muted" }, "No applicable human-note excerpt was cited for this question."),
+        el("p", { class: "muted" }, a.solver_knew === "yes" ? "The screening model says the solver had this evidence at the time."
+          : a.solver_knew === "no" ? "The solver had not been given this evidence. Trying to discover a rule is not automatically a mistake."
+            : "We do not know whether the solver had this evidence at the time.")),
       el("div", { class: "tq-explanation" },
-        el("h3", {}, "A reasonable alternative"), el("p", {}, a.alternative || "No alternative explanation was supplied; check the full context."),
-        el("p", { class: "muted" }, a.solver_knew === "yes" ? "The screener reports that this evidence was available to the solver."
-          : a.solver_knew === "no" ? "The solver had not been given this evidence. A discovery attempt is not automatically a mistake."
-            : "It is unclear whether the solver had this evidence at the time."),
         el("h3", {}, "What happens next"), el("p", {}, a.next_action || "Investigate the concern before proposing any training change.")),
       sourceDetails(item));
     const notesURL = safeSourceURL(packet.notes_url);
@@ -214,7 +263,7 @@ export async function startTriage(request = triageRequest) {
       el("label", { for: "tq-note" }, "Correction or context (optional)"),
       el("textarea", { id: "tq-note", rows: "2", maxlength: "4000", placeholder: "One sentence is enough." }),
       el("div", { class: "tq-actions" },
-        ...[["confirmed", "Confirm issue"], ["reasonable", "Reasonable experiment"], ["insufficient", "Need evidence"], ["dismissed", "Dismiss"]]
+        ...[["confirmed", "Confirm issue"], ["reasonable", "Reasoning holds up"], ["insufficient", "Need evidence"], ["dismissed", "Dismiss"]]
           .map(([verdict, label]) => el("button", { type: "button", onclick: () => save(verdict) }, label)),
         el("button", { type: "button", class: "tq-skip", onclick: () => {
           if (state.busy) return;

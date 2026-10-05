@@ -2,7 +2,18 @@
 // Run: node --test tests/triage.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reviewMode, safeSourceURL, nextItem, triageRequest } from '../docs/static/js/triage.js';
+import { reviewMode, safeSourceURL, nextItem, triageRequest, gameRecord, levelAwarenessText } from '../docs/static/js/triage.js';
+
+test('game facts report wins and level changes without claiming that reasoning was correct', () => {
+  assert.equal(gameRecord({ level_before: 1, level_after: 2, cleared: true, action_count: 1 }),
+    'The board changed from level 1 to level 2. 1 move on this turn. The game recorded a level win.');
+  assert.equal(gameRecord({ level_before: 2, level_after: 2, cleared: false, action_count: 0 }),
+    'The board stayed on level 2. 0 moves on this turn. No level win was recorded on this turn.');
+  assert.equal(gameRecord({ cleared: 'true', action_count: '1', level_before: null, level_after: null }), gameRecord());
+  assert.match(levelAwarenessText('missed'), /seems to have missed/);
+  assert.match(levelAwarenessText('unclear'), /cannot tell/);
+  assert.match(levelAwarenessText(undefined), /has not been checked/);
+});
 
 test('the default queue is distinct from legacy pair, split and invite review URLs', () => {
   assert.equal(reviewMode('', ''), 'triage');

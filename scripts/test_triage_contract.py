@@ -22,6 +22,31 @@ def sample():
 
 
 class TriageContractTests(unittest.TestCase):
+    def test_ambiguous_win_can_reach_human_without_becoming_training_approval(self):
+        packet, assessment, judge = sample()
+        packet["moment"] = {"level_before": 1, "level_after": 2, "cleared": True, "action_count": 1}
+        assessment.update(status="ambiguous", category="ambiguous_win", intent="Move through the passage.",
+                          believed_rule="The passage cannot work.", level_awareness="unclear",
+                          outcome_explanation="The game advanced to level two.",
+                          uncertainty="It may have reached the goal by accident.")
+        judge["prompt_version"] = "trace-triage-v2"
+        item = make_item(packet, assessment, judge)
+        self.assertEqual(item["route"], "human")
+        self.assertEqual(item["assessment"]["intent"], assessment["intent"])
+        self.assertEqual(item["packet"]["moment"], packet["moment"])
+        self.assertFalse(item["training_approved"])
+        for key in ("intent", "believed_rule", "level_awareness", "outcome_explanation", "uncertainty"):
+            missing = dict(assessment)
+            del missing[key]
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                make_item(packet, missing, judge)
+
+    def test_recorded_clear_is_a_boolean_not_model_prose(self):
+        packet, assessment, judge = sample()
+        packet["moment"] = {"level_before": 1, "level_after": 2, "cleared": "yes", "action_count": 1}
+        with self.assertRaises(ValueError):
+            make_item(packet, assessment, judge)
+
     def test_exact_citations_are_required(self):
         packet, assessment, judge = sample()
         for key in ("claim", "support", "reference"):

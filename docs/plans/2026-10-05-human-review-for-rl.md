@@ -4,6 +4,23 @@
 **For:** Mark, Son, and assistants working on the RL loop  
 **Status:** Initial notes-first triage implementation included in PR #77. The worker, authenticated queue, human decisions, export, and publisher integration are implemented; activation requires running the publisher with `--triage` after deployment. Recovery experiments, judge calibration, and training consumption remain evaluation work. See the [operator instructions](../../README.md#trace-review-which-way-forward-is-better-rl).
 
+## Live review focus, 5 October update
+
+The review unit is an ambiguous reasoning moment, including successful play: what the solver
+was trying to do, the rule it believed, whether it noticed a level change, and whether the
+observed outcome actually supports its explanation. These are short plain-language summaries,
+with exact excerpts and before/after boards underneath. A concern need not be a proven error
+to deserve human judgment, but it needs a specific question that would change how we use the
+example. A short win is not automatically a clean training example.
+
+Current project evidence matters: the 5-Oct sprint plan uses the full Flash-Next reference,
+and the live training dashboard says Plan C selects stronger and weaker sibling attempts.
+That is a different consumer from the older 27B solved-level SFT extractor in this checkout.
+The triage export therefore identifies exact source/step holds for that picker to enforce;
+it does not claim to have changed a running training job. Preserve engine outcomes for
+comparison while excluding unresolved reasoning examples from a subsequent training batch.
+A resolved concern is not general training approval, and unrelated held-out fences remain.
+
 ## Recommendation
 
 Use a small model to compare traces with **Mark's existing ARC-Explainer notes**, then surface only consequential questions those notes and recorded evidence cannot settle. Keep game outcomes as the automatic performance signal. Ask humans to resolve a genuinely new uncertainty, rather than rank whole traces whose results we already know or restate rules they have already documented.
