@@ -1,6 +1,7 @@
 """Regression checks for cited diagnoses, safe routing, and immutable identities."""
 import copy
 import unittest
+from unittest.mock import patch
 
 from railway.triage_contract import digest, fenced_game, make_item, validate_assessment, validate_item
 
@@ -22,6 +23,11 @@ def sample():
 
 
 class TriageContractTests(unittest.TestCase):
+    def test_container_root_module_keeps_game_fences(self):
+        with patch("railway.triage_contract.__file__", "/triage_contract.py"):
+            self.assertFalse(fenced_game("wa30"))
+            self.assertTrue(fenced_game("as66"))
+
     def test_ambiguous_win_can_reach_human_without_becoming_training_approval(self):
         packet, assessment, judge = sample()
         packet["moment"] = {"level_before": 1, "level_after": 2, "cleared": True, "action_count": 1}
