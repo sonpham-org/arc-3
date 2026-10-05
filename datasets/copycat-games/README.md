@@ -35,11 +35,47 @@ dist/
   in WIN; (2) the packaged folder, scanned by arc_agi's offline Arcade, makes the game by id
   and the same line stepped through that wrapper reaches WIN with the right level count.
 
+## Games in this package
+
+30 copycats of 18 public games, every one `verified: true`.
+
+| original | copycats | levels |
+|---|---|---|
+| bp35 | bx35, by35 | 9 |
+| cd82 | cx82, cy82 | 6 |
+| cn04 | cx04, cy04 | 6 |
+| dc22 | dx22, dy22 | 6 |
+| ft09 | fx09, fy09 | 6 |
+| g50t | gx0t, gy0t | 7 |
+| ka59 | kx59 | 7 |
+| lf52 | lx52, ly52 | 10 |
+| lp85 | lx85, ly85 | 8 |
+| ls20 | lx20, ly20 | 7 |
+| m0r0 | mxr0 | 6 |
+| r11l | rx1l | 6 |
+| s5i5 | sxi5 | 8 |
+| sc25 | sx25, sy25 | 6 |
+| sk48 | sx48 | 8 |
+| sp80 | sx80, sy80 | 6 |
+| tn36 | tx36 | 7 |
+| wa30 | wx30, wy30 | 9 |
+
+6 games have one copycat so far (ka59, m0r0, r11l, s5i5, sk48, tn36); the rest have two.
+The `kept`, `changed` and `not_changed` notes in `manifest.json` name games by our internal
+nicknames: they are build notes for people, never text to show an agent. Game files and
+`metadata.json` carry opaque ids only.
+
 ## Held out
 
-No copycats exist for the seven held-out public games (vc33, ar25, sb26, re86, su15, tr87,
-tu93): a copycat would leak the held-out test. They wait on Son's decision. as66 is test-only
-and not one of the public 25.
+This package holds no copies of the seven held-out public games (vc33, ar25, sb26, re86,
+su15, tr87, tu93) or of as66, and must never be mixed with them: it is training material.
+Their test-only copies were built separately (Son asked for them on 4-Oct-2026); they live in
+`arc3games/copycats_heldout/` here and `datasets/test-only-games/` on sonpham-org/arc-3, and
+are never trained on.
+
+On sonpham-org/arc-3 this folder also holds ws03 and ws04, two earlier Locksmith reskins
+(August 2026, ws04 the repaired build). They were not made by this packager and are not in
+`manifest.json`.
 
 ## How a copycat is made
 
