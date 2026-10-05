@@ -520,8 +520,25 @@ function mergePanels(d) {
     const parts = ps.map(p => p.models[k]).filter(Boolean);
     const done = parts.filter(a => a.plays && a.plays.length);
     const ses = done.map(a => a.se);
+    const nGames = a => Object.keys(a.per_game || {}).length;
+    // a panel's score is the mean over its games of each game's mean score, so the joined score weighs each panel
+    // by its number of games
+    const scored = done.filter(a => a.score !== null && a.score !== undefined && nGames(a));
+    const gsum = scored.reduce((s, a) => s + nGames(a), 0);
+    // a rep is one repeat of the whole panel (levels summed over its games); the panels repeat separately, so the
+    // joined rep i is rep i of every panel added together, kept only while every panel has a rep i
+    const nr = done.length ? Math.min(...done.map(a => (a.reps || []).length)) : 0;
+    const reps = Array.from({ length: nr }, (_, i) => {
+      const rs = done.map(a => a.reps[i]), g = rs.reduce((s, r) => s + (r.games || 0), 0);
+      return { ...rs[0], levels: rs.reduce((s, r) => s + (r.levels || 0), 0), games: g,
+        score: g ? rs.reduce((s, r) => s + (r.score || 0) * (r.games || 0), 0) / g : null,
+        complete: rs.every(r => r.complete), playing: rs.some(r => r.playing) };
+    });
     models[k] = {
       ...parts[0],
+      per_game: Object.assign({}, ...parts.map(a => a.per_game || {})),
+      reps,
+      score: gsum ? scored.reduce((s, a) => s + a.score * nGames(a), 0) / gsum : null,
       runs: parts.flatMap(a => a.runs || []),
       plays: parts.flatMap(a => a.plays || []),
       playing: parts.reduce((s, a) => s + (a.playing || 0), 0),
