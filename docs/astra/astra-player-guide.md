@@ -7,6 +7,8 @@ Boss, this is what the winning player's published notes can actually teach us at
 
 Every game here uses its **max-effort provider-adapter** replay. All 25 session records report 100 and every level completed. There are **759 published summaries across 6,485 actions**. The notes are intermittent summaries, not a complete record of the player's reasoning. A note saying “continue the plan” does not show us the plan; it also does not establish that no thinking happened.
 
+There is a concrete check on that distinction: [G50T level 6](https://arcprize.org/replay/b93ce848-16a9-4930-994b-871dd64ed93d) records reasoning tokens on **all 49 moves**, even though its 13 written summaries do not explain the solution. The counter does not prove understanding; it does rule out describing the log as reporting no reasoning at all.
+
 ## Interesting gaps to inspect first
 
 | Game and level | What makes it useful to inspect | Published steps |
