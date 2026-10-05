@@ -13,6 +13,10 @@ Two things live in this repo, and they share one site (**https://arc3.sonpham.ne
 Everything under `docs/` is that site; everything else is the machinery that produces it —
 the harness variants, the GCP launch kit, and the raw run logs.
 
+**Astra guides and evidence:** [Start here](docs/astra/README.md). This links the
+plain-language learning guide, the published-note review, and the structured lesson
+text and replay references that another system can read.
+
 ---
 
 ## 1. Games
