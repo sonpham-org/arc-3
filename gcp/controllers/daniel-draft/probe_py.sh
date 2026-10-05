@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "host uv: $(command -v uv || echo none) | $(python3 --version 2>&1) | ensurepip: $(python3 -c 'import ensurepip; print("ok")' 2>&1 | tail -1) | venv: $(python3 -c 'import venv; print("ok")' 2>&1 | tail -1)"
+docker run --rm arc3-sglang:built bash -lc 'echo "ctr uv: $(command -v uv || echo none) | sglvenv bin: $(ls /opt/sglvenv/bin | grep -E "^(pip|uv|python)" | tr "\n" " ") | pip module: $(/opt/sglvenv/bin/python -c "import pip; print(pip.__version__)" 2>&1 | tail -1) | sys python3: $(command -v python3) $(python3 -c "import venv, ensurepip; print(\"venv+ensurepip ok\")" 2>&1 | tail -1)"' 2>/dev/null
