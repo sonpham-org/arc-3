@@ -506,11 +506,15 @@ function renderPanels(d) {
 
 /* ------------------------------------------------------------------ main */
 // Son, 4-Oct-2026: training happens inside the hard games, so the hard panel and the train panel are one set; show
-// them as a single panel. Games are joined, each model's runs and plays are joined, its level total is the sum of the
-// panel totals and its error the root of the summed squares (the panels share no games). Claude Opus 5.5 for Bubba.
+// them as a single panel and keep the held-out panel apart, as before. Games are joined, each model's runs and plays
+// are joined, its level total is the sum of the panel totals and its error the root of the summed squares (the panels
+// share no games). Claude Opus 5.5 for Bubba.
+const MERGED_KEYS = ["train", "hard"];
 function mergePanels(d) {
-  if (!Array.isArray(d.panels) || d.panels.length < 2) return d;
-  const ps = d.panels, keys = [...new Set(ps.flatMap(p => Object.keys(p.models || {})))];
+  if (!Array.isArray(d.panels)) return d;
+  const ps = d.panels.filter(p => MERGED_KEYS.includes(p.key));
+  if (ps.length < 2) return d;
+  const keys = [...new Set(ps.flatMap(p => Object.keys(p.models || {})))];
   const models = {};
   for (const k of keys) {
     const parts = ps.map(p => p.models[k]).filter(Boolean);
@@ -526,7 +530,12 @@ function mergePanels(d) {
     };
   }
   const games = [...new Set(ps.flatMap(p => p.games || []))];
-  return { ...d, panels: [{ ...ps[0], label: "All games", games, passes: Math.max(...ps.map(p => p.passes || 0)), models }] };
+  const merged = { ...ps[0], key: "train_hard", label: "Train and hard games", note: "Training happens inside these games.",
+    games, levels: Object.assign({}, ...ps.map(p => p.levels || {})), passes: Math.max(...ps.map(p => p.passes || 0)), models };
+  // the merged panel takes the place of the first of the two; every other panel (held-out) stays where it was
+  const out = [];
+  d.panels.forEach(p => { if (!MERGED_KEYS.includes(p.key)) out.push(p); else if (!out.includes(merged)) out.push(merged); });
+  return { ...d, panels: out };
 }
 function render(d) {
   d = mergePanels(d);
