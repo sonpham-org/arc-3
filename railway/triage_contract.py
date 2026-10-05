@@ -41,7 +41,7 @@ def fenced_game(game):
     code = str(game).split("-", 1)[0].lower()
     extra = set(re.split(r"[,\s]+", os.environ.get("ARC3_REVIEW_FENCED", "")))
     # The deployed API uses the constant fence; local authoring adds newly registered test games.
-    folder = Path(__file__).resolve().parents[1] / "datasets" / "test-only-games"
+    folder = Path(__file__).resolve().parent.parent / "datasets" / "test-only-games"
     return code in FENCED or code in extra or (folder / code).is_dir()
 
 
