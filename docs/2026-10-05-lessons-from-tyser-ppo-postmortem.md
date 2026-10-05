@@ -40,3 +40,59 @@ Kaggriculture (silver range, still being scored). We were also in Kaggriculture.
 6. **Size the model for the training budget, not for the limit.** The question for Son's cut-down
    model is "what can we train to convergence before 2-Nov", not "what is the biggest model that fits".
 7. **Throughput last.** Faster serving only helps after points 1–6 are right.
+
+## Second reading: his "next competition" list is his ARC-3 playbook (Boss, 5-Oct)
+
+The first reading above treated the post as general advice. The Boss's correction: the closing section,
+"What I will do in the next competition", describes what Keith is doing now, in this contest. Read that
+way, it tells us what our competitor will build in the last four weeks.
+
+**Where he stands (our leaderboard poller, 5-Oct).** Team `keithtyser`, rank about 39, 32.74, 98
+submissions. That puts him in silver and close to the gold line (about 34). His climb: about 12 on 30-Sep,
+26.71 on 1-Oct (the day Franzen's notebook went public), 29.42 on 3-Oct, and 32.74 overnight 4–5-Oct. He is
+working on top of the Franzen base and still gaining, while we sit at 28.94.
+
+**His seven rules, translated to ARC-3, and what he will likely do with each:**
+
+1. *Representation and action space first.* In ARC-3, "what the network sees" is how the harness shows
+   the frame to the LLM: the grid text, images, frame-to-frame diffs, and what is flagged as changed. "What
+   it selects" is the action set: the arrows, the action keys, RESET, and clicks on exact coordinates. His
+   Kaggriculture lesson was to keep mechanical execution out of the model and to check that an abstraction
+   can express what winners actually did. Expect him to change the harness here: object-level frame
+   descriptions, click-on-object instead of raw coordinates, move-to macros run by a path rule, and
+   automatic flagging of actions that changed nothing. **This is the biggest harness lever, and we have not
+   done this audit.**
+2. *Clone winners, the actions the engine executed, and select checkpoints only by full games.* For him,
+   "winners" means winning game traces. We already hold the best version of that data: every level of the
+   public games and our copycat and recolor copies has a verified winning line, replayed to WIN through the
+   offline loader (48 solution files under datasets/copycat-games). That is perfect teacher data with only
+   executed actions. It is also exactly what rule 1 says to check an action abstraction against.
+3. *Size the model for the training budget.* He has already published both a 27B FP8 notebook and a
+   Flash Next NVFP4 + MTP notebook, so he has measured the speed and size trade-off on Kaggle. Expect him
+   to fine-tune whatever he can train to convergence by 2-Nov, not the biggest model.
+4. *No datacenter needed.* He trains at home on two RTX PRO 6000 cards. **Kaggle's ARC-3 machine is an RTX
+   PRO 6000** (Franzen's notebook metadata, `machine_shape: NvidiaRtxPro6000`). So he can rehearse the exact
+   package on the exact hardware every day. We rehearse on the DGX Sparks, which are different hardware with
+   different speed. Under rule 6, that gap is his Orbit Wars mistake: practice that does not match what is
+   scored.
+5. *Diverse opponents; keep some out of training.* The ARC-3 analog is a diverse pool of games, with some
+   held out. He has only the public games plus whatever he builds. We have a game-authoring pipeline
+   (autoresearch-arena arc3games), the authored games, copycats, recolors and test-only games. This is an
+   edge for us, if Son's training actually uses it and the held-out set stays clean.
+6. *An evaluation you trust.* That means paired seeds, a fixed panel, and the exact package near the real
+   harness. Ninety-eight submissions suggest he uses repeat submissions to measure the noise he described
+   (731–1,004 on one Pokémon file).
+7. *Throughput last.* His public notebooks were throughput work (quantisation, MTP). By his own rule, his
+   next moves are rules 1–2, not more speed.
+
+**What this changes for us:**
+- Add a harness item now: audit representation and action space against the verified winning lines.
+  For each winning line, sort the steps into mechanical steps a rule could do exactly (moving to a
+  location, clicking a known object, undoing a dead end) and real decisions. Then measure how often our
+  model wastes actions on the mechanical part in its traces. Build harness macros only where the audit
+  shows real waste, and confirm each macro can reproduce the winning lines.
+- Give Son the winning lines as clean teacher data (executed actions only), keeping test-only games out.
+- Close the rehearsal-hardware gap: final candidate packages get a run on Kaggle's own hardware (a
+  notebook save-run at competition shape) before they count, not only a Spark run.
+- Expect Keith to move into gold contention late. He is the kind of competitor who turns a post-mortem
+  into a plan.
