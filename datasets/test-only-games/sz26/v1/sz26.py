@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. sb26 is in our team's held-out set; this
-# recolor copy (sr26) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (sz26) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy sr26: public ARC-AGI-3 game sb26 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy sz26: public ARC-AGI-3 game sb26 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation sb26, MIT licence (notice follows), class renamed.
@@ -706,7 +706,7 @@ llttrdekba = 5
 
 
 class khmhhfucux(RenderableUserDisplay):
-    def __init__(self, ffragxabeh: "_Sr26Rules") -> None:
+    def __init__(self, ffragxabeh: "_Sz26Rules") -> None:
         self.ffragxabeh = ffragxabeh
 
     def render_interface(self, frame: np.ndarray) -> np.ndarray:
@@ -717,7 +717,7 @@ class khmhhfucux(RenderableUserDisplay):
         return frame
 
 
-class _Sr26Rules(ARCBaseGame):
+class _Sz26Rules(ARCBaseGame):
     def __init__(self) -> None:
         lmknwfmvh = Camera(
             background=BACKGROUND_COLOR,
@@ -1171,10 +1171,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Sr26(_Sr26Rules):
+class Sz26(_Sz26Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'sr26'
+        self._game_id = 'sz26'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

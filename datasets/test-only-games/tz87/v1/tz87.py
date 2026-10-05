@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. tr87 is in our team's held-out set; this
-# recolor copy (tq87) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (tz87) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy tq87: public ARC-AGI-3 game tr87 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy tz87: public ARC-AGI-3 game tr87 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation tr87, MIT licence (notice follows), class renamed.
@@ -894,7 +894,7 @@ rhoqllymmn = [5, 8, 14, 15, 6, 9, 12, 0]
 
 
 class cjcjtddeyl(RenderableUserDisplay):
-    def __init__(self, aqrjzwnzcx: "_Tq87Rules") -> None:
+    def __init__(self, aqrjzwnzcx: "_Tz87Rules") -> None:
         self.aqrjzwnzcx = aqrjzwnzcx
 
     def render_interface(self, gyrdjxybtcm: np.ndarray) -> np.ndarray:
@@ -906,7 +906,7 @@ class cjcjtddeyl(RenderableUserDisplay):
         return gyrdjxybtcm
 
 
-class _Tq87Rules(ARCBaseGame):
+class _Tz87Rules(ARCBaseGame):
     def __init__(self) -> None:
         cvgwmhmdmtp = Camera(
             background=BACKGROUND_COLOR,
@@ -1146,10 +1146,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Tq87(_Tq87Rules):
+class Tz87(_Tz87Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'tq87'
+        self._game_id = 'tz87'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

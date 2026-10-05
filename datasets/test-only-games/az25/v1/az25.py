@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. ar25 is in our team's held-out set; this
-# recolor copy (aq25) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (az25) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy aq25: public ARC-AGI-3 game ar25 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy az25: public ARC-AGI-3 game ar25 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation ar25, MIT licence (notice follows), class renamed.
@@ -1098,7 +1098,7 @@ zdyigzwohq = htgujuotrd
 
 
 class toseucmfue(RenderableUserDisplay):
-    def __init__(self, jbadghdnct: "_Aq25Rules", ilqnjlrnkk: int, flxrxkvmhd: int = 1):
+    def __init__(self, jbadghdnct: "_Az25Rules", ilqnjlrnkk: int, flxrxkvmhd: int = 1):
         self.ilqnjlrnkk: int = ilqnjlrnkk
         self.current_steps: int = ilqnjlrnkk
         self.flxrxkvmhd: int = max(1, flxrxkvmhd)
@@ -1158,7 +1158,7 @@ class toseucmfue(RenderableUserDisplay):
 class iywvsmblpj(RenderableUserDisplay):
     """."""
 
-    def __init__(self, jbadghdnct: "_Aq25Rules"):
+    def __init__(self, jbadghdnct: "_Az25Rules"):
         self.jbadghdnct = jbadghdnct
 
     def chfxwryseh(self, llvzyxwevj: int) -> int:
@@ -1267,7 +1267,7 @@ class vqybldiuhij(TypedDict):
     ouurgkpbbjj: list[tuple[int, int]]
 
 
-class _Aq25Rules(ARCBaseGame):
+class _Az25Rules(ARCBaseGame):
     def __init__(self) -> None:
         self.yjuszzjksae = iywvsmblpj(self)
         ilqnjlrnkk = 0
@@ -1872,10 +1872,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Aq25(_Aq25Rules):
+class Az25(_Az25Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'aq25'
+        self._game_id = 'az25'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

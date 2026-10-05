@@ -24,8 +24,9 @@ the harder step (new maps).
 Every entry in `manifest.json` has `reviewed: false`. A copy is **not** a yardstick -- do not
 report scores on it as evidence of anything -- until a human (the Boss or Son) has played it and
 set `reviewed` to `true`. Previews (original left, copy right, every level start) are in
-`previews/` to make that review quick. Entries with a non-empty `reviewer_hint` had touching
-colours lose some contrast; look at those closely.
+`previews/` to make that review quick. Entries with a non-empty `reviewer_hint` (Compass Dye and
+Reaching Lurch's copies, cr82 and rr1l) kept the least of their original contrast between
+touching colours; look at those closely.
 
 ## What is here
 
@@ -41,9 +42,9 @@ manifest.json                                      # per copy: palette, checks, 
 Same formats as the full copycats (see `../README.md`). `metadata.json` carries `tier: recolor`
 and the tags `copycat`, `recolor`.
 
-**Ids.** The original id with its second letter changed to `r`: ls20 -> lr20, ft09 -> fr09. Where
-the second letter already is `r` (ar25, tr87, both held out) it becomes `q`. Every id was checked
-against all existing game and copycat ids.
+**Ids.** The original id with its second letter changed to `r`: ls20 -> lr20, ft09 -> fr09. The
+held-out seven's copies use `z` instead (vc33 -> vz33), so a test-only id is never one letter away
+from a trainable one. Every id was checked against all existing game and copycat ids.
 
 ## How each copy is proven (`verified: true` needs all three)
 

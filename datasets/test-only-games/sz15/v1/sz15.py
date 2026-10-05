@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. su15 is in our team's held-out set; this
-# recolor copy (sr15) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (sz15) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy sr15: public ARC-AGI-3 game su15 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy sz15: public ARC-AGI-3 game su15 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation su15, MIT licence (notice follows), class renamed.
@@ -832,7 +832,7 @@ levels = [
 
 
 class cqrtilsbtt(RenderableUserDisplay):
-    def __init__(self, qhtizyoapk: "_Sr15Rules", ccgddjelir: int):
+    def __init__(self, qhtizyoapk: "_Sz15Rules", ccgddjelir: int):
         self.ccgddjelir = ccgddjelir
         self.current_steps = ccgddjelir
         self.qhtizyoapk = qhtizyoapk
@@ -912,7 +912,7 @@ gvvyzrusqq: int = 10
 qsqeqpepjy: int = 63
 
 
-class _Sr15Rules(ARCBaseGame):
+class _Sz15Rules(ARCBaseGame):
     def __init__(self) -> None:
         self.step_counter_ui = cqrtilsbtt(self, 128)
         camera = Camera(
@@ -2197,10 +2197,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Sr15(_Sr15Rules):
+class Sz15(_Sz15Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'sr15'
+        self._game_id = 'sz15'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

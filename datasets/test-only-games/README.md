@@ -137,13 +137,13 @@ survives a colour change and nothing else. Method and proofs: `../copycat-games/
 
 | copy id | copy of | levels |
 |---|---|---|
-| `aq25-v1` | ar25 | 8 |
-| `rr86-v1` | re86 | 8 |
-| `sr26-v1` | sb26 | 8 |
-| `sr15-v1` | su15 | 9 |
-| `tq87-v1` | tr87 | 6 |
-| `tr93-v1` | tu93 | 9 |
-| `vr33-v1` | vc33 | 7 |
+| `az25-v1` | ar25 | 8 |
+| `rz86-v1` | re86 | 8 |
+| `sz26-v1` | sb26 | 8 |
+| `sz15-v1` | su15 | 9 |
+| `tz87-v1` | tr87 | 6 |
+| `tz93-v1` | tu93 | 9 |
+| `vz33-v1` | vc33 | 7 |
 
 Game folders sit in this folder like the others; manifest, previews and the fence note are in
 `recolor-heldout/`. **No solution files**: a recolor copy's winning line is the held-out
@@ -152,8 +152,8 @@ original, and this folder's offline arcade, all passed for all seven). as66 has 
 copy: it is not one of the 25 public games and has no recorded line.
 
 **Extend the extractor fence again** -- the full list is now
-`--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66,vh33,ah25,sh26,rh86,sh15,th87,th93,ah66,aq25,rr86,sr26,sr15,tq87,tr93,vr33`.
-Recolor ids use second letter `r` (`q` where the original already has `r`); the trainable recolor
-copies of the other 18 games use the same rule, and none of their ids is in this list.
+`--exclude-games vc33,ar25,sb26,re86,su15,tr87,tu93,as66,vh33,ah25,sh26,rh86,sh15,th87,th93,ah66,az25,rz86,sz26,sz15,tz87,tz93,vz33`.
+Held-out recolor ids use second letter `z`; the trainable recolor copies of the other 18 games use
+`r`, so the two sets are never one letter apart and none of the trainable ids is in this list.
 
 Every copy is `reviewed: false` until the Boss or Son has played it -- not a yardstick before that.

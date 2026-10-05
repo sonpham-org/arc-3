@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. vc33 is in our team's held-out set; this
-# recolor copy (vr33) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (vz33) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy vr33: public ARC-AGI-3 game vc33 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy vz33: public ARC-AGI-3 game vc33 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation vc33, MIT licence (notice follows), class renamed.
@@ -1834,7 +1834,7 @@ class xclqwacrmx(RenderableUserDisplay):
         return frame
 
 
-class _Vr33Rules(ARCBaseGame):
+class _Vz33Rules(ARCBaseGame):
     heczcoeosi: xclqwacrmx
     dwwmpxqsza: tuple[int, int]
     wrcxjliglr: dict[Sprite, tuple[Sprite, Sprite]]
@@ -2149,10 +2149,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Vr33(_Vr33Rules):
+class Vz33(_Vz33Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'vr33'
+        self._game_id = 'vz33'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

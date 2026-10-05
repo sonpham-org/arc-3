@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. re86 is in our team's held-out set; this
-# recolor copy (rr86) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (rz86) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy rr86: public ARC-AGI-3 game re86 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy rz86: public ARC-AGI-3 game re86 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation re86, MIT licence (notice follows), class renamed.
@@ -1869,7 +1869,7 @@ class khxzqomkkk(RenderableUserDisplay):
         return frame
 
 
-class _Rr86Rules(ARCBaseGame):
+class _Rz86Rules(ARCBaseGame):
     xikvflgqgp: khxzqomkkk
     ylzrmgmdyh: Sprite | None
     cptlsijjli: Sprite | None
@@ -2183,10 +2183,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Rr86(_Rr86Rules):
+class Rz86(_Rz86Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'rr86'
+        self._game_id = 'rz86'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)

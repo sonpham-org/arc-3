@@ -16,20 +16,21 @@ copycat-games package (`datasets/copycat-games/recolor/README.md` on arc-3).
 
 | original | copy |
 |---|---|
-| ar25 | aq25 |
-| re86 | rr86 |
-| sb26 | sr26 |
-| su15 | sr15 |
-| tr87 | tq87 |
-| tu93 | tr93 |
-| vc33 | vr33 |
+| ar25 | az25 |
+| re86 | rz86 |
+| sb26 | sz26 |
+| su15 | sz15 |
+| tr87 | tz87 |
+| tu93 | tz93 |
+| vc33 | vz33 |
 
 ## The fence
 
 - **Never train on these** -- not the game files, their frames, any replay of them, or the
   previews. They exist only to measure a model on an unseen colouring of the held-out games.
 - Training-data extractors must also exclude these ids:
-  `aq25,rr86,sr26,sr15,tq87,tr93,vr33`.
+  `az25,rz86,sz26,sz15,tz87,tz93,vz33`.
+  Second letter `z` marks a held-out recolor copy; the trainable recolor copies use `r`.
 - Every manifest entry says `held_out: true` and `usage: TEST ONLY -- NEVER TRAIN`, every game
   file starts with the same warning, and every `metadata.json` is tagged `test-only-never-train`.
 - **No solution files**, on purpose: a recolor copy's winning line is the held-out original's own

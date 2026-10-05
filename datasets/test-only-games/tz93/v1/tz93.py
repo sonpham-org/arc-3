@@ -1,7 +1,7 @@
 # HELD-OUT TEST COPY -- TEST ONLY, NEVER TRAIN. tu93 is in our team's held-out set; this
-# recolor copy (tr93) exists only to measure play on an unseen colouring of it. Do not feed it,
+# recolor copy (tz93) exists only to measure play on an unseen colouring of it. Do not feed it,
 # its frames or any replay of it into any training, fine-tuning, RL or prompt-example pipeline.
-# Recolor copy tr93: public ARC-AGI-3 game tu93 with its rules, maps, sprites and HUD unchanged;
+# Recolor copy tz93: public ARC-AGI-3 game tu93 with its rules, maps, sprites and HUD unchanged;
 # only the displayed colours are permuted. Built and verified by autoresearch-arena
 # arc3games/copycats/recolor/build_recolor.py (04-October-2026, Claude Opus 5.5).
 # Rule code below: ARC Prize Foundation tu93, MIT licence (notice follows), class renamed.
@@ -993,7 +993,7 @@ class eytqjghipl(RenderableUserDisplay):
         return frame
 
 
-class _Tr93Rules(ARCBaseGame):
+class _Tz93Rules(ARCBaseGame):
     ksulgrfyqx: eytqjghipl
     kdkehgjrzq: int
     ylmdnwbdyy: dict[Sprite, list[int]]
@@ -1297,10 +1297,10 @@ def _cc_recolor(frame):
     return out.astype(a.dtype) if isinstance(frame, _cc_np.ndarray) else out.tolist()
 
 
-class Tr93(_Tr93Rules):
+class Tz93(_Tz93Rules):
     def __init__(self) -> None:
         super().__init__()
-        self._game_id = 'tr93'
+        self._game_id = 'tz93'
 
     def perform_action(self, action_input, raw=False):
         fd = super().perform_action(action_input, raw)
