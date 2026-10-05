@@ -1,5 +1,29 @@
 # GPT-6 Astra on ARC-AGI-3 — harness failure modes
 
+**Read on the website:** [Learning guide](https://arc3.sonpham.net/learn.html#bp35)
+has short practice steps, pictures, and helper questions for all 25 games, with a
+BP35 before-and-after lesson. [Published-note review](https://arc3.sonpham.net/astra-notes.html)
+includes the 183-level max review and the low/none follow-up: low has 256 written
+summaries, while none has no written summaries across its 25 public runs. Missing
+solutions remain marked; teaching exercises are distinguished from recorded play.
+
+## Finding the lessons and evidence
+
+For another assistant or program, start with
+[`astra-learning-guide.json`](../static/research/astra-learning-guide.json): all 25 games,
+183 level tips, explicit gaps, and references to the replay, level, and move supporting
+each lesson. The lessons are teaching exercises drawn from the published evidence,
+not a transcript of private thoughts or a guaranteed solution.
+
+| Read or use | File |
+|---|---|
+| Learner page | [learn.html](../learn.html) |
+| Review of what the published notes explain and leave missing | [astra-notes.html](../astra-notes.html) |
+| Max-effort replay sources | [astra-max-sources.json](../static/research/astra-max-sources.json) |
+| Low/no-effort replay sources and summary counts | [astra-low-none-sources.json](../static/research/astra-low-none-sources.json) |
+
+## Earlier review
+
 **5 October follow-up:** [Astra's player guide, level by level](astra-player-guide.md)
 covers all 183 levels in the 25 winning max-effort provider-adapter runs. It reconstructs
 what the 759 published summaries teach, highlights missing solutions and unresolved

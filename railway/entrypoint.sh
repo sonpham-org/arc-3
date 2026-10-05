@@ -100,6 +100,8 @@ exec oauth2-proxy \
   --skip-auth-route="^/api/v1/games/training-set$" \
   --skip-auth-route="^/api/v1/traces/feedback-export$" \
   --skip-auth-route="^/review\.html$" \
+  --skip-auth-route="^/learn\.html$" \
+  --skip-auth-route="^/astra-notes\.html$" \
   --skip-auth-route="^/api/v1/review/publication$" \
   --skip-auth-route="^/api/v1/review/export$" \
   --skip-auth-route="^/api/v1/review/triage/publication$" \
