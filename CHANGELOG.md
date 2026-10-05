@@ -23,6 +23,18 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 - Added authenticated publication, ranked duplicate groups, reviewer decisions, assistant handoffs and paginated export. Neither model flags nor human decisions create automatic rewards or training approvals.
 - Fixed legacy review mark edits resurrecting deleted annotations and invite links disappearing after creation.
 
+## [2026.10.05-sprints-tab] — main
+*Author: Claude Opus 5.5 (Bubba sub-agent) | 2026-10-05*
+
+### Added
+- **Sprints tab** (Boss, 5-Oct-2026): `docs/sprints.html`, a weekly plan to the Kaggle close
+  (2-Nov-2026 23:59 UTC) in four one-week sprints, two tracks: Son's model track and the Boss +
+  Bubba harness track. Each item has a status and a "done means" line; sprints two to four are
+  marked draft. The plan lives in `docs/static/data/sprints.json` so it can be edited without
+  touching HTML; `docs/static/js/sprints.js` draws it with a countdown, a current-week highlight
+  and our standing from the leaderboard snapshot. A Sprints link was added to the site tabs on
+  every page that has them.
+
 ## [2026.10.04-copycats-on-games-page] — main
 *Author: Claude Opus 5.5 (Bubba sub-agent) | 2026-10-04*
 

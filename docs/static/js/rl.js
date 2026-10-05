@@ -49,7 +49,7 @@ const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : NaN;
 function states(d) {
   const t = d.train, map = s => s === "running" ? "active" : s;
   const runsOf = keys => d.panels.flatMap(p => keys.flatMap(k => (p.models[k] || { runs: [] }).runs));
-  const tested = runsOf(d.models.slice(1).map(m => m.key)), base = runsOf(["base"]);
+  const tested = runsOf(d.models.slice(1).map(m => m.key)), base = runsOf([d.models[0].key]);
   const testedDone = tested.length > 0 && tested.every(r => r.state === "done");
   const st = {
     play: "done", pick: "done", train: map(t.job_state), merge: map(t.merge.state),
@@ -345,7 +345,7 @@ function trendChart(d, p, box) {
 }
 function renderTrends(d) {
   document.getElementById("betterTrends").replaceChildren(...d.panels.map(p => {
-    const base = panelScore(p.models.base);
+    const base = panelScore(p.models[d.models[0].key]);
     const later = d.models.slice(1).map(m => ({ m, s: panelScore(p.models[m.key]) })).filter(x => x.s);
     const fin = later.filter(x => !x.s.playing), last = fin[fin.length - 1], running = later.find(x => x.s.playing);
     let chip = el("span", { class: running ? "chip active" : "chip" }, running ? `${running.m.short} playing` : "before only, so far");
@@ -426,7 +426,7 @@ function renderBetter(d) {
   document.getElementById("betterLegend").replaceChildren(el("div", { class: "mlegend" },
     ...d.models.map((m, i) => el("span", {}, el("i", { style: `background:${modelColor(i)}` }), el("b", {}, m.short), " ", m.note))));
   document.getElementById("betterRows").replaceChildren(...d.panels.map(p => {
-    const base = p.models.base, trained = d.models.slice(1).map(m => p.models[m.key]).filter(x => x && x.plays.length);
+    const base = p.models[d.models[0].key], trained = d.models.slice(1).map(m => p.models[m.key]).filter(x => x && x.plays.length);
     const last = trained.length ? trained[trained.length - 1] : null;
     const scores = d.models.map((m, i) => ({ m, i, s: (p.models[m.key] || {}).score })).filter(x => x.s !== null && x.s !== undefined);
     return el("div", { class: "card brow" },
@@ -438,7 +438,7 @@ function renderBetter(d) {
         ...scores.map((x, k) => el("span", { class: "num", style: `color:${modelColor(x.i)}` }, (k ? "  →  " : "") + `${x.m.short} ${x.s.toFixed(1)}`))));
   }));
   const byg = {};
-  d.panels.forEach(p => p.models.base.plays.filter(q => !q.playing).forEach(q => (byg[q.game] = byg[q.game] || []).push(q.levels)));
+  d.panels.forEach(p => ((p.models[d.models[0].key] || { plays: [] }).plays).filter(q => !q.playing).forEach(q => (byg[q.game] = byg[q.game] || []).push(q.levels)));
   let w = null;
   Object.entries(byg).forEach(([g, lv]) => {
     if (lv.length < 3) return;
@@ -504,6 +504,37 @@ function renderPanels(d) {
     })))));
 }
 
+/* ------------------------------------------------------------------ in-play test (plan C, 5-Oct) */
+function pctOf(x) { return x === null || x === undefined ? "–" : Math.round(100 * x) + "%"; }
+function renderInplay(d) {
+  const box = document.getElementById("inplayRows");
+  if (!box) return;
+  const rows = d.inplay || [];
+  if (!rows.length) { box.replaceChildren(el("div", { class: "note" }, "No model has played its test slice yet.")); return; }
+  const idx = Object.fromEntries(d.models.map((m, i) => [m.key, i]));
+  const label = k => (d.models.find(m => m.key === k) || { label: k }).label;
+  const cell = g => g && g.tries ? el("td", { class: "num" }, `${g.cleared}/${g.tries} = ${pctOf(g.rate)}`,
+    el("span", { class: "muted" }, `  base ${pctOf(g.base_rate)}`)) : el("td", { class: "muted" }, "–");
+  const th = t => el("th", { style: "text-align:left;padding:6px 10px;font-weight:500" }, t);
+  const table = el("table", { style: "width:100%;border-collapse:collapse" },
+    el("thead", {}, el("tr", {}, th("Model"), th("Test tries finished"), th("Trained games, cleared at the hard level"),
+      th("Never-trained games"))),
+    el("tbody", {}, ...rows.map(r => {
+      const i = idx[r.model] === undefined ? 0 : idx[r.model];
+      const td = x => { x.style.padding = "6px 10px"; x.style.borderTop = "1px solid var(--line, rgba(0,0,0,.08))"; return x; };
+      return el("tr", {},
+        td(el("td", {}, el("b", { style: `color:${modelColor(i)}` }, label(r.model)))),
+        td(el("td", { class: "num" }, String(r.tries))),
+        td(cell((r.groups || {}).trained)), td(cell((r.groups || {}).never)));
+    })));
+  const per = rows.map(r => el("details", { style: "margin-top:6px" },
+    el("summary", {}, `${label(r.model)}: per game`),
+    el("div", { class: "pn" }, Object.entries(r.per_game || {}).sort().map(([g, x]) =>
+      `${g} L${x.level} ${x.cleared}/${x.tries}` + (x.base && x.base[1] ? ` (base ${Math.round(100 * x.base[0] / x.base[1])}%)` : "") +
+      (x.trained ? "" : " · never trained")).join("   ·   "))));
+  box.replaceChildren(el("div", { class: "card" }, table), ...per);
+}
+
 /* ------------------------------------------------------------------ main */
 // Son, 4-Oct-2026: training happens inside the hard games, so the hard panel and the train panel are one set; show
 // them as a single panel and keep the held-out panel apart, as before. Games are joined, each model's runs and plays
@@ -559,7 +590,7 @@ function render(d) {
   DATA = d;
   document.getElementById("updated").textContent = "updated " + ago(d.updated);
   document.getElementById("footR").textContent = `Data ${new Date(d.updated).toLocaleString()} · refreshes every 5 min`;
-  for (const [name, fn] of [["hero", renderHero], ["trends", renderTrends], ["better", renderBetter], ["loop", renderLoop], ["training", renderTraining], ["games", renderGames], ["panels", renderPanels]]) {
+  for (const [name, fn] of [["hero", renderHero], ["trends", renderTrends], ["better", renderBetter], ["inplay", renderInplay], ["loop", renderLoop], ["training", renderTraining], ["games", renderGames], ["panels", renderPanels]]) {
     try { fn(d); } catch (e) { console.error(name, e); }
   }
 }
