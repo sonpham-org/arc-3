@@ -1,5 +1,12 @@
 # GPT-6 Astra on ARC-AGI-3 — harness failure modes
 
+**5 October follow-up:** [Astra's player guide, level by level](astra-player-guide.md)
+covers all 183 levels in the 25 winning max-effort provider-adapter runs. It reconstructs
+what the 759 published summaries teach, highlights missing solutions and unresolved
+explanations, and links each entry to its evidence. The
+[source index](astra-player-guide-sources.json) pins the game builds, replay sessions,
+summary hashes, and level boundaries. Comparison with Boss's human guide is still pending.
+
 Source: <https://arcprize.org/results/openai-gpt-6-astra>. The page is JS-only; the
 numbers below were pulled from the JSON API behind it, not scraped from the HTML.
 Raw extract: `astra_v3_gaps.json` (25 games x 12 configurations).
