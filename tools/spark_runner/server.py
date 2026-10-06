@@ -122,7 +122,7 @@ class PlayRequest(BaseModel):
     samples: int = Field(default=10, ge=1, le=20)
     max_actions: int = Field(default=250, ge=10, le=1000)
     max_turns: int = Field(default=20, ge=1, le=60)
-    max_minutes: int = Field(default=75, ge=5, le=180)
+    max_minutes: int = Field(default=120, ge=5, le=180)
     levels_to_play: int = Field(default=1, ge=1, le=9)
     label: str | None = Field(default=None, max_length=120)
     by: str | None = Field(default=None, max_length=120)

@@ -29,7 +29,7 @@ N samples (default 10) of that game from its stuck level:
    of the same turn keeps its slot.
 3. **Stock after the scheme.** When the scheme runs out, Stock plays every later turn until the stuck level is
    cleared, the game ends, or the sample's cap is hit: 20 model turns by default (the main limit, so a sample gets the same
-   number of turns however busy the cluster is), 250 actions, or 75 minutes as a safety net.
+   number of turns however busy the cluster is), 250 actions, or 120 minutes as a safety net.
 4. **Results.** Per sample: cleared or not, levels gained, actions used, turns, which modes ran, time. The page
    shows them under the game next to the stock tally for that level, for everyone signed in to the site.
 

@@ -26,7 +26,7 @@ let health = null;
 let pollTimer = null;
 const jobsByGame = new Map();
 // Play options survive the page's frequent redraws (every scheme edit redraws the builder).
-const opts = { variant: null, samples: 10, max_turns: 20, max_actions: 250, max_minutes: 75, label: '' };
+const opts = { variant: null, samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120, label: '' };
 
 function runnerKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
 function setRunnerKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* private mode */ } }

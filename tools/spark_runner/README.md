@@ -56,7 +56,7 @@ Speed and limits (set 6-Oct after Son said about 40 tokens/s is good enough): me
 one stream gets about 33 tokens/s, three get about 25 each (75 total), six get about 18 each (104 total). Four at
 once is the compromise: each sample still gets about 22 tokens/s, so a turn takes about three minutes. Per-sample
 caps default to 20 model turns (the main limit, so results do not depend on how busy the cluster is), 250 actions,
-and 75 minutes as a safety net. A Play request may override max_turns (1-60), max_actions, max_minutes (5-180).
+and 120 minutes as a safety net (well clear of twenty turns at about three minutes each). A Play request may override max_turns (1-60), max_actions, max_minutes (5-180).
 A default 10-sample job takes roughly one to three hours. Outcome "turn_cap" means the sample used its turns.
 
 ## Public link (Funnel)
