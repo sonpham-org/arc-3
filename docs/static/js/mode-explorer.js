@@ -20,15 +20,24 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   new version, and Play sends each slot's version so the job keeps the exact wording. If the database cannot be
   reached the page falls back to modes.json plus this browser's own custom modes, as before. Queues stay in
   localStorage; custom modes from the old browser store are offered for upload once. Queues and modes can be
-  exported and imported as JSON. View state lives in the URL (?view=&mode=&v=&cmp=&game=). The diff is a plain
+  exported and imported as JSON. View state lives in the URL (?view=&mode=&v=&cmp=&game=&level=). The diff is a plain
   longest-common-subsequence over lines.
+  Game sidebar and level buttons (Son's ask, #arc-3 6-Oct 10:47 ET: "show games on the left side with Thumbnails so
+  that it is easy to switch games and levels ... show all the levels as 1, 2, 3, 4, 5, 6 buttons, with how much fill
+  depending on how often this level has been conquered"): every public game the runner plays (the eight held-out
+  games stay out, as on the runner) with its first-frame picture from static/img/games, nickname and stuck level,
+  hardest first; on a phone the list becomes a strip that scrolls sideways. Above the queue, one button per level:
+  the fill is the share of stock runs in the tally that cleared it, the thin bar under it the share of Spark samples
+  that played it and cleared it (spark-runner.js sparkTally), a dot marks an exact saved start and a ring a fresh or
+  rebuilt start; levels Play cannot start from are greyed with the reason. The chosen level is the queue's starting
+  level (kept per game with the queue) and the results follow it.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults } from './spark-runner.js?v=20261006-m1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-lv1';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +54,12 @@ const FIELDS = [
   { k: 'actions', label: 'Action budget', type: 'number', min: 0, step: 1, empty: 'no limit' },
 ];
 const FALLBACK_SETTINGS = { temperature: 0.6, thinking: true, effort: 'default', thinking_budget: null, tool_calls: null, actions: null };
+// Kept out of prompt tuning; the runner refuses them (tools/spark_runner/server.py HELD_OUT), so the sidebar leaves them out.
+const HELD_OUT = new Set(['vc33', 'ar25', 'sb26', 're86', 'su15', 'tr87', 'tu93', 'as66']);
+// First-frame picture per game, the version the runner plays (its environment_files), as on the Games page.
+const THUMBS = { bp35: '0a0ad940', cd82: 'fb555c5d', cn04: '2fe56bfb', dc22: 'fdcac232', ft09: '0d8bbf25', g50t: '5849a774',
+  ka59: '38d34dbb', lf52: '271a04aa', lp85: '305b61c3', ls20: '9607627b', m0r0: '492f87ba', r11l: '495a7899', s5i5: '18d95033',
+  sc25: '635fd71a', sk48: 'd8078629', sp80: '589a99af', tn36: 'ef4dde99', wa30: 'ee6fef47' };
 
 const params = new URLSearchParams(location.search);
 const state = {
@@ -53,8 +68,10 @@ const state = {
   v: params.get('v') === 'daniel' ? 'daniel' : 'son',
   cmp: params.get('cmp') === 'other' ? 'other' : 'stock',
   game: params.get('game') || null,
+  level: Number(params.get('level')) || null,   // from the link only; applied to that game's queue once loaded
   open: -1,         // queue item whose settings are showing
 };
+const SPARK = {};   // game -> { tally: {level: {played, cleared}}, harvest }, from the jobs the results list loads
 let DATA = null;    // modes.json
 let STUCK = null;   // stuck-levels.json (null until loaded; false if it failed)
 let store = loadStore();
@@ -112,7 +129,11 @@ function settingsSummary(s) {
 function syncUrl() {
   const q = new URLSearchParams();
   if (state.view === 'prompts') { q.set('view', 'prompts'); q.set('mode', state.mode); if (state.cmp !== 'stock') q.set('cmp', state.cmp); }
-  else if (state.game) q.set('game', state.game);
+  else if (state.game) {
+    q.set('game', state.game);
+    const g = currentGame();
+    if (g) q.set('level', String(levelOf(g)));
+  }
   if (state.v !== 'son') q.set('v', state.v);
   history.replaceState(null, '', '?' + q.toString());
 }
@@ -278,42 +299,115 @@ function renderDiff(m) {
   $('fullh').textContent = `Full prompt · ${rightLabel}`;
 }
 
-// ---------------------------------------------------------------- Queue view: game picker
+// ---------------------------------------------------------------- Queue view: game sidebar and level buttons
 
-// Games with a stuck level, hardest first (lowest share of levels safely cleared, then lowest median).
-function stuckGames() {
+// The public games the runner plays, hardest first (lowest share of levels safely cleared, then lowest median);
+// games with no stuck level (stock clears every level) go last.
+function sidebarGames() {
   if (!STUCK) return [];
-  return STUCK.games.filter(g => g.stuck_level)
-    .sort((a, b) => (a.safe_through / a.levels - b.safe_through / b.levels) || (a.median_levels / a.levels - b.median_levels / b.levels) || a.game.localeCompare(b.game));
+  const hard = (g) => g.stuck_level ? g.safe_through / g.levels : 2;
+  return STUCK.games.filter(g => !HELD_OUT.has(g.game))
+    .sort((a, b) => (hard(a) - hard(b)) || (a.median_levels / a.levels - b.median_levels / b.levels) || a.game.localeCompare(b.game));
 }
-function currentGame() { return STUCK && state.game ? stuckGames().find(g => g.game === state.game) || null : null; }
+function currentGame() { return STUCK && state.game ? sidebarGames().find(g => g.game === state.game) || null : null; }
+function levelOf(g) { return queueOf(g).start_level; }
+function thumb(g) { return THUMBS[g.game] ? `./static/img/games/${g.game}-${THUMBS[g.game]}.png` : null; }
 
-function renderPicker() {
-  const sel = $('gamepick'); sel.textContent = '';
-  if (STUCK === null) { sel.append(h('option', null, 'loading…')); sel.disabled = true; return; }
-  if (STUCK === false) { sel.append(h('option', null, 'could not load the stuck levels')); sel.disabled = true; return; }
-  sel.disabled = false;
-  for (const g of stuckGames()) {
+function pickGame(code) {
+  if (code === state.game) return;
+  state.game = code; state.open = -1; store.game = code; saveStore(); render();
+}
+function pickLevel(g, lv) {
+  const q = queueOf(g);
+  if (q.start_level === lv) return;
+  q.start_level = lv; state.open = -1; touch(q); render();
+}
+
+function renderGamebar() {
+  const bar = $('gamebar');
+  bar.textContent = '';
+  if (STUCK === null) { bar.append(h('p', 'mx-sum', 'loading…')); return; }
+  if (STUCK === false) { bar.append(h('p', 'mx-sum', 'Could not load the stuck levels.')); return; }
+  bar.append(h('div', 'mx-gbhead', 'Games · hardest first'));
+  const list = h('div', 'mx-gblist');
+  for (const g of sidebarGames()) {
+    const on = g.game === state.game;
+    const b = h('button', 'mx-gbgame' + (on ? ' on' : ''));
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
     const n = (store.schemes[g.game]?.slots || []).length;
-    const o = h('option', null, `${g.nickname} · stuck at level ${g.stuck_level} of ${g.levels}${n ? ` · ${n} in queue` : ''}`);
-    o.value = g.game;
-    sel.append(o);
+    b.title = `${g.nickname}: ${g.levels} levels, ` + (g.stuck_level ? `stuck at level ${g.stuck_level} (stock clears every level before it in at least 90% of runs)` : 'stock clears every level in at least 90% of runs') +
+      (n ? `. ${n} mode${n === 1 ? '' : 's'} in your queue.` : '.');
+    const src = thumb(g);
+    if (src) { const img = h('img', 'mx-gbthumb'); img.src = src; img.alt = ''; img.loading = 'lazy'; img.width = 40; img.height = 40; b.append(img); }
+    else b.append(h('span', 'mx-gbthumb mx-gbnothumb'));
+    const txt = h('span', 'mx-gbtext');
+    txt.append(h('span', 'mx-gbname', g.nickname));
+    txt.append(h('span', 'mx-gbsub', `${g.levels} levels${n ? ` · ${n} queued` : ''}`));
+    b.append(txt);
+    b.append(h('span', 'mx-gbstuck' + (g.stuck_level ? '' : ' none'), g.stuck_level ? `L${g.stuck_level}` : 'all'));
+    b.onclick = () => pickGame(g.game);
+    list.append(b);
   }
-  sel.value = state.game || '';
-  sel.onchange = () => { state.game = sel.value; state.open = -1; store.game = sel.value; saveStore(); render(); };
+  bar.append(list);
+  // bring the open game into view inside the list (the sidebar on a desktop, the strip on a phone), never the page
+  const sel = list.querySelector('.mx-gbgame.on');
+  if (sel && !renderGamebar.scrolled) {
+    renderGamebar.scrolled = true;
+    const sideways = list.scrollWidth > list.clientWidth;
+    const box = sideways ? list : bar;
+    if (sideways) box.scrollLeft = sel.offsetLeft - list.offsetLeft - 8;
+    else if (sel.offsetTop + sel.offsetHeight > box.clientHeight) box.scrollTop = sel.offsetTop - bar.offsetTop - 40;
+  }
+}
+
+function rate(a, b) { return b ? Math.round((100 * a) / b) : 0; }
+
+function renderLevels() {
   const g = currentGame();
-  const p = g && g.per_level[g.stuck_level - 1];
-  $('gamefact').textContent = g ? `Every run starts from a recorded stock run's position at the start of level ${g.stuck_level}. ` +
-    (p ? `Stock alone clears that level in ${p.cleared} of ${p.n} full runs.` : '') : '';
+  const box = $('levels'); box.textContent = '';
+  $('gametitle').textContent = g ? g.nickname : '';
+  $('levellegend').textContent = g ? 'Fill: stock runs that cleared the level · bar under it: Spark runs · ● exact saved start · ○ fresh or rebuilt start' : '';
+  if (!g) { $('gamefact').textContent = ''; return; }
+  const sel = levelOf(g);
+  const spark = SPARK[g.game] && SPARK[g.game].tally || {};
+  for (let lv = 1; lv <= g.levels; lv++) {
+    const p = g.per_level[lv - 1];
+    const sp = spark[lv];
+    const ls = levelStart(g, lv, state.v);
+    const off = !ls.ok && !ls.unknown;
+    const b = h('button', 'mx-lv' + (lv === sel ? ' on' : '') + (lv === g.stuck_level ? ' stuck' : '') + (off ? ' off' : ''));
+    b.setAttribute('aria-pressed', lv === sel ? 'true' : 'false');
+    const fill = h('span', 'mx-lvfill'); fill.style.height = `${p ? rate(p.cleared, p.n) : 0}%`;
+    b.append(fill, h('span', 'mx-lvnum', String(lv)));
+    if (sp && sp.played) { const bar = h('span', 'mx-lvspark'); bar.style.setProperty('--w', `${rate(sp.cleared, sp.played)}%`); b.append(bar); }
+    if (ls.ok) b.append(h('span', 'mx-lvmark' + (ls.kind === 'exact' ? ' exact' : ''), ls.kind === 'exact' ? '●' : '○'));
+    const lines = [`Level ${lv} of ${g.levels}${lv === g.stuck_level ? ' · the stuck level' : ''}`,
+      p ? `${p.cleared} of ${p.n} stock runs cleared it (full runs from the start of the game).` : 'No stock tally for this level.',
+      sp && sp.played ? `On the Sparks: ${sp.cleared} of ${sp.played} run${sp.played === 1 ? '' : 's'} that played it cleared it.` : 'No Spark run has played it yet.',
+      ls.ok ? (ls.kind === 'exact' ? `Play starts from an exact saved start (reached in ${ls.chosen.actions_to_reach} actions${ls.count > 1 ? `, best of ${ls.count}` : ''}).`
+        : ls.kind === 'reset' ? 'Play starts a fresh game from its first frame.' : 'Play starts from the snapshot, with the conversation rebuilt from stored transcripts.')
+        : ls.why];
+    b.title = lines.join('\n');
+    b.setAttribute('aria-label', `Level ${lv}${off ? ', no start available' : ''}`);
+    // no start: shown greyed with the reason in its tooltip, and not selectable (aria-disabled keeps the tooltip on hover)
+    if (off) { b.setAttribute('aria-disabled', 'true'); b.onclick = () => flash(`Level ${lv}: ${ls.why}`); }   // a phone has no hover
+    else b.onclick = () => pickLevel(g, lv);
+    box.append(b);
+  }
+  const p = g.per_level[sel - 1], sp = spark[sel];
+  const ls = levelStart(g, sel, state.v);
+  $('gamefact').textContent = `Level ${sel}${sel === g.stuck_level ? ', the stuck level' : ''}: stock cleared it in ${p ? `${p.cleared} of ${p.n}` : 'no'} full runs` +
+    (sp && sp.played ? `, Spark runs in ${sp.cleared} of ${sp.played}.` : '; no Spark run has played it yet.') +
+    (ls.ok ? (ls.kind === 'exact' ? ' Play starts from an exact saved start.' : ls.kind === 'reset' ? ' Play starts a fresh game.' : ' Play starts from the snapshot (conversation rebuilt).') : ' ' + ls.why);
 }
 
 // ---------------------------------------------------------------- Queue view: the queue
 
+// One queue per game; start_level is the level Play starts from (the level buttons set it; the stuck level by default).
 function queueOf(g) {
-  // start_level stays in the stored record for exports and older copies of the page; Play always uses the stuck level
-  if (!store.schemes[g.game]) store.schemes[g.game] = { start_level: g.stuck_level, slots: [], updated: null };
+  if (!store.schemes[g.game]) store.schemes[g.game] = { start_level: g.stuck_level || 1, slots: [], updated: null };
   const q = store.schemes[g.game];
-  q.start_level = g.stuck_level;
+  if (!Number.isInteger(q.start_level) || q.start_level < 1 || q.start_level > g.levels) q.start_level = g.stuck_level || 1;
   return q;
 }
 function touch(q) { q.updated = new Date().toISOString(); saveStore(); }
@@ -358,8 +452,8 @@ function renderQueueArea() {
   list.append(tail);
   if (state.open >= 0 && q.slots[state.open]) { set.hidden = false; set.append(itemEditor(q.slots[state.open], state.open, q)); }
   renderPlayRow($('playrow'), playCtx(g, q));
-  const opt = $('gamepick').selectedOptions[0];
-  if (opt) opt.textContent = `${g.nickname} · stuck at level ${g.stuck_level} of ${g.levels}${q.slots.length ? ` · ${q.slots.length} in queue` : ''}`;
+  const sub = $('gamebar').querySelector('.mx-gbgame.on .mx-gbsub');
+  if (sub) sub.textContent = `${g.levels} levels${q.slots.length ? ` · ${q.slots.length} queued` : ''}`;
 }
 
 function itemNode(item, i) {
@@ -648,7 +742,10 @@ async function importJson(file) {
 
 // ---------------------------------------------------------------- main
 
-function playCtx(g, q) { return { game: g, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen }; }
+function playCtx(g, q) {
+  return { game: g, level: q.start_level, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen,
+    onJobs: (game, tally, harvest) => { SPARK[game] = { tally, harvest }; if (game === state.game && state.view === 'queue') renderLevels(); } };
+}
 
 // ---------------------------------------------------------------- shared modes
 
@@ -697,7 +794,8 @@ function render() {
     renderDiff(m);
     return;
   }
-  renderPicker();
+  renderGamebar();
+  renderLevels();
   renderQueueArea();
   const g = currentGame();
   if (g) renderResults($('results'), playCtx(g, queueOf(g)));
@@ -705,11 +803,15 @@ function render() {
 }
 
 // The dock pins just under the site tabs, whose height changes when they wrap or scroll sideways on a phone.
+// The game sidebar pins under both, so it needs the dock's height too.
 function trackNav() {
-  const nav = document.querySelector('.sitetabs');
-  const set = () => document.documentElement.style.setProperty('--navh', `${nav ? nav.offsetHeight : 0}px`);
+  const nav = document.querySelector('.sitetabs'), dock = $('dock');
+  const set = () => {
+    document.documentElement.style.setProperty('--navh', `${nav ? nav.offsetHeight : 0}px`);
+    document.documentElement.style.setProperty('--dockh', `${dock ? dock.offsetHeight : 0}px`);
+  };
   set();
-  if (nav && 'ResizeObserver' in window) new ResizeObserver(set).observe(nav);
+  if ('ResizeObserver' in window) { const ro = new ResizeObserver(set); if (nav) ro.observe(nav); if (dock) ro.observe(dock); }
   else addEventListener('resize', set);
 }
 
@@ -749,11 +851,13 @@ async function main() {
   } catch { STUCK = false; }
   // open the game from the link, else the last one used here, else the hardest
   if (!currentGame()) state.game = store.game;
-  if (!currentGame()) state.game = stuckGames()[0]?.game || null;
+  if (!currentGame()) state.game = sidebarGames()[0]?.game || null;
+  const g0 = currentGame();
+  if (g0 && state.level && state.level <= g0.levels && Number.isInteger(state.level)) queueOf(g0).start_level = state.level;
   render();
   migrateLocal();
   await loadRunnerInfo();
-  if (state.view === 'queue' && currentGame()) renderQueueArea();
+  if (state.view === 'queue' && currentGame()) { renderLevels(); renderQueueArea(); }
 }
 
 main();

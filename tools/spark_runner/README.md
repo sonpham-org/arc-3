@@ -9,7 +9,7 @@ SRP/DRY check: Pass - operations only; the design write-up is the doc above.
 
 # Spark runner (Jethro, gx10-a424)
 
-Plays ARC-3 games from a game's stuck level under a Mode explorer scheme, on the two-Spark Flash-Next server.
+Plays ARC-3 games from a chosen level (an exact start, level 1 from RESET, or the stuck-level snapshot) under a Mode explorer scheme, on the two-Spark Flash-Next server.
 
 ```
 browser (arc3.sonpham.net/mode-explorer.html, signed in)

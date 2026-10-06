@@ -9,12 +9,18 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     not verified, held-out game). Play sends the queue (each item's mode text, the Stock text it is diffed against,
     and its settings), the Stock tail, the version, samples and caps; the action and minute caps keep their
     defaults. It needs the runner key, asked once and kept in this browser; the runner checks it.
-  - renderResults: everything that ran for the open game's stuck level, newest first, for anyone signed in: the
+  - renderResults: everything that ran for the open game's selected level, newest first, for anyone signed in: the
     live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
     the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
     actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
   Each slot also carries the mode version it came from; the site stores the exact text and versions with the job,
   and every job card shows them (versions on the queue tags, the full wording in a fold-out).
+  - Starting level (added 6-Oct, Son: "show all the levels as 1, 2, 3, 4, 5, 6 buttons"): every call takes the level the
+    page has selected (ctx.level), not only the stuck level. levelStart says whether Play can start there and from what:
+    an exact checkpoint for that game, level and wording; a fresh game for level 1 (the runner starts any public game
+    from RESET); the stuck-level snapshot (conversation rebuilt); otherwise not, with the reason. sparkTally counts, per
+    level, how many Spark samples (Play and idle-time harvest) played it and how many cleared it, from the same jobs
+    answer the results list already loads, and hands it to the page through ctx.onJobs for the level buttons.
   - Exact starts (added 6-Oct, Son): every job says whether it started from an EXACT level-start checkpoint (the
     request body, harness state and actions saved when some run cleared the level before) or from the snapshot
     whose conversation was rebuilt from stored transcripts; exact samples also say whether their first request
@@ -33,7 +39,8 @@ const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) 
 let stuckPoints = null;      // from /stuck-points, null until loaded, false if the runner cannot be reached
 let health = null;
 let pollTimer = null;
-let resultsGame = null;      // the game the results box is showing; a poll for another game is dropped
+let exactStarts = null;     // /exact-starts rows (every game, not only those with a snapshot); null until loaded
+let resultsKey = null;       // the game and level the results box is showing; a poll for another one is dropped
 // Play options survive the page's redraws (every queue edit redraws the Play row).
 const opts = { samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120 };
 
@@ -59,6 +66,52 @@ async function call(path, { method = 'GET', body, auth = false } = {}) {
 export async function loadRunnerInfo() {
   try { health = await call('health'); } catch (e) { health = { ok: false, message: e.message }; }
   try { stuckPoints = (await call('stuck-points')).stuck_points || []; } catch { stuckPoints = false; }
+  // the relay answers this one from its stored index when the Sparks are off, so the level buttons still show exact starts
+  try { exactStarts = (await call('exact-starts')).levels || []; } catch { exactStarts = []; }
+}
+
+function pointOf(game) { return Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === game) || null : null; }
+function exactRow(game, level, variant) {
+  return (exactStarts || []).find(x => x.game === game && x.level === level && x.variant === variant && x.chosen) || null;
+}
+
+// Where Play would start this game at this level with this wording, or why it cannot:
+// {ok, kind: 'exact' | 'reset' | 'rebuilt', chosen, count, why}. Mirrors the runner's play(): exact checkpoint first,
+// then a fresh game for level 1, then the stuck-level snapshot if it passed its replay check.
+export function levelStart(g, level, variant) {
+  const ex = exactRow(g.game, level, variant);
+  if (ex) return { ok: true, kind: 'exact', chosen: ex.chosen, count: ex.count };
+  if (level === 1) return { ok: true, kind: 'reset' };
+  const point = pointOf(g.game);
+  if (point && point.stuck_level === level && point.replay_verified) return { ok: true, kind: point.actions ? 'rebuilt' : 'reset' };
+  if (exactStarts === null || stuckPoints === null) return { ok: false, unknown: true, why: 'Checking the Spark runner…' };
+  if (stuckPoints === false) return { ok: false, unknown: true, why: 'The Spark runner cannot be reached right now, so whether this level can start is not known.' };
+  if (point && point.stuck_level === level) return { ok: false, why: `The starting point for level ${level} has not passed its replay check, so it cannot be played.` };
+  const other = exactRow(g.game, level, variant === 'son' ? 'daniel' : 'son');
+  return { ok: false, why: other
+    ? `Level ${level} has a saved start only for ${variant === 'son' ? "Franzen's" : "Son's"} wording; switch the version to play it.`
+    : `No saved start for level ${level} yet. One is saved when a Spark run that began fresh or from an exact start clears level ${level - 1} (runs from a rebuilt start do not count); idle Spark time collects them.` };
+}
+
+// Per level: Spark samples that played it and that cleared it. A sample that started at level L and cleared c levels
+// cleared L..L+c-1; when it stopped on a cap before its last level it played level L+c without clearing it. Samples
+// that ended in an error or were stopped count only the levels they did clear.
+const CAPS = new Set(['action_cap', 'turn_cap', 'time_cap']);
+export function sparkTally(jobs) {
+  const t = {};
+  const add = (lv, cleared) => { const x = t[lv] || (t[lv] = { played: 0, cleared: 0 }); x.played++; if (cleared) x.cleared++; };
+  for (const j of jobs || []) {
+    const start = j.stuck_level || 1;
+    const toPlay = j.kind === 'harvest' ? 99 : ((j.caps || {}).levels_to_play || 1);
+    for (const row of j.sample_rows || []) {
+      const r = row.result;
+      if (!r) continue;
+      const c = r.levels_cleared || 0;
+      for (let k = 0; k < c; k++) add(start + k, true);
+      if (CAPS.has(r.outcome) && c < toPlay) add(start + c, false);
+    }
+  }
+  return t;
 }
 
 function pct(a, b) { return b ? `${Math.round((100 * a) / b)}%` : '–'; }
@@ -120,30 +173,19 @@ function buildRequest(ctx) {
   });
   const stock = ctx.findMode('stock');
   return {
-    game: ctx.game.game, stuck_level: ctx.game.stuck_level, variant: v, scheme,
+    game: ctx.game.game, stuck_level: ctx.level, variant: v, scheme,
     stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
     max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: null,
   };
 }
 
-// Why Play is off for this game, or '' when it can run.
-function exactStart(g, variant) {
-  const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
-  const row = point && (point.exact_levels || []).find(x => x.level === g.stuck_level && x.variant === variant);
-  return row ? row.chosen : null;
-}
-
-function blocked(g, variant) {
-  const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
-  if (point && exactStart(g, variant) && (point.playable || !point.held_out)) return '';
+// Why Play is off for this game and level, or '' when it can run.
+function blocked(g, level, variant) {
   if (stuckPoints === false) return health && health.message ? `${health.message} Nothing can start; past results still show below.`
     : 'The Spark runner cannot be reached from the site right now, so nothing can start. Past results still show below.';
   if (stuckPoints === null) return 'Checking the Spark runner…';
-  if (!point) return `No starting point exists for ${g.nickname} yet, so it cannot be played.`;
-  if (!point.replay_verified) return `The starting point for ${g.nickname} has not passed its replay check, so it cannot be played.`;
-  if (point.held_out && !point.playable) return `${g.nickname} is one of the eight held-out games, kept out of prompt tuning, so the runner does not play it.`;
-  if (point.stuck_level !== g.stuck_level) return `The runner's starting point is level ${point.stuck_level}, not level ${g.stuck_level}; it needs rebuilding before this game can be played.`;
-  return '';
+  const ls = levelStart(g, level, variant);
+  return ls.ok ? '' : ls.why;
 }
 
 function ordinal(n) {
@@ -168,8 +210,9 @@ function runnerLine() {
 export function renderPlayRow(box, ctx) {
   box.textContent = '';
   const g = ctx.game, q = ctx.scheme;
-  const why = blocked(g, ctx.variant);
-  const ex = exactStart(g, ctx.variant);
+  const lv = ctx.level;
+  const why = blocked(g, lv, ctx.variant);
+  const ls = levelStart(g, lv, ctx.variant);
   const play = h('button', 'mx-play', 'Play');
   play.disabled = !!why;
   const num = (label, key, min, max, title) => {
@@ -190,9 +233,10 @@ export function renderPlayRow(box, ctx) {
   box.append(row);
   const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
   const note = h('p', 'mx-playnote', why || (q.slots.length
-    ? `Plays the queue, one mode per turn from the start of level ${g.stuck_level}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
-    : `Empty queue: Play runs Stock only from level ${g.stuck_level}, a baseline from the same starting point.`) +
-    (why ? '' : ex ? ` Exact start: the conversation, board pictures and tool state saved when a run reached this level in ${ex.actions_to_reach} actions.`
+    ? `Plays the queue, one mode per turn from the start of level ${lv}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
+    : `Empty queue: Play runs Stock only from level ${lv}, a baseline from the same starting point.`) +
+    (why ? '' : ls.kind === 'exact' ? ` Exact start: the conversation, board pictures and tool state saved when a run reached this level in ${ls.chosen.actions_to_reach} actions.`
+      : ls.kind === 'reset' ? ' Start: a fresh game from its first frame, as a real run begins.'
       : ' Start: the snapshot, with the conversation rebuilt from stored transcripts (no exact start for this level yet).'));
   box.append(note);
   play.onclick = async () => {
@@ -211,62 +255,68 @@ export function renderPlayRow(box, ctx) {
       if (res) await refreshResults(res, ctx);
     } catch (e) {
       note.textContent = e.status === 401 ? 'The runner refused the key. Check it with Son or the Boss, then set it again.' : `Not started: ${e.message}`;
-    } finally { play.disabled = !!blocked(g, ctx.variant); }
+    } finally { play.disabled = !!blocked(g, lv, ctx.variant); }
   };
 }
 
 // ---------------------------------------------------------------- results
 
+function resTitle(ctx) { return `Results · ${ctx.game.nickname}, level ${ctx.level}`; }
+
 export function renderResults(box, ctx) {
-  if (resultsGame !== ctx.game.game) {
+  const key = `${ctx.game.game}:${ctx.level}`;
+  if (resultsKey !== key) {
     box.textContent = '';
-    box.append(h('h2', 'mx-resh', `Results · ${ctx.game.nickname}, level ${ctx.game.stuck_level}`), h('p', 'mx-sum', 'loading…'));
+    box.append(h('h2', 'mx-resh', resTitle(ctx)), h('p', 'mx-sum', 'loading…'));
   }
-  resultsGame = ctx.game.game;
+  resultsKey = key;
   refreshResults(box, ctx);
 }
 
 async function refreshResults(box, ctx) {
   clearTimeout(pollTimer);
-  const game = ctx.game.game;
+  const game = ctx.game.game, key = `${game}:${ctx.level}`;
   let data;
   const runs = ctx.loadRuns ? ctx.loadRuns(game) : Promise.resolve({});
-  try { data = await call(`jobs?game=${encodeURIComponent(game)}`); data.records = await runs; }
+  // Play and harvest jobs together: Play jobs are listed below, both feed the level buttons' Spark tally.
+  try { data = await call(`jobs?game=${encodeURIComponent(game)}&kind=all&limit=200`); data.records = await runs; }
   catch (e) {
-    if (resultsGame !== game) return;
+    if (resultsKey !== key) return;
     box.textContent = '';
-    box.append(h('h2', 'mx-resh', `Results · ${ctx.game.nickname}, level ${ctx.game.stuck_level}`), h('p', 'mx-sum', `Could not load results: ${e.message}`));
+    box.append(h('h2', 'mx-resh', resTitle(ctx)), h('p', 'mx-sum', `Could not load results: ${e.message}`));
     return;
   }
-  if (resultsGame !== game || !box.isConnected) return;
+  if (resultsKey !== key || !box.isConnected) return;
+  const jobs = data.jobs || [];
+  data.jobs = jobs.filter(j => (j.kind || 'play') === 'play');
+  if (ctx.onJobs) ctx.onJobs(game, sparkTally(jobs), jobs.filter(j => j.kind === 'harvest').length);
   drawResults(box, ctx, data);
-  const live = (data.jobs || []).some(j => j.status === 'queued' || j.status === 'running');
-  if (live) pollTimer = setTimeout(() => { if (resultsGame === game) refreshResults(box, ctx); }, POLL_MS);
+  const live = data.jobs.some(j => j.status === 'queued' || j.status === 'running');
+  if (live) pollTimer = setTimeout(() => { if (resultsKey === key) refreshResults(box, ctx); }, POLL_MS);
 }
 
-function stockTally(g) {
-  const p = (g.per_level || []).find(x => x.level === g.stuck_level);
+function stockTally(g, level) {
+  const p = (g.per_level || []).find(x => x.level === level);
   return p ? { cleared: p.cleared, n: p.n } : null;
 }
 
 function drawResults(box, ctx, data) {
-  const g = ctx.game;
+  const g = ctx.game, lv = ctx.level;
   box.textContent = '';
-  box.append(h('h2', 'mx-resh', `Results · ${g.nickname}, level ${g.stuck_level}`));
-  const st = stockTally(g);
+  box.append(h('h2', 'mx-resh', resTitle(ctx)));
+  const st = stockTally(g, lv);
   if (st) box.append(h('p', 'mx-sum', `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}). Each run below starts at this level, so compare its cleared share with that.`));
   if (data.from_storage) box.append(h('p', 'mx-sum mx-warnline', `${data.message} Showing what the site stored earlier.`));
-  const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
-  const exact = point ? (point.exact_levels || []).filter(x => x.variant === ctx.variant).sort((a, b) => a.level - b.level) : [];
+  const exact = (exactStarts || []).filter(x => x.game === g.game && x.variant === ctx.variant && x.chosen).sort((a, b) => a.level - b.level);
   box.append(h('p', 'mx-sum', exact.length
     ? `Exact starts for ${g.nickname}: ${exact.map(x => `level ${x.level} (${x.chosen.actions_to_reach} actions from reset${x.count > 1 ? `, best of ${x.count}` : ''})`).join(', ')}.`
     : `No exact starts for ${g.nickname} yet; idle Spark time collects them.`));
   const all = (data.jobs || []).slice().sort((a, b) => String(b.created).localeCompare(String(a.created)));
-  const jobs = all.filter(j => j.stuck_level === g.stuck_level);
-  if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${g.stuck_level} yet. Build a queue and press Play.`));
+  const jobs = all.filter(j => j.stuck_level === lv);
+  if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${lv} yet. Build a queue and press Play.`));
   for (const j of jobs) box.append(jobCard(j, ctx, (data.records || {})[j.id]));
   const other = all.length - jobs.length;
-  if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown.`));
+  if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown; pick that level above to see ${other === 1 ? 'it' : 'them'}.`));
 }
 
 const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
@@ -331,7 +381,7 @@ function jobCard(j, ctx, rec) {
   const results = rows.map(r => r.result).filter(Boolean);
   const s = j.summary || {};
   const done = s.finished_samples ?? results.length;
-  const st = stockTally(ctx.game);
+  const st = stockTally(ctx.game, j.stuck_level);
   const line = h('p', 'mx-jobsum');
   if (done) {
     const cleared = s.cleared ?? results.filter(r => r.outcome === 'cleared' || r.outcome === 'won').length;

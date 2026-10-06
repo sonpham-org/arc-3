@@ -172,7 +172,7 @@ More in `tools/spark_runner/README.md` (also `~/arc3-runner/README.md` on Jethro
 
 ## Not done / limits
 
-- The page plays the stuck level. The runner itself accepts any level that has an exact start (API `stuck_level`).
+- The page's level buttons (added 6-Oct) pick the starting level: any level with an exact start, level 1 (a fresh game from RESET for any public game), or the stuck level from its snapshot. Other levels wait until a run with exact lineage clears the level before them.
 - Funnel waits for the tailnet admin's approval (above).
 - The runner does not start or stop the model server. If the cluster is being rebuilt, samples fail their requests,
   retry, and end with an error after repeated failures; the page shows that per sample.

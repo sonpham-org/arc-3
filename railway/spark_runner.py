@@ -15,7 +15,8 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   Exact level starts (6-Oct): the small per-level index of the runner's exact checkpoints (game, level, variant,
   the chosen one's actions from RESET, tokens, source job; never the checkpoints themselves) is kept in
   arc3_spark_runner_exact_starts whenever stuck-points or exact-starts is relayed, and exact-starts is answered from
-  there when the runner is off.
+  there when the runner is off. Only Play job views are stored; harvest views pass through (the page's level
+  buttons count them) but are not kept.
 SRP/DRY check: Pass - relay shape follows harness_relay.py and debugger_relay.py (identity from oauth2-proxy,
   narrow route list, size caps, no redirects); storage is one upsert table in catalog_schema.sql. No game logic.
 """
@@ -67,7 +68,10 @@ class SparkRunnerRelay:
     # ------------------------------------------------------------ storage
 
     def _store(self, views: list[dict]) -> None:
-        rows = [v for v in views if isinstance(v, dict) and isinstance(v.get("id"), str) and JOB_ROUTE.fullmatch("/jobs/" + v["id"])]
+        # Play jobs only: the page also lists harvest runs (idle-time Stock runs for exact starts) for its level tally,
+        # but stored ones would come back as Play jobs when the Sparks are off.
+        rows = [v for v in views if isinstance(v, dict) and isinstance(v.get("id"), str) and JOB_ROUTE.fullmatch("/jobs/" + v["id"])
+                and v.get("kind", "play") == "play"]
         if not rows:
             return
         try:

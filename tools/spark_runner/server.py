@@ -18,7 +18,8 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
   A job = one game's starting level, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
   and N samples (default 10). The start is EXACT when an exact checkpoint exists for that game, level and variant
   (checkpoints.py: full request body, harness state, actions from RESET, written whenever a level is cleared);
-  otherwise the stuck-level snapshot with its conversation rebuilt from the site's transcripts ("rebuilt").
+  otherwise level 1 starts a fresh game from RESET (any public game; added 6-Oct for the page's level buttons), and
+  any other level the stuck-level snapshot with its conversation rebuilt from the site's transcripts ("rebuilt").
   Harvest (default on, ARC3_RUNNER_HARVEST / settings.json): while no Play sample is queued or running, one or two
   one-sample Stock runs from RESET on the public games outside the held-out eight, only to collect exact checkpoints
   for every level they clear. A queued Play job pre-empts them at once (process group killed, job "preempted";
@@ -540,6 +541,12 @@ def play(req: PlayRequest) -> dict:
     if cp is not None:
         start = {"kind": "checkpoint", "path": cp["path"], "id": cp["id"]}
         start_kind, game_id = "exact", cp["game_id"]
+    elif req.stuck_level == 1:
+        # Level 1 is the game's first frame: a fresh game from RESET, as harvest plays it, for any game on disk.
+        game_id = game_id_for(req.game)
+        if game_id is None:
+            raise HTTPException(404, f"{req.game} is not among the runner's games")
+        start, start_kind = {"kind": "reset"}, "reset"
     else:
         if snap is None:
             raise HTTPException(404, f"no starting point for {req.game}: nothing to play from")

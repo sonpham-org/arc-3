@@ -15,6 +15,15 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-game-sidebar-levels]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Game sidebar and level buttons on the Mode explorer.** Son (#arc-3, 6-Oct 10:47 ET): "show games on the left side with Thumbnails so that it is easy to switch games and levels ... show all the levels as 1, 2, 3, 4, 5, 6 buttons, with how much fill depending on how often this level has been conquered." The game dropdown is replaced by a sidebar of the eighteen public games the runner plays (held-out eight left out), each with its first-frame picture, nickname and stuck-level badge, hardest first; sticky and scrolling on a desktop, a sideways strip on a phone.
+- Above the queue, one button per level. Fill = share of the stock tally's full runs that cleared it (stuck-levels.json); a thin bar under it = share of Spark samples (Play and harvest) that played it and cleared it; the tooltip says both ("8 of 11 stock runs cleared it", "On the Sparks: 4 of 7 ..."). The stuck level has an amber edge; a dot marks an exact saved start, a ring a fresh or rebuilt start. Levels with no start are greyed and say why. The chosen level is the queue's starting level (kept per game), Play sends it, and the results list follows game and level (?game=&level= in the link).
+- **Runner: level 1 starts fresh for any game.** With no exact checkpoint, Play at level 1 now starts the game from RESET (the start harvest already uses) instead of requiring a snapshot at level 1. Deployed on Jethro with a backup; tested with a one-sample, one-turn Play.
+- **Relay:** harvest job views pass through for the level tally but are not stored, so they never come back as Play jobs when the Sparks are off.
+- How: `docs/mode-explorer.html`, `docs/static/js/mode-explorer.js`, `docs/static/js/spark-runner.js` (`levelStart`, `sparkTally`), `docs/static/css/mode-explorer.css`, `tools/spark_runner/server.py`, `railway/spark_runner.py`.
+
 ## [2026.10.06-spark-runner-one-job-at-a-time]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
