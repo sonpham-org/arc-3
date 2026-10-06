@@ -6,7 +6,7 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   to the Spark runner on Jethro (tools/spark_runner/server.py, published tailnet-only by `tailscale serve`), and
   keeps every job view it sees in Postgres (arc3_spark_runner_jobs) so the results table still loads when the
   Sparks are off or busy.
-    GET  /api/v1/spark-runner/health | stuck-points | exact-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
+    GET  /api/v1/spark-runner/health | stuck-points | exact-starts | start-board?game=&level=&variant= | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
     POST /api/v1/spark-runner/play | jobs/<id>/cancel
   The runner's key never reaches the browser (the Boss, #arc-3 6-Oct 11:01 ET: "It needs a runner key?!?"): the
   site sign-in is the only gate a person sees, and this relay adds the key itself, from the service variable
@@ -19,7 +19,8 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   the chosen one's actions from RESET, tokens, source job; never the checkpoints themselves) is kept in
   arc3_spark_runner_exact_starts whenever stuck-points or exact-starts is relayed, and exact-starts is answered from
   there when the runner is off. Only Play job views are stored; harvest views pass through (the page's level
-  buttons count them) but are not kept.
+  buttons count them) but are not kept. start-board (6-Oct, the page's board picture) passes through unstored; when the
+  runner is off the page draws the level's opening frame from its own static copy instead.
 SRP/DRY check: Pass - relay shape follows harness_relay.py and debugger_relay.py (identity from oauth2-proxy,
   narrow route list, size caps, no redirects); storage is one upsert table in catalog_schema.sql. No game logic.
 """
@@ -36,7 +37,7 @@ from urllib.parse import parse_qs, urlsplit
 from psycopg2.extras import Json
 
 PREFIX = "/api/v1/spark-runner"
-GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
+GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|start-board|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
 POST_ROUTES = re.compile(r"/(?:play|jobs/[a-z0-9-]{8,40}/cancel)")
 JOB_ROUTE = re.compile(r"/jobs/([a-z0-9-]{8,40})")
 EMAIL_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,255}$")

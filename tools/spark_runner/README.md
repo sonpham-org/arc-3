@@ -112,7 +112,9 @@ the address; Play, Cancel and per-turn logs still need the key.
 
 ## API
 
-`GET /api/health`, `GET /api/stuck-points`, `GET /api/exact-starts[?game=]`, `GET /api/jobs[?game=&kind=]`, `GET /api/jobs/<id>`;
+`GET /api/health`, `GET /api/stuck-points`, `GET /api/exact-starts[?game=]`, `GET /api/jobs[?game=&kind=]`, `GET /api/jobs/<id>`,
+`GET /api/start-board?game=&level=&variant=` (the board at the start Play would use there, from `boards.py`; cached in
+`~/arc3-runner/boards/`);
 with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`, `POST /api/settings`,
 `GET /api/jobs/<id>/samples/<k>/turns`. The Play body is built by `docs/static/js/spark-runner.js`.
 

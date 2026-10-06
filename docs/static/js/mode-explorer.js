@@ -31,6 +31,9 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   that played it and cleared it (spark-runner.js sparkTally), a dot marks an exact saved start and a ring a fresh or
   rebuilt start; levels Play cannot start from are greyed with the reason. The chosen level is the queue's starting
   level (kept per game with the queue) and the results follow it.
+  Board picture (Son, #arc-3 6-Oct 10:47 ET: "at least show the screen at that time as well"): next to the queue and
+  Play, the board at the start Play would use for the chosen game, level and wording (start-board.js); it is redrawn
+  whenever the game, level or wording changes, and says when it is only the level's opening frame.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
@@ -38,6 +41,7 @@ SRP/DRY check: Pass — prompt text and default settings live in the shared mode
 */
 
 import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-nk';
+import { renderStartBoard } from './start-board.js?v=20261006-bd1';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
@@ -440,7 +444,7 @@ function renderQueueArea() {
   const g = currentGame();
   const list = $('queue'); list.textContent = '';
   const set = $('slotset'); set.textContent = ''; set.hidden = true;
-  if (!g) { $('playrow').textContent = ''; return; }
+  if (!g) { $('playrow').textContent = ''; $('startboard').textContent = ''; return; }
   const q = queueOf(g);
   q.slots.forEach((item, i) => list.append(itemNode(item, i)));
   if (!q.slots.length) list.append(h('li', 'mx-qempty', 'Drag modes here from the bar above, or tap a mode to add it. An empty queue plays Stock only.'));
@@ -452,6 +456,7 @@ function renderQueueArea() {
   list.append(tail);
   if (state.open >= 0 && q.slots[state.open]) { set.hidden = false; set.append(itemEditor(q.slots[state.open], state.open, q)); }
   renderPlayRow($('playrow'), playCtx(g, q));
+  renderStartBoard($('startboard'), { game: g, level: q.start_level, variant: state.v, ls: levelStart(g, q.start_level, state.v) });
   const sub = $('gamebar').querySelector('.mx-gbgame.on .mx-gbsub');
   if (sub) sub.textContent = `${g.levels} levels${q.slots.length ? ` · ${q.slots.length} queued` : ''}`;
 }
@@ -857,7 +862,8 @@ async function main() {
   render();
   migrateLocal();
   await loadRunnerInfo();
-  if (state.view === 'queue' && currentGame()) { renderLevels(); renderQueueArea(); }
+  // the results header lists exact starts, so it is redrawn too once the runner has answered
+  if (state.view === 'queue' && currentGame()) { renderLevels(); renderQueueArea(); renderResults($('results'), playCtx(currentGame(), queueOf(currentGame()))); }
 }
 
 main();

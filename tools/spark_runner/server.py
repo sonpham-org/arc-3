@@ -15,6 +15,7 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     GET  /api/jobs/{id}/samples/{k}/turns   per-turn log of one sample (bearer key)
     GET  /api/exact-starts            exact level-start checkpoints: per game, level and variant, the chosen one (public)
     POST /api/settings                harvest on/off and lanes (bearer key)
+    GET  /api/start-board?game=&level=&variant=   the board at the start Play would use there (boards.py; public)
   A job = one game's starting level, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
   and N samples (default 10). The start is EXACT when an exact checkpoint exists for that game, level and variant
   (checkpoints.py: full request body, harness state, actions from RESET, written whenever a level is cleared);
@@ -483,6 +484,28 @@ def get_exact_starts(game: str | None = None) -> dict:
     idx = checkpoints.index()
     rows = [r for r in idx.get("levels", []) if game is None or r["game"] == game]
     return {"rule": idx.get("rule"), "built": idx.get("built"), "levels": rows}
+
+
+@app.get("/api/start-board")
+def get_start_board(game: str, level: int, variant: Literal["son", "daniel"] = "son") -> dict:
+    """The board at the start Play would use for this game, level and wording (boards.py: exact checkpoint replayed,
+    fresh game, snapshot replayed, or the level's opening frame when there is no start). Runs the game file in a
+    subprocess; answers are cached on disk, so only a new start costs a replay."""
+    if not CODE_RE.fullmatch(game) or not 1 <= level <= 30:
+        raise HTTPException(422, "game is four letters or digits, level 1 to 30")
+    if game in HELD_OUT and not ALLOW_HELD_OUT:
+        raise HTTPException(403, f"{game} is one of the eight held-out games")
+    if not (ENV_DIR / game).is_dir():
+        raise HTTPException(404, f"{game} is not among the runner's games")
+    try:
+        r = subprocess.run([PYTHON, str(HERE / "boards.py"), game, str(level), variant],
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "drawing the board took too long")
+    if r.returncode != 0:
+        last = (r.stderr.strip().splitlines() or ["drawing the board failed"])[-1]
+        raise HTTPException(422 if "ValueError" in last else 500, last[-300:])
+    return json.loads(r.stdout.strip().splitlines()[-1])
 
 
 class RunnerSettings(BaseModel):

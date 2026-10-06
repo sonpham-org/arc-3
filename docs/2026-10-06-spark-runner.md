@@ -177,6 +177,7 @@ More in `tools/spark_runner/README.md` (also `~/arc3-runner/README.md` on Jethro
 ## Not done / limits
 
 - The page's level buttons (added 6-Oct) pick the starting level: any level with an exact start, level 1 (a fresh game from RESET for any public game), or the stuck level from its snapshot. Other levels wait until a run with exact lineage clears the level before them.
+- The board picture next to Play (added 6-Oct) comes from the runner's start-board route: the chosen start's actions replayed in the bare game engine and checked against the board saved with it. When the runner is off the page shows the level's opening frame from the site's static copy instead and says so; at a level start that is the same board for every saved start checked on 6-Oct except one snapshot.
 - Funnel waits for the tailnet admin's approval (above).
 - The runner does not start or stop the model server. If the cluster is being rebuilt, samples fail their requests,
   retry, and end with an error after repeated failures; the page shows that per sample.

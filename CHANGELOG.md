@@ -15,6 +15,23 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-start-board]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** the Mode explorer shows the game board at the starting point next to the queue and Play (above the queue on
+  a phone), redrawn whenever the game, level or wording changes. Son's ask, #arc-3 6-Oct 10:47 ET: "in the screen where
+  you set up mode, at least show the screen at that time as well".
+- **How:** new runner route `GET /api/start-board` (tools/spark_runner/boards.py, run as a subprocess) mirrors Play's
+  choice of start and replays it in the bare game engine: the exact checkpoint's actions (checked against its saved
+  board hash), the first frame for level 1, the stuck-level snapshot's actions (checked the same way), or the level's
+  clean opening frame when there is no start. Answers are cached on Jethro. The relay passes the route through; the
+  page (docs/static/js/start-board.js) draws the grid in the canonical ARC palette and captions which start it is. When
+  the runner is off it falls back to docs/static/data/level-frames/<game>.json (every level's opening frame, written
+  by boards.py --openings) and says so. The results header now redraws once the runner answers, so it lists exact
+  starts instead of saying there are none.
+- **Checked:** on 6-Oct every snapshot and chosen checkpoint replayed to its saved board; all but one (sc25's level-5
+  snapshot) equal the level's clean opening frame. Deployed to Jethro with a backup while no Play job ran.
+
 ## [2026.10.06-spark-runner-no-key-for-people]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
