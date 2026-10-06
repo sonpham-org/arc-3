@@ -575,3 +575,9 @@ The harness is a working fork of [Tufa Labs' ARC-AGI-3 Duck Harness](https://www
 Michal Tesnar and Stefano Viel, MIT-licensed. Commit `a2dddac` is pristine upstream; every
 divergence since is one reviewed commit. Competition environment files are not redistributed
 here.
+
+The same chart now includes verified published AI results from ARC Prize’s `/api/models`,
+archived at `docs/static/ai-game-results-2026-10-05.json`. Each model/game cell uses one
+highest-scoring published run (ties: fewer actions, then session ID), with its own levels,
+actions and replay. Scores measure action efficiency, not completion percentage. Model
+columns can be selected; configurations may differ across games.
