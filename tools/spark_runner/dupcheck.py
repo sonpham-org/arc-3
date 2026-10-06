@@ -16,7 +16,9 @@ PURPOSE: Duplicate check over a FULL rendered chat request (what the runner post
                         (difflib ratio >= 0.8 for units of six words or more, or a standing unit of ten words or
                         more contained in it)
     within_message      a unit said twice inside one user message
-    across_messages     a unit repeated across user messages that is not a per-turn fact or an event notice
+    across_messages     a unit repeated across user messages that is not a per-turn fact, an event notice, or the
+                        selected mode's instructions (each turn carries its own mode's block; a queue can run the
+                        same mode on two turns)
     concepts            the same standing instruction said in DIFFERENT words: each entry of CONCEPTS is one
                         standing instruction with a pattern that matches any of its wordings (taken from every
                         wording in the original prompts). Fails when a concept is said in more than one unit of the
@@ -122,6 +124,9 @@ def harness_text_of_tool(text: str) -> str:
     return "\n".join(keep)
 
 
+MODE_HEADER = "Instructions for this turn ("
+
+
 def norm(s: str) -> str:
     s = s.lower().replace("`", "").replace('"', "").replace("'", "")
     s = re.sub(r"\d+", "#", s)
@@ -189,12 +194,16 @@ def check(body: dict) -> dict:
     std_units = [u for _, u in standing]
     std_long = [u for u in std_units if len(u.split()) >= CONTAIN_WORDS]
     seen_across: dict[str, list[int]] = defaultdict(list)
+    mode_units: set[str] = set()      # units inside a mode block ("Instructions for this turn (<mode> mode):")
     for i, m in enumerate(msgs):
         role = m.get("role")
         if role not in ("user", "tool"):
             continue
         mine: dict[str, int] = defaultdict(int)
         for t in message_texts(m):
+            if role == "user" and MODE_HEADER in t:
+                block = t[t.index(MODE_HEADER):].split("\n\n", 1)[0]
+                mode_units.update(units(block))
             for u in units(t):
                 report["units_checked"] += 1
                 hit = next((s for s in std_units if u == s or near(u, s)), None) \
@@ -211,7 +220,9 @@ def check(body: dict) -> dict:
     for u, where in seen_across.items():
         if len(where) < 2:
             continue
-        if allowed(u):
+        if allowed(u) or u in mode_units:
+            # a per-turn fact, or the selected mode's instructions on each turn that mode runs (a queue may run
+            # the same mode twice); still checked against the standing text above
             report["allowed_recurring"][u[:90]] = len(where)
         else:
             report["across_messages"].append({"unit": u, "messages": where})

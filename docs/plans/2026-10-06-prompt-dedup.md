@@ -193,6 +193,13 @@ batch no-op guard stops the death batch early, so their sixth request is an ordi
 | dedup | 13 | 78 | 0 | 0 | 0 | 0 | 0 | all clean |
 | original | 13 | 78 | 156 | 3,329 | 0 | 1,324 | 1,465 | every request has repeats |
 
+Son's queued Leapfrog job (lf52 level 3, carried, queue Stock, Probe, Probe, queued before the profiles existed) was
+also rendered from its own spec, the way it will run when the model is back: dedup (stamped into the job when it
+starts), its Probe slots read from the old whole-message text as the lines they added to Stock (so they carry the old
+"Mode: PROBE." wording Son queued), six requests, all clean. Probe running on two turns puts its instructions in two
+turn messages; the check counts a mode's block as that turn's content (it is still checked against the system
+prompt), like the step and level lines.
+
 Full results: `datasets/spark-runner-prompt-dedup/dedup-checks.json`. The original profile is byte-identical to what
 the runner sent before today (checked: a No-context first request against the old code's render, and the first
 request after restoring the exact checkpoints for bp35 level 2 and cd82 level 3 against the saved requests: only the
