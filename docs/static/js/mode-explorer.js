@@ -41,14 +41,19 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   How-to and tips (the Boss, #arc-3 6-Oct 12:52 ET: "Are there tooltips or instructions on the page?"): a short "How to
   use this page" panel under the title, open on a first visit and closed after that unless it was last opened by hand
   (its own localStorage key), and a hover tip plus an accessible label on every control.
+  Help tour (Son, #arc-3 6-Oct 13:10 ET: "Have like a 'Help' icon, and do a demo"): the "?" in the dock starts
+  mode-tour.js, which walks every control with a spotlight and runs a demo through tourHost below. While it runs,
+  saveStore and syncUrl do nothing, so the demo's game, level, queue and settings live in memory only; when it ends
+  the person's own store and view are put back from a copy taken at the start, and Play is locked (playCtx.demo).
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-ht1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart, playRequest } from './spark-runner.js?v=20261006-tour1';
 import { renderStartBoard } from './start-board.js?v=20261006-ht1';
+import { startTour, flyChip, pause } from './mode-tour.js?v=20261006-tour1';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
@@ -87,6 +92,8 @@ const SPARK = {};   // `${game}:${context}` -> { tally: {level: {played, cleared
 let DATA = null;    // modes.json
 let STUCK = null;   // stuck-levels.json (null until loaded; false if it failed)
 let store = loadStore();
+// The guided tour's copy of the person's own store and view (null when no tour runs). While set, nothing is saved.
+let TOUR = null;
 state.context = params.get('ctx') === 'none' ? 'none' : params.get('ctx') === 'carried' ? 'carried' : store.context;
 
 // ---------------------------------------------------------------- local store
@@ -99,6 +106,7 @@ function loadStore() {
   } catch { return { customModes: [], schemes: {}, game: null, context: 'carried' }; }
 }
 function saveStore() {
+  if (TOUR) return;   // the tour's demo is never saved; the person's own store comes back when it ends
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
   catch (e) { flash(`Could not save in this browser (${e.message}). Use Export to keep your work.`); }
 }
@@ -140,6 +148,7 @@ function settingsSummary(s) {
 // ---------------------------------------------------------------- URL
 
 function syncUrl() {
+  if (TOUR) return;
   const q = new URLSearchParams();
   if (state.view === 'prompts') { q.set('view', 'prompts'); q.set('mode', state.mode); if (state.cmp !== 'stock') q.set('cmp', state.cmp); }
   else if (state.game) {
@@ -770,6 +779,7 @@ async function importJson(file) {
 function playCtx(g, q) {
   const context = state.context;
   return { game: g, level: q.start_level, scheme: q, variant: state.v, context, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen,
+    demo: () => !!TOUR,
     onJobs: (game, tally, harvest) => { SPARK[`${game}:${context}`] = { tally, harvest }; if (game === state.game && context === state.context && state.view === 'queue') renderLevels(); },
     onContext: (c) => { state.context = c; store.context = c; saveStore(); state.open = -1; render(); } };
 }
@@ -858,8 +868,83 @@ function setupHowto() {
   });
 }
 
+// ---------------------------------------------------------------- guided tour (mode-tour.js)
+
+// The demo uses Probe, Hypothesize and Execute when they are shown, else the first visible modes after Stock.
+function demoModeIds() {
+  const shown = allModes().filter(m => m.id !== 'stock');
+  const want = ['probe', 'hypothesize', 'execute'].filter(id => shown.some(m => m.id === id));
+  for (const m of shown) if (want.length < 3 && !want.includes(m.id)) want.push(m.id);
+  return want;
+}
+
+const tourHost = {
+  ready: () => !!(DATA && STUCK && sidebarGames().length),
+  notReady: () => flash(STUCK === false ? 'The tour needs the game list, which did not load.' : 'The page is still loading; try the tour again in a moment.'),
+  // a sample game other than the one open (hardest first), its stuck level when Play can start there, else level 1
+  begin() {
+    TOUR = { store: JSON.stringify(store), state: { view: state.view, game: state.game, open: state.open, context: state.context, v: state.v, mode: state.mode, cmp: state.cmp } };
+    const games = sidebarGames();
+    const g = games.find(x => x.game !== state.game) || games[0];
+    const lv = g.stuck_level && levelStart(g, g.stuck_level, state.v, state.context).ok ? g.stuck_level : 1;
+    TOUR.demo = { code: g.game, nickname: g.nickname, level: lv };
+    store.schemes[g.game] = { start_level: g.stuck_level || 1, slots: [], updated: null };   // in memory only
+    state.view = 'queue'; state.open = -1;
+    render();
+  },
+  end() {
+    const t = TOUR; if (!t) return;
+    store = JSON.parse(t.store);
+    Object.assign(state, t.state);
+    TOUR = null;
+    renderGamebar.scrolled = false;
+    render();
+  },
+  demo: () => TOUR.demo,
+  demoGame() {
+    if (!TOUR || state.game === TOUR.demo.code) return;
+    renderGamebar.scrolled = false;   // bring the demo game into view in the list
+    pickGame(TOUR.demo.code);
+  },
+  demoLevel() { const g = currentGame(); if (TOUR && g) pickLevel(g, TOUR.demo.level); },
+  // Puts the demo modes into the demo queue, each flying in from the bar when animate is set. live() turns false when
+  // the person moves to another step (which fills the rest at once) or leaves the tour.
+  async fillQueue(live, animate) {
+    if (!TOUR) return;
+    tourHost.demoGame(); tourHost.demoLevel();
+    const q = queueOf(currentGame());
+    for (const id of demoModeIds()) {
+      if (!TOUR || !live()) return;
+      if (q.slots.some(s => s.mode === id)) continue;
+      if (animate) {
+        await flyChip([...$('modes').querySelectorAll('.mx-mode')].find(b => b.textContent === findMode(id).name), live);
+        if (!TOUR || !live() || q.slots.some(s => s.mode === id)) return;
+      }
+      addItem(id);
+      if (animate) await pause(200);
+    }
+  },
+  settings(i) {
+    if (!TOUR) return;
+    const g = currentGame();
+    state.open = g && queueOf(g).slots[i] ? i : -1;
+    renderQueueArea();
+  },
+  // What Play would send for the demo queue, in words (the request itself is built by spark-runner.js)
+  playPreview() {
+    const g = currentGame(), q = queueOf(g);
+    let req;
+    try { req = playRequest(playCtx(g, q)); } catch (e) { return [`Nothing: ${e.message}`]; }
+    return [`Game: ${g.nickname}, starting at level ${req.stuck_level}`,
+      `${req.context === 'none' ? 'No context' : 'Carry context'}, ${req.variant === 'daniel' ? "Franzen's" : "Son's"} wording`,
+      `Queue: ${req.scheme.map(s => s.name + (s.version ? ` v${s.version.version}` : '')).join(', ') || 'empty'}, then ${req.stock.name}${req.stock.version ? ` v${req.stock.version.version}` : ''}`,
+      `${req.samples} samples, up to ${req.max_turns} turns each`];
+  },
+};
+
 async function main() {
   setupHowto();
+  $('tourhelp').onclick = () => startTour(tourHost);
   trackNav();
   try {
     const r = await fetch('./static/data/modes.json', { cache: 'no-cache' });

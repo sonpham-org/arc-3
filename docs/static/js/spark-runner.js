@@ -38,6 +38,8 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     level buttons counts only jobs of the selected kind. Jobs from before the option carried context.
   - Hover tips (added 6-Oct, the Boss: "Are there tooltips or instructions on the page?"): Play (or why it is off),
     samples and turn cap, the runner line, each job's status or place in line, its queue, Cancel, and every column.
+  - Guided tour (added 6-Oct, Son: "Have like a 'Help' icon, and do a demo"): playRequest hands the tour the request
+    Play would send, to show it without sending; Play does nothing while ctx.demo() says the tour is running.
 SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
@@ -186,6 +188,9 @@ function buildRequest(ctx) {
   };
 }
 
+// The exact request Play would send now, for the guided tour's "what Play would send" (mode-tour.js); never sent there.
+export function playRequest(ctx) { return buildRequest(ctx); }
+
 // Why Play is off for this game and level, or '' when it can run.
 function blocked(g, level, variant, context) {
   if (stuckPoints === false) return health && health.message ? `${health.message} Nothing can start; past results still show below.`
@@ -261,6 +266,8 @@ export function renderPlayRow(box, ctx) {
       : ' Start: the snapshot, with the conversation rebuilt from stored transcripts (no exact start for this level yet).'));
   box.append(note);
   play.onclick = async () => {
+    // the guided tour never sends anything (the page is inert then too; this is the second lock)
+    if (ctx.demo && ctx.demo()) return;
     // (exact or rebuilt is decided by the runner when the job is queued; the job card shows which)
     let req;
     try { req = buildRequest(ctx); } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }

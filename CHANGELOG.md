@@ -15,6 +15,26 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-tour]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** a "?" Help button in the Mode explorer's pinned bar, next to Queue and Prompts, that starts a guided tour
+  with a demo. Son, #arc-3 6-Oct 13:10 ET: "You can even do a demo too. Have like a 'Help' icon, and do a demo."
+- **How:** new docs/static/js/mode-tour.js. A dim layer with the lit controls cut out (even-odd clip path) and a caption
+  card (step count, Back / Next / Skip, arrow keys, Esc, focus kept in the card) walks the game list, level buttons,
+  context switch, board, mode bar, queue, samples and turn cap, Play and results. The demo picks a sample game and
+  level, flies Probe, Hypothesize and Execute into the queue, opens the first turn's settings, and on the Play step can
+  list what Play would send (spark-runner.js playRequest, the real request builder) without sending it.
+- **Safety:** while the tour runs, mode-explorer.js saves nothing (saveStore and syncUrl return early), the page is
+  inert, a transparent layer takes every click, and Play returns at once (playCtx.demo). On Finish, Skip or Esc the
+  person's own store, view, game, level and context are put back from a copy taken at the start.
+- **Phone and motion:** on a phone the card sits along the bottom and each step scrolls its control under the pinned
+  bars; with reduced motion the modes are placed without the flying animation.
+- **Checked:** headless Chromium on desktop and a phone-sized screen against the live site's read routes (writes
+  refused by the local server): every step lights its control and keeps the card on screen; the saved queue is
+  byte-identical before, at every step and after the tour (Finish and Esc mid-tour); no write request of any kind was
+  attempted, including a click aimed at the real Play button under the shade; no page errors.
+
 ## [2026.10.06-mode-explorer-howto]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
