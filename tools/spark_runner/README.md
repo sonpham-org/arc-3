@@ -80,7 +80,8 @@ whether its first request equalled the saved one); otherwise the snapshot ("rebu
 Harvest: while no Play sample is queued or running, up to two one-sample Stock runs from RESET on the public games
 outside the held-out eight (game with the fewest harvest runs first), caps 40 turns / 400 actions / 150 minutes.
 A queued Play sample kills every harvest sample at once (job "preempted"; checkpoints already written stay).
-Harvest jobs are hidden from `GET /api/jobs` unless `?kind=harvest|all`.
+Harvest jobs are hidden from `GET /api/jobs` unless `?kind=harvest|all`. When harvest is busy, a Play press waits one scheduler tick (about two seconds) while
+harvest is stopped.
 
 ```bash
 curl -s localhost:8787/api/health | python3 -m json.tool      # "harvest" block and "exact_starts" counts

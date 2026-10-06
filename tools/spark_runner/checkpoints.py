@@ -181,8 +181,15 @@ def rebuild_index() -> dict:
 
 
 def index() -> dict:
-    idx = _read_json(ROOT / "index.json")
-    return idx if idx else rebuild_index()
+    """The index, rebuilt when any checkpoint is newer than it: two samples saving at the same moment each rebuild
+    it and the last rename wins, so a row can go missing until the next save; checking on read closes that gap."""
+    path = ROOT / "index.json"
+    idx = _read_json(path)
+    if idx:
+        built = path.stat().st_mtime
+        if not any(m.stat().st_mtime > built for m in ROOT.glob("*/*/*/meta.json")):
+            return idx
+    return rebuild_index()
 
 
 def chosen(game: str, level: int, variant: str) -> dict | None:
