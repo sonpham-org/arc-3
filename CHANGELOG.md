@@ -15,6 +15,30 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-prompt-dedup]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** the Spark runner's prompts no longer repeat any instruction (Astra's notes, approved by the Boss in #arc-3 at
+  17:07 ET). Every standing instruction is in the system prompt once; the turn message has only this turn's facts and,
+  last, the selected mode's instructions. Every mode uses it, Stock included. The Lean toggle and Stock (lean) are gone.
+- **How (runner):** new prompt profile "dedup" (tools/spark_runner/prompt_profiles.py), applied at run time through the
+  runner's hooks, never by editing Franzen's bundle: a rewritten system prompt (each instruction once, merged, the
+  edge-bar contradiction resolved), a one-sentence tool description, the harness's turn message filtered to its facts,
+  short game-over / level-start / retained-function / stop-detail / retry texts, the harness's short resume on yielded
+  turns, and the same treatment for a carried conversation built under the old prompts. "original" stays selectable
+  for comparison with old runs and is byte-identical to before. Every job, sample and checkpoint records its profile;
+  the queued Leapfrog job gets the default stamped when it starts. Checkpoint restores no longer carry a system
+  prompt. Slots are now `instructions` (old `prompt` + `stock_template` slots still work). New: dupcheck.py (whole
+  request, sentence and meaning level), render_requests.py (real requests with a scripted stand-in model: preview,
+  check, page data), POST /api/preview-request (and the site relay route).
+- **How (site):** the Prompts view and mode editor show three labelled parts (system prompt, this turn, mode
+  instructions) and a "Preview request" button with the exact assembled messages and their duplicate check; "Full
+  prompt" is gone. Modes are instruction-only (modes_store.py accepts `instructions`, record_play keeps them and the
+  profile). Results label each job's profile and say the Stock tally was measured with the original prompts.
+- **Checked:** 13 cases (exact, rebuilt, fresh and No-context starts, both wordings), six kinds of turn each, 78
+  requests: zero repeated instructions with dedup; the original prompts show thousands. Plan, inventory and side-by-side
+  texts: docs/plans/2026-10-06-prompt-dedup.md.
+
 ## [2026.10.06-mode-editor-clarity]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

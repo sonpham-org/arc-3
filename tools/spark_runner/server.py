@@ -17,6 +17,9 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     POST /api/settings                harvest on/off and lanes (bearer key)
     GET  /api/start-board?game=&level=&variant=&context=   the board at the start Play would use there (boards.py; public)
     GET  /api/replay-starts           per trainable game, the levels a No-context job can start from (replays.py; public)
+    POST /api/preview-request         {game, level, variant, context, prompt_profile, mode, name, instructions}: the exact
+                                      first request Play would send there with that mode, rendered with no model
+                                      (render_requests.py), plus the duplicate check of it (dupcheck.py); key needed
   A job = one game's starting level, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
   and N samples (default 10). The start is EXACT when an exact checkpoint exists for that game, level and variant
   (checkpoints.py: full request body, harness state, actions from RESET, written whenever a level is cleared);
@@ -41,6 +44,7 @@ SRP/DRY check: Pass - the game is played only by sample.py through Son's harness
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -64,6 +68,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import checkpoints  # noqa: E402
 import replays  # noqa: E402
+import prompt_profiles  # noqa: E402
 from modes import ModeError, build_delta  # noqa: E402
 
 HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
@@ -136,10 +141,23 @@ class Slot(BaseModel):
     mode: str = Field(min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=64)
     base: Literal["turn", "game_over", "level_start"] = "turn"
-    prompt: str = Field(min_length=1, max_length=20000)          # the mode's text as shown on the page
-    stock_template: str = Field(min_length=1, max_length=20000)  # Stock text of the same surface and variant
+    # The mode's turn-only instructions (prompt_profiles.py; empty for Stock). Pages from before 6-Oct send the
+    # full template instead (prompt + stock_template); sample.slot_instructions turns that into instructions.
+    instructions: str | None = Field(default=None, max_length=4000)
+    prompt: str | None = Field(default=None, max_length=20000)
+    stock_template: str | None = Field(default=None, max_length=20000)
     settings: Settings = Settings()
-    lean: bool = False      # leave the stock tool-call reminders out of this slot's turn message (modes.apply_lean)
+
+
+class PreviewRequest(BaseModel):
+    game: str = Field(pattern=r"^[a-z0-9]{4}$")
+    level: int = Field(ge=1, le=12)
+    variant: Literal["son", "daniel"] = "son"
+    context: Literal["carried", "none"] = "carried"
+    prompt_profile: Literal["dedup", "original"] = "dedup"
+    mode: str = Field(default="stock", min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=64)
+    instructions: str = Field(default="", max_length=4000)
 
 
 class PlayRequest(BaseModel):
@@ -154,6 +172,7 @@ class PlayRequest(BaseModel):
     max_minutes: int = Field(default=120, ge=5, le=180)
     levels_to_play: int = Field(default=1, ge=1, le=9)
     context: Literal["carried", "none"] = "carried"
+    prompt_profile: Literal["dedup", "original"] = "dedup"   # prompt_profiles.py; "original" only to compare with old runs
     label: str | None = Field(default=None, max_length=120)
     by: str | None = Field(default=None, max_length=120)
 
@@ -238,13 +257,18 @@ def job_view(job_id: str, *, full: bool = False, line: list[str] | None = None) 
                                                        "final_level", "seconds", "error", "replay_verified", "generated_tokens",
                                                        "start_kind", "start_checkpoint", "first_request",
                                                        "checkpoints_written", "checkpoint_errors", "context",
-                                                       "replay_source")}
+                                                       "replay_source", "prompt_profile")}
             row["result"]["context"] = row["result"]["context"] or job.get("context", "carried")
         samples.append(row)
     view = {k: job.get(k) for k in ("id", "created", "game", "stuck_level", "variant", "samples", "status", "label", "by",
                                     "caps", "scheme_summary", "model", "conversation_exact", "finished", "kind",
-                                    "start_kind", "start_checkpoint", "preempted", "context", "replay_source")}
+                                    "start_kind", "start_checkpoint", "preempted", "context", "replay_source",
+                                    "prompt_profile", "prompt_profile_assigned")}
     view["kind"] = view["kind"] or "play"
+    # Jobs that finished before prompt profiles (6-Oct) ran the original prompts; one still waiting runs the default.
+    if not view["prompt_profile"]:
+        view["prompt_profile"] = (prompt_profiles.DEFAULT_PROFILE if view["status"] in ("queued", "running")
+                                  else "original")
     view["context"] = view["context"] or "carried"
     view["start_kind"] = view["start_kind"] or ("exact" if job.get("conversation_exact") else "rebuilt")
     if view["kind"] == "play" and view["status"] in ("queued", "running"):
@@ -386,6 +410,11 @@ def tick() -> None:
                 def started(j, k=k):
                     j["sample_state"][k] = "running"
                     j["status"] = "running"
+                    if not j.get("prompt_profile"):
+                        # queued before prompt profiles existed: it runs under the default (sample.py does the
+                        # same with its spec); the job says so, and when
+                        j["prompt_profile"] = prompt_profiles.DEFAULT_PROFILE
+                        j["prompt_profile_assigned"] = f"at start, {now()} (queued before prompt profiles)"
                 update_job(job["id"], started)
         # harvest when idle: no Play job in line and no Play sample still running
         settings = runner_settings()
@@ -419,16 +448,18 @@ def start_harvest() -> None:
     job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4] + "--" + game
     d = JOBS / job_id
     (d / "samples" / "0").mkdir(parents=True)
-    stock = {"key": "0:stock", "mode": "stock", "name": "Stock", "base": "turn", "prompt": "stock",
-             "stock_template": "stock", "settings": dict(checkpoints.STOCK_SETTINGS)}
+    stock = {"key": "0:stock", "mode": "stock", "name": "Stock", "base": "turn", "instructions": "",
+             "settings": dict(checkpoints.STOCK_SETTINGS)}
     spec = {"kind": "harvest", "game": game, "game_id": game_id_for(game), "stuck_level": 1, "variant": HARVEST_VARIANT,
             "scheme": [], "stock": stock, "start": {"kind": "reset"}, "caps": dict(HARVEST_CAPS),
+            "prompt_profile": prompt_profiles.DEFAULT_PROFILE,
             "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
     write_json(d / "spec.json", spec)
     job = {"id": job_id, "kind": "harvest", "created": now(), "game": game, "stuck_level": 1, "variant": HARVEST_VARIANT,
            "samples": 1, "status": "running", "label": "harvest: Stock from RESET for exact level starts", "by": "runner",
            "caps": spec["caps"], "scheme_summary": [], "model": {"model_id": MODEL_ID}, "conversation_exact": True,
-           "start_kind": "reset", "sample_state": ["running"], "finished": None}
+           "start_kind": "reset", "sample_state": ["running"], "finished": None,
+           "prompt_profile": prompt_profiles.DEFAULT_PROFILE}
     write_json(d / "job.json", job)
     log = open(d / "samples" / "0.log", "ab")
     PROCS[(job_id, 0)] = subprocess.Popen([PYTHON, str(HERE / "sample.py"), str(d), "0"], stdout=log,
@@ -486,6 +517,7 @@ def health() -> dict:
         j = read_json(JOBS / jid / "job.json", {}) or {}
         play_queue.append({"place": place, "job": jid, "game": j.get("game"), "level": j.get("stuck_level"),
                            "context": j.get("context", "carried"),
+                           "prompt_profile": j.get("prompt_profile") or prompt_profiles.DEFAULT_PROFILE,
                            "samples": j.get("samples"), "by": j.get("by"), "created": j.get("created")})
     return {"ok": True, "time": now(), "concurrency": CONCURRENCY,
             "samples_running": running - len(harvest_running), "samples_queued": queued,
@@ -588,22 +620,20 @@ def sample_turns(job_id: str, k: int) -> dict:
     return {"turns": [json.loads(x) for x in path.read_text().splitlines() if x.strip()]}
 
 
-@app.post("/api/play", dependencies=[Depends(require_key)])
-def play(req: PlayRequest) -> dict:
-    if req.game in HELD_OUT and not ALLOW_HELD_OUT:
-        raise HTTPException(403, f"{req.game} is one of the eight held-out games, which this runner does not play "
-                                 "(they stay out of prompt tuning); Son can switch that off on the runner")
+def resolve_start(game: str, level: int, variant: str, context: str) -> tuple[dict, str, str, str | None]:
+    """Where a Play job for this game and level starts: (start, start_kind, game_id, replay_source). Shared by
+    Play and the request preview (render_requests.py), so a preview starts where the job would."""
     # Exact checkpoint for this game, level and variant if there is one; else the rebuilt stuck-level snapshot.
-    snap_file = snapshot_path(req.game)
+    snap_file = snapshot_path(game)
     snap = read_json(snap_file)
-    cp = checkpoints.chosen(req.game, req.stuck_level, req.variant)
+    cp = checkpoints.chosen(game, level, variant)
     replay_source = None
-    if req.context == "none":
+    if context == "none":
         # No context: the level's start board by a verified replay, and a new game's first turn
-        r = replays.start_for(req.game, req.stuck_level, req.variant)
-        game_id = game_id_for(req.game)
+        r = replays.start_for(game, level, variant)
+        game_id = game_id_for(game)
         if r is None or game_id is None:
-            raise HTTPException(409, f"{req.game} level {req.stuck_level} has no verified replay to its start, so it "
+            raise HTTPException(409, f"{game} level {level} has no verified replay to its start, so it "
                                      "cannot be played without context")
         start = {"kind": "replay", "source": r["source"], "checkpoint": r.get("checkpoint"), "actions": r["actions"],
                  "expected": r["expected"], "id": r.get("checkpoint")}
@@ -611,30 +641,43 @@ def play(req: PlayRequest) -> dict:
     elif cp is not None:
         start = {"kind": "checkpoint", "path": cp["path"], "id": cp["id"]}
         start_kind, game_id = "exact", cp["game_id"]
-    elif req.stuck_level == 1:
+    elif level == 1:
         # Level 1 is the game's first frame: a fresh game from RESET, as harvest plays it, for any game on disk.
-        game_id = game_id_for(req.game)
+        game_id = game_id_for(game)
         if game_id is None:
-            raise HTTPException(404, f"{req.game} is not among the runner's games")
+            raise HTTPException(404, f"{game} is not among the runner's games")
         start, start_kind = {"kind": "reset"}, "reset"
     else:
         if snap is None:
-            raise HTTPException(404, f"no starting point for {req.game}: nothing to play from")
-        if snap["stuck_level"] != req.stuck_level:
-            raise HTTPException(409, f"{req.game} has no exact start at level {req.stuck_level} yet, and its snapshot "
+            raise HTTPException(404, f"no starting point for {game}: nothing to play from")
+        if snap["stuck_level"] != level:
+            raise HTTPException(409, f"{game} has no exact start at level {level} yet, and its snapshot "
                                      f"starts at level {snap['stuck_level']}")
-        verified = (read_json(SNAPSHOTS / "verified.json", {}) or {}).get(req.game)
+        verified = (read_json(SNAPSHOTS / "verified.json", {}) or {}).get(game)
         if not verified or not verified.get("ok"):
-            raise HTTPException(409, f"the snapshot for {req.game} has not passed its replay check")
+            raise HTTPException(409, f"the snapshot for {game} has not passed its replay check")
         bare = not snap["actions"] and not snap["turns"]
         start = {"kind": "snapshot", "path": str(snap_file)}
         start_kind, game_id = ("reset" if bare else "rebuilt"), snap["game_id"]
+    return start, start_kind, game_id, replay_source
+
+
+@app.post("/api/play", dependencies=[Depends(require_key)])
+def play(req: PlayRequest) -> dict:
+    if req.game in HELD_OUT and not ALLOW_HELD_OUT:
+        raise HTTPException(403, f"{req.game} is one of the eight held-out games, which this runner does not play "
+                                 "(they stay out of prompt tuning); Son can switch that off on the runner")
+    start, start_kind, game_id, replay_source = resolve_start(req.game, req.stuck_level, req.variant, req.context)
     slots = []
     for i, s in enumerate(req.scheme + [req.stock]):
-        try:
-            build_delta(s.mode, s.stock_template, s.prompt)
-        except ModeError as exc:
-            raise HTTPException(422, f"slot {i + 1}: {exc}")
+        if s.instructions is None and not (s.prompt and s.stock_template):
+            raise HTTPException(422, f"slot {i + 1}: a slot needs instructions (or, from an older page, prompt and "
+                                     "stock_template)")
+        if s.instructions is None:
+            try:
+                build_delta(s.mode, s.stock_template, s.prompt)
+            except ModeError as exc:
+                raise HTTPException(422, f"slot {i + 1}: {exc}")
         d = s.model_dump()
         d["key"] = f"{i}:{s.mode}"
         d["settings"] = s.settings.model_dump()
@@ -644,13 +687,14 @@ def play(req: PlayRequest) -> dict:
     (d / "samples").mkdir(parents=True)
     spec = {"kind": "play", "game": req.game, "game_id": game_id, "stuck_level": req.stuck_level, "variant": req.variant,
             "scheme": slots[:-1], "stock": slots[-1], "start": start, "context": req.context,
-            "capture": req.context == "carried",
+            "prompt_profile": req.prompt_profile, "capture": req.context == "carried",
             "caps": {"max_actions": req.max_actions, "max_turns": req.max_turns, "max_minutes": req.max_minutes, "levels_to_play": req.levels_to_play},
             "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
     write_json(d / "spec.json", spec)
     job = {"id": job_id, "created": now(), "game": req.game, "stuck_level": req.stuck_level, "variant": req.variant,
            "samples": req.samples, "status": "queued", "label": req.label, "by": req.by, "caps": spec["caps"],
-           "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"], "lean": s["lean"]} for s in slots[:-1]],
+           "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"]} for s in slots[:-1]],
+           "prompt_profile": req.prompt_profile,
            "model": {"model_id": MODEL_ID}, "conversation_exact": start_kind != "rebuilt", "kind": "play",
            "start_kind": start_kind, "start_checkpoint": start.get("id"), "context": req.context,
            "replay_source": replay_source,
@@ -659,7 +703,74 @@ def play(req: PlayRequest) -> dict:
     line = play_line()
     return {"job": job_id, "queued_samples": req.samples,
             "place_in_line": line.index(job_id) + 1 if job_id in line else None, "start_kind": start_kind,
-            "start_checkpoint": start.get("id"), "context": req.context, "replay_source": replay_source}
+            "start_checkpoint": start.get("id"), "context": req.context, "replay_source": replay_source,
+            "prompt_profile": req.prompt_profile}
+
+
+PREVIEWS = HOME / "previews"
+
+
+def preview_view(body: dict) -> dict:
+    """A request body as the page shows it: every message's text parts in order, images as labelled stand-ins (the
+    pictures are the board, which the page draws already), the tool schema and the sampling settings."""
+    msgs = []
+    for m in body.get("messages") or []:
+        c = m.get("content")
+        parts = [{"kind": "text", "text": c}] if isinstance(c, str) else [
+            {"kind": "text", "text": p.get("text", "")} if p.get("type") == "text" else {"kind": "image"}
+            for p in c or [] if isinstance(p, dict)]
+        row = {"role": m.get("role"), "parts": parts}
+        if m.get("tool_calls"):
+            row["tool_calls"] = [((t.get("function") or {}).get("arguments") or "")[:2000] for t in m["tool_calls"]]
+        msgs.append(row)
+    return {"messages": msgs, "tools": body.get("tools"),
+            "settings": {k: v for k, v in body.items() if k not in ("messages", "tools", "model")}}
+
+
+@app.post("/api/preview-request", dependencies=[Depends(require_key)])
+def preview_request(req: PreviewRequest) -> dict:
+    """The first request a Play job would send for this game, level and mode, built by the real harness with no model
+    (render_requests.py preview), and the duplicate check of it. Cached per input; a render takes a few seconds."""
+    if req.game in HELD_OUT and not ALLOW_HELD_OUT:
+        raise HTTPException(403, f"{req.game} is one of the eight held-out games")
+    start, start_kind, game_id, replay_source = resolve_start(req.game, req.level, req.variant, req.context)
+    slot = {"key": f"0:{req.mode}", "mode": req.mode, "name": req.name or req.mode, "base": "turn",
+            "instructions": req.instructions, "settings": dict(checkpoints.STOCK_SETTINGS)}
+    stock = {"key": "stock", "mode": "stock", "name": "Stock", "base": "turn", "instructions": "",
+             "settings": dict(checkpoints.STOCK_SETTINGS)}
+    spec = {"kind": "play", "game": req.game, "game_id": game_id, "stuck_level": req.level, "variant": req.variant,
+            "scheme": [slot], "stock": stock, "start": start, "context": req.context,
+            "prompt_profile": req.prompt_profile, "capture": False,
+            "caps": {"max_actions": 250, "max_turns": 20, "max_minutes": 40, "levels_to_play": 1},
+            "model": {"base_url": "http://127.0.0.1:9/v1", "model_id": MODEL_ID}}
+    key = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:24]
+    cached = read_json(PREVIEWS / f"{key}.json")
+    if cached:
+        return cached
+    out = PREVIEWS / f"{key}.work"
+    PREVIEWS.mkdir(parents=True, exist_ok=True)
+    (PREVIEWS / f"{key}.spec.json").write_text(json.dumps(spec))
+    try:
+        r = subprocess.run([PYTHON, str(HERE / "render_requests.py"), str(PREVIEWS / f"{key}.spec.json"), str(out),
+                            "preview"], capture_output=True, text=True, timeout=55)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "building the preview took too long")
+    first = out / "requests" / "01.json.gz"
+    if r.returncode != 0 or not first.exists():
+        last = ((r.stderr or r.stdout).strip().splitlines() or ["the harness built no request"])[-1]
+        raise HTTPException(500, f"preview failed: {last[-300:]}")
+    import dupcheck
+    body = dupcheck.load(first)
+    check = dupcheck.check(body)
+    view = {"game": req.game, "level": req.level, "variant": req.variant, "context": req.context,
+            "prompt_profile": req.prompt_profile, "mode": req.mode, "start_kind": start_kind,
+            "start_checkpoint": start.get("id"), "replay_source": replay_source, "built": now(),
+            "request": preview_view(body),
+            "duplicate_check": {"ok": check["ok"], "fail_counts": check["fail_counts"],
+                                "failures": {k: check[k][:5] for k in check["fail_counts"] if check[k]}}}
+    write_json(PREVIEWS / f"{key}.json", view)
+    shutil.rmtree(out, ignore_errors=True)
+    return view
 
 
 @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_key)])

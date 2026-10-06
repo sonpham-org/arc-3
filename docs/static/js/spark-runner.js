@@ -5,8 +5,8 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
   site's own relay, /api/v1/spark-runner/* (railway/spark_runner.py), which forwards over the ARC tailnet to the
   Spark runner on Jethro (tools/spark_runner/server.py) and keeps every job it sees in the site's database.
   - renderPlayRow: the Play button with two small inline fields (samples, turn cap) next to it, and one line saying what Play will do or why it is off (runner unreachable, no starting point, replay
-    not verified, held-out game). Play sends the queue (each item's mode text, the Stock text it is diffed against,
-    and its settings), the Stock tail, the version, samples and caps; the action and minute caps keep their
+    not verified, held-out game). Play sends the queue (each item's mode instructions and settings), the Stock tail,
+    the wording, the prompt profile, samples and caps; the action and minute caps keep their
     defaults. Signing in to the site is all Play and Cancel need: the relay adds the runner's key on the server
     (the Boss, 6-Oct 11:01 ET: "It needs a runner key?!?"), so the page never asks for it or keeps it. A key left in
     this browser by the earlier key prompt is deleted on load.
@@ -14,9 +14,18 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
     the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
     actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
-  Each slot also carries its mode's lean flag (lean turn message: the runner leaves the stock tool-call reminders out,
-  added 6-Oct after the Boss's 16:39 ET note) and the mode version it came from; the site stores the exact text and versions with the job,
-  and every job card shows them (versions on the queue tags, the full wording in a fold-out).
+  Prompt profiles (6-Oct, the Boss approved Astra's notes at 17:07 ET): each slot sends its mode's turn-only
+  instructions (ctx.instructionsOf) and the mode version it came from, and the request names the prompt profile
+  ("dedup", the default for every mode including Stock: every standing instruction once in the system prompt, the turn
+  message only this turn's facts plus the mode's instructions; "original" only to compare with runs from before).
+  The site stores the exact instructions and versions with the job, and every job card shows them and its profile.
+  The Stock comparison says which prompts it was measured with: the full-run stock tally and every job before 6-Oct
+  used the original prompts, so it is not a like-for-like baseline for dedup jobs until fresh Stock runs exist; the
+  No-context Stock pool only counts jobs of the same profile.
+  - previewRequest / renderPreview: the exact first request Play would send for a game, level, wording, context and
+    mode, rendered by the runner's own harness with no model (runner /api/preview-request), drawn as its messages in
+    order with the mode's instructions marked, plus the runner's duplicate check of that request. Used by the Prompts
+    view and the mode editor.
   - Starting level (added 6-Oct, Son: "show all the levels as 1, 2, 3, 4, 5, 6 buttons"): every call takes the level the
     page has selected (ctx.level), not only the stuck level. levelStart says whether Play can start there and from what:
     an exact checkpoint for that game, level and wording; a fresh game for level 1 (the runner starts any public game
@@ -167,16 +176,10 @@ function clampSettings(s) {
 
 function buildRequest(ctx) {
   const v = ctx.variant;
-  // A mode with one wording is diffed against the Stock of that wording (base_variant), as custom modes always were.
-  // `version` names the stored mode version the text came from; the site keeps it with the job (modes_store.py).
-  const slotFor = (mode, settings) => {
-    const base = mode.base || 'turn';
-    const prompt = mode.variants[v].prompt;
-    const stockTemplate = ctx.stockText(mode.base_variant || v, base);
-    // lean: the runner leaves the stock tool-call reminders out of this slot's turn message (tools/spark_runner/modes.py)
-    return { mode: mode.id, name: mode.name, base, prompt, stock_template: stockTemplate, settings: clampSettings(settings),
-      lean: mode.lean === true, version: ctx.versionOf(mode, v) };
-  };
+  // Each slot is its mode's turn-only instructions (empty for Stock). `version` names the stored mode version the
+  // text came from; the site keeps it with the job (modes_store.py).
+  const slotFor = (mode, settings) => ({ mode: mode.id, name: mode.name, base: mode.base || 'turn',
+    instructions: ctx.instructionsOf(mode, v), settings: clampSettings(settings), version: ctx.versionOf(mode, v) });
   const scheme = ctx.scheme.slots.map((slot) => {
     const m = ctx.findMode(slot.mode);
     if (!m) throw new Error(`the queue uses a mode that no longer exists (${slot.mode})`);
@@ -185,10 +188,16 @@ function buildRequest(ctx) {
   const stock = ctx.findMode('stock');
   return {
     game: ctx.game.game, stuck_level: ctx.level, variant: v, scheme, context: ctx.context === 'none' ? 'none' : 'carried',
+    prompt_profile: profileOf(ctx),
     stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
     max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: null,
   };
 }
+
+export const PROFILE_NAME = { dedup: 'Dedup prompts', original: 'Original prompts' };
+export function profileOf(ctx) { return ctx.profile === 'original' ? 'original' : 'dedup'; }
+// Jobs from before prompt profiles (6-Oct) ran the original prompts; the runner says so in each job view.
+function jobProfile(j) { return j.prompt_profile === 'dedup' ? 'dedup' : 'original'; }
 
 // The exact request Play would send now, for the guided tour's "what Play would send" (mode-tour.js); never sent there.
 export function playRequest(ctx) { return buildRequest(ctx); }
@@ -251,15 +260,22 @@ export function renderPlayRow(box, ctx) {
   };
   const samples = num('samples', 'samples', 1, 20, 'How many times to play the level from the same starting point');
   const turns = num('turns max', 'max_turns', 1, 60, 'Model turns per sample before it stops (the queue counts toward this)');
+  const prof = h('select', 'mx-profsel');
+  prof.setAttribute('aria-label', 'Prompts');
+  prof.title = 'Which prompts the runner sends. Dedup (the default, every mode including Stock): each standing instruction once, in the system prompt; the turn message has only this turn\'s facts and the mode\'s instructions. Original: the prompts as they were before 6-Oct, only to compare with old runs.';
+  for (const [k, label] of Object.entries(PROFILE_NAME)) { const o = h('option', null, k === 'original' ? `${label} (old runs)` : label); o.value = k; prof.append(o); }
+  prof.value = profileOf(ctx);
+  prof.onchange = () => { if (ctx.onProfile) ctx.onProfile(prof.value); };
   const status = h('span', 'mx-runstatus', runnerLine());
   status.title = 'The Spark runner right now: whether the model answers, whose job is playing and how many wait in line.';
   const row = h('div', 'mx-playline');
-  row.append(seg, play, samples, turns, status);
+  row.append(seg, play, samples, turns, prof, status);
   box.append(row);
   const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
+  const pname = profileOf(ctx) === 'dedup' ? 'dedup prompts' : 'the original prompts';
   const note = h('p', 'mx-playnote', why || (q.slots.length
-    ? `Plays the queue, one mode per turn from the start of level ${lv}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
-    : `Empty queue: Play runs Stock only from level ${lv}, a baseline from the same starting point.`) +
+    ? `Plays the queue, one mode per turn from the start of level ${lv}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording and ${pname}.`
+    : `Empty queue: Play runs Stock only from level ${lv}, a baseline from the same starting point, with ${pname}.`) +
     (why ? '' : ls.kind === 'replay' ? ` No context: the board is replayed to the start of level ${lv}` +
         (ls.source === 'reset' ? ' (the first frame)' : ls.source === 'checkpoint' ? ' from a saved start\'s actions' : ' along the recorded winning line') +
         ' and checked; the model gets only the system prompt and a first-turn prompt for that board.'
@@ -333,10 +349,11 @@ function stockTally(g, level) {
 
 // Stock-only No-context Spark jobs at this level, pooled, optionally leaving one job out (its own card): the No-context
 // Stock comparison. The full-run stock tally carries context from the start of the game, so it is never used here.
-function noContextStock(jobs, level, skipId) {
+function noContextStock(jobs, level, skipId, profile) {
   let cleared = 0, n = 0;
   for (const j of jobs) {
     if (contextOf(j) !== 'none' || j.stuck_level !== level || j.id === skipId || (j.scheme_summary || []).length) continue;
+    if (jobProfile(j) !== profile) continue;   // Stock under other prompts is a different baseline
     for (const row of j.sample_rows || []) {
       const r = row.result;
       if (!r || r.outcome === 'error') continue;
@@ -347,15 +364,18 @@ function noContextStock(jobs, level, skipId) {
 }
 
 // The Stock comparison for one context, as {line (header sentence), pct (for a job card) }.
-function stockFor(ctx, jobs, context, skipId) {
+// profile: the prompts the comparison is for (the job's own, or the one selected for Play in the header line).
+function stockFor(ctx, jobs, context, skipId, profile = profileOf(ctx)) {
   const g = ctx.game, lv = ctx.level;
+  const pn = profile === 'dedup' ? 'dedup prompts' : 'original prompts';
   if (context === 'none') {
-    const st = noContextStock(jobs, lv, skipId);
-    return st ? { st, line: `Stock without context for this level: cleared in ${st.cleared} of ${st.n} Stock-only No-context samples (${pct(st.cleared, st.n)}).` }
-      : { st: null, line: 'No Stock comparison without context yet: nobody has played this level Stock-only in No-context mode. Play an empty queue with No context to get one. The full-run stock tally is not used here, because those runs carried context.' };
+    const st = noContextStock(jobs, lv, skipId, profile);
+    return st ? { st, line: `Stock without context for this level, ${pn}: cleared in ${st.cleared} of ${st.n} Stock-only No-context samples (${pct(st.cleared, st.n)}).` }
+      : { st: null, line: `No Stock comparison without context with ${pn} yet: nobody has played this level Stock-only in No-context mode with them. Play an empty queue with No context to get one. The full-run stock tally is not used here, because those runs carried context.` };
   }
   const st = stockTally(g, lv);
-  return { st, line: st ? `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}); those runs carried context from the start of the game, like the jobs here.`
+  const caveat = profile === 'dedup' ? ' Measured with the original prompts, before 6-Oct: not a like-for-like baseline for dedup jobs until fresh Stock runs with the dedup prompts exist.' : '';
+  return { st, original: profile === 'dedup', line: st ? `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}); those runs carried context from the start of the game, like the jobs here.${caveat}`
     : 'No stock tally for this level.' };
 }
 
@@ -379,7 +399,7 @@ function drawResults(box, ctx, data) {
     sec.append(h('h3', 'mx-ctxh', `${CONTEXT_NAME[context]}${context === cur ? '' : ' (the other kind; switch next to Play to start one)'}`));
     sec.append(h('p', 'mx-sum', stockFor(ctx, all, context).line));
     if (!jobs.length) sec.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${lv} ${context === 'none' ? 'without context' : 'with context carried'} yet. Build a queue and press Play.`));
-    for (const j of jobs) sec.append(jobCard(j, ctx, (data.records || {})[j.id], stockFor(ctx, all, context, j.id).st));
+    for (const j of jobs) sec.append(jobCard(j, ctx, (data.records || {})[j.id], stockFor(ctx, all, context, j.id, jobProfile(j))));
     box.append(sec);
   }
   const other = all.length - here.length;
@@ -414,7 +434,8 @@ function queueTags(j, ctx, rec) {
 }
 
 // The exact wording a job ran, as recorded by the site when Play was pressed: each slot's mode version, who saved
-// that version and when, its settings and full prompt text. Jobs from before recording started say so.
+// that version and when, its settings and its instructions (jobs from before 6-Oct: the whole turn message it sent).
+// Jobs from before recording started say so.
 function wordingBlock(rec, ctx) {
   const det = h('details', 'mx-wording');
   if (!rec) { det.append(h('summary', 'muted', 'Wording: not recorded (started before mode versions were kept)')); return det; }
@@ -430,7 +451,9 @@ function wordingBlock(rec, ctx) {
     box.append(h('div', 'mx-wset', `temp ${st.temperature ?? '–'} · ${st.thinking ? 'thinking' + (st.effort && st.effort !== 'default' ? ', ' + st.effort + ' effort' : '') + (st.thinking_budget ? ', ≤' + st.thinking_budget + ' tokens' : '') : 'no thinking'}` +
       ` · ${st.tool_calls != null ? st.tool_calls + ' tool calls' : 'any tool calls'} · ${st.actions != null ? '≤' + st.actions + ' actions' : 'any actions'}` +
       (s.lean ? ' · lean turn message (stock tool-call lines left out)' : '')));
-    const pre = h('pre', 'mx-wtext', s.prompt || '');
+    const instr = typeof s.instructions === 'string';
+    const pre = h('pre', 'mx-wtext', instr ? (s.instructions || '(no instructions: Stock)') : s.prompt || '');
+    if (!instr && s.prompt) box.append(h('div', 'mx-wset', 'Sent before 6-Oct as a whole turn message (original prompts):'));
     box.append(pre);
     det.append(box);
   }
@@ -453,7 +476,11 @@ function jobCard(j, ctx, rec, st) {
     : STATUS_TIP[j.status] || `Job status: ${j.status}`;
   const qt = queueTags(j, ctx, rec);
   qt.title = 'The queue this job ran, one mode per turn, with the version of each mode; Stock played the turns after it.';
-  top.append(stChip, sk, qt);
+  const pc = h('span', `chip mx-js ${jobProfile(j) === 'dedup' ? 'done' : 'queued'}`, jobProfile(j) === 'dedup' ? 'dedup prompts' : 'original prompts');
+  pc.title = jobProfile(j) === 'dedup' ? 'Ran with the dedup prompts: each standing instruction once in the system prompt; the turn message only this turn\'s facts and the mode\'s instructions.'
+    + (j.prompt_profile_assigned ? ` Queued before prompt profiles existed; given the default ${j.prompt_profile_assigned}.` : '')
+    : 'Ran with the original prompts (the harness as it was before 6-Oct, standing instructions repeated in every turn message).';
+  top.append(stChip, sk, pc, qt);
   card.append(top);
   const caps = j.caps || {};
   const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
@@ -461,6 +488,7 @@ function jobCard(j, ctx, rec, st) {
   if (caps.max_turns) meta.push(`up to ${caps.max_turns} turns`);
   if (j.by) meta.push(j.by);
   card.append(h('p', 'mx-jobmeta', meta.join(' · ')));
+  const cmp = st && st.st;
   if (j.label) card.append(h('p', 'mx-sum', j.label));
   card.append(wordingBlock(rec, ctx));
 
@@ -474,7 +502,7 @@ function jobCard(j, ctx, rec, st) {
     const turns = results.length ? results.reduce((a, r) => a + (r.turns || 0), 0) / results.length : null;
     const b = h('b', null, `Cleared in ${cleared} of ${done} (${pct(cleared, done)})`);
     line.append(b, document.createTextNode(
-      (st ? ` vs stock ${contextOf(j) === 'none' ? 'without context' : 'with context'} ${pct(st.cleared, st.n)}` : '') +
+      (cmp ? ` vs stock ${contextOf(j) === 'none' ? 'without context' : 'with context'} ${pct(cmp.cleared, cmp.n)}${st.original ? ' (measured with the original prompts)' : ''}` : '') +
       ` · levels gained ${s.levels_gained ?? '–'} · mean actions ${s.mean_actions ?? '–'}` +
       (turns != null ? ` · mean turns ${Math.round(turns * 10) / 10}` : '') +
       (s.errors ? ` · ${plural(s.errors, 'error')}` : '') +
@@ -518,4 +546,64 @@ function jobCard(j, ctx, rec, st) {
     card.append(cancel);
   }
   return card;
+}
+
+// ---------------------------------------------------------------- request preview
+
+// The exact first request Play would send for this game, level, wording, context, prompt profile and mode, rendered
+// by the runner's own harness with no model (tools/spark_runner/render_requests.py via the runner's
+// /api/preview-request), with the runner's duplicate check of it. Nothing is played or saved.
+export async function previewRequest(p) {
+  return call('preview-request', { method: 'POST', body: {
+    game: p.game, level: p.level, variant: p.variant === 'daniel' ? 'daniel' : 'son',
+    context: p.context === 'none' ? 'none' : 'carried', prompt_profile: p.profile === 'original' ? 'original' : 'dedup',
+    mode: p.mode || 'stock', name: p.name || null, instructions: p.instructions || '' } });
+}
+
+const ROLE_NAME = { system: 'System prompt', user: 'User message', assistant: 'Model reply (earlier turn)', tool: 'Tool result (earlier turn)' };
+
+// Draws a preview: a summary line, the duplicate check, the tool schema, then every message in order. A carried start
+// sends the earlier conversation too; those messages are folded away, the system prompt and this turn's message open.
+export function renderPreview(box, data, { header } = {}) {
+  box.textContent = '';
+  const req = data.request || {};
+  const msgs = req.messages || [];
+  const startName = { replay: 'no context (board replayed to the level start)', exact: 'exact saved start, its conversation carried',
+    rebuilt: 'snapshot, conversation rebuilt from transcripts', reset: 'fresh game' }[data.start_kind] || data.start_kind;
+  box.append(h('p', 'mx-sum', `${header || 'Exactly what Play would send first'}: ${data.game} level ${data.level}, ${data.variant === 'daniel' ? "Franzen's" : "Son's"} wording, ${startName}, ${PROFILE_NAME[data.prompt_profile] || data.prompt_profile}. ${msgs.length} messages; images are the board pictures, not shown here.`));
+  const dc = data.duplicate_check || {};
+  const bad = Object.entries(dc.fail_counts || {}).filter(([, n]) => n);
+  const chk = h('p', `mx-sum ${dc.ok ? 'mx-okline' : 'mx-warnline'}`, dc.ok
+    ? 'Duplicate check of this whole request (system prompt, tool definition, every message): no instruction is said twice.'
+    : `Duplicate check of this whole request found repeats: ${bad.map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ')}.`);
+  chk.title = 'The runner checks the assembled request sentence by sentence and by meaning (tools/spark_runner/dupcheck.py). Per-turn facts that recur in earlier turns (step, level, valid actions) are allowed.';
+  box.append(chk);
+  const tools = h('details', 'mx-pvmsg mx-pvtool');
+  const fn = ((req.tools || [])[0] || {}).function || {};
+  tools.append(h('summary', null, `Tool definition · ${fn.name || 'python'}`), h('pre', 'mx-wtext', JSON.stringify(req.tools || [], null, 1)));
+  box.append(tools);
+  const last = msgs.length - 1;
+  msgs.forEach((m, i) => {
+    const open = i === 0 || i === last;
+    const det = h('details', `mx-pvmsg mx-pv-${m.role}${i === last ? ' mx-pvlast' : ''}`);
+    det.open = open && i === last;
+    const label = i === last ? 'User message · this turn (what the mode adds is marked)' : ROLE_NAME[m.role] || m.role;
+    det.append(h('summary', null, `${i + 1}. ${label}`));
+    const body = h('div', 'mx-pvbody');
+    for (const part of m.parts || []) {
+      if (part.kind === 'image') { body.append(h('div', 'mx-pvimg', '[board image]')); continue; }
+      const text = part.text || '';
+      const k = i === last ? text.indexOf('Instructions for this turn (') : -1;
+      if (k < 0) { body.append(h('pre', 'mx-wtext', text)); continue; }
+      const end = text.indexOf('\n\n', k);
+      if (k > 0) body.append(h('pre', 'mx-wtext', text.slice(0, k)));
+      const mine = h('pre', 'mx-wtext mx-pvmode', end < 0 ? text.slice(k) : text.slice(k, end));
+      mine.title = 'The mode\'s instructions: the only part a mode sets';
+      body.append(mine);
+      if (end >= 0) body.append(h('pre', 'mx-wtext', text.slice(end)));
+    }
+    for (const t of m.tool_calls || []) body.append(h('pre', 'mx-wtext muted', `tool call: ${t}`));
+    det.append(body);
+    box.append(det);
+  });
 }

@@ -6,7 +6,7 @@ PURPOSE: The Mode explorer's guided tour (docs/mode-explorer.html), started by t
   the page and cuts holes around one control (or a few) at a time, with a small caption card: step counter, Back /
   Next / Skip, arrow keys, Esc. Steps: game list, level buttons, context switch, board, mode bar, the pencil that
   opens the mode editor (added 6-Oct with the editor rework: where the text goes, locked harness lines, the one
-  editable instruction, lean turn message), queue, samples and turn cap, Play, results, and the Help button itself.
+  the editor's three parts: system prompt, this turn, the mode's instructions), queue, samples and turn cap, Play, results, and the Help button itself.
   Demo: while the tour runs, the page (through the host object mode-explorer.js passes in) picks a sample game and
   level, flies Probe, Hypothesize and Execute from the mode bar into the queue, opens one turn's settings for a moment,
   and the Play step can show what Play would send without sending it. The host keeps all of that in memory only (no
@@ -56,7 +56,7 @@ function steps(host) {
       targets: () => [$('#modes'), $('#queue')],
       enter: (live) => host.fillQueue(live, true) },
     { title: 'Editing a mode',
-      text: 'The pencil opens the mode editor in a large window. It shows where the text goes: the system prompt is the same for every mode and a mode never changes it; a mode only edits the turn message, sent as the user message at the start of each turn it runs. Grey lines with a lock come from the harness and cannot be edited there; the highlighted box, the mode\'s own instruction, is the only text you change. The tool-call lines the system prompt already says are marked, and "Lean turn message" leaves them out: Stock (lean) is Stock with that on, to test it against plain Stock.',
+      text: 'The pencil opens the mode editor. It shows what the model receives in three parts: the system prompt (the same for every mode, read-only), this turn\'s facts (filled in by the harness every turn, read-only), and the mode\'s instructions, added at the end of the turn message: the only text a mode sets. Preview request shows the exact request Play would send with them.',
       targets: () => [$('#modes .mx-chipedit') || $('#modes')],
       enter: (live) => host.fillQueue(live, false) },
     { title: 'The queue',

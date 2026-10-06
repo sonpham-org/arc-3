@@ -49,6 +49,9 @@ AGENT_SKIP = {
     "_model", "_timeout", "_api_key", "_tool_steps", "_python_timeout", "_yield_seconds", "_yield_tokens",
     "_max_output_tokens", "_save_request_logs", "_session_runtime_dir", "_step_env_callback",
     "_http_initial_grace_used", "_diag_name", "analyze", "_build_user_prompt", "_harness_template_kwargs",
+    # the prompt profile's (prompt_profiles.py): a job sets its own system prompt after restoring, so a checkpoint
+    # captured under one profile cannot hand its system prompt to a job running another
+    "_system_prompt", "_dedup_turn", "_append_context_message", "_retained_function_context", "_tools",
 }
 SESSION_KEYS = ("history_entries", "animation_record", "last_engine_action", "analysis_step")
 # The Stock settings checkpoints are taken under: what the page sends for Stock (modes.json stock.settings, the 28.94

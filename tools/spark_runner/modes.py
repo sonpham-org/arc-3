@@ -13,12 +13,12 @@ PURPOSE: Turn a Mode explorer mode into an edit of the harness's real per-turn p
   If no anchor is found (for example a Level start mode scheduled on an ordinary mid-level turn), the added lines go
   just before the "When ready, call `action(actions)`" line, or at the end. Every application returns a small report
   (lines removed, lines inserted, anchor or fallback) that is written into the sample's trajectory.
-  Lean turn message (the Boss, #arc-3 6-Oct 16:39 ET: "Stuff like the Python tool calling belongs in the system
-  prompt and shouldn't get duplicated in the user prompt"): a slot sent with lean = true has the harness's stock
-  tool-call reminders (LEAN_LINES, the closing lines of ToolAgent._build_user_prompt, each also said in the system
-  prompt) left out of its turn message by apply_lean, after the mode's delta is applied. Off by default, so every
-  existing mode builds the same prompt as before; the page's "Stock (lean)" mode tests the difference against Stock.
-  docs/static/data/modes.json meta.tool_reminders lists the same lines in their template form for the page.
+  Prompt profiles (6-Oct, the Boss approved Astra's notes at 17:07 ET): this diff is the ORIGINAL profile's way of
+  applying a mode. In the dedup profile (prompt_profiles.py, the default) a mode is only its turn instructions, added
+  as the last block of the turn message; a slot from before then (prompt + stock_template, no instructions) gets
+  instructions_from_template(), the lines it added to Stock. A slot with instructions running in the original
+  profile gets them where the old built-in modes put their lines (insert_original). The lean flag and LEAN_LINES
+  (16:39 ET) are gone: dedup leaves every standing line out of every turn message, Stock included.
 SRP/DRY check: Pass - mode text comes only from modes.json or the page's custom mode; the harness builds the prompt;
   this module only computes and applies the difference.
 """
@@ -30,16 +30,13 @@ from dataclasses import dataclass, field
 PLACEHOLDER = re.compile(r"\{[^{}\s]+\}")
 CONDITION = re.compile(r"^\[when [^\]]*\]\s*")
 FALLBACK_ANCHOR = "When ready, call `action(actions)`"
-# The stock per-turn tool-call reminders exactly as the harness writes them (tool_agent.py _build_user_prompt and
-# prompts.py TOOL_CALL_FORMAT_GUIDANCE); the system prompt already carries each of them.
-LEAN_LINES = (
-    "When ready, call `action(actions)` from inside the `python` tool with the best valid action or ordered batch "
-    "selected by your code. If your code has found a reliable short sequence, prefer batching it in one call.",
-    "You may call `action(actions)` more than once in one Python snippet if your search or control loop needs it.",
-    "When calling `python`, emit exactly the tool-call format shown elsewhere in this prompt for this model. Use only "
-    "that format; do not add markdown fences, prose wrappers, or alternate tool-call syntax. Do not quote or place "
-    "tool-call markup inside explanatory text; when you decide to call the tool, emit the tool call itself.",
-    "If you use MOUSE, include integer row and col arguments.",
+# The generic per-turn guidance line the original built-in modes replaced (son) or followed (daniel); the first turn
+# of a game has the "Ground yourself" line in its place (tool_agent.py _build_user_prompt).
+FOCUS_LINES = (
+    "Focus on what changed most recently in `history`, update the target environment change if needed, and separate "
+    "gameplay-object changes from HUD-only changes.",
+    "Ground yourself in `current_frame` before acting, but start with a compact structural summary rather than "
+    "restating the full frame.",
 )
 
 
@@ -152,8 +149,27 @@ def apply_delta(delta: ModeDelta, prompt: str) -> tuple[str, dict]:
     return "\n".join(lines), report
 
 
-def apply_lean(prompt: str) -> tuple[str, int]:
-    """The turn message without the stock tool-call reminders (LEAN_LINES); returns the text and how many lines went."""
+def instructions_from_template(mode: str, stock_template: str, mode_template: str) -> str:
+    """A slot from before the dedup profile: its instructions are the lines it added to the Stock text."""
+    return "\n".join(ln for h in build_delta(mode, stock_template, mode_template).hunks for ln in h.added)
+
+
+def insert_original(prompt: str, variant: str, instructions: str) -> tuple[str, dict]:
+    """Original profile, slot given as instructions: the lines go where the original built-in modes put theirs
+    (son: in place of the generic focus line; daniel: right after it); else before the closing tool lines."""
+    added = [ln for ln in (instructions or "").split("\n") if ln.strip()]
+    report = {"mode_lines": len(added), "removed": 0, "fallback": False}
+    if not added:
+        return prompt, report
     lines = prompt.split("\n")
-    kept = [ln for ln in lines if ln not in LEAN_LINES]
-    return "\n".join(kept), len(lines) - len(kept)
+    k = next((i for i, ln in enumerate(lines) if ln in FOCUS_LINES), None)
+    if k is None:
+        k = next((i for i, ln in enumerate(lines) if ln.startswith(FALLBACK_ANCHOR)), len(lines))
+        report["fallback"] = True
+        lines[k:k] = added
+    elif variant == "son":
+        lines[k:k + 1] = added
+        report["removed"] = 1
+    else:
+        lines[k + 1:k + 1] = added
+    return "\n".join(lines), report

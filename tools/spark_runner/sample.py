@@ -25,8 +25,12 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
            turn at that board (system prompt + the normal first prompt, the real step and level), nothing carried.
            These samples write no checkpoints.
     3. Play with session.play(), the harness's own loop, with narrow hooks:
-         - _build_user_prompt: the scheduled mode's delta (modes.py) is applied to the prompt the harness built,
-           then, for a slot sent with lean = true, the stock tool-call reminders are left out (modes.apply_lean);
+         - prompt profile (prompt_profiles.py; spec["prompt_profile"], "dedup" when absent, recorded in result.json):
+           installed after the start is in place (so a restored checkpoint cannot bring back another profile's
+           system prompt). dedup: the standing manual is the system prompt, said once;
+         - _build_user_prompt: dedup = the harness's turn message without its standing lines, plus the slot's
+           mode instructions as the last block; original = the mode's delta (modes.py) applied to the prompt the
+           harness built, or a slot's instructions put where the original built-in modes put theirs;
          - _chat_completion / build_chat_payload: temperature, thinking on/off, reasoning effort of the slot;
          - _tool_steps and _yield_tokens: tool-call limit and thinking budget of the slot;
          - step_env: the slot's action budget (a batch is cut to what is left; nothing past it executes);
@@ -48,6 +52,7 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
          sample.py --verify-checkpoint <checkpoint dir> <out dir>   (replay + state restore check, no model)
          sample.py --render-first <game> <level> <variant> <out dir>   (No-context start + its first request, no model)
          sample.py --render-all <out dir> [variant]   (the same for every trainable game and level; render-checks.json)
+         (render_requests.py runs main() itself with a scripted stand-in for the model: previews and the dedup check)
 SRP/DRY check: Pass - no harness logic is copied; everything runs through the bundle's ToolAgent and
   _HarnessGameSession. Mode text math lives in modes.py, checkpoint storage in checkpoints.py, queueing in server.py.
 """
@@ -69,7 +74,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import checkpoints  # noqa: E402
-from modes import apply_delta, apply_lean, build_delta  # noqa: E402
+import prompt_profiles  # noqa: E402
+from modes import apply_delta, build_delta, insert_original, instructions_from_template  # noqa: E402
 
 RUNNER_HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
 HARNESS = Path(os.environ.get("ARC3_RUNNER_HARNESS", RUNNER_HOME / "harness"))
@@ -311,6 +317,16 @@ def verify(snapshot_file: Path, out: Path) -> dict:
         return {"ok": False, "game": snap["game"], "error": f"{type(exc).__name__}: {exc}"}
 
 
+def slot_instructions(slot: dict) -> str:
+    """A slot's turn instructions. Slots sent before the dedup profile carry the full template instead
+    (prompt + stock_template): their instructions are the lines they added to Stock."""
+    if slot.get("instructions") is not None:
+        return slot["instructions"]
+    if slot.get("prompt") and slot.get("stock_template"):
+        return instructions_from_template(slot["mode"], slot["stock_template"], slot["prompt"])
+    return ""
+
+
 def settings_are_stock(s: dict) -> bool:
     """The Stock settings the page sends and harvest uses (modes.json, stock.settings)."""
     want = checkpoints.STOCK_SETTINGS
@@ -333,7 +349,9 @@ def main(job_dir: Path, k: int) -> int:
     flush()
     # Jobs from before the No-context option (6-Oct) have no context field: they carried context.
     context = spec.get("context", "carried")
-    result = {"sample": k, "game": spec["game"], "stuck_level": spec["stuck_level"], "variant": spec["variant"],
+    # Jobs queued before prompt profiles (6-Oct) have no field: they run under the current default and say so.
+    profile = spec.get("prompt_profile") or prompt_profiles.DEFAULT_PROFILE
+    result = {"prompt_profile": profile, "prompt_profile_from_spec": bool(spec.get("prompt_profile")),"sample": k, "game": spec["game"], "stuck_level": spec["stuck_level"], "variant": spec["variant"],
               "kind": spec.get("kind", "play"), "context": context, "start_kind": None, "outcome": "error",
               "levels_cleared": 0, "actions_used": 0, "turns": 0, "modes_run": [], "conversation_exact": False,
               "seconds": 0, "error": None, "checkpoints_written": []}
@@ -366,6 +384,7 @@ def main(job_dir: Path, k: int) -> int:
             if ta._persistent_functions():
                 agent._kept_functions = dict(snap.get("retained_functions") or {})
         result["replay_verified"] = True
+        result.update(prompt_profiles.install(profile, ta, agent))
         start_actions = session.action_count
         start_completed = int(game.current_state.levels_completed)
         start_tokens = agent.generated_tokens
@@ -377,11 +396,15 @@ def main(job_dir: Path, k: int) -> int:
         # ---- per-turn scheduling hooks
         stock_slot = spec["stock"]
         scheme = spec["scheme"]
-        capture_slot = {"key": "__capture_stock__", "mode": "stock", "settings": dict(checkpoints.STOCK_SETTINGS)}
-        deltas = {capture_slot["key"]: build_delta("stock", "stock", "stock")}
-        for slot in scheme + [stock_slot]:
+        capture_slot = {"key": "__capture_stock__", "mode": "stock", "name": "Stock", "instructions": "",
+                        "settings": dict(checkpoints.STOCK_SETTINGS)}
+        # Per slot: its turn instructions (dedup, or original with an instructions slot), or for an old-style slot
+        # in the original profile the template delta, exactly as before.
+        deltas, instr = {}, {}
+        for slot in scheme + [stock_slot, capture_slot]:
             key = slot["key"]
-            if key not in deltas:
+            instr[key] = slot_instructions(slot)
+            if profile == "original" and slot.get("instructions") is None and slot.get("prompt"):
                 deltas[key] = build_delta(slot["mode"], slot["stock_template"], slot["prompt"])
         base_tool_steps, base_yield_tokens = agent._tool_steps, agent._yield_tokens
         state = {"turn": 0, "slot": None, "slot_index": -1, "actions_in_turn": 0, "delta_report": None,
@@ -392,7 +415,8 @@ def main(job_dir: Path, k: int) -> int:
         turns_log = open(out / "turns.jsonl", "a", encoding="utf-8")
 
         def slot_is_stock(slot) -> bool:
-            return deltas[slot["key"]].empty and not slot.get("lean") and settings_are_stock(slot["settings"])
+            empty = deltas[slot["key"]].empty if slot["key"] in deltas else not instr[slot["key"]].strip()
+            return empty and settings_are_stock(slot["settings"])
 
         def apply_slot_limits(slot):
             s = slot["settings"]
@@ -444,7 +468,7 @@ def main(job_dir: Path, k: int) -> int:
                           "source_kind": spec.get("kind", "play"), "start_kind": result["start_kind"],
                           "parent_checkpoint": result.get("start_checkpoint"), "tokens_to_reach": snap["tokens"],
                           "actions_into_level": snap["actions_into_level"], "board_sha256": snap["board"],
-                          "captured": how, "model_id": spec["model"]["model_id"],
+                          "captured": how, "model_id": spec["model"]["model_id"], "prompt_profile": profile,
                           "stock_settings": checkpoints.STOCK_SETTINGS,
                           "notebook_env": {k2: os.environ.get(k2) for k2 in sorted(os.environ)
                                            if k2.startswith(("ARC3_", "LOCAL_ANALYZER_", "MULTIMODAL_", "EXPOSE_"))
@@ -513,6 +537,9 @@ def main(job_dir: Path, k: int) -> int:
                         json.dump(body, fh)
                     diff = checkpoints.diff_requests(saved, body)
                     diff["first_slot_is_stock"] = slot_is_stock(state["slot"] or stock_slot)
+                    # a checkpoint saved under another prompt profile cannot be byte-equal; say so next to the answer
+                    diff["saved_profile"] = (cp["meta"].get("prompt_profile") or "original") if cp else None
+                    diff["profile"] = profile
                     result["first_request"] = diff
             return real_post(url, *a, **kw)
         requests_mod.post = post
@@ -552,9 +579,13 @@ def main(job_dir: Path, k: int) -> int:
         def build_user_prompt(self, *a, **kw):
             text = original_build(*a, **kw)
             slot = state["slot"] or stock_slot
-            new, report = apply_delta(deltas[slot["key"]], text)
-            if slot.get("lean"):
-                new, report["lean_removed"] = apply_lean(new)
+            key = slot["key"]
+            if profile == "dedup":
+                new, report = prompt_profiles.turn_message(self, text, slot.get("name") or slot["mode"], instr[key])
+            elif key in deltas:
+                new, report = apply_delta(deltas[key], text)
+            else:
+                new, report = insert_original(text, spec["variant"], instr[key])
             state["delta_report"] = report
             return new
         agent._build_user_prompt = types.MethodType(build_user_prompt, agent)

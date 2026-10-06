@@ -6,6 +6,8 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   to the Spark runner on Jethro (tools/spark_runner/server.py, published tailnet-only by `tailscale serve`), and
   keeps every job view it sees in Postgres (arc3_spark_runner_jobs) so the results table still loads when the
   Sparks are off or busy.
+    POST /api/v1/spark-runner/preview-request (6-Oct: the exact first request Play would send, rendered by the runner
+      with no model, passed through unstored)
     GET  /api/v1/spark-runner/health | stuck-points | exact-starts | start-board?game=&level=&variant=&context= | replay-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
     POST /api/v1/spark-runner/play | jobs/<id>/cancel
   The runner's key never reaches the browser (the Boss, #arc-3 6-Oct 11:01 ET: "It needs a runner key?!?"): the
@@ -39,7 +41,7 @@ from psycopg2.extras import Json
 
 PREFIX = "/api/v1/spark-runner"
 GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|start-board|replay-starts|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
-POST_ROUTES = re.compile(r"/(?:play|jobs/[a-z0-9-]{8,40}/cancel)")
+POST_ROUTES = re.compile(r"/(?:play|preview-request|jobs/[a-z0-9-]{8,40}/cancel)")
 JOB_ROUTE = re.compile(r"/jobs/([a-z0-9-]{8,40})")
 EMAIL_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,255}$")
 SITE_ORIGIN = "https://arc3.sonpham.net"

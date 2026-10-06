@@ -18,11 +18,13 @@ PURPOSE: Shared, versioned Mode explorer modes (Son's ask, #arc-3 6-Oct 08:42 ET
   exact slots sent (full prompt text, Stock template, settings) with the mode version each came from and whether
   that text still matched the stored version, keyed by the runner's job id (arc3_spark_runner_job_modes), and
   whether the job carried context or started without it (the No-context option, 6-Oct).
-  Lean turn message (the Boss, #arc-3 6-Oct 16:39 ET, tool-call lines duplicated between the system prompt and the
-  turn message): a mode body carries lean (true/false, false when absent), kept by every save, restore and
-  hide/unhide, and record_play keeps each slot's lean with the job. The runner does the leaving-out
-  (tools/spark_runner/modes.py apply_lean). Built-ins keep modes.json's order in the bar, ahead of added modes, so a
-  built-in seeded later (Stock (lean), 6-Oct) still sits next to Stock.
+  Prompt profiles (6-Oct, the Boss approved Astra's notes at 17:07 ET): a mode is now its turn-only instructions, one
+  text for both wordings (body "instructions"; variants keep only purpose, when to use and budget). Versions saved
+  before keep their whole-turn-message prompts and stay readable and restorable; the runner reads either shape
+  (tools/spark_runner/sample.py slot_instructions). The lean flag of the same afternoon is gone (dedup leaves every
+  standing line out of every turn message); old versions that carry it keep it as history. record_play keeps each
+  slot's instructions and the job's prompt profile. Built-ins keep modes.json's order in the bar, ahead of added
+  modes.
 SRP/DRY check: Pass - same handler shape as spark_runner.py (identity from oauth2-proxy's X-Forwarded-Email, narrow
   route list, same-site Origin on POST, size caps). Prompt application stays in tools/spark_runner/modes.py; this
   module only stores and checks text.
@@ -115,7 +117,15 @@ def clean_mode(m) -> dict:
     base = m.get("base") or "turn"
     if base not in BASES:
         raise ModeError("base must be turn, game_over or level_start")
+    # Since 6-Oct (prompt profiles) a mode is its turn-only instructions, the same for both wordings; versions from
+    # before store the whole turn message per wording (variants[k].prompt) and stay readable. The text fields
+    # (purpose, when to use, budget) stay per wording.
+    instructions = m.get("instructions")
+    if instructions is not None:
+        instructions = _text(instructions, 4000, what="instructions").replace("\r", "").strip("\n")
     raw = m.get("variants")
+    if raw is None and instructions is not None:
+        raw = {}
     if not isinstance(raw, dict):
         raise ModeError("variants must be an object")
     variants = {}
@@ -129,14 +139,16 @@ def clean_mode(m) -> dict:
             "purpose": _text(v.get("purpose"), 500, what="purpose"),
             "trigger": _text(v.get("trigger"), 500, what="when to use"),
             "budget": _text(v.get("budget"), 200, what="budget text"),
-            "prompt": _text(v.get("prompt"), 20000, required=True, what=f"{k} prompt"),
         }
-    if not variants:
-        raise ModeError("a mode needs at least one prompt")
+        if instructions is None:
+            variants[k]["prompt"] = _text(v.get("prompt"), 20000, required=True, what=f"{k} prompt")
+    if not variants and instructions is None:
+        raise ModeError("a mode needs instructions")
     out = {"name": name, "color": color.lower(), "base": base, "variants": variants,
            "settings": clean_settings(m.get("settings")),
-           "settings_why": _text(m.get("settings_why"), 1000, what="why these settings"),
-           "lean": m.get("lean") is True}
+           "settings_why": _text(m.get("settings_why"), 1000, what="why these settings")}
+    if instructions is not None:
+        out["instructions"] = instructions
     rl2 = m.get("rl2")
     if isinstance(rl2, str) and re.fullmatch(r"[a-z0-9_-]{1,32}", rl2):
         out["rl2"] = rl2
@@ -257,12 +269,15 @@ class ModeLibrary:
                         stored = cursor.fetchone()
                     if stored:
                         body = stored[0]
-                        text = (body["variants"].get(v.get("variant") or variant) or {}).get("prompt")
-                        check = "matches" if text == s.get("prompt") and (body.get("lean") is True) == (s.get("lean") is True) else "differs"
+                        if body.get("instructions") is not None or s.get("instructions") is not None:
+                            check = "matches" if (body.get("instructions") or "") == (s.get("instructions") or "") else "differs"
+                        else:
+                            text = (body["variants"].get(v.get("variant") or variant) or {}).get("prompt")
+                            check = "matches" if text == s.get("prompt") else "differs"
                     return {
                         "mode": s.get("mode"), "name": s.get("name"), "base": s.get("base"),
+                        "instructions": s.get("instructions"),
                         "prompt": s.get("prompt"), "stock_template": s.get("stock_template"), "settings": s.get("settings"),
-                        "lean": s.get("lean") is True,
                         "mode_id": mode_id, "version": number, "prompt_variant": v.get("variant") or variant,
                         "edited_by": stored[1] if stored else v.get("created_by"),
                         "edited_at": stored[2].isoformat() if stored else v.get("created_at"),
@@ -270,6 +285,7 @@ class ModeLibrary:
                     }
                 record = {"variant": variant, "stuck_level": payload.get("stuck_level"),
                           "context": "none" if payload.get("context") == "none" else "carried",
+                          "prompt_profile": "original" if payload.get("prompt_profile") == "original" else "dedup",
                           "scheme": [slot(s) for s in payload.get("scheme") or []], "stock": slot(payload.get("stock")),
                           "caps": {k: payload.get(k) for k in ("samples", "max_turns", "max_actions", "max_minutes")}}
                 cursor.execute(
@@ -429,7 +445,7 @@ class ModeLibrary:
                         hide = action == "hide"
                         if not hide and self._name_taken(cursor, latest["name"], mode_id):
                             raise ModeError(f"another mode is now called {latest['name']}; rename that one first")
-                        keep = {k: latest[k] for k in ("name", "color", "base", "variants", "settings", "settings_why", "rl2", "builtin", "lean") if k in latest}
+                        keep = {k: latest[k] for k in ("name", "color", "base", "variants", "instructions", "settings", "settings_why", "rl2", "builtin") if k in latest}
                         row = self._insert(cursor, mode_id, latest["version"] + 1, clean_mode(keep), hide,
                                            note or ("deleted (hidden; history kept)" if hide else "brought back"), who)
                     connection.commit()

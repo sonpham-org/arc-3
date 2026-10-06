@@ -45,20 +45,27 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   mode-tour.js, which walks every control with a spotlight and runs a demo through tourHost below. While it runs,
   saveStore and syncUrl do nothing, so the demo's game, level, queue and settings live in memory only; when it ends
   the person's own store and view are put back from a copy taken at the start, and Play is locked (playCtx.demo).
-  Lean turn message (the Boss, #arc-3 6-Oct 16:39 ET, tool-call lines repeated between the system prompt and the turn
-  message): a mode with lean on has the stock tool-call reminders (modes.json meta.tool_reminders) left out of its turn
-  message by the runner; the Prompts view shows and diffs the text as it is sent (sentText), and the card says so.
-  The mode editor itself (where the text goes, locked harness lines, the editable instruction) is in mode-library.js.
+  Prompt profiles (6-Oct, the Boss approved Astra's notes at 17:07 ET; replaces the lean toggle of 16:39): the runner
+  sends the "dedup" prompts for every mode, Stock included: every standing instruction once, in the system prompt;
+  the turn message only this turn's facts, then the mode's instructions. A mode is only those instructions
+  (instructionsOf; modes saved before 6-Oct stored the whole turn message, and their instructions are the lines they
+  added to Stock, as the runner reads them). The Prompts view shows what the model receives in three labelled parts:
+  1 System prompt (read-only), 2 This turn (filled in by the harness, read-only; a real example from
+  static/data/prompt-profiles.json, rendered by the runner's harness), 3 Mode instructions (the mode's own text,
+  edited with the pencil), and "Preview request" shows the exact assembled messages Play would send for the game,
+  level, wording and context chosen in the Queue view (spark-runner.js previewRequest). Next to Play a select keeps
+  "Original prompts" available only to compare with old runs (state.profile, kept in this browser).
+  The mode editor itself (the same three parts, the editable instructions, preview) is in mode-library.js.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart, playRequest } from './spark-runner.js?v=20261006-lean1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart, playRequest, previewRequest, renderPreview, PROFILE_NAME } from './spark-runner.js?v=20261006-dedup1';
 import { renderStartBoard } from './start-board.js?v=20261006-ht1';
-import { startTour, flyChip, pause } from './mode-tour.js?v=20261006-lean1';
-import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-lean1';
+import { startTour, flyChip, pause } from './mode-tour.js?v=20261006-dedup1';
+import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-dedup1';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -94,11 +101,13 @@ const state = {
 };
 const SPARK = {};   // `${game}:${context}` -> { tally: {level: {played, cleared}}, harvest }, from the jobs the results list loads
 let DATA = null;    // modes.json
+let PROMPTS = null; // prompt-profiles.json: system prompts, tool schema and example turn messages per profile
 let STUCK = null;   // stuck-levels.json (null until loaded; false if it failed)
 let store = loadStore();
 // The guided tour's copy of the person's own store and view (null when no tour runs). While set, nothing is saved.
 let TOUR = null;
 state.context = params.get('ctx') === 'none' ? 'none' : params.get('ctx') === 'carried' ? 'carried' : store.context;
+state.profile = store.profile;
 
 // ---------------------------------------------------------------- local store
 
@@ -106,8 +115,9 @@ function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
     return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {}, game: s.game || null, migrated: s.migrated || null,
-      uploaded: Array.isArray(s.uploaded) ? s.uploaded : [], context: s.context === 'none' ? 'none' : 'carried' };
-  } catch { return { customModes: [], schemes: {}, game: null, context: 'carried' }; }
+      uploaded: Array.isArray(s.uploaded) ? s.uploaded : [], context: s.context === 'none' ? 'none' : 'carried',
+      profile: s.profile === 'original' ? 'original' : 'dedup' };
+  } catch { return { customModes: [], schemes: {}, game: null, context: 'carried', profile: 'dedup' }; }
 }
 function saveStore() {
   if (TOUR) return;   // the tour's demo is never saved; the person's own store comes back when it ends
@@ -121,10 +131,12 @@ function flash(text) {
 
 // ---------------------------------------------------------------- modes
 
-// A custom mode stored as {id, name, color, purpose, base_variant, prompt, settings, settings_why}, drawn like a built-in.
+// A custom mode stored as {id, name, color, purpose, instructions (or, before 6-Oct, base_variant + prompt), settings,
+// settings_why}, drawn like a built-in.
 function asMode(c) {
   const v = { purpose: c.purpose || 'Custom mode.', trigger: 'Your choice: custom mode.', budget: budgetText(c.settings), prompt: c.prompt };
   return { id: c.id, name: c.name, color: c.color, base: 'turn', custom: true, base_variant: c.base_variant,
+    instructions: typeof c.instructions === 'string' ? c.instructions : undefined,
     settings: { ...FALLBACK_SETTINGS, ...(c.settings || {}) }, settings_why: c.settings_why || '', variants: { son: v, daniel: v } };
 }
 // Shared modes from the site's database when it answers (everyone sees the same ones); otherwise modes.json plus this
@@ -136,12 +148,24 @@ function modeById(id) { const all = allModes(); return all.find(m => m.id === id
 // The harness's own Stock text for a surface: what the diff is drawn against and what the runner diffs against.
 function stockText(variant, base) { return DATA.stock[variant][base]; }
 function defaults(m) { return { ...FALLBACK_SETTINGS, ...(m.settings || {}) }; }
-// A wording's text as the runner sends it: a lean mode's turn message has the stock tool-call reminders left out.
-function sentText(m, variant) {
-  const text = m.variants[variant].prompt;
-  if (!m.lean) return text;
-  const drop = new Set(DATA.meta.tool_reminders || []);
-  return text.split('\n').filter(l => !drop.has(l)).join('\n');
+// A mode's turn-only instructions for a wording. Modes saved before 6-Oct stored the whole turn message (the original
+// profile's template): their instructions are the lines they added to that wording's Stock text, which is also how
+// the runner reads such a slot (tools/spark_runner/sample.py slot_instructions).
+function instructionsOf(m, variant) {
+  if (!m) return '';
+  if (typeof m.instructions === 'string') return m.instructions;
+  const v = (m.variants || {})[m.base_variant || variant] || {};
+  if (!v.prompt) return '';
+  return diffLines(stockText(m.base_variant || variant, m.base || 'turn').split('\n'), v.prompt.split('\n'))
+    .filter(([kind]) => kind === 'add' || kind === 'chg').map(([, , r]) => r).join('\n');
+}
+// What a preview needs from the Queue view: its game and level (else the first game's stuck level), wording, context.
+function previewTarget() {
+  const g = currentGame() || sidebarGames()[0];
+  if (!g) return null;
+  const q = queueOf(g);
+  return { game: g.game, nickname: g.nickname, level: q.start_level || g.stuck_level || 1, variant: state.v,
+    context: state.context, profile: state.profile };
 }
 function budgetText(s) { return s && s.actions != null ? `up to ${s.actions} action${s.actions === 1 ? '' : 's'}` : 'no limit'; }
 
@@ -251,7 +275,7 @@ function renderDock() {
   add.onclick = () => (lib.ok ? editMode(null) : openModeDialog(null));
   box.append(add);
 
-  $('compare').hidden = state.view !== 'prompts';
+  $('compare').hidden = true;   // one instruction text serves both wordings since 6-Oct: nothing to compare
   const vb = $('variants'); vb.textContent = '';
   for (const [k, label] of Object.entries(VARIANTS)) {
     const b = h('button', 'mx-seg' + (k === state.v ? ' on' : ''), label);
@@ -302,38 +326,45 @@ function renderCard(m) {
   const dl = h('dl', 'mx-facts');
   const rows = [['Purpose', v.purpose], ['When to use', v.trigger], ['Action budget', v.budget],
     ['Built on', m.base_variant ? `${DATA.surfaces[m.base]}, ${VARIANTS[m.base_variant]} only` : DATA.surfaces[m.base]],
-    ['Turn message', m.lean ? 'Lean: the stock tool-call lines are left out (the system prompt still has them)' : 'As the harness writes it, tool-call lines included'],
+    ['Instructions', instructionsOf(m, state.v) ? 'Added as the last part of the turn message on each turn this mode runs' : 'None: Stock sends the turn message as the harness fills it in'],
     ['Settings', settingsSummary(defaults(m))]];
   if (m.settings_why) rows.push(['Why these settings', m.settings_why]);
   for (const [k, val] of rows) dl.append(h('dt', null, k), h('dd', null, val));
   card.append(dl);
 }
 
-function renderDiff(m) {
-  const other = state.v === 'son' ? 'daniel' : 'son';
-  const leftText = state.cmp === 'other' ? sentText(m, other) : stockText(m.base_variant || state.v, m.base);
-  const rightText = sentText(m, state.v);
-  const leftLabel = state.cmp === 'other' ? `${m.name} · ${VARIANTS[other]}` : `Harness Stock · ${VARIANTS[m.base_variant || state.v]}`;
-  const rightLabel = `${m.name} · ${m.custom ? 'your prompt' : VARIANTS[state.v]}`;
-  const rows = diffLines(leftText.split('\n'), rightText.split('\n'));
-  const counts = { add: 0, del: 0, chg: 0 };
-  rows.forEach(r => { if (r[0] in counts) counts[r[0]]++; });
-  const changed = counts.add + counts.del + counts.chg;
-  $('diffsum').textContent = changed ? `${counts.add + counts.chg} line(s) added or changed, ${counts.del + counts.chg} removed or replaced.` : 'The two prompts are the same text.';
-
-  const grid = $('diff'); grid.textContent = '';
-  grid.append(h('div', 'mx-colh', leftLabel), h('div', 'mx-colh', rightLabel));
-  for (const [kind, l, r] of rows) {
-    const L = lineNode(l), R = lineNode(r);
-    L.classList.add('mx-l'); R.classList.add('mx-r');
-    if (kind === 'del' || kind === 'chg') L.classList.add('mx-del');
-    if (kind === 'add' || kind === 'chg') R.classList.add('mx-add');
-    if (kind === 'add') L.classList.add('mx-gap');
-    if (kind === 'del') R.classList.add('mx-gap');
-    grid.append(L, R);
-  }
-  $('full').textContent = rightText;
-  $('fullh').textContent = `Full prompt · ${rightLabel}`;
+// What the model receives, in three labelled parts, then the exact request on demand.
+const EXAMPLE_FOR = { turn: 'turn', game_over: 'game_over', level_start: 'level_start' };
+function renderParts(m) {
+  const prof = state.profile === 'original' ? 'original' : 'dedup';
+  const P = PROMPTS && PROMPTS.profiles[prof];
+  $('profilenote').textContent = prof === 'dedup'
+    ? 'Dedup prompts, the default for every mode including Stock: every standing instruction is said once, in the system prompt; the turn message carries only this turn\'s facts and, last, the mode\'s instructions.'
+    : 'Original prompts (selected next to Play, only to compare with runs from before 6-Oct): the harness repeats several standing instructions in every turn message, and the mode\'s lines go where the original modes put them.';
+  $('sysfull').textContent = P ? P.system[state.v] : 'Could not load the system prompt.';
+  $('syshint').textContent = `${VARIANTS[state.v]} · ${P ? P.system[state.v].length.toLocaleString() + ' characters' : ''} · the tool definition sent with it: "${P ? (((P.tools || [])[0] || {}).function || {}).description || '' : ''}"`;
+  const ex = P && P.turn_examples[EXAMPLE_FOR[m.base] || 'turn'];
+  $('turnex').textContent = ex || '(no example)';
+  const meta = PROMPTS && PROMPTS.meta.example;
+  $('turnnote').textContent = `${DATA.surfaces[m.base] || ''}. Filled in by the harness every turn; this example is real, from a walk through ${meta ? meta.game : ''} level ${meta ? meta.level : ''} (${prof} prompts). In the sent message the mode's instructions come after these facts and before the board images.`;
+  const text = instructionsOf(m, state.v);
+  const header = PROMPTS ? PROMPTS.meta.mode_header.replace('{name}', m.name) : '';
+  $('modetext').textContent = text ? `${header}\n${text}` : 'Stock adds no instructions: the turn message is only the facts above.';
+  $('modetext').classList.toggle('muted', !text);
+  $('modenote').textContent = m.shared ? `${versionTag(m)} · ${whoWhen(m.created_by, m.created_at)} · the pencil on the mode edits it (a new version; the old ones stay).` : '';
+  const t = previewTarget();
+  $('preview').disabled = !t;
+  $('preview').textContent = t ? `Preview request · ${t.nickname} level ${t.level}` : 'Preview request';
+  $('preview').title = t ? `Build the exact first request Play would send for ${t.nickname} level ${t.level} with ${m.name}, ${VARIANTS[state.v]}, ${t.context === 'none' ? 'no context' : 'context carried'} (the game and level chosen in the Queue view). The runner builds it with its real harness; nothing is played.`
+    : 'Pick a game in the Queue view first';
+  $('preview').onclick = async () => {
+    const out = $('previewout');
+    out.textContent = 'Building the request on the runner…';
+    try {
+      const d = await previewRequest({ ...t, mode: m.id, name: m.name, instructions: prof === 'dedup' || text ? text : '' });
+      renderPreview(out, d);
+    } catch (e) { out.textContent = `No preview: ${e.message}`; }
+  };
 }
 
 // ---------------------------------------------------------------- Queue view: game sidebar and level buttons
@@ -676,32 +707,26 @@ function openModeDialog(id) {
   const existing = id ? store.customModes.find(c => c.id === id) : null;
   const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
     id: null, name: '', color: '#0e7490', purpose: '', base_variant: state.v,
-    prompt: DATA.stock[state.v].turn, settings: { ...defaults(DATA.modes[0]) }, settings_why: '',
+    instructions: '', settings: { ...defaults(DATA.modes[0]) }, settings_why: '',
   };
+  if (existing && typeof existing.instructions !== 'string') draft.instructions = instructionsOf(asMode(existing), state.v);
   draft.settings = { ...FALLBACK_SETTINGS, ...draft.settings };
-  let promptTouched = !!existing;
   const dlg = $('modedlg'); dlg.textContent = ''; dlg.className = 'mx-dialog';
   const form = h('form', 'mx-form'); form.method = 'dialog';
   form.append(h('h2', null, existing ? `Edit ${existing.name}` : 'New mode'));
-  form.append(h('p', 'mx-sum', 'Saved in this browser only. The prompt starts as Stock; add your focus lines where you want them. It shows up in the mode bar, ready to drag into a queue.'));
+  form.append(h('p', 'mx-sum', 'Saved in this browser only. A mode is its instructions for the turn it runs: what the model should do differently. They go last in the turn message; the system prompt and the turn facts stay as they are.'));
 
   const row = h('div', 'mx-formrow');
   const name = h('input'); name.required = true; name.maxLength = 32; name.value = draft.name; name.placeholder = 'e.g. Map the board';
   const color = h('input'); color.type = 'color'; color.value = draft.color;
-  const variant = h('select');
-  for (const [k, label] of Object.entries(VARIANTS)) { const o = h('option', null, `Stock, ${label}`); o.value = k; variant.append(o); }
-  variant.value = draft.base_variant;
   const lab = (t, el, cls) => { const l = h('label', 'mx-field' + (cls ? ' ' + cls : '')); l.append(h('span', 'mx-flabel', t), el); return l; };
-  row.append(lab('Name', name, 'grow'), lab('Colour', color), lab('Built on', variant));
+  row.append(lab('Name', name, 'grow'), lab('Colour', color));
   form.append(row);
   const purpose = h('input'); purpose.value = draft.purpose; purpose.placeholder = 'What this turn is for, in one line';
   form.append(lab('Purpose', purpose, 'wide'));
-  const prompt = h('textarea', 'mx-prompt'); prompt.value = draft.prompt; prompt.rows = 14; prompt.required = true;
-  prompt.oninput = () => { promptTouched = true; };
-  variant.onchange = () => {
-    if (!promptTouched || confirm('Replace the prompt text with the Stock prompt of this version?')) { prompt.value = DATA.stock[variant.value].turn; promptTouched = false; }
-  };
-  form.append(lab('Prompt (sent as the turn message)', prompt, 'wide'));
+  const prompt = h('textarea', 'mx-prompt'); prompt.value = draft.instructions; prompt.rows = 6; prompt.required = true;
+  prompt.placeholder = 'What the model should do differently on the turn this mode runs';
+  form.append(lab('Mode instructions (the last part of the turn message)', prompt, 'wide'));
   form.append(h('h3', 'mx-subh', 'Default settings'));
   form.append(settingsGrid(() => draft.settings, (k, v) => { draft.settings[k] = v; }));
   const why = h('textarea'); why.rows = 2; why.value = draft.settings_why; why.placeholder = 'Why these settings (optional)';
@@ -732,7 +757,7 @@ function openModeDialog(id) {
     if (!prompt.value.trim()) { prompt.focus(); return; }
     if (allModes().some(m => m.name.toLowerCase() === nm.toLowerCase() && m.id !== draft.id)) { name.setCustomValidity(`A mode called ${nm} already exists.`); name.reportValidity(); name.oninput = () => name.setCustomValidity(''); return; }
     const rec = { id: draft.id || `custom-${slug(nm)}-${Date.now().toString(36)}`, name: nm, color: color.value, purpose: purpose.value.trim(),
-      base_variant: variant.value, prompt: prompt.value, settings: draft.settings, settings_why: why.value.trim() };
+      instructions: prompt.value.replace(/\r/g, '').trim(), settings: draft.settings, settings_why: why.value.trim() };
     const k = store.customModes.findIndex(c => c.id === rec.id);
     if (k >= 0) store.customModes[k] = rec; else store.customModes.push(rec);
     saveStore(); dlg.close();
@@ -754,7 +779,7 @@ function exportJson() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function validCustom(c) { return c && typeof c.id === 'string' && typeof c.name === 'string' && c.name.trim() && typeof c.prompt === 'string'; }
+function validCustom(c) { return c && typeof c.id === 'string' && typeof c.name === 'string' && c.name.trim() && (typeof c.prompt === 'string' || typeof c.instructions === 'string'); }
 function validScheme(s) { return s && Array.isArray(s.slots) && s.slots.every(x => x && typeof x.mode === 'string'); }
 
 async function importJson(file) {
@@ -766,6 +791,7 @@ async function importJson(file) {
   for (const c of modes) {
     const rec = { id: c.id, name: c.name.trim().slice(0, 32), color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '#0e7490',
       purpose: String(c.purpose || ''), base_variant: c.base_variant === 'daniel' ? 'daniel' : 'son', prompt: c.prompt,
+      instructions: typeof c.instructions === 'string' ? c.instructions : undefined,
       settings: { ...FALLBACK_SETTINGS, ...(c.settings && typeof c.settings === 'object' ? c.settings : {}) }, settings_why: String(c.settings_why || '') };
     const k = store.customModes.findIndex(x => x.id === rec.id);
     if (k >= 0) store.customModes[k] = rec; else store.customModes.push(rec);
@@ -790,7 +816,8 @@ async function importJson(file) {
 
 function playCtx(g, q) {
   const context = state.context;
-  return { game: g, level: q.start_level, scheme: q, variant: state.v, context, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen,
+  return { game: g, level: q.start_level, scheme: q, variant: state.v, context, profile: state.profile, DATA, findMode, slotSettings: itemSettings, defaults, stockText, instructionsOf, versionOf, loadRuns, whoWhen,
+    onProfile: (p) => { state.profile = p; store.profile = p; saveStore(); render(); },
     demo: () => !!TOUR,
     onJobs: (game, tally, harvest) => { SPARK[`${game}:${context}`] = { tally, harvest }; if (game === state.game && context === state.context && state.view === 'queue') renderLevels(); },
     onContext: (c) => { state.context = c; store.context = c; saveStore(); state.open = -1; render(); } };
@@ -839,8 +866,9 @@ function render() {
   if (state.view === 'prompts') {
     const m = modeById(state.mode);
     state.mode = m.id;
+    if ($('previewout').dataset.mode !== m.id) { $('previewout').textContent = ''; $('previewout').dataset.mode = m.id; }
     renderCard(m);
-    renderDiff(m);
+    renderParts(m);
     return;
   }
   renderGamebar();
@@ -967,21 +995,26 @@ async function main() {
     $('card').textContent = `Could not load the mode prompts (${e.message}).`;
     return;
   }
-  initLibrary({ h, settingsGrid, diffLines, lineNode, settingsSummary, FALLBACK_SETTINGS, stockText, toolReminders: () => DATA.meta.tool_reminders || [] });
+  try {
+    const r = await fetch('./static/data/prompt-profiles.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    PROMPTS = await r.json();
+  } catch { PROMPTS = null; }
+  initLibrary({ h, settingsGrid, diffLines, lineNode, settingsSummary, FALLBACK_SETTINGS, stockText, instructionsOf,
+    prompts: () => PROMPTS, profile: () => state.profile, previewTarget, previewRequest, renderPreview, surfaces: () => DATA.surfaces });
   await loadLibrary();
   $('updated').textContent = lib.ok ? 'Shared modes · anyone signed in can edit; every save is a new version'
     : `Draft prompts · ${DATA.meta.date} · shared modes could not load (${lib.error}), showing the built-in drafts`;
   $('storenote').textContent = lib.ok ? 'Modes are shared with everyone signed in, and every save keeps a new version. Your queues, chosen levels and the context choice are saved in this browser only.'
     : 'The shared modes could not be reached, so custom modes made now, queues, chosen levels and the context choice are saved in this browser only.';
   $('finding').textContent = DATA.meta.finding;
-  $('notation').textContent = `${DATA.meta.notation} ${DATA.meta.insert_rule} ${DATA.meta.settings_note || ''}`;
   $('copy').onclick = async () => {
-    try { await navigator.clipboard.writeText($('full').textContent); $('copy').textContent = 'Copied'; }
+    try { await navigator.clipboard.writeText($('modetext').textContent); $('copy').textContent = 'Copied'; }
     catch { $('copy').textContent = 'Copy failed'; }
-    setTimeout(() => { $('copy').textContent = 'Copy prompt'; }, 1500);
+    setTimeout(() => { $('copy').textContent = 'Copy instructions'; }, 1500);
   };
-  for (const b of $('tabs').querySelectorAll('.mx-tab')) b.title = b.dataset.view === 'queue' ? 'Build a queue of modes and play it on the Sparks' : 'Read each mode\'s prompt and how it differs from Stock';
-  $('copy').title = 'Copy the full prompt shown below';
+  for (const b of $('tabs').querySelectorAll('.mx-tab')) b.title = b.dataset.view === 'queue' ? 'Build a queue of modes and play it on the Sparks' : 'See what the model receives: the system prompt, this turn\'s facts and each mode\'s instructions';
+  $('copy').title = 'Copy this mode\'s instructions';
   for (const b of $('tabs').querySelectorAll('.mx-tab')) b.onclick = () => { state.view = b.dataset.view; state.open = -1; render(); };
   $('export').onclick = exportJson;
   $('import').onclick = () => $('importfile').click();

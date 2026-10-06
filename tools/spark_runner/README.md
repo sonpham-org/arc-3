@@ -25,7 +25,7 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 
 | Path | What |
 |---|---|
-| `code/` | `server.py`, `sample.py`, `modes.py`, `checkpoints.py`, `boards.py`, `replays.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
+| `code/` | `server.py`, `sample.py`, `modes.py`, `prompt_profiles.py`, `dupcheck.py`, `render_requests.py`, `checkpoints.py`, `boards.py`, `replays.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
 | `solutions/` | the original games' winning lines, one list per level: copy of `datasets/copycat-games/recolor/solutions/*.json` + `manifest.json` in the repo (trainable public games only) |
 | `replays/verified.json` | per trainable game and level: the replay check of the winning line (actions to reach, board hash, same as the opening frame or not), built by `replays.py --verify-all`; a copy is in the repo at `datasets/spark-runner-replays/` |
 | `harness/` | Franzen's bundle + the notebook's patch + Son's toolfast edits, `notebook_env.json` with the notebook's flags (built by `build_harness.py`) |
@@ -120,6 +120,36 @@ The one line that differs from a game's true first turn: past step zero the harn
 was captured." where a new game says "No previous sequence has been executed yet." It is the harness's own wording for
 a turn with a real step count and nothing executed in this conversation, and it is left as the harness writes it.
 
+## Prompt profiles (added 6-Oct-2026, the Boss approved Astra's notes)
+
+Every job runs under a prompt profile (`prompt_profiles.py`), recorded in its spec, `job.json` and every sample's
+`result.json`; checkpoints record theirs in `meta.json`.
+
+- **dedup** (default, every mode including Stock, harvest too): each standing instruction once, in the system prompt;
+  the turn message has only this turn's facts (what the last sequence did, events, step, level, valid actions,
+  retained functions, board images) and, last, the slot's `instructions` under "Instructions for this turn (<mode>
+  mode):". A yielded turn re-opens with the harness's short "state_only" continuation instead of a copy of the turn
+  message. A carried conversation built under the original prompts gets the same per-turn treatment.
+- **original**: the prompts as the 31.63 notebook sends them, only to compare with older runs.
+
+A Play slot is `{mode, name, base, instructions, settings, version}`; slots from older pages (`prompt` +
+`stock_template`) still work: their instructions are the lines they added to Stock. A job queued before the profiles
+existed runs under the default and gets `prompt_profile` + `prompt_profile_assigned` in `job.json` when it starts.
+
+```bash
+cd ~/arc3-runner
+# the exact first request Play would send (no model): also POST /api/preview-request, which the page's button uses
+venv/bin/python code/render_requests.py --spec lf52 3 son none dedup /tmp/r preview
+# the dedup check: 13 cases, six kinds of turn each, every request through dupcheck.py (writes dedup-checks.json)
+venv/bin/python code/render_requests.py --check-all /tmp/dc slots.json dedup original
+venv/bin/python code/dupcheck.py /tmp/r/requests/01.json.gz       # one request
+# the page's static/data/prompt-profiles.json (system prompts, tool schema, example turn messages)
+venv/bin/python code/render_requests.py --page-data /tmp/pd docs-prompt-profiles.json
+```
+
+`slots.json` for the check is in the repo at `datasets/spark-runner-prompt-dedup/`. Previews are cached in
+`~/arc3-runner/previews/`.
+
 ## Public link (Funnel)
 
 Son agreed to a Tailscale Funnel link. It is not on yet: the tailnet policy has to allow this machine first
@@ -140,7 +170,7 @@ the address; Play, Cancel and per-turn logs still need the key.
 `GET /api/start-board?game=&level=&variant=&context=` (the board at the start Play would use there, from `boards.py`; cached in
 `~/arc3-runner/boards/`), `GET /api/replay-starts` (levels a No-context job can start from);
 with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`, `POST /api/settings`,
-`GET /api/jobs/<id>/samples/<k>/turns`. The Play body is built by `docs/static/js/spark-runner.js`.
+`GET /api/jobs/<id>/samples/<k>/turns`, `POST /api/preview-request`. The Play body is built by `docs/static/js/spark-runner.js`.
 
 ## Rebuilding pieces
 
