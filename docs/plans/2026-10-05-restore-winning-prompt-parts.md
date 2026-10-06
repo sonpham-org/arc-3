@@ -5,6 +5,17 @@ Written 5-Oct-2026 by Bubba (Claude Opus 5.5) for the Boss and Son, at the Boss'
 We need to look at what got lost and what we can be injecting").
 Status: PLAN. Read-only research; nothing was run on a GPU, nothing submitted, no harness edited.
 
+
+> **Correction, 5-Oct 23:40 ET (Boss: "read it again").** This plan was checked against the 28.94
+> notebook, but our best is now Son's 31.63 notebook (`sonphamorg/arc3-daniel-sb-t06-toolfast-rs-hicache11-kq8-ct1`,
+> shared 5-Oct, pulled to `~/bubba-workspace/arc3-kaggle/son-31p6/`). Diffed cell by cell: the harness patch is
+> byte-identical, and the prompt flags are the same (border rule still off, memory sections off). It differs in
+> two ways. **(1) The animation feed is gone.** So "the feed is still on" below is wrong for the 31.63 base,
+> and the feed itself joins the lost list. **(2) Everything else Son added is speed**: an ARC hot-token map
+> for the drafter, the tuned MTP drafter, temperature 0.6 (was 0.7), toolfast, 11 streams over 10 slots with
+> a 32 GB host cache, and rejection sampling over the hot draft vocab. The 28.94→31.63 gain came from serving
+> and sampling, not from instructions. All candidates below should be tested against the **31.63** notebook.
+
 ## Bottom line first
 
 - The 28.94 notebook (Son's "Daniel Noborder Animfeed Ftdraft CT1") sends **Daniel Franzen's prompts, not
