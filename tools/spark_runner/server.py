@@ -275,6 +275,9 @@ def prune_disk() -> None:
 
 # ------------------------------------------------------------------ scheduler
 
+ONE_JOB_SEEN = [None]
+
+
 def scheduler() -> None:
     while True:
         try:
@@ -285,6 +288,7 @@ def scheduler() -> None:
 
 
 def tick() -> None:
+    ONE_JOB_SEEN[0] = None
     with LOCK:
         # reap finished processes
         for (job_id, k), proc in list(PROCS.items()):
@@ -331,6 +335,10 @@ def tick() -> None:
                 break
             if job["status"] not in ("queued", "running") or job.get("cancel"):
                 continue
+            # One Play job at a time (Son, 6-Oct): only the oldest active job gets lanes; later jobs wait whole.
+            if ONE_JOB_SEEN[0] and ONE_JOB_SEEN[0] != job["id"]:
+                break
+            ONE_JOB_SEEN[0] = job["id"]
             for k, s in enumerate(job["sample_state"]):
                 if free <= 0:
                     break
