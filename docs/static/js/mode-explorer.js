@@ -34,14 +34,18 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   Board picture (Son, #arc-3 6-Oct 10:47 ET: "at least show the screen at that time as well"): next to the queue and
   Play, the board at the start Play would use for the chosen game, level and wording (start-board.js); it is redrawn
   whenever the game, level or wording changes, and says when it is only the level's opening frame.
+  Context (Son, #arc-3 6-Oct 11:50 ET: "Add a 'non-context' mode too"): the Carry context / No context toggle next to
+  Play (drawn by spark-runner.js) sets state.context, kept in this browser and in the link (?ctx=none). In No-context
+  mode every level with a verified replay is playable, the level buttons' Spark bar counts only No-context jobs, and
+  the board picture shows the replayed level start.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-nk';
-import { renderStartBoard } from './start-board.js?v=20261006-bd1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-nc1';
+import { renderStartBoard } from './start-board.js?v=20261006-nc1';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
@@ -73,12 +77,14 @@ const state = {
   cmp: params.get('cmp') === 'other' ? 'other' : 'stock',
   game: params.get('game') || null,
   level: Number(params.get('level')) || null,   // from the link only; applied to that game's queue once loaded
+  context: null,    // 'carried' | 'none': the link's ?ctx= wins, else this browser's last choice (set below)
   open: -1,         // queue item whose settings are showing
 };
-const SPARK = {};   // game -> { tally: {level: {played, cleared}}, harvest }, from the jobs the results list loads
+const SPARK = {};   // `${game}:${context}` -> { tally: {level: {played, cleared}}, harvest }, from the jobs the results list loads
 let DATA = null;    // modes.json
 let STUCK = null;   // stuck-levels.json (null until loaded; false if it failed)
 let store = loadStore();
+state.context = params.get('ctx') === 'none' ? 'none' : params.get('ctx') === 'carried' ? 'carried' : store.context;
 
 // ---------------------------------------------------------------- local store
 
@@ -86,8 +92,8 @@ function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
     return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {}, game: s.game || null, migrated: s.migrated || null,
-      uploaded: Array.isArray(s.uploaded) ? s.uploaded : [] };
-  } catch { return { customModes: [], schemes: {}, game: null }; }
+      uploaded: Array.isArray(s.uploaded) ? s.uploaded : [], context: s.context === 'none' ? 'none' : 'carried' };
+  } catch { return { customModes: [], schemes: {}, game: null, context: 'carried' }; }
 }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
@@ -137,6 +143,7 @@ function syncUrl() {
     q.set('game', state.game);
     const g = currentGame();
     if (g) q.set('level', String(levelOf(g)));
+    if (state.context === 'none') q.set('ctx', 'none');
   }
   if (state.v !== 'son') q.set('v', state.v);
   history.replaceState(null, '', '?' + q.toString());
@@ -370,14 +377,16 @@ function renderLevels() {
   const g = currentGame();
   const box = $('levels'); box.textContent = '';
   $('gametitle').textContent = g ? g.nickname : '';
-  $('levellegend').textContent = g ? 'Fill: stock runs that cleared the level · bar under it: Spark runs · ● exact saved start · ○ fresh or rebuilt start' : '';
+  const nc = state.context === 'none';
+  $('levellegend').textContent = !g ? '' : nc ? 'No context · fill: stock runs that cleared the level · bar under it: No-context Spark runs · ○ replayed level start'
+    : 'Fill: stock runs that cleared the level · bar under it: Spark runs · ● exact saved start · ○ fresh or rebuilt start';
   if (!g) { $('gamefact').textContent = ''; return; }
   const sel = levelOf(g);
-  const spark = SPARK[g.game] && SPARK[g.game].tally || {};
+  const spark = SPARK[`${g.game}:${state.context}`] && SPARK[`${g.game}:${state.context}`].tally || {};
   for (let lv = 1; lv <= g.levels; lv++) {
     const p = g.per_level[lv - 1];
     const sp = spark[lv];
-    const ls = levelStart(g, lv, state.v);
+    const ls = levelStart(g, lv, state.v, state.context);
     const off = !ls.ok && !ls.unknown;
     const b = h('button', 'mx-lv' + (lv === sel ? ' on' : '') + (lv === g.stuck_level ? ' stuck' : '') + (off ? ' off' : ''));
     b.setAttribute('aria-pressed', lv === sel ? 'true' : 'false');
@@ -387,8 +396,9 @@ function renderLevels() {
     if (ls.ok) b.append(h('span', 'mx-lvmark' + (ls.kind === 'exact' ? ' exact' : ''), ls.kind === 'exact' ? '●' : '○'));
     const lines = [`Level ${lv} of ${g.levels}${lv === g.stuck_level ? ' · the stuck level' : ''}`,
       p ? `${p.cleared} of ${p.n} stock runs cleared it (full runs from the start of the game).` : 'No stock tally for this level.',
-      sp && sp.played ? `On the Sparks: ${sp.cleared} of ${sp.played} run${sp.played === 1 ? '' : 's'} that played it cleared it.` : 'No Spark run has played it yet.',
-      ls.ok ? (ls.kind === 'exact' ? `Play starts from an exact saved start (reached in ${ls.chosen.actions_to_reach} actions${ls.count > 1 ? `, best of ${ls.count}` : ''}).`
+      sp && sp.played ? `On the Sparks${nc ? ' without context' : ''}: ${sp.cleared} of ${sp.played} run${sp.played === 1 ? '' : 's'} that played it cleared it.` : `No Spark run has played it${nc ? ' without context' : ''} yet.`,
+      ls.ok ? (ls.kind === 'replay' ? "No context: Play replays the board to this level's start and gives the model a clean first turn."
+        : ls.kind === 'exact' ? `Play starts from an exact saved start (reached in ${ls.chosen.actions_to_reach} actions${ls.count > 1 ? `, best of ${ls.count}` : ''}).`
         : ls.kind === 'reset' ? 'Play starts a fresh game from its first frame.' : 'Play starts from the snapshot, with the conversation rebuilt from stored transcripts.')
         : ls.why];
     b.title = lines.join('\n');
@@ -399,10 +409,10 @@ function renderLevels() {
     box.append(b);
   }
   const p = g.per_level[sel - 1], sp = spark[sel];
-  const ls = levelStart(g, sel, state.v);
+  const ls = levelStart(g, sel, state.v, state.context);
   $('gamefact').textContent = `Level ${sel}${sel === g.stuck_level ? ', the stuck level' : ''}: stock cleared it in ${p ? `${p.cleared} of ${p.n}` : 'no'} full runs` +
-    (sp && sp.played ? `, Spark runs in ${sp.cleared} of ${sp.played}.` : '; no Spark run has played it yet.') +
-    (ls.ok ? (ls.kind === 'exact' ? ' Play starts from an exact saved start.' : ls.kind === 'reset' ? ' Play starts a fresh game.' : ' Play starts from the snapshot (conversation rebuilt).') : ' ' + ls.why);
+    (sp && sp.played ? `, Spark runs${nc ? ' without context' : ''} in ${sp.cleared} of ${sp.played}.` : `; no Spark run has played it${nc ? ' without context' : ''} yet.`) +
+    (ls.ok ? (ls.kind === 'replay' ? ' No context: Play replays the board to this level start and starts a clean conversation.' : ls.kind === 'exact' ? ' Play starts from an exact saved start.' : ls.kind === 'reset' ? ' Play starts a fresh game.' : ' Play starts from the snapshot (conversation rebuilt).') : ' ' + ls.why);
 }
 
 // ---------------------------------------------------------------- Queue view: the queue
@@ -456,7 +466,8 @@ function renderQueueArea() {
   list.append(tail);
   if (state.open >= 0 && q.slots[state.open]) { set.hidden = false; set.append(itemEditor(q.slots[state.open], state.open, q)); }
   renderPlayRow($('playrow'), playCtx(g, q));
-  renderStartBoard($('startboard'), { game: g, level: q.start_level, variant: state.v, ls: levelStart(g, q.start_level, state.v) });
+  renderStartBoard($('startboard'), { game: g, level: q.start_level, variant: state.v, context: state.context,
+    ls: levelStart(g, q.start_level, state.v, state.context) });
   const sub = $('gamebar').querySelector('.mx-gbgame.on .mx-gbsub');
   if (sub) sub.textContent = `${g.levels} levels${q.slots.length ? ` · ${q.slots.length} queued` : ''}`;
 }
@@ -748,8 +759,10 @@ async function importJson(file) {
 // ---------------------------------------------------------------- main
 
 function playCtx(g, q) {
-  return { game: g, level: q.start_level, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen,
-    onJobs: (game, tally, harvest) => { SPARK[game] = { tally, harvest }; if (game === state.game && state.view === 'queue') renderLevels(); } };
+  const context = state.context;
+  return { game: g, level: q.start_level, scheme: q, variant: state.v, context, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen,
+    onJobs: (game, tally, harvest) => { SPARK[`${game}:${context}`] = { tally, harvest }; if (game === state.game && context === state.context && state.view === 'queue') renderLevels(); },
+    onContext: (c) => { state.context = c; store.context = c; saveStore(); state.open = -1; render(); } };
 }
 
 // ---------------------------------------------------------------- shared modes

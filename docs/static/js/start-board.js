@@ -9,6 +9,8 @@ PURPOSE: The Mode explorer's board picture (docs/mode-explorer.html, Queue view,
     reset     level 1: the game's first frame
     rebuilt   the stuck-level snapshot's board (replayed the same way)
     opening   no start there: the level's opening frame from the game file, and Play is not available
+    replay    No context (added 6-Oct): the level start a No-context job plays from, replayed by the runner (an exact
+              checkpoint's actions, else the original game's winning line) and checked against the expected board
   The board comes from the Spark runner through the site's relay (/api/v1/spark-runner/start-board, answered by
   tools/spark_runner/boards.py). When the runner cannot be reached, it falls back to the level's opening frame from
   the site's static copy (static/data/level-frames/<game>.json, written by boards.py --openings) and says so. Answers
@@ -33,11 +35,12 @@ let shown = null;                 // the key the panel is drawing; a late answer
 
 function startKey(ls) {
   if (!ls || !ls.ok) return ls && ls.unknown ? 'unknown' : 'none';
+  if (ls.kind === 'replay') return `replay-${ls.source}${ls.chosen ? '-' + ls.chosen.id : ''}`;
   return ls.kind === 'exact' ? `exact-${ls.chosen && ls.chosen.id}` : ls.kind;
 }
 
-async function fromRunner(game, level, variant) {
-  const r = await fetch(new URL(`start-board?game=${encodeURIComponent(game)}&level=${level}&variant=${variant}`, API),
+async function fromRunner(game, level, variant, context) {
+  const r = await fetch(new URL(`start-board?game=${encodeURIComponent(game)}&level=${level}&variant=${variant}&context=${context}`, API),
     { headers: { Accept: 'application/json' }, cache: 'no-store' });
   const type = r.headers.get('Content-Type') || '';
   if (r.redirected || !type.includes('json')) throw new Error(r.status === 401 || r.redirected ? 'sign in to the site again' : `HTTP ${r.status}`);
@@ -82,6 +85,11 @@ function caption(ls, level, answer, fallback) {
         : ls && ls.unknown ? 'so whether Play can start here is not known.' : 'and Play has no start at this level yet.');
   }
   switch (answer.kind) {
+    case 'replay':
+      if (answer.replay_source === 'reset') return 'The board a No-context Play starts from: the first frame of the game.';
+      return `The board a No-context Play starts from: replayed through ${answer.actions_to_reach} actions ` +
+        (answer.replay_source === 'checkpoint' ? "of a saved start" : 'of the recorded winning line') +
+        (answer.matches_saved_board === false ? ' (warning: it does not match the expected board).' : ' and checked against the expected board. The model sees this board with a clean conversation.');
     case 'exact':
       return `The board Play starts from: the exact saved start, reached in ${answer.actions_to_reach} actions from the first frame` +
         (answer.matches_saved_board === false ? ' (warning: the replayed board does not match the one saved with it).' : ', replayed and checked against the board saved with it.');
@@ -95,15 +103,17 @@ function caption(ls, level, answer, fallback) {
   }
 }
 
-// box: the panel element. ctx: {game (stuck-levels row), level, variant, ls (levelStart for that level)}.
+// box: the panel element. ctx: {game (stuck-levels row), level, variant, context ('carried' | 'none'), ls (levelStart
+// for that level and context)}.
 export function renderStartBoard(box, ctx) {
   const { game: g, level, variant, ls } = ctx;
-  const key = `${g.game}:${level}:${variant}:${startKey(ls)}`;
+  const context = ctx.context === 'none' ? 'none' : 'carried';
+  const key = `${g.game}:${level}:${variant}:${context}:${startKey(ls)}`;
   if (shown === key && box.querySelector('canvas')) return;
   shown = key;
   box.textContent = '';
   const head = h('div', 'mx-bdhead');
-  head.append(h('span', 'mx-bdtitle', `Level ${level} at the start`), h('span', 'mx-bdkind', ls && ls.ok ? (ls.kind === 'exact' ? 'exact start' : ls.kind === 'reset' ? 'fresh game' : ls.kind === 'rebuilt' ? 'snapshot' : '') : ls && ls.unknown ? 'start not known' : 'no start yet'));
+  head.append(h('span', 'mx-bdtitle', `Level ${level} at the start`), h('span', 'mx-bdkind', ls && ls.ok ? (ls.kind === 'exact' ? 'exact start' : ls.kind === 'reset' ? 'fresh game' : ls.kind === 'rebuilt' ? 'snapshot' : ls.kind === 'replay' ? 'no context, replayed' : '') : ls && ls.unknown ? 'start not known' : 'no start yet'));
   const frame = h('div', 'mx-bdframe' + (ls && !ls.ok && !ls.unknown ? ' off' : ''));
   const canvas = h('canvas', 'mx-bdcanvas');
   canvas.setAttribute('role', 'img');
@@ -112,7 +122,7 @@ export function renderStartBoard(box, ctx) {
   box.append(head, frame, note);
 
   if (!runnerBoards.has(key)) {
-    const p = fromRunner(g.game, level, variant);
+    const p = fromRunner(g.game, level, variant, context);
     runnerBoards.set(key, p);
     p.catch(() => runnerBoards.delete(key));   // try the runner again next time
   }

@@ -28,6 +28,14 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     matched the saved one. The Play note says which start Play will use (the chosen checkpoint: fewest actions from
     RESET, then fewest tokens) and the results header lists this game's levels that have exact starts. The runner
     line shows harvest (idle-time Stock runs that collect exact starts).
+  - Context (added 6-Oct, Son: "Right now future levels require previous context. Add a 'non-context' mode too."): a
+    toggle next to Play, "Carry context" (everything above) or "No context". No context starts the chosen level at that
+    level's start board, reached by a verified replay on the runner (an exact checkpoint's actions, else the original
+    game's winning line; level 1 a fresh game), with a new game's first turn: no earlier turns, no notes, no kept
+    functions. Every level of the trainable public games can start that way (the runner's replay-starts answer).
+    Results are split by context: each kind gets its own section and its own Stock comparison (carried: the stock
+    tally from full runs; no context: the Stock-only No-context Spark jobs at that level), and the Spark tally on the
+    level buttons counts only jobs of the selected kind. Jobs from before the option carried context.
 SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
@@ -40,7 +48,8 @@ let stuckPoints = null;      // from /stuck-points, null until loaded, false if 
 let health = null;
 let pollTimer = null;
 let exactStarts = null;     // /exact-starts rows (every game, not only those with a snapshot); null until loaded
-let resultsKey = null;       // the game and level the results box is showing; a poll for another one is dropped
+let resultsKey = null;       // the game, level and context the results box is showing; a poll for another one is dropped
+let replayStarts = null;     // /replay-starts: per trainable game, levels a No-context job can start from; null until loaded, false if unreachable
 // Play options survive the page's redraws (every queue edit redraws the Play row).
 const opts = { samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120 };
 
@@ -67,7 +76,12 @@ export async function loadRunnerInfo() {
   try { stuckPoints = (await call('stuck-points')).stuck_points || []; } catch { stuckPoints = false; }
   // the relay answers this one from its stored index when the Sparks are off, so the level buttons still show exact starts
   try { exactStarts = (await call('exact-starts')).levels || []; } catch { exactStarts = []; }
+  try { replayStarts = (await call('replay-starts')).games || {}; } catch { replayStarts = false; }
 }
+
+// Jobs from before the context option carried context.
+export function contextOf(j) { return (j && j.context) === 'none' ? 'none' : 'carried'; }
+const CONTEXT_NAME = { carried: 'Carry context', none: 'No context' };
 
 function pointOf(game) { return Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === game) || null : null; }
 function exactRow(game, level, variant) {
@@ -77,7 +91,10 @@ function exactRow(game, level, variant) {
 // Where Play would start this game at this level with this wording, or why it cannot:
 // {ok, kind: 'exact' | 'reset' | 'rebuilt', chosen, count, why}. Mirrors the runner's play(): exact checkpoint first,
 // then a fresh game for level 1, then the stuck-level snapshot if it passed its replay check.
-export function levelStart(g, level, variant) {
+// With context 'none': {ok, kind: 'replay', source: 'reset' | 'checkpoint' | 'winning_line'} when the runner has a
+// verified replay to that level's start, else why not.
+export function levelStart(g, level, variant, context = 'carried') {
+  if (context === 'none') return replayStart(g, level, variant);
   const ex = exactRow(g.game, level, variant);
   if (ex) return { ok: true, kind: 'exact', chosen: ex.chosen, count: ex.count };
   if (level === 1) return { ok: true, kind: 'reset' };
@@ -92,14 +109,29 @@ export function levelStart(g, level, variant) {
     : `No saved start for level ${level} yet. One is saved when a Spark run that began fresh or from an exact start clears level ${level - 1} (runs from a rebuilt start do not count); idle Spark time collects them.` };
 }
 
+function replayStart(g, level, variant) {
+  if (level === 1) return { ok: true, kind: 'replay', source: 'reset' };
+  if (replayStarts === null) return { ok: false, unknown: true, why: 'Checking the Spark runner…' };
+  if (replayStarts === false) return { ok: false, unknown: true, why: 'The Spark runner cannot be reached right now, so whether this level can start without context is not known.' };
+  const row = replayStarts[g.game];
+  if (row && (row.playable_levels || []).includes(level)) {
+    const ex = exactRow(g.game, level, variant) || exactRow(g.game, level, variant === 'son' ? 'daniel' : 'son');
+    return ex ? { ok: true, kind: 'replay', source: 'checkpoint', chosen: ex.chosen } : { ok: true, kind: 'replay', source: 'winning_line' };
+  }
+  return { ok: false, why: row ? `Level ${level} has no verified replay to its start, so it cannot start without context.`
+    : `${g.nickname} has no winning line on the runner, so only level 1 can start without context.` };
+}
+
 // Per level: Spark samples that played it and that cleared it. A sample that started at level L and cleared c levels
 // cleared L..L+c-1; when it stopped on a cap before its last level it played level L+c without clearing it. Samples
 // that ended in an error or were stopped count only the levels they did clear.
 const CAPS = new Set(['action_cap', 'turn_cap', 'time_cap']);
-export function sparkTally(jobs) {
+// Only jobs of the given context count (harvest runs carry context), so the two kinds never mix on the level buttons.
+export function sparkTally(jobs, context = 'carried') {
   const t = {};
   const add = (lv, cleared) => { const x = t[lv] || (t[lv] = { played: 0, cleared: 0 }); x.played++; if (cleared) x.cleared++; };
   for (const j of jobs || []) {
+    if (contextOf(j) !== context) continue;
     const start = j.stuck_level || 1;
     const toPlay = j.kind === 'harvest' ? 99 : ((j.caps || {}).levels_to_play || 1);
     for (const row of j.sample_rows || []) {
@@ -146,18 +178,18 @@ function buildRequest(ctx) {
   });
   const stock = ctx.findMode('stock');
   return {
-    game: ctx.game.game, stuck_level: ctx.level, variant: v, scheme,
+    game: ctx.game.game, stuck_level: ctx.level, variant: v, scheme, context: ctx.context === 'none' ? 'none' : 'carried',
     stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
     max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: null,
   };
 }
 
 // Why Play is off for this game and level, or '' when it can run.
-function blocked(g, level, variant) {
+function blocked(g, level, variant, context) {
   if (stuckPoints === false) return health && health.message ? `${health.message} Nothing can start; past results still show below.`
     : 'The Spark runner cannot be reached from the site right now, so nothing can start. Past results still show below.';
   if (stuckPoints === null) return 'Checking the Spark runner…';
-  const ls = levelStart(g, level, variant);
+  const ls = levelStart(g, level, variant, context);
   return ls.ok ? '' : ls.why;
 }
 
@@ -184,8 +216,20 @@ export function renderPlayRow(box, ctx) {
   box.textContent = '';
   const g = ctx.game, q = ctx.scheme;
   const lv = ctx.level;
-  const why = blocked(g, lv, ctx.variant);
-  const ls = levelStart(g, lv, ctx.variant);
+  const cx = ctx.context === 'none' ? 'none' : 'carried';
+  const why = blocked(g, lv, ctx.variant, cx);
+  const ls = levelStart(g, lv, ctx.variant, cx);
+  // Carry context / No context, right next to Play; switching redraws the level buttons, board and results
+  const seg = h('div', 'mx-segs mx-ctxseg');
+  seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Context');
+  for (const [k, label] of Object.entries(CONTEXT_NAME)) {
+    const b = h('button', 'mx-seg' + (k === cx ? ' on' : ''), label);
+    b.setAttribute('aria-pressed', k === cx ? 'true' : 'false');
+    b.title = k === 'carried' ? 'The model keeps what an earlier run of this game learned before this level: its conversation, notes and kept functions (exact start or snapshot).'
+      : "The game board is at this level's start, but the model starts a clean conversation, as on a new game's first turn: no earlier turns, no notes, no kept functions.";
+    b.onclick = () => { if (k !== cx && ctx.onContext) ctx.onContext(k); };
+    seg.append(b);
+  }
   const play = h('button', 'mx-play', 'Play');
   play.disabled = !!why;
   const num = (label, key, min, max, title) => {
@@ -199,13 +243,16 @@ export function renderPlayRow(box, ctx) {
   const turns = num('turns max', 'max_turns', 1, 60, 'Model turns per sample before it stops (the queue counts toward this)');
   const status = h('span', 'mx-runstatus', runnerLine());
   const row = h('div', 'mx-playline');
-  row.append(play, samples, turns, status);
+  row.append(seg, play, samples, turns, status);
   box.append(row);
   const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
   const note = h('p', 'mx-playnote', why || (q.slots.length
     ? `Plays the queue, one mode per turn from the start of level ${lv}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
     : `Empty queue: Play runs Stock only from level ${lv}, a baseline from the same starting point.`) +
-    (why ? '' : ls.kind === 'exact' ? ` Exact start: the conversation, board pictures and tool state saved when a run reached this level in ${ls.chosen.actions_to_reach} actions.`
+    (why ? '' : ls.kind === 'replay' ? ` No context: the board is replayed to the start of level ${lv}` +
+        (ls.source === 'reset' ? ' (the first frame)' : ls.source === 'checkpoint' ? ' from a saved start\'s actions' : ' along the recorded winning line') +
+        ' and checked; the model gets only the system prompt and a first-turn prompt for that board.'
+      : ls.kind === 'exact' ? ` Exact start: the conversation, board pictures and tool state saved when a run reached this level in ${ls.chosen.actions_to_reach} actions.`
       : ls.kind === 'reset' ? ' Start: a fresh game from its first frame, as a real run begins.'
       : ' Start: the snapshot, with the conversation rebuilt from stored transcripts (no exact start for this level yet).'));
   box.append(note);
@@ -226,7 +273,7 @@ export function renderPlayRow(box, ctx) {
       note.textContent = e.status === 401 && /runner key/.test(e.message)
         ? 'Not started: the Spark runner turned the site away. That is a site setup problem, not yours; tell Bubba.'
         : `Not started: ${e.message}`;
-    } finally { play.disabled = !!blocked(g, lv, ctx.variant); }
+    } finally { play.disabled = !!blocked(g, lv, ctx.variant, cx); }
   };
 }
 
@@ -235,7 +282,7 @@ export function renderPlayRow(box, ctx) {
 function resTitle(ctx) { return `Results · ${ctx.game.nickname}, level ${ctx.level}`; }
 
 export function renderResults(box, ctx) {
-  const key = `${ctx.game.game}:${ctx.level}`;
+  const key = `${ctx.game.game}:${ctx.level}:${ctx.context}`;
   if (resultsKey !== key) {
     box.textContent = '';
     box.append(h('h2', 'mx-resh', resTitle(ctx)), h('p', 'mx-sum', 'loading…'));
@@ -246,7 +293,7 @@ export function renderResults(box, ctx) {
 
 async function refreshResults(box, ctx) {
   clearTimeout(pollTimer);
-  const game = ctx.game.game, key = `${game}:${ctx.level}`;
+  const game = ctx.game.game, key = `${game}:${ctx.level}:${ctx.context}`;
   let data;
   const runs = ctx.loadRuns ? ctx.loadRuns(game) : Promise.resolve({});
   // Play and harvest jobs together: Play jobs are listed below, both feed the level buttons' Spark tally.
@@ -260,7 +307,7 @@ async function refreshResults(box, ctx) {
   if (resultsKey !== key || !box.isConnected) return;
   const jobs = data.jobs || [];
   data.jobs = jobs.filter(j => (j.kind || 'play') === 'play');
-  if (ctx.onJobs) ctx.onJobs(game, sparkTally(jobs), jobs.filter(j => j.kind === 'harvest').length);
+  if (ctx.onJobs) ctx.onJobs(game, sparkTally(jobs, ctx.context === 'none' ? 'none' : 'carried'), jobs.filter(j => j.kind === 'harvest').length);
   drawResults(box, ctx, data);
   const live = data.jobs.some(j => j.status === 'queued' || j.status === 'running');
   if (live) pollTimer = setTimeout(() => { if (resultsKey === key) refreshResults(box, ctx); }, POLL_MS);
@@ -271,22 +318,58 @@ function stockTally(g, level) {
   return p ? { cleared: p.cleared, n: p.n } : null;
 }
 
+// Stock-only No-context Spark jobs at this level, pooled, optionally leaving one job out (its own card): the No-context
+// Stock comparison. The full-run stock tally carries context from the start of the game, so it is never used here.
+function noContextStock(jobs, level, skipId) {
+  let cleared = 0, n = 0;
+  for (const j of jobs) {
+    if (contextOf(j) !== 'none' || j.stuck_level !== level || j.id === skipId || (j.scheme_summary || []).length) continue;
+    for (const row of j.sample_rows || []) {
+      const r = row.result;
+      if (!r || r.outcome === 'error') continue;
+      n++; if (r.outcome === 'cleared' || r.outcome === 'won') cleared++;
+    }
+  }
+  return n ? { cleared, n } : null;
+}
+
+// The Stock comparison for one context, as {line (header sentence), pct (for a job card) }.
+function stockFor(ctx, jobs, context, skipId) {
+  const g = ctx.game, lv = ctx.level;
+  if (context === 'none') {
+    const st = noContextStock(jobs, lv, skipId);
+    return st ? { st, line: `Stock without context for this level: cleared in ${st.cleared} of ${st.n} Stock-only No-context samples (${pct(st.cleared, st.n)}).` }
+      : { st: null, line: 'No Stock comparison without context yet: nobody has played this level Stock-only in No-context mode. Play an empty queue with No context to get one. The full-run stock tally is not used here, because those runs carried context.' };
+  }
+  const st = stockTally(g, lv);
+  return { st, line: st ? `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}); those runs carried context from the start of the game, like the jobs here.`
+    : 'No stock tally for this level.' };
+}
+
 function drawResults(box, ctx, data) {
   const g = ctx.game, lv = ctx.level;
+  const cur = ctx.context === 'none' ? 'none' : 'carried';
   box.textContent = '';
   box.append(h('h2', 'mx-resh', resTitle(ctx)));
-  const st = stockTally(g, lv);
-  if (st) box.append(h('p', 'mx-sum', `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}). Each run below starts at this level, so compare its cleared share with that.`));
   if (data.from_storage) box.append(h('p', 'mx-sum mx-warnline', `${data.message} Showing what the site stored earlier.`));
   const exact = (exactStarts || []).filter(x => x.game === g.game && x.variant === ctx.variant && x.chosen).sort((a, b) => a.level - b.level);
   box.append(h('p', 'mx-sum', exact.length
     ? `Exact starts for ${g.nickname}: ${exact.map(x => `level ${x.level} (${x.chosen.actions_to_reach} actions from reset${x.count > 1 ? `, best of ${x.count}` : ''})`).join(', ')}.`
     : `No exact starts for ${g.nickname} yet; idle Spark time collects them.`));
   const all = (data.jobs || []).slice().sort((a, b) => String(b.created).localeCompare(String(a.created)));
-  const jobs = all.filter(j => j.stuck_level === lv);
-  if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${lv} yet. Build a queue and press Play.`));
-  for (const j of jobs) box.append(jobCard(j, ctx, (data.records || {})[j.id]));
-  const other = all.length - jobs.length;
+  const here = all.filter(j => j.stuck_level === lv);
+  // One section per context, the selected one first; the other only when it has jobs here. Never mixed.
+  for (const context of [cur, cur === 'none' ? 'carried' : 'none']) {
+    const jobs = here.filter(j => contextOf(j) === context);
+    if (context !== cur && !jobs.length) continue;
+    const sec = h('section', 'mx-ctxsec');
+    sec.append(h('h3', 'mx-ctxh', `${CONTEXT_NAME[context]}${context === cur ? '' : ' (the other kind; switch next to Play to start one)'}`));
+    sec.append(h('p', 'mx-sum', stockFor(ctx, all, context).line));
+    if (!jobs.length) sec.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${lv} ${context === 'none' ? 'without context' : 'with context carried'} yet. Build a queue and press Play.`));
+    for (const j of jobs) sec.append(jobCard(j, ctx, (data.records || {})[j.id], stockFor(ctx, all, context, j.id).st));
+    box.append(sec);
+  }
+  const other = all.length - here.length;
   if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown; pick that level above to see ${other === 1 ? 'it' : 'them'}.`));
 }
 
@@ -328,13 +411,15 @@ function wordingBlock(rec, ctx) {
   return det;
 }
 
-function jobCard(j, ctx, rec) {
+function jobCard(j, ctx, rec, st) {
   const card = h('div', 'card mx-job');
   const top = h('div', 'mx-jobtop');
   const when = new Date(j.created);
   const startKind = j.start_kind || (j.conversation_exact ? 'exact' : 'rebuilt');
-  const sk = h('span', `chip mx-js ${startKind === 'rebuilt' ? 'queued' : 'done'}`, startKind === 'rebuilt' ? 'conversation rebuilt' : startKind === 'reset' ? 'from reset' : 'exact start');
-  sk.title = startKind === 'rebuilt' ? 'Started from the snapshot: the game state is exact, the conversation was rebuilt from stored transcripts'
+  const sk = h('span', `chip mx-js ${startKind === 'rebuilt' ? 'queued' : 'done'}`, startKind === 'replay' ? 'no context'
+    : startKind === 'rebuilt' ? 'conversation rebuilt' : startKind === 'reset' ? 'from reset' : 'exact start');
+  sk.title = startKind === 'replay' ? `No context: the board was replayed to this level's start (${j.replay_source === 'checkpoint' ? "a saved start's actions" : j.replay_source === 'winning_line' ? 'the recorded winning line' : 'the first frame'}) and the model began a clean conversation`
+    : startKind === 'rebuilt' ? 'Started from the snapshot: the game state is exact, the conversation was rebuilt from stored transcripts'
     : startKind === 'reset' ? 'Started from the first frame of the game' : `Started from an exact checkpoint${j.start_checkpoint ? ' (' + j.start_checkpoint + ')' : ''}: the saved request, harness state and actions`;
   const waiting = j.place_in_line > 1;
   top.append(h('span', `chip mx-js ${j.status}`, waiting ? `${ordinal(j.place_in_line)} in line` : j.status), sk, queueTags(j, ctx, rec));
@@ -352,14 +437,13 @@ function jobCard(j, ctx, rec) {
   const results = rows.map(r => r.result).filter(Boolean);
   const s = j.summary || {};
   const done = s.finished_samples ?? results.length;
-  const st = stockTally(ctx.game, j.stuck_level);
   const line = h('p', 'mx-jobsum');
   if (done) {
     const cleared = s.cleared ?? results.filter(r => r.outcome === 'cleared' || r.outcome === 'won').length;
     const turns = results.length ? results.reduce((a, r) => a + (r.turns || 0), 0) / results.length : null;
     const b = h('b', null, `Cleared in ${cleared} of ${done} (${pct(cleared, done)})`);
     line.append(b, document.createTextNode(
-      (st ? ` vs stock ${pct(st.cleared, st.n)}` : '') +
+      (st ? ` vs stock ${contextOf(j) === 'none' ? 'without context' : 'with context'} ${pct(st.cleared, st.n)}` : '') +
       ` · levels gained ${s.levels_gained ?? '–'} · mean actions ${s.mean_actions ?? '–'}` +
       (turns != null ? ` · mean turns ${Math.round(turns * 10) / 10}` : '') +
       (s.errors ? ` · ${plural(s.errors, 'error')}` : '') +

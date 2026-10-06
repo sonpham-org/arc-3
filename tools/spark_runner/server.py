@@ -15,12 +15,18 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     GET  /api/jobs/{id}/samples/{k}/turns   per-turn log of one sample (bearer key)
     GET  /api/exact-starts            exact level-start checkpoints: per game, level and variant, the chosen one (public)
     POST /api/settings                harvest on/off and lanes (bearer key)
-    GET  /api/start-board?game=&level=&variant=   the board at the start Play would use there (boards.py; public)
+    GET  /api/start-board?game=&level=&variant=&context=   the board at the start Play would use there (boards.py; public)
+    GET  /api/replay-starts           per trainable game, the levels a No-context job can start from (replays.py; public)
   A job = one game's starting level, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
   and N samples (default 10). The start is EXACT when an exact checkpoint exists for that game, level and variant
   (checkpoints.py: full request body, harness state, actions from RESET, written whenever a level is cleared);
   otherwise level 1 starts a fresh game from RESET (any public game; added 6-Oct for the page's level buttons), and
   any other level the stuck-level snapshot with its conversation rebuilt from the site's transcripts ("rebuilt").
+  Context (added 6-Oct, Son: "Add a 'non-context' mode too"): a Play job carries context ("carried", the default and
+  everything above) or not ("none"). A No-context job starts the chosen level at that level's start board, reached by a
+  verified replay (replays.py: exact checkpoint actions, else the original game's winning line; level 1 a fresh game),
+  with a new game's first turn: the harness system prompt and its normal first prompt for that board, no earlier
+  turns, no retained functions. Its samples write no checkpoints. Old jobs without the field carried context.
   Harvest (default on, ARC3_RUNNER_HARVEST / settings.json): while no Play sample is queued or running, one or two
   one-sample Stock runs from RESET on the public games outside the held-out eight, only to collect exact checkpoints
   for every level they clear. A queued Play job pre-empts them at once (process group killed, job "preempted";
@@ -57,6 +63,7 @@ from pydantic import BaseModel, Field, field_validator
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import checkpoints  # noqa: E402
+import replays  # noqa: E402
 from modes import ModeError, build_delta  # noqa: E402
 
 HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
@@ -145,6 +152,7 @@ class PlayRequest(BaseModel):
     max_turns: int = Field(default=20, ge=1, le=60)
     max_minutes: int = Field(default=120, ge=5, le=180)
     levels_to_play: int = Field(default=1, ge=1, le=9)
+    context: Literal["carried", "none"] = "carried"
     label: str | None = Field(default=None, max_length=120)
     by: str | None = Field(default=None, max_length=120)
 
@@ -228,12 +236,15 @@ def job_view(job_id: str, *, full: bool = False, line: list[str] | None = None) 
             row["result"] = {x: res.get(x) for x in ("outcome", "levels_cleared", "actions_used", "turns", "modes_run",
                                                        "final_level", "seconds", "error", "replay_verified", "generated_tokens",
                                                        "start_kind", "start_checkpoint", "first_request",
-                                                       "checkpoints_written", "checkpoint_errors")}
+                                                       "checkpoints_written", "checkpoint_errors", "context",
+                                                       "replay_source")}
+            row["result"]["context"] = row["result"]["context"] or job.get("context", "carried")
         samples.append(row)
     view = {k: job.get(k) for k in ("id", "created", "game", "stuck_level", "variant", "samples", "status", "label", "by",
                                     "caps", "scheme_summary", "model", "conversation_exact", "finished", "kind",
-                                    "start_kind", "start_checkpoint", "preempted")}
+                                    "start_kind", "start_checkpoint", "preempted", "context", "replay_source")}
     view["kind"] = view["kind"] or "play"
+    view["context"] = view["context"] or "carried"
     view["start_kind"] = view["start_kind"] or ("exact" if job.get("conversation_exact") else "rebuilt")
     if view["kind"] == "play" and view["status"] in ("queued", "running"):
         line = play_line() if line is None else line
@@ -473,6 +484,7 @@ def health() -> dict:
     for place, jid in enumerate(line, 1):
         j = read_json(JOBS / jid / "job.json", {}) or {}
         play_queue.append({"place": place, "job": jid, "game": j.get("game"), "level": j.get("stuck_level"),
+                           "context": j.get("context", "carried"),
                            "samples": j.get("samples"), "by": j.get("by"), "created": j.get("created")})
     return {"ok": True, "time": now(), "concurrency": CONCURRENCY,
             "samples_running": running - len(harvest_running), "samples_queued": queued,
@@ -480,6 +492,7 @@ def health() -> dict:
             "play_queue": play_queue,
             "model": {"base_url_kind": "two-Spark Flash-Next server (via tunnel)", "model_id": MODEL_ID, **model_status()},
             "snapshots": len(stuck_points()),
+            "replay_starts": {"games": len(replays.summary()["games"]), "checked": replays.summary()["checked"]},
             "harvest": {"enabled": bool(settings["harvest"]), "lanes": settings["harvest_lanes"],
                         "running": harvest_running, "started_since_restart": HARVEST["started"],
                         "preemptions_since_restart": HARVEST["preemptions"], "last_started": HARVEST["last_started"],
@@ -500,8 +513,16 @@ def get_exact_starts(game: str | None = None) -> dict:
     return {"rule": idx.get("rule"), "built": idx.get("built"), "levels": rows}
 
 
+@app.get("/api/replay-starts")
+def get_replay_starts() -> dict:
+    """Levels a No-context job can start from, per trainable public game (level 1 always; later levels with a verified
+    replay, see replays.py)."""
+    return replays.summary()
+
+
 @app.get("/api/start-board")
-def get_start_board(game: str, level: int, variant: Literal["son", "daniel"] = "son") -> dict:
+def get_start_board(game: str, level: int, variant: Literal["son", "daniel"] = "son",
+                    context: Literal["carried", "none"] = "carried") -> dict:
     """The board at the start Play would use for this game, level and wording (boards.py: exact checkpoint replayed,
     fresh game, snapshot replayed, or the level's opening frame when there is no start). Runs the game file in a
     subprocess; answers are cached on disk, so only a new start costs a replay."""
@@ -512,7 +533,7 @@ def get_start_board(game: str, level: int, variant: Literal["son", "daniel"] = "
     if not (ENV_DIR / game).is_dir():
         raise HTTPException(404, f"{game} is not among the runner's games")
     try:
-        r = subprocess.run([PYTHON, str(HERE / "boards.py"), game, str(level), variant],
+        r = subprocess.run([PYTHON, str(HERE / "boards.py"), game, str(level), variant, context],
                            capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "drawing the board took too long")
@@ -575,7 +596,18 @@ def play(req: PlayRequest) -> dict:
     snap_file = snapshot_path(req.game)
     snap = read_json(snap_file)
     cp = checkpoints.chosen(req.game, req.stuck_level, req.variant)
-    if cp is not None:
+    replay_source = None
+    if req.context == "none":
+        # No context: the level's start board by a verified replay, and a new game's first turn
+        r = replays.start_for(req.game, req.stuck_level, req.variant)
+        game_id = game_id_for(req.game)
+        if r is None or game_id is None:
+            raise HTTPException(409, f"{req.game} level {req.stuck_level} has no verified replay to its start, so it "
+                                     "cannot be played without context")
+        start = {"kind": "replay", "source": r["source"], "checkpoint": r.get("checkpoint"), "actions": r["actions"],
+                 "expected": r["expected"], "id": r.get("checkpoint")}
+        start_kind, replay_source = "replay", r["source"]
+    elif cp is not None:
         start = {"kind": "checkpoint", "path": cp["path"], "id": cp["id"]}
         start_kind, game_id = "exact", cp["game_id"]
     elif req.stuck_level == 1:
@@ -610,7 +642,8 @@ def play(req: PlayRequest) -> dict:
     d = JOBS / job_id
     (d / "samples").mkdir(parents=True)
     spec = {"kind": "play", "game": req.game, "game_id": game_id, "stuck_level": req.stuck_level, "variant": req.variant,
-            "scheme": slots[:-1], "stock": slots[-1], "start": start,
+            "scheme": slots[:-1], "stock": slots[-1], "start": start, "context": req.context,
+            "capture": req.context == "carried",
             "caps": {"max_actions": req.max_actions, "max_turns": req.max_turns, "max_minutes": req.max_minutes, "levels_to_play": req.levels_to_play},
             "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
     write_json(d / "spec.json", spec)
@@ -618,12 +651,14 @@ def play(req: PlayRequest) -> dict:
            "samples": req.samples, "status": "queued", "label": req.label, "by": req.by, "caps": spec["caps"],
            "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"]} for s in slots[:-1]],
            "model": {"model_id": MODEL_ID}, "conversation_exact": start_kind != "rebuilt", "kind": "play",
-           "start_kind": start_kind, "start_checkpoint": start.get("id"),
+           "start_kind": start_kind, "start_checkpoint": start.get("id"), "context": req.context,
+           "replay_source": replay_source,
            "sample_state": ["queued"] * req.samples, "finished": None, "queued_ns": time.time_ns()}
     write_json(d / "job.json", job)
     line = play_line()
     return {"job": job_id, "queued_samples": req.samples,
-            "place_in_line": line.index(job_id) + 1 if job_id in line else None, "start_kind": start_kind, "start_checkpoint": start.get("id")}
+            "place_in_line": line.index(job_id) + 1 if job_id in line else None, "start_kind": start_kind,
+            "start_checkpoint": start.get("id"), "context": req.context, "replay_source": replay_source}
 
 
 @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_key)])

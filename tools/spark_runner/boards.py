@@ -11,11 +11,14 @@ PURPOSE: The game board at the start Play would use, for the Mode explorer's boa
     rebuilt    the stuck-level snapshot's action line replayed; checked against the snapshot's board hash
     opening    no start for this level: the level's clean opening frame from the game file (the level's own sprites,
                as the site's in-browser player jumps to a level). Play is not available there.
+  With context "none" (the No-context Play option, added 6-Oct) it draws the replayed level start a No-context sample
+  plays from (replays.start_for: exact checkpoint actions, else the verified winning line; level 1 the first frame),
+  checked against the expected board.
   Replay is the bare arcengine game (no harness, no model): a few hundred actions take well under a second. Each
   answer is cached under <home>/boards/ by game, level and what it was drawn from (checkpoint id, snapshot build
   time, game file), so a new chosen checkpoint gets a new picture and nothing else is redrawn.
   Run as a subprocess by server.py (/api/start-board), since it executes the game's own Python file:
-    python boards.py <game> <level> <variant>        prints one JSON answer
+    python boards.py <game> <level> <variant> [carried|none]   prints one JSON answer
     python boards.py --openings <game>               prints every level's opening frame (for the site's static copy)
 SRP/DRY check: Pass - drawing only. The start choice is the same order as server.play() and reads the same files
   (checkpoints.chosen, snapshots/<game>.json, snapshots/verified.json); replay follows sample.replay's action format.
@@ -117,10 +120,22 @@ def start_for(game: str, level: int, variant: str) -> dict:
     return {"kind": "opening", "key": "opening"}
 
 
-def draw(game: str, level: int, variant: str) -> dict:
-    start = start_for(game, level, variant)
+def replay_start_for(game: str, level: int, variant: str) -> dict:
+    """What a No-context sample would start from (replays.start_for), in the shape draw() uses."""
+    import replays   # imported here: replays imports this module
+    r = replays.start_for(game, level, variant)
+    if r is None:
+        return {"kind": "opening", "key": "opening"}
+    key = f"replay-{r['source']}-{r.get('checkpoint') or (r['expected'] or {}).get('board_sha256', 'first')[:16]}"
+    return {"kind": "replay", "source": r["source"], "checkpoint": r.get("checkpoint"), "actions": r["actions"],
+            "expected": r["expected"], "key": key}
+
+
+def draw(game: str, level: int, variant: str, context: str = "carried") -> dict:
+    start = replay_start_for(game, level, variant) if context == "none" else start_for(game, level, variant)
     src = game_file(game)
-    key = f"{level}-{variant if start['kind'] == 'exact' else 'any'}-{start['key']}-{int(src.stat().st_mtime)}"
+    exact_key = start["kind"] == "exact" or start.get("source") == "checkpoint"
+    key = f"{context}-{level}-{variant if exact_key else 'any'}-{start['key']}-{int(src.stat().st_mtime)}"
     cache = CACHE / game / f"{key}.json"
     hit = read_json(cache)
     if hit:
@@ -130,8 +145,14 @@ def draw(game: str, level: int, variant: str) -> dict:
     if not 1 <= level <= n:
         raise ValueError(f"{game} has {n} levels")
     open_grid, _ = opening(cls, level)
-    out = {"game": game, "level": level, "variant": variant, "levels": n, "kind": start["kind"]}
-    if start["kind"] == "exact":
+    out = {"game": game, "level": level, "variant": variant, "levels": n, "kind": start["kind"], "context": context}
+    if start["kind"] == "replay":
+        grid = replay(cls, start["actions"])
+        exp = start["expected"]
+        out.update(replay_source=start["source"], checkpoint=start.get("checkpoint"), actions_to_reach=len(start["actions"]),
+                   matches_saved_board=(hashlib.sha256(json.dumps(grid).encode()).hexdigest() == exp["board_sha256"])
+                   if exp else grid == open_grid)
+    elif start["kind"] == "exact":
         grid = replay(cls, read_json(Path(start["path"]) / "actions.json", []))
         saved = start["board_sha256"]
         out.update(checkpoint=start["id"], actions_to_reach=start["actions_to_reach"],
@@ -166,4 +187,5 @@ if __name__ == "__main__":
     if sys.argv[1] == "--openings":
         print(json.dumps(openings(sys.argv[2]), separators=(",", ":")))
     else:
-        print(json.dumps(draw(sys.argv[1], int(sys.argv[2]), sys.argv[3]), separators=(",", ":")))
+        print(json.dumps(draw(sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "carried"),
+                         separators=(",", ":")))

@@ -9,7 +9,7 @@ SRP/DRY check: Pass - operations only; the design write-up is the doc above.
 
 # Spark runner (Jethro, gx10-a424)
 
-Plays ARC-3 games from a chosen level (an exact start, level 1 from RESET, or the stuck-level snapshot) under a Mode explorer scheme, on the two-Spark Flash-Next server.
+Plays ARC-3 games from a chosen level (an exact start, level 1 from RESET, or the stuck-level snapshot) under a Mode explorer scheme, on the two-Spark Flash-Next server. A job either carries context (the default) or starts with **no context**: the board at that level's start, the model on a new game's first turn (added 6-Oct, see below).
 
 ```
 browser (arc3.sonpham.net/mode-explorer.html, signed in)
@@ -25,7 +25,9 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 
 | Path | What |
 |---|---|
-| `code/` | `server.py`, `sample.py`, `modes.py`, `checkpoints.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
+| `code/` | `server.py`, `sample.py`, `modes.py`, `checkpoints.py`, `boards.py`, `replays.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
+| `solutions/` | the original games' winning lines, one list per level: copy of `datasets/copycat-games/recolor/solutions/*.json` + `manifest.json` in the repo (trainable public games only) |
+| `replays/verified.json` | per trainable game and level: the replay check of the winning line (actions to reach, board hash, same as the opening frame or not), built by `replays.py --verify-all`; a copy is in the repo at `datasets/spark-runner-replays/` |
 | `harness/` | Franzen's bundle + the notebook's patch + Son's toolfast edits, `notebook_env.json` with the notebook's flags (built by `build_harness.py`) |
 | `environment_files/` | the 25 public games (copy of `~/GitHub/arc-3/environment_files`) |
 | `snapshots/` | rebuilt starting points (`<game>.json`, `index.json`) from `datasets/spark-runner-snapshots/`, plus `verified.json` (replay check) |
@@ -96,6 +98,28 @@ venv/bin/python code/sample.py --verify-checkpoint checkpoints/<game>/<level>/<i
 
 KV cache: not stored. See docs/2026-10-06-spark-runner.md for the measured re-prefill time.
 
+## No context (added 6-Oct-2026, Son)
+
+A Play request with `"context": "none"` starts the chosen level at that level's start board but gives the model a
+clean conversation: Son's harness system prompt and the harness's normal first prompt for that board (real step and
+level), no earlier turns, no notes, no retained functions, empty `history` in the Python tool apart from the current
+frame. The board is reached by replay (`replays.start_for`): the chosen exact checkpoint's actions for that level if
+there is one (either wording), else the winning line cut at that level; level 1 is a fresh game. The replay is checked
+against the expected level, action count and board hash, and the sample refuses to play if they differ. These jobs
+write no checkpoints. Job and sample results carry `context` ("carried" or "none") and `replay_source`; jobs from
+before the option have no field and count as carried. `GET /api/replay-starts` lists the playable levels per game.
+
+```bash
+cd ~/arc3-runner
+venv/bin/python code/replays.py --verify-all                       # bare-engine check of every level start (writes replays/verified.json)
+venv/bin/python code/sample.py --render-first lf52 4 son /tmp/r    # one No-context first request, built and stopped before sending
+venv/bin/python code/sample.py --render-all /tmp/r                 # every trainable game and level; /tmp/r/render-checks.json
+```
+
+The one line that differs from a game's true first turn: past step zero the harness says "No previous action sequence
+was captured." where a new game says "No previous sequence has been executed yet." It is the harness's own wording for
+a turn with a real step count and nothing executed in this conversation, and it is left as the harness writes it.
+
 ## Public link (Funnel)
 
 Son agreed to a Tailscale Funnel link. It is not on yet: the tailnet policy has to allow this machine first
@@ -113,8 +137,8 @@ the address; Play, Cancel and per-turn logs still need the key.
 ## API
 
 `GET /api/health`, `GET /api/stuck-points`, `GET /api/exact-starts[?game=]`, `GET /api/jobs[?game=&kind=]`, `GET /api/jobs/<id>`,
-`GET /api/start-board?game=&level=&variant=` (the board at the start Play would use there, from `boards.py`; cached in
-`~/arc3-runner/boards/`);
+`GET /api/start-board?game=&level=&variant=&context=` (the board at the start Play would use there, from `boards.py`; cached in
+`~/arc3-runner/boards/`), `GET /api/replay-starts` (levels a No-context job can start from);
 with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`, `POST /api/settings`,
 `GET /api/jobs/<id>/samples/<k>/turns`. The Play body is built by `docs/static/js/spark-runner.js`.
 

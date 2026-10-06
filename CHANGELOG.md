@@ -15,6 +15,27 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-no-context]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** a "No context" start for Mode explorer Play, next to the existing "Carry context". Son, #arc-3 6-Oct 11:50
+  ET: "Right now future levels require previous context. Add a 'non-context' mode too." A No-context job starts the
+  chosen level at that level's start board, and the model gets a new game's first turn: the harness system prompt and
+  its normal first prompt for that board (real step and level), no earlier turns, notes or retained functions. Every
+  level of the eighteen trainable public games can now be started this way.
+- **How:** tools/spark_runner/replays.py reaches any level start by replay: the chosen exact checkpoint's actions, else
+  the original game's winning line (datasets/copycat-games/recolor/solutions), checked against the expected board
+  recorded by its bare-engine verify pass. sample.py gets a fourth start kind ("replay") that clears the session's
+  runtime-state history after the replay, so nothing carries over; these samples write no checkpoints. server.py takes
+  `context` ("carried" default, or "none") on Play, records it on the job and every sample result, and serves
+  `GET /api/replay-starts`; start-board takes a context too. The relay passes the new route; the site records the
+  context with the job's mode versions. The page has the toggle, makes every replayable level playable in No-context
+  mode, draws the replayed board, and splits results by context, each with its own Stock comparison (no mixing).
+- **Checked:** offline on Jethro, every trainable game and level: the bare-engine replay reaches each level start
+  (datasets/spark-runner-replays/verified.json) and the harness-path replay plus a rendered first request passes
+  (render-checks.json: only a system and one user message, no kept functions, right level and step). Not yet played
+  against the model: Cletus is off. Old jobs without the field count as carried context.
+
 ## [2026.10.06-mode-explorer-start-board]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

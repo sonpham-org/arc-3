@@ -8,6 +8,8 @@ PURPOSE: How the Mode explorer's Play button works (Son's go, #arc-3, 6-Oct 01:1
   Updated 6-Oct 09:00 ET (Son, 08:33 ET: restart "with the context as if it played the game and completed the level
   up to that point ... store KV cache and REPL state of each level that has level completed. If there has been
   multiple completions, pick one."): exact level-start checkpoints, how one is chosen, harvest, the KV measurement.
+  Updated 6-Oct 12:30 ET (Son, 11:50 ET: "Right now future levels require previous context. Add a 'non-context' mode
+  too."): the No-context option.
 SRP/DRY check: Pass - operations detail is in tools/spark_runner/README.md; stuck levels in
   docs/2026-10-06-stuck-levels-tally.md; mode wording in docs/static/data/modes.json.
 -->
@@ -125,6 +127,51 @@ kills every harvest sample at once. On by default; switched with `POST /api/sett
 **Site.** The page reads exact starts from the runner's stuck-points answer; the relay keeps the small index
 (game, level, version, count, the chosen one's actions, tokens and source job) in `arc3_spark_runner_exact_starts`.
 The checkpoints themselves (request bodies with model thinking and board images) stay on Jethro.
+
+## No context (added 6-Oct-2026)
+
+**What it is.** Next to Play there is a switch: **Carry context** (everything above: the model keeps what an earlier
+run learned before this level) or **No context**. A No-context job starts the chosen level with the game board at
+that level's start, but the model begins a clean conversation, exactly as on a new game's first turn: Son's harness
+system prompt and the harness's normal first prompt for that board, with the real step and level, and nothing else.
+No earlier turns, no carried notes or world model, no retained functions, and the Python tool's `history` holds only
+the current frame.
+
+**How the board gets there.** The runner replays the game from RESET to the start of that level and checks the level,
+action count and board before the model is called. The replay is the chosen exact checkpoint's actions when that
+level has one (either wording), otherwise the original game's recorded winning line cut at that level
+(`datasets/copycat-games/recolor/solutions`, identical to the originals' lines and proven level by level when the
+recolor copies were made). Level 1 is a fresh game. So **every level of the eighteen trainable public games** can
+be played without context, not only levels with saved starts. The held-out games have no winning line here and stay
+refused.
+
+**Checked offline on 6-Oct, without the model.** On Jethro, for every trainable game and every level:
+
+- the winning line replayed in the bare game engine reaches each level exactly at the end of the previous level's
+  segment (not earlier), with the game still playing, and the whole line wins
+  (`datasets/spark-runner-replays/verified.json`). Every level start equals that level's clean opening frame except
+  Sigil Caster (sc25) levels 4 to 6, where a panel at the bottom of the board carries what was earned on earlier
+  levels; the replay shows what a real player sees there;
+- the same replay through the harness's own action path, then the harness built its first request and it was stopped
+  before sending (`sample.py --render-all`; `datasets/spark-runner-replays/render-checks.json`): all levels passed.
+  Each request had exactly a system message and one user message, no kept functions, a one-frame history, the
+  replayed board, and the line "Current state: step N, level L." with the real step and level.
+
+A No-context job was also queued in a scratch copy of the runner and its sample run up to the first model call, which
+it made at the right level and step.
+
+**One wording difference.** Past step zero the harness writes "No previous action sequence was captured." where a
+brand-new game says "No previous sequence has been executed yet." That is the harness's own line for a turn with a
+real step count and nothing executed in this conversation; it is left as the harness writes it.
+
+**Results kept apart.** Every job and sample records its context (jobs from before the switch carried context). The
+results under the queue have one section per kind, each with its own Stock comparison: carried context compares with
+the stock tally of full runs (which carried context from the start of the game); No context compares only with the
+Stock-only No-context jobs at that level, and says so when there are none yet. The Spark bar on the level buttons
+counts only jobs of the selected kind. No-context samples write no checkpoints, so they never become a carried start.
+
+**Not yet played against the model.** The model server on Cletus is off (6-Oct, waiting for its own power), so no
+No-context job has run against the model yet. The first real ones are untested until Cletus is back.
 
 ## Starting points (snapshots, "conversation rebuilt")
 

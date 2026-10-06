@@ -8,7 +8,7 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
        setup cell for the "daniel" variant, plus Son's port cell (noborder, temperature 0.6) for "son". Server address
        and model id point at the two-Spark Flash-Next server. Priority scheduling and the warm-up RESET are off: one
        game per process, nothing to schedule.
-    2. Start (spec["start"]), three kinds:
+    2. Start (spec["start"]), four kinds:
          - "checkpoint" (EXACT): an exact level-start checkpoint (checkpoints.py). The game is replayed from RESET
            through the harness's own _execute_action with the recorded automatic flags and checked against the saved
            board hash, level and action count; then the harness agent's and session's own saved attributes are put
@@ -18,6 +18,12 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
            level or action count differ, then hand the agent the conversation rebuilt from the site's transcripts and
            the retained functions. Labelled "conversation rebuilt" (unless the snapshot is a bare game start).
          - "reset": play from the first RESET (harvest runs).
+         - "replay" (NO CONTEXT, spec["context"] == "none", added 6-Oct): replay to the level's start (an exact
+           checkpoint's actions or the verified winning line, replays.py), check level, action count and board, then
+           clear what the replay left in the session (runtime-state history re-seeded with the current frame only, last
+           action and animation record dropped). The agent is a fresh one: the first request is a new game's first
+           turn at that board (system prompt + the normal first prompt, the real step and level), nothing carried.
+           These samples write no checkpoints.
     3. Play with session.play(), the harness's own loop, with narrow hooks:
          - _build_user_prompt: the scheduled mode's delta (modes.py) is applied to the prompt the harness built;
          - _chat_completion / build_chat_payload: temperature, thinking on/off, reasoning effort of the slot;
@@ -39,6 +45,8 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
   Usage: sample.py <job_dir> <sample_index>   (reads <job_dir>/spec.json; written by server.py)
          sample.py --verify-all <snapshots dir>   (replay check of every snapshot, no model; writes verified.json)
          sample.py --verify-checkpoint <checkpoint dir> <out dir>   (replay + state restore check, no model)
+         sample.py --render-first <game> <level> <variant> <out dir>   (No-context start + its first request, no model)
+         sample.py --render-all <out dir> [variant]   (the same for every trainable game and level; render-checks.json)
 SRP/DRY check: Pass - no harness logic is copied; everything runs through the bundle's ToolAgent and
   _HarnessGameSession. Mode text math lives in modes.py, checkpoint storage in checkpoints.py, queueing in server.py.
 """
@@ -210,6 +218,85 @@ def restore_checkpoint(spec: dict, cp: dict, out: Path, k: int, flush=lambda **k
     return solver, game, agent, session, sv, ta
 
 
+def replay_clean(spec: dict, start: dict, out: Path, k: int, flush=lambda **kw: None):
+    """No-context start: replay to the level's start (exact checkpoint actions or the verified winning line, from
+    replays.start_for), check level, action count and board, then clear everything the replay left in the session, so
+    the first turn is built exactly as a new game's first turn, at this board: the runtime-state history (the model
+    reads it as `history` and the prompt builder reads it) is re-seeded with the current frame only, and the last
+    action and animation record are dropped. The agent is the fresh one start_session made: no messages, no retained
+    functions, no world model or ledgers. analysis_step stays 0, so play() counts this as turn 1."""
+    solver, game, agent, session, sv, ta = start_session(spec, out, k)
+    flush(status="replaying")
+    replay(session, sv, start["actions"])
+    exp = start.get("expected") or {"level": 1, "action_count": 0, "board_sha256": None}
+    got = {"level": sv._level_number(game), "action_count": session.action_count, "board_sha256": grid_hash(sv, game)}
+    if exp["board_sha256"] is None:
+        got["board_sha256"] = None
+    if got != {k2: exp[k2] for k2 in ("level", "action_count", "board_sha256")}:
+        raise RuntimeError(f"replay to the level start did not match: expected {exp}, engine gave {got}")
+    session.history_entries = []
+    session.seed_initial_history()
+    session.last_engine_action = None
+    session.animation_record = None
+    session.analysis_step = 0
+    agent._last_step_summary = None
+    return solver, game, agent, session, sv, ta
+
+
+def render_first_request(game_code: str, level: int, variant: str, out: Path) -> dict:
+    """Offline check of a No-context start (no model): replay to the level start, then let the harness build its first
+    request and stop it right before it is sent. Reports the message roles, retained functions and the level and step
+    the first user prompt shows; writes the body to <out>/first_request.json.gz."""
+    import replays
+    start = replays.start_for(game_code, level, variant)
+    if start is None:
+        return {"ok": False, "game": game_code, "level": level, "error": "no verified replay"}
+    env_dir = ENV_DIR / game_code
+    game_id = next((json.loads(p.read_text()).get("game_id") for p in env_dir.glob("*/metadata.json")), None)
+    spec = {"variant": variant, "game_id": game_id, "caps": {"max_minutes": 40},
+            "model": {"base_url": "http://127.0.0.1:9/v1", "model_id": "none"}}
+    out.mkdir(parents=True, exist_ok=True)
+    _, game, agent, session, sv, ta = replay_clean(spec, start, out, 0)
+    import requests as requests_mod
+    captured = {}
+
+    def post(url, *a, **kw):
+        if str(url).endswith("/chat/completions"):
+            captured["body"] = copy.deepcopy(kw.get("json"))
+            raise DryStop()
+        raise RuntimeError(f"unexpected request to {url}")
+    requests_mod.post = post
+    try:
+        session.play()
+    except DryStop:
+        pass
+    body = captured.get("body")
+    if not body:
+        return {"ok": False, "game": game_code, "level": level, "error": "the harness sent no request"}
+    with gzip.open(out / "first_request.json.gz", "wt", encoding="utf-8") as fh:
+        json.dump(body, fh)
+    msgs = body.get("messages") or []
+    roles = [m.get("role") for m in msgs]
+
+    def text(m):
+        c = m.get("content")
+        return c if isinstance(c, str) else " ".join(p.get("text", "") for p in c or [] if isinstance(p, dict))
+    user = text(msgs[-1]) if msgs else ""
+    images = sum(1 for m in msgs if isinstance(m.get("content"), list)
+                 for p in m["content"] if isinstance(p, dict) and p.get("type") == "image_url")
+    step = session.action_count + 1
+    checks = {
+        "only_system_and_one_user": roles == ["system", "user"],
+        "no_kept_functions": not getattr(agent, "_kept_functions", {}),
+        "history_is_one_frame": len(session.history_entries) == 1,
+        # the harness's own state line; a new game's first turn reads "Current state: step 1, level 1."
+        "level_and_step_in_prompt": f"Current state: step {step}, level {level}." in user,
+        "board_is_replayed_board": grid_hash(sv, game) == (start["expected"] or {}).get("board_sha256", grid_hash(sv, game)),
+    }
+    return {"ok": all(checks.values()), "game": game_code, "level": level, "source": start["source"],
+            "roles": roles, "images": images, "step_shown": step, "checks": checks, "user_prompt_head": user[:400]}
+
+
 def verify(snapshot_file: Path, out: Path) -> dict:
     """Replay-only check used by verify_snapshots: no model call."""
     snap = json.loads(snapshot_file.read_text())
@@ -243,13 +330,21 @@ def main(job_dir: Path, k: int) -> int:
         write_json(out / "progress.json", progress)
 
     flush()
+    # Jobs from before the No-context option (6-Oct) have no context field: they carried context.
+    context = spec.get("context", "carried")
     result = {"sample": k, "game": spec["game"], "stuck_level": spec["stuck_level"], "variant": spec["variant"],
-              "kind": spec.get("kind", "play"), "start_kind": None, "outcome": "error", "levels_cleared": 0,
-              "actions_used": 0, "turns": 0, "modes_run": [], "conversation_exact": False, "seconds": 0,
-              "error": None, "checkpoints_written": []}
+              "kind": spec.get("kind", "play"), "context": context, "start_kind": None, "outcome": "error",
+              "levels_cleared": 0, "actions_used": 0, "turns": 0, "modes_run": [], "conversation_exact": False,
+              "seconds": 0, "error": None, "checkpoints_written": []}
     try:
         cp = None
-        if start["kind"] == "checkpoint":
+        if start["kind"] == "replay":
+            # No context: the board at the level start, a new game's first turn, nothing carried over
+            solver, game, agent, session, sv, ta = replay_clean(spec, start, out, k, flush)
+            exact_lineage = False   # its checkpoints (capture is off for these jobs anyway) must never be chosen
+            result.update(start_kind="replay", replay_source=start.get("source"),
+                          start_checkpoint=start.get("checkpoint"), conversation_exact=True)
+        elif start["kind"] == "checkpoint":
             cp = checkpoints.load(start["path"])
             solver, game, agent, session, sv, ta = restore_checkpoint(spec, cp, out, k, flush)
             exact_lineage = bool(cp["meta"].get("exact_lineage"))
@@ -290,7 +385,7 @@ def main(job_dir: Path, k: int) -> int:
         base_tool_steps, base_yield_tokens = agent._tool_steps, agent._yield_tokens
         state = {"turn": 0, "slot": None, "slot_index": -1, "actions_in_turn": 0, "delta_report": None,
                  "turn_started_actions": start_actions, "turn_started_tokens": start_tokens}
-        cap = {"enabled": spec.get("capture", True), "done_completed": start_completed, "pending": None,
+        cap = {"enabled": spec.get("capture", True) and context == "carried", "done_completed": start_completed, "pending": None,
                "dry": False, "dry_body": None, "in_analyze": False, "clear_action_count": None,
                "compare": cp["request"] if cp else None}
         turns_log = open(out / "turns.jsonl", "a", encoding="utf-8")
@@ -344,7 +439,7 @@ def main(job_dir: Path, k: int) -> int:
                 d = checkpoints.save(
                     game=spec["game"], game_id=game.game_run.game_id, level=snap["level"], variant=spec["variant"],
                     request_body=body, state_blob=snap["blob"], skipped=snap["skipped"], actions=snap["actions"],
-                    meta={"exact_lineage": exact_lineage, "source_job": job_dir.name, "source_sample": k,
+                    meta={"exact_lineage": exact_lineage, "context": context, "source_job": job_dir.name, "source_sample": k,
                           "source_kind": spec.get("kind", "play"), "start_kind": result["start_kind"],
                           "parent_checkpoint": result.get("start_checkpoint"), "tokens_to_reach": snap["tokens"],
                           "actions_into_level": snap["actions_into_level"], "board_sha256": snap["board"],
@@ -603,6 +698,27 @@ if __name__ == "__main__":
     if sys.argv[1] == "--verify-checkpoint":
         print(json.dumps(verify_checkpoint(Path(sys.argv[2]), Path(sys.argv[3]))))
         sys.exit(0)
+    if sys.argv[1] == "--render-first":   # <game> <level> <variant> <out dir>: No-context first request, no model
+        print(json.dumps(render_first_request(sys.argv[2], int(sys.argv[3]), sys.argv[4], Path(sys.argv[5]))))
+        sys.exit(0)
+    if sys.argv[1] == "--render-all":   # <out dir> [variant]: every trainable game and level, one process each
+        import subprocess
+        import replays
+        folder, variant = Path(sys.argv[2]), (sys.argv[3] if len(sys.argv) > 3 else "son")
+        rows = []
+        for g, info in sorted(replays.summary()["games"].items()):
+            for lv in range(1, int(info["levels"] or 0) + 1):
+                r = subprocess.run([sys.executable, __file__, "--render-first", g, str(lv), variant, str(folder / f"{g}-{lv}")],
+                                   capture_output=True, text=True, timeout=900)
+                try:
+                    v = json.loads(r.stdout.strip().splitlines()[-1])
+                except (IndexError, json.JSONDecodeError):
+                    v = {"ok": False, "game": g, "level": lv, "error": (r.stderr or r.stdout)[-300:]}
+                v.pop("user_prompt_head", None)
+                rows.append(v)
+                print(g, lv, v.get("ok"), v.get("source"), v.get("error", ""), flush=True)
+        write_json(folder / "render-checks.json", rows)
+        sys.exit(0 if all(v.get("ok") for v in rows) else 1)
     if sys.argv[1] == "--verify-all":   # every snapshot in a folder, one process each; writes verified.json there
         import subprocess
         from datetime import datetime, timezone

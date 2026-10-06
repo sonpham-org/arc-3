@@ -16,7 +16,8 @@ PURPOSE: Shared, versioned Mode explorer modes (Son's ask, #arc-3 6-Oct 08:42 ET
     POST /api/v1/modes/<id>/hide | unhide     {from_version} -> current version with hidden switched
   record_play is called by the Spark runner relay (spark_runner.py) after the runner accepts a Play: it stores the
   exact slots sent (full prompt text, Stock template, settings) with the mode version each came from and whether
-  that text still matched the stored version, keyed by the runner's job id (arc3_spark_runner_job_modes).
+  that text still matched the stored version, keyed by the runner's job id (arc3_spark_runner_job_modes), and
+  whether the job carried context or started without it (the No-context option, 6-Oct).
 SRP/DRY check: Pass - same handler shape as spark_runner.py (identity from oauth2-proxy's X-Forwarded-Email, narrow
   route list, same-site Origin on POST, size caps). Prompt application stays in tools/spark_runner/modes.py; this
   module only stores and checks text.
@@ -259,6 +260,7 @@ class ModeLibrary:
                         "version_check": check,
                     }
                 record = {"variant": variant, "stuck_level": payload.get("stuck_level"),
+                          "context": "none" if payload.get("context") == "none" else "carried",
                           "scheme": [slot(s) for s in payload.get("scheme") or []], "stock": slot(payload.get("stock")),
                           "caps": {k: payload.get(k) for k in ("samples", "max_turns", "max_actions", "max_minutes")}}
                 cursor.execute(
