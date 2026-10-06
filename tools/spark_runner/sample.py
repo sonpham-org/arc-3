@@ -25,7 +25,8 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
            turn at that board (system prompt + the normal first prompt, the real step and level), nothing carried.
            These samples write no checkpoints.
     3. Play with session.play(), the harness's own loop, with narrow hooks:
-         - _build_user_prompt: the scheduled mode's delta (modes.py) is applied to the prompt the harness built;
+         - _build_user_prompt: the scheduled mode's delta (modes.py) is applied to the prompt the harness built,
+           then, for a slot sent with lean = true, the stock tool-call reminders are left out (modes.apply_lean);
          - _chat_completion / build_chat_payload: temperature, thinking on/off, reasoning effort of the slot;
          - _tool_steps and _yield_tokens: tool-call limit and thinking budget of the slot;
          - step_env: the slot's action budget (a batch is cut to what is left; nothing past it executes);
@@ -68,7 +69,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import checkpoints  # noqa: E402
-from modes import apply_delta, build_delta  # noqa: E402
+from modes import apply_delta, apply_lean, build_delta  # noqa: E402
 
 RUNNER_HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
 HARNESS = Path(os.environ.get("ARC3_RUNNER_HARNESS", RUNNER_HOME / "harness"))
@@ -391,7 +392,7 @@ def main(job_dir: Path, k: int) -> int:
         turns_log = open(out / "turns.jsonl", "a", encoding="utf-8")
 
         def slot_is_stock(slot) -> bool:
-            return deltas[slot["key"]].empty and settings_are_stock(slot["settings"])
+            return deltas[slot["key"]].empty and not slot.get("lean") and settings_are_stock(slot["settings"])
 
         def apply_slot_limits(slot):
             s = slot["settings"]
@@ -552,6 +553,8 @@ def main(job_dir: Path, k: int) -> int:
             text = original_build(*a, **kw)
             slot = state["slot"] or stock_slot
             new, report = apply_delta(deltas[slot["key"]], text)
+            if slot.get("lean"):
+                new, report["lean_removed"] = apply_lean(new)
             state["delta_report"] = report
             return new
         agent._build_user_prompt = types.MethodType(build_user_prompt, agent)

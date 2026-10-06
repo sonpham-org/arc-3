@@ -139,6 +139,7 @@ class Slot(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)          # the mode's text as shown on the page
     stock_template: str = Field(min_length=1, max_length=20000)  # Stock text of the same surface and variant
     settings: Settings = Settings()
+    lean: bool = False      # leave the stock tool-call reminders out of this slot's turn message (modes.apply_lean)
 
 
 class PlayRequest(BaseModel):
@@ -649,7 +650,7 @@ def play(req: PlayRequest) -> dict:
     write_json(d / "spec.json", spec)
     job = {"id": job_id, "created": now(), "game": req.game, "stuck_level": req.stuck_level, "variant": req.variant,
            "samples": req.samples, "status": "queued", "label": req.label, "by": req.by, "caps": spec["caps"],
-           "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"]} for s in slots[:-1]],
+           "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"], "lean": s["lean"]} for s in slots[:-1]],
            "model": {"model_id": MODEL_ID}, "conversation_exact": start_kind != "rebuilt", "kind": "play",
            "start_kind": start_kind, "start_checkpoint": start.get("id"), "context": req.context,
            "replay_source": replay_source,

@@ -14,7 +14,8 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
     the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
     actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
-  Each slot also carries the mode version it came from; the site stores the exact text and versions with the job,
+  Each slot also carries its mode's lean flag (lean turn message: the runner leaves the stock tool-call reminders out,
+  added 6-Oct after the Boss's 16:39 ET note) and the mode version it came from; the site stores the exact text and versions with the job,
   and every job card shows them (versions on the queue tags, the full wording in a fold-out).
   - Starting level (added 6-Oct, Son: "show all the levels as 1, 2, 3, 4, 5, 6 buttons"): every call takes the level the
     page has selected (ctx.level), not only the stuck level. levelStart says whether Play can start there and from what:
@@ -172,8 +173,9 @@ function buildRequest(ctx) {
     const base = mode.base || 'turn';
     const prompt = mode.variants[v].prompt;
     const stockTemplate = ctx.stockText(mode.base_variant || v, base);
+    // lean: the runner leaves the stock tool-call reminders out of this slot's turn message (tools/spark_runner/modes.py)
     return { mode: mode.id, name: mode.name, base, prompt, stock_template: stockTemplate, settings: clampSettings(settings),
-      version: ctx.versionOf(mode, v) };
+      lean: mode.lean === true, version: ctx.versionOf(mode, v) };
   };
   const scheme = ctx.scheme.slots.map((slot) => {
     const m = ctx.findMode(slot.mode);
@@ -426,7 +428,8 @@ function wordingBlock(rec, ctx) {
     box.append(h('div', 'mx-whead', `${label(s)} · ${who}${s.version_check === 'differs' ? ' · text differs from that saved version' : ''}`));
     const st = s.settings || {};
     box.append(h('div', 'mx-wset', `temp ${st.temperature ?? '–'} · ${st.thinking ? 'thinking' + (st.effort && st.effort !== 'default' ? ', ' + st.effort + ' effort' : '') + (st.thinking_budget ? ', ≤' + st.thinking_budget + ' tokens' : '') : 'no thinking'}` +
-      ` · ${st.tool_calls != null ? st.tool_calls + ' tool calls' : 'any tool calls'} · ${st.actions != null ? '≤' + st.actions + ' actions' : 'any actions'}`));
+      ` · ${st.tool_calls != null ? st.tool_calls + ' tool calls' : 'any tool calls'} · ${st.actions != null ? '≤' + st.actions + ' actions' : 'any actions'}` +
+      (s.lean ? ' · lean turn message (stock tool-call lines left out)' : '')));
     const pre = h('pre', 'mx-wtext', s.prompt || '');
     box.append(pre);
     det.append(box);

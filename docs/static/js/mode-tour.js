@@ -4,8 +4,9 @@ Date: 06-October-2026
 PURPOSE: The Mode explorer's guided tour (docs/mode-explorer.html), started by the "?" Help button in the pinned dock
   (Son, #arc-3 6-Oct 13:10 ET: "You can even do a demo too. Have like a 'Help' icon, and do a demo."). A spotlight dims
   the page and cuts holes around one control (or a few) at a time, with a small caption card: step counter, Back /
-  Next / Skip, arrow keys, Esc. Steps: game list, level buttons, context switch, board, mode bar, queue, samples and
-  turn cap, Play, results, and the Help button itself.
+  Next / Skip, arrow keys, Esc. Steps: game list, level buttons, context switch, board, mode bar, the pencil that
+  opens the mode editor (added 6-Oct with the editor rework: where the text goes, locked harness lines, the one
+  editable instruction, lean turn message), queue, samples and turn cap, Play, results, and the Help button itself.
   Demo: while the tour runs, the page (through the host object mode-explorer.js passes in) picks a sample game and
   level, flies Probe, Hypothesize and Execute from the mode bar into the queue, opens one turn's settings for a moment,
   and the Play step can show what Play would send without sending it. The host keeps all of that in memory only (no
@@ -54,6 +55,10 @@ function steps(host) {
       text: 'Each mode is one turn\'s instructions. Drag a mode into the queue, or tap it on a phone. The pencil next to a mode edits it for everyone, and every save keeps a new version; New mode adds one. Watch: Probe, Hypothesize and Execute go into the queue.',
       targets: () => [$('#modes'), $('#queue')],
       enter: (live) => host.fillQueue(live, true) },
+    { title: 'Editing a mode',
+      text: 'The pencil opens the mode editor in a large window. It shows where the text goes: the system prompt is the same for every mode and a mode never changes it; a mode only edits the turn message, sent as the user message at the start of each turn it runs. Grey lines with a lock come from the harness and cannot be edited there; the highlighted box, the mode\'s own instruction, is the only text you change. The tool-call lines the system prompt already says are marked, and "Lean turn message" leaves them out: Stock (lean) is Stock with that on, to test it against plain Stock.',
+      targets: () => [$('#modes .mx-chipedit') || $('#modes')],
+      enter: (live) => host.fillQueue(live, false) },
     { title: 'The queue',
       text: 'One mode runs per turn, in this order; drag an item to move it. The gear opens that turn\'s own settings (open here for the first turn), the x takes it out, and Stock plays every turn after the queue.',
       targets: () => [$('#queue'), $('#slotset')],

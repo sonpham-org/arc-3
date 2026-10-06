@@ -45,16 +45,20 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   mode-tour.js, which walks every control with a spotlight and runs a demo through tourHost below. While it runs,
   saveStore and syncUrl do nothing, so the demo's game, level, queue and settings live in memory only; when it ends
   the person's own store and view are put back from a copy taken at the start, and Play is locked (playCtx.demo).
+  Lean turn message (the Boss, #arc-3 6-Oct 16:39 ET, tool-call lines repeated between the system prompt and the turn
+  message): a mode with lean on has the stock tool-call reminders (modes.json meta.tool_reminders) left out of its turn
+  message by the runner; the Prompts view shows and diffs the text as it is sent (sentText), and the card says so.
+  The mode editor itself (where the text goes, locked harness lines, the editable instruction) is in mode-library.js.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart, playRequest } from './spark-runner.js?v=20261006-tour1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart, playRequest } from './spark-runner.js?v=20261006-lean1';
 import { renderStartBoard } from './start-board.js?v=20261006-ht1';
-import { startTour, flyChip, pause } from './mode-tour.js?v=20261006-tour1';
-import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
+import { startTour, flyChip, pause } from './mode-tour.js?v=20261006-lean1';
+import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-lean1';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -132,6 +136,13 @@ function modeById(id) { const all = allModes(); return all.find(m => m.id === id
 // The harness's own Stock text for a surface: what the diff is drawn against and what the runner diffs against.
 function stockText(variant, base) { return DATA.stock[variant][base]; }
 function defaults(m) { return { ...FALLBACK_SETTINGS, ...(m.settings || {}) }; }
+// A wording's text as the runner sends it: a lean mode's turn message has the stock tool-call reminders left out.
+function sentText(m, variant) {
+  const text = m.variants[variant].prompt;
+  if (!m.lean) return text;
+  const drop = new Set(DATA.meta.tool_reminders || []);
+  return text.split('\n').filter(l => !drop.has(l)).join('\n');
+}
 function budgetText(s) { return s && s.actions != null ? `up to ${s.actions} action${s.actions === 1 ? '' : 's'}` : 'no limit'; }
 
 function settingsSummary(s) {
@@ -291,6 +302,7 @@ function renderCard(m) {
   const dl = h('dl', 'mx-facts');
   const rows = [['Purpose', v.purpose], ['When to use', v.trigger], ['Action budget', v.budget],
     ['Built on', m.base_variant ? `${DATA.surfaces[m.base]}, ${VARIANTS[m.base_variant]} only` : DATA.surfaces[m.base]],
+    ['Turn message', m.lean ? 'Lean: the stock tool-call lines are left out (the system prompt still has them)' : 'As the harness writes it, tool-call lines included'],
     ['Settings', settingsSummary(defaults(m))]];
   if (m.settings_why) rows.push(['Why these settings', m.settings_why]);
   for (const [k, val] of rows) dl.append(h('dt', null, k), h('dd', null, val));
@@ -299,8 +311,8 @@ function renderCard(m) {
 
 function renderDiff(m) {
   const other = state.v === 'son' ? 'daniel' : 'son';
-  const leftText = state.cmp === 'other' ? m.variants[other].prompt : stockText(m.base_variant || state.v, m.base);
-  const rightText = m.variants[state.v].prompt;
+  const leftText = state.cmp === 'other' ? sentText(m, other) : stockText(m.base_variant || state.v, m.base);
+  const rightText = sentText(m, state.v);
   const leftLabel = state.cmp === 'other' ? `${m.name} · ${VARIANTS[other]}` : `Harness Stock · ${VARIANTS[m.base_variant || state.v]}`;
   const rightLabel = `${m.name} · ${m.custom ? 'your prompt' : VARIANTS[state.v]}`;
   const rows = diffLines(leftText.split('\n'), rightText.split('\n'));
@@ -668,7 +680,7 @@ function openModeDialog(id) {
   };
   draft.settings = { ...FALLBACK_SETTINGS, ...draft.settings };
   let promptTouched = !!existing;
-  const dlg = $('modedlg'); dlg.textContent = '';
+  const dlg = $('modedlg'); dlg.textContent = ''; dlg.className = 'mx-dialog';
   const form = h('form', 'mx-form'); form.method = 'dialog';
   form.append(h('h2', null, existing ? `Edit ${existing.name}` : 'New mode'));
   form.append(h('p', 'mx-sum', 'Saved in this browser only. The prompt starts as Stock; add your focus lines where you want them. It shows up in the mode bar, ready to drag into a queue.'));
@@ -955,7 +967,7 @@ async function main() {
     $('card').textContent = `Could not load the mode prompts (${e.message}).`;
     return;
   }
-  initLibrary({ h, settingsGrid, diffLines, settingsSummary, FALLBACK_SETTINGS, stockText });
+  initLibrary({ h, settingsGrid, diffLines, lineNode, settingsSummary, FALLBACK_SETTINGS, stockText, toolReminders: () => DATA.meta.tool_reminders || [] });
   await loadLibrary();
   $('updated').textContent = lib.ok ? 'Shared modes · anyone signed in can edit; every save is a new version'
     : `Draft prompts · ${DATA.meta.date} · shared modes could not load (${lib.error}), showing the built-in drafts`;

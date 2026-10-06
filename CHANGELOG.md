@@ -15,6 +15,30 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-editor-clarity]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** the Mode explorer's mode editor reworked after the Boss, #arc-3 16:39 ET: the text was hard to read, it was
+  not clear what could be edited or whether the text was the system prompt or the user prompt, and the panel sat in the
+  top-left corner. Plus a "Lean turn message" setting and a built-in "Stock (lean)" mode, because the per-turn message
+  repeats tool-call lines the system prompt already has.
+- **How (page):** mode-library.js openEditor is now a centred two-column window (full-screen sheet on a phone) with a
+  "Where this goes" diagram (system prompt, never changed by a mode, readable behind "Show system prompt" from the new
+  static/data/system-prompts.json -> turn message, the user message at the start of each turn the mode runs). The turn
+  message is split (splitTurn / joinTurn, the runner's own line diff against Stock) into locked, greyed harness lines
+  and the mode's instruction, the only editable box; unedited it saves byte for byte what was stored. The four stock
+  tool-call reminder lines are marked "also in the system prompt". The dialog was in the top-left corner because
+  theme.css zeroes every margin; mode-explorer.css gives it margin: auto. The tour has an "Editing a mode" step; the
+  Prompts view shows a lean mode's text as sent.
+- **How (lean):** modes.json meta.tool_reminders lists the four lines; a mode body carries lean (modes_store.py keeps it
+  through save, restore, hide; record_play keeps each slot's lean with the job); Play sends lean per slot; the runner
+  (tools/spark_runner/modes.py LEAN_LINES / apply_lean, called in sample.py after the mode's delta; server.py Slot.lean)
+  leaves the lines out. Off by default: every existing mode's prompt is unchanged. Built-ins keep modes.json's order in
+  the bar so Stock (lean) sits next to Stock.
+- **Checked:** every built-in and every live mode round-trips byte for byte; lean off builds the same prompt as before
+  for every mode, wording, kind of turn and optional-line case; the four lines match every saved real turn message on
+  the runner; headless desktop and phone with every write caught. Plan: docs/plans/2026-10-06-mode-editor-clarity.md.
+
 ## [2026.10.06-mode-explorer-tour]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
