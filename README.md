@@ -13,6 +13,13 @@ Two things live in this repo, and they share one site (**https://arc3.sonpham.ne
 Everything under `docs/` is that site; everything else is the machinery that produces it —
 the harness variants, the GCP launch kit, and the raw run logs.
 
+**Best human action records:** `docs/human-records.html` is a public, dated chart of the
+fewest published human actions for full-game wins across the 25 public games. Its source
+snapshot is `docs/static/human-records-2026-10-05.json`; only score 100 / WIN rows from
+ARC Prize's `ai=false` leaderboard are used. All 25 counts were independently checked,
+sum to 5,502, and the differences use r11l's 57 actions. ARC Explainer hosts the same
+dated page. These are best-known records, not proofs of optimality or private-set results.
+
 **Astra guides and evidence:** [Start here](docs/astra/README.md). This links the
 plain-language learning guide, the published-note review, and the structured lesson
 text and replay references that another system can read.
