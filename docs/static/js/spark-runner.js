@@ -1,18 +1,19 @@
 /*
 Author: Claude Opus 5.5
 Date: 06-October-2026
-PURPOSE: The Mode explorer's Play button and results panel (docs/mode-explorer.html, Stuck levels view). Talks only
-  to the site's own relay, /api/v1/spark-runner/* (railway/spark_runner.py), which forwards over the ARC tailnet to
-  the Spark runner on Jethro (tools/spark_runner/server.py) and keeps every job it sees in the site's database.
-  - Play sends the open game's scheme (each slot's mode text, the Stock text it is diffed against, and its settings),
-    the Stock tail, the variant, the number of samples and the per-sample caps. It needs the runner key, asked once
-    and kept in this browser (localStorage); the key is checked by the runner, never stored on the site.
-  - The panel lists every job for the game, newest first, for anyone signed in to the site: queued / running /
-    done, per-sample progress (turn, mode, actions, level) and, when done, the results table (cleared or not,
-    levels gained, actions, turns, modes that ran), compared with the stock tally's clear rate for that level.
-    While anything is queued or running it refreshes every few seconds.
-  - Only games whose starting point exists and passed its replay check can be played, and only from the stuck level.
-SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (modes.json + the scheme); the tally from
+PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html, Queue view). Talks only to the
+  site's own relay, /api/v1/spark-runner/* (railway/spark_runner.py), which forwards over the ARC tailnet to the
+  Spark runner on Jethro (tools/spark_runner/server.py) and keeps every job it sees in the site's database.
+  - renderPlayRow: the Play button with two small inline fields (samples, turn cap) next to it, the runner key
+    button, and one line saying what Play will do or why it is off (runner unreachable, no starting point, replay
+    not verified, held-out game). Play sends the queue (each item's mode text, the Stock text it is diffed against,
+    and its settings), the Stock tail, the version, samples and caps; the action and minute caps keep their
+    defaults. It needs the runner key, asked once and kept in this browser; the runner checks it.
+  - renderResults: everything that ran for the open game's stuck level, newest first, for anyone signed in: the
+    live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
+    the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
+    actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
+SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (modes.json + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
 
@@ -24,9 +25,9 @@ const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) 
 let stuckPoints = null;      // from /stuck-points, null until loaded, false if the runner cannot be reached
 let health = null;
 let pollTimer = null;
-const jobsByGame = new Map();
-// Play options survive the page's frequent redraws (every scheme edit redraws the builder).
-const opts = { variant: null, samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120, label: '' };
+let resultsGame = null;      // the game the results box is showing; a poll for another game is dropped
+// Play options survive the page's redraws (every queue edit redraws the Play row).
+const opts = { samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120 };
 
 function runnerKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
 function setRunnerKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* private mode */ } }
@@ -52,13 +53,8 @@ export async function loadRunnerInfo() {
   try { stuckPoints = (await call('stuck-points')).stuck_points || []; } catch { stuckPoints = false; }
 }
 
-async function loadJobs(game) {
-  const data = await call(`jobs?game=${encodeURIComponent(game)}`);
-  jobsByGame.set(game, data);
-  return data;
-}
-
 function pct(a, b) { return b ? `${Math.round((100 * a) / b)}%` : '–'; }
+function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
 
 // ---------------------------------------------------------------- key dialog
 
@@ -98,8 +94,8 @@ function clampSettings(s) {
   };
 }
 
-function buildRequest(ctx, opts) {
-  const v = opts.variant;
+function buildRequest(ctx) {
+  const v = ctx.variant;
   const slotFor = (mode, settings) => {
     const custom = !!mode.custom;
     const prompt = mode.variants[v].prompt;
@@ -109,185 +105,205 @@ function buildRequest(ctx, opts) {
   };
   const scheme = ctx.scheme.slots.map((slot) => {
     const m = ctx.findMode(slot.mode);
-    if (!m) throw new Error(`the scheme uses a mode that no longer exists (${slot.mode})`);
+    if (!m) throw new Error(`the queue uses a mode that no longer exists (${slot.mode})`);
     return slotFor(m, ctx.slotSettings(slot));
   });
   const stock = ctx.DATA.modes.find(m => m.id === 'stock');
   return {
-    game: ctx.game.game, stuck_level: ctx.scheme.start_level, variant: v, scheme,
+    game: ctx.game.game, stuck_level: ctx.game.stuck_level, variant: v, scheme,
     stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
-    max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: opts.label || null,
+    max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: null,
   };
 }
 
-// ---------------------------------------------------------------- panel
-
-export function renderRunnerPanel(box, ctx) {
-  box.textContent = '';
-  const g = ctx.game, sc = ctx.scheme;
+// Why Play is off for this game, or '' when it can run.
+function blocked(g) {
   const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
-  const head = h('div', 'mx-runhead');
-  head.append(h('h3', 'mx-subh', 'Play on the Sparks'));
-  const status = h('span', 'mx-runstatus');
-  if (!health) status.textContent = 'checking the runner…';
-  else if (health.ok === false) status.textContent = health.message || 'The Spark runner cannot be reached right now.';
-  else {
-    const m = health.model || {};
-    status.textContent = (m.reachable && m.serves_expected_model ? 'Runner up, model server answering' : 'Runner up, but the model server is not answering')
-      + ` · ${health.samples_running} sample(s) running, ${health.samples_queued} queued`;
-  }
-  head.append(status);
-  box.append(head);
+  if (stuckPoints === false) return health && health.message ? `${health.message} Nothing can start; past results still show below.`
+    : 'The Spark runner cannot be reached from the site right now, so nothing can start. Past results still show below.';
+  if (stuckPoints === null) return 'Checking the Spark runner…';
+  if (!point) return `No starting point exists for ${g.nickname} yet, so it cannot be played.`;
+  if (!point.replay_verified) return `The starting point for ${g.nickname} has not passed its replay check, so it cannot be played.`;
+  if (point.held_out && !point.playable) return `${g.nickname} is one of the eight held-out games, kept out of prompt tuning, so the runner does not play it.`;
+  if (point.stuck_level !== g.stuck_level) return `The runner's starting point is level ${point.stuck_level}, not level ${g.stuck_level}; it needs rebuilding before this game can be played.`;
+  return '';
+}
 
-  // why Play may be off
-  let why = '';
-  if (stuckPoints === false) why = 'The Spark runner cannot be reached from the site right now, so nothing can start. Results already stored still show below.';
-  else if (stuckPoints === null) why = 'Checking which starting points exist…';
-  else if (!point) why = `No starting point exists for ${g.nickname}${g.stuck_level ? '' : ' (every level clears, so there is no stuck level)'}.`;
-  else if (!point.replay_verified) why = `The starting point for ${g.nickname} has not passed its replay check.`;
-  else if (point.held_out && !point.playable) why = `${g.nickname} is one of the eight held-out games; the runner keeps them out of prompt tuning, so it does not play them.`;
-  else if (sc.start_level !== point.stuck_level) why = `Only the stuck level (level ${point.stuck_level}) has a starting point. Click it in the level strip to play from there.`;
+function runnerLine() {
+  if (!health) return '';
+  if (health.ok === false) return '';
+  const m = health.model || {};
+  const busy = health.samples_running || health.samples_queued
+    ? ` · ${health.samples_running} running, ${health.samples_queued} waiting` : ' · idle';
+  return (m.reachable && m.serves_expected_model ? 'Sparks ready' : 'Runner up, model server not answering') + busy;
+}
 
-  const form = h('div', 'mx-runform');
-  const field = (label, el) => { const l = h('label', 'mx-field'); l.append(h('span', 'mx-flabel', label), el); return l; };
-  const variant = h('select');
-  for (const [k, t] of [['son', "Son's version"], ['daniel', "Franzen's version"]]) { const o = h('option', null, t); o.value = k; variant.append(o); }
-  variant.value = opts.variant || ctx.variant;
-  variant.onchange = () => { opts.variant = variant.value; };
-  const num = (val, min, max) => { const i = h('input'); i.type = 'number'; i.min = min; i.max = max; i.step = 1; i.value = val; i.inputMode = 'numeric'; return i; };
-  const samples = num(opts.samples, 1, 20), maxTurns = num(opts.max_turns, 1, 60), maxActions = num(opts.max_actions, 10, 1000),
-    maxMinutes = num(opts.max_minutes, 5, 180);
-  const label = h('input'); label.maxLength = 120; label.placeholder = 'optional note, e.g. probe twice then execute'; label.value = opts.label;
-  samples.onchange = () => { opts.samples = +samples.value; };
-  maxTurns.onchange = () => { opts.max_turns = +maxTurns.value; };
-  maxActions.onchange = () => { opts.max_actions = +maxActions.value; };
-  maxMinutes.onchange = () => { opts.max_minutes = +maxMinutes.value; };
-  label.oninput = () => { opts.label = label.value; };
-  form.append(field('Version', variant), field('Samples', samples), field('Turns per sample', maxTurns),
-    field('Action cap per sample', maxActions),
-    field('Minutes per sample', maxMinutes));
-  const lab = field('Note', label); lab.classList.add('grow'); form.append(lab);
-  box.append(form);
-
-  const foot = h('div', 'mx-buildfoot');
-  const play = h('button', 'mx-play', 'Play this scheme');
+export function renderPlayRow(box, ctx) {
+  box.textContent = '';
+  const g = ctx.game, q = ctx.scheme;
+  const why = blocked(g);
+  const play = h('button', 'mx-play', 'Play');
   play.disabled = !!why;
-  const keyBtn = h('button', 'mx-tool', runnerKey() ? 'Runner key ✓' : 'Runner key');
-  keyBtn.onclick = () => askKey(() => renderRunnerPanel(box, ctx));
-  const note = h('span', 'mx-playnote', why || (sc.slots.length
-    ? `Plays ${sc.slots.length} scheduled turn${sc.slots.length === 1 ? '' : 's'} from the start of level ${sc.start_level}, then Stock until the level is cleared or a cap is hit.`
-    : `Empty schedule: this plays Stock only from level ${sc.start_level}, a baseline from the same starting point.`));
+  const num = (label, key, min, max, title) => {
+    const l = h('label', 'mx-inl'); l.title = title;
+    const i = h('input'); i.type = 'number'; i.min = min; i.max = max; i.step = 1; i.value = opts[key]; i.inputMode = 'numeric';
+    i.onchange = () => { const n = Math.round(+i.value); if (Number.isFinite(n) && n >= min && n <= max) opts[key] = n; else i.value = opts[key]; };
+    l.append(i, h('span', null, label));
+    return l;
+  };
+  const samples = num('samples', 'samples', 1, 20, 'How many times to play the level from the same starting point');
+  const turns = num('turns max', 'max_turns', 1, 60, 'Model turns per sample before it stops (the queue counts toward this)');
+  const keyBtn = h('button', 'mx-tool mx-keybtn', runnerKey() ? 'Key ✓' : 'Key');
+  keyBtn.title = 'The Spark runner key, kept in this browser';
+  keyBtn.onclick = () => askKey(() => renderPlayRow(box, ctx));
+  const status = h('span', 'mx-runstatus', runnerLine());
+  const row = h('div', 'mx-playline');
+  row.append(play, samples, turns, keyBtn, status);
+  box.append(row);
+  const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
+  const note = h('p', 'mx-playnote', why || (q.slots.length
+    ? `Plays the queue, one mode per turn from the start of level ${g.stuck_level}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
+    : `Empty queue: Play runs Stock only from level ${g.stuck_level}, a baseline from the same starting point.`));
+  box.append(note);
   play.onclick = async () => {
     if (!runnerKey()) { askKey((ok) => { if (ok) play.onclick(); }); return; }
     let req;
-    try {
-      req = buildRequest(ctx, { variant: variant.value, samples: +samples.value, max_turns: +maxTurns.value,
-        max_actions: +maxActions.value,
-        max_minutes: +maxMinutes.value, label: label.value.trim() });
-    } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }
+    try { req = buildRequest(ctx); } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }
     play.disabled = true; note.textContent = 'Sending to the runner…';
     try {
       const r = await call('play', { method: 'POST', body: req, auth: true });
-      note.textContent = `Queued: job ${r.job}, ${r.queued_samples} sample(s).`;
-      await refreshJobs(box.querySelector('.mx-jobs'), ctx);
+      note.textContent = `Queued on the Sparks: ${plural(r.queued_samples, 'sample')}. Watch it below.`;
+      const res = document.getElementById('results');
+      if (res) await refreshResults(res, ctx);
     } catch (e) {
       note.textContent = e.status === 401 ? 'The runner refused the key. Check it with Son or the Boss, then set it again.' : `Not started: ${e.message}`;
-    } finally { play.disabled = !!why; }
+    } finally { play.disabled = !!blocked(g); }
   };
-  foot.append(play, keyBtn, note);
-  box.append(foot);
+}
 
-  if (point) {
-    const src = point.source || {};
-    box.append(h('p', 'mx-why', point.source.kind === 'game_start'
-      ? `Starting point: the start of the game (stuck at level 1), no earlier conversation.`
-      : `Starting point: the board, history and retained functions of a recorded stock run (${src.run}) at the start of level ${point.stuck_level}, ` +
-        `replayed in the game engine and checked against the recorded board. The model's earlier conversation is rebuilt from that run's ` +
-        `stored transcripts (${point.turns} turn${point.turns === 1 ? '' : 's'}), so it is close to, not exactly, what the model saw.`));
+// ---------------------------------------------------------------- results
+
+export function renderResults(box, ctx) {
+  if (resultsGame !== ctx.game.game) {
+    box.textContent = '';
+    box.append(h('h2', 'mx-resh', `Results · ${ctx.game.nickname}, level ${ctx.game.stuck_level}`), h('p', 'mx-sum', 'loading…'));
   }
-
-  const jobs = h('div', 'mx-jobs');
-  box.append(jobs);
-  refreshJobs(jobs, ctx);
+  resultsGame = ctx.game.game;
+  refreshResults(box, ctx);
 }
 
-async function refreshJobs(box, ctx) {
-  if (!box) return;
+async function refreshResults(box, ctx) {
   clearTimeout(pollTimer);
+  const game = ctx.game.game;
   let data;
-  try { data = await loadJobs(ctx.game.game); }
-  catch (e) { box.textContent = ''; box.append(h('p', 'mx-sum', `Could not load results: ${e.message}`)); return; }
-  if (!box.isConnected) return;
-  drawJobs(box, ctx, data);
+  try { data = await call(`jobs?game=${encodeURIComponent(game)}`); }
+  catch (e) {
+    if (resultsGame !== game) return;
+    box.textContent = '';
+    box.append(h('h2', 'mx-resh', `Results · ${ctx.game.nickname}, level ${ctx.game.stuck_level}`), h('p', 'mx-sum', `Could not load results: ${e.message}`));
+    return;
+  }
+  if (resultsGame !== game || !box.isConnected) return;
+  drawResults(box, ctx, data);
   const live = (data.jobs || []).some(j => j.status === 'queued' || j.status === 'running');
-  if (live) pollTimer = setTimeout(() => refreshJobs(box, ctx), POLL_MS);
+  if (live) pollTimer = setTimeout(() => { if (resultsGame === game) refreshResults(box, ctx); }, POLL_MS);
 }
 
-function stockLine(g, level) {
-  const p = (g.per_level || []).find(x => x.level === level);
-  return p ? `Stock tally for level ${level}: cleared in ${p.cleared} of ${p.n} full runs (${pct(p.cleared, p.n)}).` : '';
+function stockTally(g) {
+  const p = (g.per_level || []).find(x => x.level === g.stuck_level);
+  return p ? { cleared: p.cleared, n: p.n } : null;
 }
 
-function drawJobs(box, ctx, data) {
+function drawResults(box, ctx, data) {
+  const g = ctx.game;
   box.textContent = '';
-  const jobs = data.jobs || [];
-  box.append(h('h3', 'mx-subh', `Runs on the Sparks for ${ctx.game.nickname}`));
-  if (data.from_storage) box.append(h('p', 'mx-sum', `${data.message} Showing the results the site stored earlier.`));
-  if (!jobs.length) { box.append(h('p', 'mx-empty', 'Nothing has run for this game yet.')); return; }
+  box.append(h('h2', 'mx-resh', `Results · ${g.nickname}, level ${g.stuck_level}`));
+  const st = stockTally(g);
+  if (st) box.append(h('p', 'mx-sum', `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}). Each run below starts at this level, so compare its cleared share with that.`));
+  if (data.from_storage) box.append(h('p', 'mx-sum mx-warnline', `${data.message} Showing what the site stored earlier.`));
+  const all = (data.jobs || []).slice().sort((a, b) => String(b.created).localeCompare(String(a.created)));
+  const jobs = all.filter(j => j.stuck_level === g.stuck_level);
+  if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${g.stuck_level} yet. Build a queue and press Play.`));
   for (const j of jobs) box.append(jobCard(j, ctx));
+  const other = all.length - jobs.length;
+  if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown.`));
 }
 
 const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
+
+function queueTags(j, ctx) {
+  const wrap = h('span', 'mx-jobq');
+  const tag = (name, id) => {
+    const m = ctx.findMode(id);
+    const t = h('span', 'mx-jtag', name); t.style.setProperty('--mc', m ? m.color : '#6b7280');
+    return t;
+  };
+  for (const s of j.scheme_summary || []) wrap.append(tag(s.name || s.mode, s.mode), h('span', 'mx-arrow', '→'));
+  wrap.append(tag(j.scheme_summary && j.scheme_summary.length ? 'then Stock' : 'Stock only', 'stock'));
+  return wrap;
+}
 
 function jobCard(j, ctx) {
   const card = h('div', 'card mx-job');
   const top = h('div', 'mx-jobtop');
   const when = new Date(j.created);
-  top.append(h('span', `chip mx-js ${j.status}`, j.status),
-    h('b', null, `${j.scheme_summary.length ? j.scheme_summary.map(s => s.name || s.mode).join(' → ') + ' → Stock' : 'Stock only'}`),
-    h('span', 'mx-of', ` · level ${j.stuck_level} · ${j.variant === 'son' ? "Son's version" : "Franzen's version"} · ${j.samples} sample${j.samples === 1 ? '' : 's'} · ` +
-      `${isNaN(when) ? j.created : when.toLocaleString()}${j.by ? ' · ' + j.by : ''}`));
+  top.append(h('span', `chip mx-js ${j.status}`, j.status), queueTags(j, ctx));
   card.append(top);
+  const caps = j.caps || {};
+  const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
+    j.variant === 'daniel' ? "Franzen's wording" : "Son's wording", plural(j.samples, 'sample')];
+  if (caps.max_turns) meta.push(`up to ${caps.max_turns} turns`);
+  if (j.by) meta.push(j.by);
+  card.append(h('p', 'mx-jobmeta', meta.join(' · ')));
   if (j.label) card.append(h('p', 'mx-sum', j.label));
 
+  const rows = j.sample_rows || [];
+  const results = rows.map(r => r.result).filter(Boolean);
   const s = j.summary || {};
-  const done = s.finished_samples || 0;
+  const done = s.finished_samples ?? results.length;
+  const st = stockTally(ctx.game);
   const line = h('p', 'mx-jobsum');
-  line.textContent = done
-    ? `Cleared level ${j.stuck_level} in ${s.cleared} of ${done} finished sample${done === 1 ? '' : 's'} (${pct(s.cleared, done)}); ` +
-      `levels gained ${s.levels_gained}; mean actions ${s.mean_actions}${s.errors ? `; ${s.errors} sample(s) ended in an error` : ''}. ` + stockLine(ctx.game, j.stuck_level)
-    : 'No sample has finished yet. ' + stockLine(ctx.game, j.stuck_level);
+  if (done) {
+    const cleared = s.cleared ?? results.filter(r => r.outcome === 'cleared' || r.outcome === 'won').length;
+    const turns = results.length ? results.reduce((a, r) => a + (r.turns || 0), 0) / results.length : null;
+    const b = h('b', null, `Cleared in ${cleared} of ${done} (${pct(cleared, done)})`);
+    line.append(b, document.createTextNode(
+      (st ? ` vs stock ${pct(st.cleared, st.n)}` : '') +
+      ` · levels gained ${s.levels_gained ?? '–'} · mean actions ${s.mean_actions ?? '–'}` +
+      (turns != null ? ` · mean turns ${Math.round(turns * 10) / 10}` : '') +
+      (s.errors ? ` · ${plural(s.errors, 'error')}` : '') +
+      (done < j.samples ? ` · ${j.samples - done} still to finish` : '')));
+  } else line.textContent = j.status === 'queued' ? 'Waiting for a free slot on the Sparks.' : 'No sample has finished yet.';
   card.append(line);
 
   const table = h('table', 'mx-table mx-results');
   const tr = h('tr');
-  for (const c of ['Sample', 'State', 'Outcome', 'Levels gained', 'Actions', 'Turns', 'Modes that ran', 'Time']) tr.append(h('th', null, c));
+  for (const c of ['#', 'Result', 'Levels', 'Actions', 'Turns', 'Modes that ran', 'Time']) tr.append(h('th', null, c));
   const thead = h('thead'); thead.append(tr); table.append(thead);
   const body = h('tbody');
-  for (const row of j.sample_rows || []) {
+  for (const row of rows) {
     const r = row.result, p = row.progress || {};
     const t = h('tr');
     t.append(h('td', null, String(row.sample + 1)));
-    const live = row.state === 'running' ? `${p.status || 'running'} · turn ${p.turn ?? 0}${p.mode ? ' · ' + p.mode : ''} · ${p.actions ?? 0} actions · level ${p.level ?? '–'}` : row.state;
-    t.append(h('td', null, live));
-    t.append(h('td', r ? `mx-out ${r.outcome}` : 'muted', r ? (OUTCOME[r.outcome] || r.outcome) + (r.error ? `: ${r.error.slice(0, 120)}` : '') : '–'));
+    if (r) t.append(h('td', `mx-out ${r.outcome}`, (OUTCOME[r.outcome] || r.outcome) + (r.error ? `: ${r.error.slice(0, 120)}` : '')));
+    else if (row.state === 'running') t.append(h('td', 'mx-live', `running · turn ${p.turn ?? 0}${p.mode ? ' · ' + p.mode : ''} · level ${p.level ?? '–'}`));
+    else t.append(h('td', 'muted', row.state || '–'));
     t.append(h('td', null, r ? String(r.levels_cleared) : '–'));
     t.append(h('td', null, r ? String(r.actions_used) : (row.state === 'running' ? String(p.actions ?? 0) : '–')));
-    t.append(h('td', null, r ? String(r.turns) : '–'));
-    t.append(h('td', null, r ? (r.modes_run || []).join(', ') : '–'));
+    t.append(h('td', null, r ? String(r.turns) : (row.state === 'running' ? String(p.turn ?? 0) : '–')));
+    t.append(h('td', 'mx-modescol', r ? (r.modes_run || []).join(', ') : '–'));
     t.append(h('td', null, r ? `${Math.round((r.seconds || 0) / 60)} min` : '–'));
     body.append(t);
   }
   table.append(body);
-  const wrap = h('div', 'mx-tablewrap'); wrap.append(table);
-  card.append(wrap);
+  if (rows.length) { const wrap = h('div', 'mx-tablewrap'); wrap.append(table); card.append(wrap); }
 
   if (j.status === 'queued' || j.status === 'running') {
     const cancel = h('button', 'mx-tool mx-danger', 'Cancel this job');
     cancel.onclick = async () => {
       if (!runnerKey()) { askKey(() => {}); return; }
       if (!confirm('Cancel the samples of this job that have not finished?')) return;
-      try { await call(`jobs/${j.id}/cancel`, { method: 'POST', body: {}, auth: true }); await refreshJobs(card.parentElement, ctx); }
+      try { await call(`jobs/${j.id}/cancel`, { method: 'POST', body: {}, auth: true }); await refreshResults(document.getElementById('results'), ctx); }
       catch (e) { alert(`Cancel failed: ${e.message}`); }
     };
     card.append(cancel);

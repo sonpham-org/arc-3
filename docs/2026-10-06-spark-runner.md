@@ -13,7 +13,7 @@ SRP/DRY check: Pass - operations detail is in tools/spark_runner/README.md; stuc
 
 ## What a press of Play does
 
-On the Mode explorer's Stuck levels tab, open a game, line up modes in the lane (or leave it empty for a Stock
+On the Mode explorer's Queue tab, pick a game, drag modes into its queue (or leave it empty for a Stock
 baseline) and press Play. The page sends the scheme to the Spark runner on the two DGX Sparks. The runner plays
 N samples (default 10) of that game from its stuck level:
 
@@ -31,7 +31,7 @@ N samples (default 10) of that game from its stuck level:
    cleared, the game ends, or the sample's cap is hit: 20 model turns by default (the main limit, so a sample gets the same
    number of turns however busy the cluster is), 250 actions, or 120 minutes as a safety net.
 4. **Results.** Per sample: cleared or not, levels gained, actions used, turns, which modes ran, time. The page
-   shows them under the game next to the stock tally for that level, for everyone signed in to the site.
+   shows them right under the queue next to the stock tally for that level, for everyone signed in to the site.
 
 Four samples run at once across all jobs; the rest queue. Measured 6-Oct on the two-Spark server: one stream
 gets about 33 tokens/s, three about 25 each, six about 18 each. Son said about 40 tokens/s is good enough, so four at

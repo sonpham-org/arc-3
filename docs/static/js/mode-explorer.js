@@ -1,32 +1,36 @@
 /*
 Author: Claude Opus 5.5
 Date: 06-October-2026
-PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). Two views share one frozen dock (view tabs, the
-  mode chips, the variant switch), which stays pinned under the site tabs while the page scrolls:
-  - Prompts: each mode from docs/static/data/modes.json (Stock, Probe, Hypothesize, Execute, Re-examine, Challenge,
-    Recover, Level start, plus the user's custom modes) in two variants, "son" (Son's current notebook) and
-    "daniel" (Franzen's public notebook), with a side-by-side line diff against Stock or against the other variant.
-  - Stuck levels: docs/static/data/stuck-levels.json (built by scripts/stuck_levels_tally.py) as a sortable table,
-    hardest first. Opening a game shows its per-level clear rates and a scheme builder: an ordered lane of per-turn
-    modes, dragged (or tapped) in from the dock, starting at the game's stuck level and followed by Stock. Every
-    slot carries the mode's settings (temperature, thinking, effort, thinking budget, tool calls, action budget),
-    editable per slot. Play (spark-runner.js) sends the scheme to the Spark runner on the two DGX Sparks through the
-    site's relay and lists every job's progress and results for the game; no results are faked.
-  Custom modes (name, colour, prompt based on Stock, settings) and schemes are saved in localStorage and can be
-  exported and imported as JSON, since the site has no backend for them yet. View state lives in the URL
-  (?view=&mode=&v=&cmp=&game=) so a view can be linked. The diff is a plain longest-common-subsequence over lines.
+PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title line, then one frozen dock (view tabs,
+  the mode bar with a small "+ New mode" button, the version switch) pinned under the site tabs while the page scrolls.
+  Two views:
+  - Queue (default; Son's ask, #arc-3 6-Oct 08:26 ET: "The mode setup should just be a queue"): pick a game from
+    docs/static/data/stuck-levels.json, then build one queue of per-turn modes for that game's stuck level. Modes are
+    dragged in from the mode bar (or tapped in), dragged within the queue to reorder, and dragged out of it (or
+    removed with x) to drop them. Pointer events drive the drag, so the same code works with a mouse and on a
+    phone (where queue items drag by their grip and mode chips are tapped in, because the bar scrolls sideways).
+    Every item uses its mode's default settings from modes.json; a small settings toggle per item opens per-item
+    overrides. "then Stock" is drawn as the implicit tail. Play and the results for that level come from
+    spark-runner.js, drawn right under the queue.
+  - Prompts: each mode from modes.json (Stock, Probe, Hypothesize, Execute, Re-examine, Challenge, Recover, Level
+    start, plus the user's custom modes) in two variants, "son" and "daniel" (Franzen's public notebook), with a
+    side-by-side line diff against Stock or against the other variant.
+  Custom modes (name, colour, prompt based on Stock, settings) and queues are saved in localStorage and can be
+  exported and imported as JSON. View state lives in the URL (?view=&mode=&v=&cmp=&game=). The diff is a plain
+  longest-common-subsequence over lines.
 SRP/DRY check: Pass — prompt text and default settings live only in modes.json, the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
-  from rl-shell.css. Checked rl2.js and sprints.js: neither has a drag lane or a local store to reuse.
+  from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
+  ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderRunnerPanel } from './spark-runner.js?v=20261006-sr1';
+import { loadRunnerInfo, renderPlayRow, renderResults } from './spark-runner.js?v=20261006-q1';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const VARIANTS = { son: "Son's version", daniel: "Franzen's version" };
 const STORE_KEY = 'arc3-mode-explorer-v1';
-// The settings every mode and every scheme slot carries; defaults per mode come from modes.json.
+// The settings every mode and every queue item carries; defaults per mode come from modes.json.
 const FIELDS = [
   { k: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05 },
   { k: 'thinking', label: 'Thinking', type: 'bool' },
@@ -39,13 +43,12 @@ const FALLBACK_SETTINGS = { temperature: 0.6, thinking: true, effort: 'default',
 
 const params = new URLSearchParams(location.search);
 const state = {
-  view: params.get('view') === 'stuck' ? 'stuck' : 'prompts',
+  view: params.get('view') === 'prompts' ? 'prompts' : 'queue',
   mode: params.get('mode') || 'probe',
   v: params.get('v') === 'daniel' ? 'daniel' : 'son',
   cmp: params.get('cmp') === 'other' ? 'other' : 'stock',
   game: params.get('game') || null,
-  sort: { key: 'hard', dir: 1 },
-  sel: -1,          // selected slot in the open scheme
+  open: -1,         // queue item whose settings are showing
 };
 let DATA = null;    // modes.json
 let STUCK = null;   // stuck-levels.json (null until loaded; false if it failed)
@@ -56,8 +59,8 @@ let store = loadStore();
 function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {} };
-  } catch { return { customModes: [], schemes: {} }; }
+    return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {}, game: s.game || null };
+  } catch { return { customModes: [], schemes: {}, game: null }; }
 }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
@@ -65,7 +68,7 @@ function saveStore() {
 }
 function flash(text) {
   const p = $('dockhint'); p.textContent = text; p.hidden = false;
-  clearTimeout(flash.t); flash.t = setTimeout(() => { p.hidden = true; renderHint(); }, 4000);
+  clearTimeout(flash.t); flash.t = setTimeout(() => { p.hidden = true; }, 4000);
 }
 
 // ---------------------------------------------------------------- modes
@@ -97,8 +100,9 @@ function settingsSummary(s) {
 
 function syncUrl() {
   const q = new URLSearchParams();
-  if (state.view === 'stuck') { q.set('view', 'stuck'); if (state.game) q.set('game', state.game); }
-  else { q.set('mode', state.mode); q.set('v', state.v); if (state.cmp !== 'stock') q.set('cmp', state.cmp); }
+  if (state.view === 'prompts') { q.set('view', 'prompts'); q.set('mode', state.mode); if (state.cmp !== 'stock') q.set('cmp', state.cmp); }
+  else if (state.game) q.set('game', state.game);
+  if (state.v !== 'son') q.set('v', state.v);
   history.replaceState(null, '', '?' + q.toString());
 }
 
@@ -159,18 +163,24 @@ function renderDock() {
     const picked = state.view === 'prompts' && m.id === state.mode;
     const b = h('button', 'mx-mode' + (picked ? ' on' : '') + (m.custom ? ' custom' : ''), m.name);
     b.style.setProperty('--mc', m.color);
-    b.draggable = true;
     b.setAttribute('aria-pressed', picked ? 'true' : 'false');
-    b.title = (m.variants[state.v].purpose || '') + (state.view === 'stuck' ? ' Drag into the lane, or tap to add.' : '');
-    b.onclick = () => onChip(m);
-    b.ondragstart = (e) => { e.dataTransfer.setData('text/plain', 'mode:' + m.id); e.dataTransfer.effectAllowed = 'copy'; };
+    b.title = (m.variants[state.v].purpose || '') + (state.view === 'queue' ? ' Drag into the queue, or tap to add it at the end.' : '');
+    b.onclick = () => { if (drag.suppressClick) return; onChip(m); };
+    // a finger on the bar scrolls it sideways, so on touch a chip is tapped in rather than dragged
+    if (state.view === 'queue') b.onpointerdown = (e) => { if (e.pointerType === 'mouse') startDrag(e, { kind: 'mode', id: m.id, el: b }); };
     box.append(b);
   }
-  $('promptbar').hidden = state.view !== 'prompts';
+  const add = h('button', 'mx-mode mx-newmode', '+ New mode');
+  add.title = 'Make your own mode: a name, a colour, a prompt based on Stock, and settings. Saved in this browser.';
+  add.onclick = () => openModeDialog(null);
+  box.append(add);
+
+  $('compare').hidden = state.view !== 'prompts';
   const vb = $('variants'); vb.textContent = '';
   for (const [k, label] of Object.entries(VARIANTS)) {
     const b = h('button', 'mx-seg' + (k === state.v ? ' on' : ''), label);
     b.setAttribute('aria-pressed', k === state.v ? 'true' : 'false');
+    b.title = state.view === 'queue' ? `Play sends ${label.replace("'s version", "'s")} wording of each mode` : '';
     b.onclick = () => { state.v = k; render(); };
     vb.append(b);
   }
@@ -182,23 +192,12 @@ function renderDock() {
     b.onclick = () => { state.cmp = k; render(); };
     cb.append(b);
   }
-  renderHint();
-}
-
-function renderHint() {
-  const p = $('dockhint');
-  if (state.view === 'stuck') {
-    const g = currentGame();
-    p.textContent = g ? `Building a scheme for ${g.nickname}: drag a mode into the lane, or tap it to add it at the end.`
-      : 'Pick a game below to build a scheme for its stuck level.';
-    p.hidden = false;
-  } else p.hidden = true;
 }
 
 function onChip(m) {
   if (state.view === 'prompts') { state.mode = m.id; render(); return; }
-  if (!currentGame()) { flash('Pick a game in the table first.'); return; }
-  addSlot(m.id);
+  if (!currentGame()) { flash('Pick a game first.'); return; }
+  addItem(m.id);
 }
 
 // ---------------------------------------------------------------- Prompts view
@@ -255,215 +254,212 @@ function renderDiff(m) {
   $('fullh').textContent = `Full prompt · ${rightLabel}`;
 }
 
-// ---------------------------------------------------------------- Stuck levels view
+// ---------------------------------------------------------------- Queue view: game picker
 
-function currentGame() { return STUCK && state.game ? STUCK.games.find(g => g.game === state.game) || null : null; }
-function scheme(code) { return store.schemes[code] || null; }
-
-const COLS = [
-  { key: 'game', label: 'Game', val: g => g.nickname.toLowerCase() },
-  { key: 'hard', label: 'Stuck at', val: g => [g.safe_through / g.levels, g.median_levels / g.levels] },
-  { key: 'safe', label: 'Safe through', val: g => g.safe_through },
-  { key: 'median', label: 'Median cleared', val: g => g.median_levels },
-  { key: 'n', label: 'Runs', val: g => g.n },
-  { key: 'flags', label: 'Notes', val: g => (g.near_line ? 2 : 0) + (g.clock_shaped ? 1 : 0) },
-  { key: 'older', label: 'Older line', val: g => g.older ? g.older.safe_through : -1 },
-  { key: 'scheme', label: 'Your scheme', val: g => scheme(g.game) ? scheme(g.game).slots.length : 0 },
-];
-
-function cmpVals(a, b) {
-  if (Array.isArray(a)) { for (let i = 0; i < a.length; i++) { const c = cmpVals(a[i], b[i]); if (c) return c; } return 0; }
-  return a < b ? -1 : a > b ? 1 : 0;
+// Games with a stuck level, hardest first (lowest share of levels safely cleared, then lowest median).
+function stuckGames() {
+  if (!STUCK) return [];
+  return STUCK.games.filter(g => g.stuck_level)
+    .sort((a, b) => (a.safe_through / a.levels - b.safe_through / b.levels) || (a.median_levels / a.levels - b.median_levels / b.levels) || a.game.localeCompare(b.game));
 }
+function currentGame() { return STUCK && state.game ? stuckGames().find(g => g.game === state.game) || null : null; }
 
-function renderStuck() {
-  if (STUCK === null) { $('stucksum').textContent = 'loading…'; return; }
-  if (STUCK === false) { $('stucksum').textContent = 'Could not load the stuck-level tally.'; return; }
-  const meta = STUCK.meta, main = meta.groups.franzen_stock;
-  $('stucknote').textContent = `${main.label}: ${main.runs.length} runs. ${main.detail}`;
-  $('stucksum').textContent = `Safe through = every level up to it cleared in at least 90% of runs. Stuck at = the next level. ` +
-    `Hardest first; click a column to sort, click a game to build a scheme for its stuck level.`;
-  $('stuckcaveat').textContent = `${meta.thin_rule} ${meta.survival_note} Soft: ${meta.near_line_rule.replace(/^near_line = /, '')} ` +
-    `Clock: ${meta.clock_rule.replace(/^clock_shaped = /, '')} Older line: ${meta.groups.older.detail} ${meta.not_used}`;
-
-  const col = COLS.find(c => c.key === state.sort.key) || COLS[1];
-  const games = STUCK.games.slice().sort((a, b) => cmpVals(col.val(a), col.val(b)) * state.sort.dir || a.game.localeCompare(b.game));
-  const t = $('stucktable'); t.textContent = '';
-  const tr = h('tr');
-  for (const c of COLS) {
-    const th = h('th', null, c.label);
-    th.setAttribute('aria-sort', c.key === col.key ? (state.sort.dir > 0 ? 'ascending' : 'descending') : 'none');
-    if (c.key === col.key) th.classList.add('sorted');
-    th.tabIndex = 0;
-    th.onclick = th.onkeydown = (e) => {
-      if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
-      state.sort = { key: c.key, dir: state.sort.key === c.key ? -state.sort.dir : 1 }; renderStuck();
-    };
-    tr.append(th);
+function renderPicker() {
+  const sel = $('gamepick'); sel.textContent = '';
+  if (STUCK === null) { sel.append(h('option', null, 'loading…')); sel.disabled = true; return; }
+  if (STUCK === false) { sel.append(h('option', null, 'could not load the stuck levels')); sel.disabled = true; return; }
+  sel.disabled = false;
+  for (const g of stuckGames()) {
+    const n = (store.schemes[g.game]?.slots || []).length;
+    const o = h('option', null, `${g.nickname} · stuck at level ${g.stuck_level} of ${g.levels}${n ? ` · ${n} in queue` : ''}`);
+    o.value = g.game;
+    sel.append(o);
   }
-  const thead = h('thead'); thead.append(tr); t.append(thead);
-  const body = h('tbody');
-  for (const g of games) {
-    const row = h('tr', g.game === state.game ? 'on' : null);
-    row.tabIndex = 0;
-    row.onclick = row.onkeydown = (e) => { if (e.type === 'keydown' && e.key !== 'Enter') return; openGame(g.game); };
-    const name = h('td', 'mx-gname'); name.append(h('b', null, g.nickname), h('span', 'mx-code', g.game));
-    const stuck = h('td', 'mx-stuckcell');
-    if (g.stuck_level) {
-      stuck.append(h('b', null, `level ${g.stuck_level}`), h('span', 'mx-of', ` of ${g.levels}`));
-      stuck.append(rateBar(g.per_level[g.stuck_level - 1]));
-    } else stuck.append(h('span', 'mx-clear', `none, all ${g.levels} clear`));
-    const flags = h('td');
-    if (g.near_line) flags.append(h('span', 'chip mx-flag soft', 'soft'));
-    if (g.clock_shaped) flags.append(h('span', 'chip mx-flag clock', 'clock'));
-    if (g.thin) flags.append(h('span', 'chip mx-flag thin', 'thin'));
-    const sc = scheme(g.game);
-    row.append(name, stuck, h('td', null, `${g.safe_through} of ${g.levels}`), h('td', null, String(g.median_levels)),
-      h('td', null, String(g.n)), flags,
-      h('td', 'muted', g.older ? `safe through ${g.older.safe_through} (${g.older.n} runs)` : '–'),
-      h('td', sc && sc.slots.length ? null : 'muted', sc && sc.slots.length ? `${sc.slots.length} turn${sc.slots.length === 1 ? '' : 's'} from level ${sc.start_level}` : '–'));
-    body.append(row);
-  }
-  t.append(body);
-  renderBuilder();
+  sel.value = state.game || '';
+  sel.onchange = () => { state.game = sel.value; state.open = -1; store.game = sel.value; saveStore(); render(); };
+  const g = currentGame();
+  const p = g && g.per_level[g.stuck_level - 1];
+  $('gamefact').textContent = g ? `Every run starts from a recorded stock run's position at the start of level ${g.stuck_level}. ` +
+    (p ? `Stock alone clears that level in ${p.cleared} of ${p.n} full runs.` : '') : '';
 }
 
-function rateBar(p) {
-  const w = h('span', 'mx-rate'); w.title = `${p.cleared} of ${p.n} runs cleared level ${p.level}`;
-  const i = h('i'); i.style.width = `${Math.round(p.rate * 100)}%`; w.append(i);
-  const outer = h('span', 'mx-ratewrap'); outer.append(w, h('span', 'mx-ratet', `${p.cleared}/${p.n}`));
-  return outer;
-}
+// ---------------------------------------------------------------- Queue view: the queue
 
-function openGame(code) {
-  state.game = code; state.sel = -1;
-  render();
-  const b = $('builder');
-  if (!b.hidden) b.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function queueOf(g) {
+  // start_level stays in the stored record for exports and older copies of the page; Play always uses the stuck level
+  if (!store.schemes[g.game]) store.schemes[g.game] = { start_level: g.stuck_level, slots: [], updated: null };
+  const q = store.schemes[g.game];
+  q.start_level = g.stuck_level;
+  return q;
 }
+function touch(q) { q.updated = new Date().toISOString(); saveStore(); }
+function itemSettings(item) { const m = findMode(item.mode); return { ...(m ? defaults(m) : FALLBACK_SETTINGS), ...item.overrides }; }
 
-function ensureScheme(g) {
-  if (!store.schemes[g.game]) store.schemes[g.game] = { start_level: g.stuck_level || g.levels, slots: [], updated: null };
-  return store.schemes[g.game];
-}
-function touch(sc) { sc.updated = new Date().toISOString(); saveStore(); }
-
-function addSlot(modeId, at) {
+function addItem(modeId, at) {
   const g = currentGame(); if (!g) return;
-  const sc = ensureScheme(g);
-  const idx = at == null ? sc.slots.length : at;
-  sc.slots.splice(idx, 0, { mode: modeId, overrides: {} });
-  state.sel = idx; touch(sc); render();
+  const q = queueOf(g);
+  q.slots.splice(at == null ? q.slots.length : at, 0, { mode: modeId, overrides: {} });
+  state.open = -1; touch(q); renderQueueArea();
 }
-function moveSlot(from, to) {
-  const sc = scheme(state.game); if (!sc || from === to || from + 1 === to) return;
-  const [s] = sc.slots.splice(from, 1);
+function moveItem(from, to) {
+  const q = queueOf(currentGame());
   const dest = to > from ? to - 1 : to;
-  sc.slots.splice(dest, 0, s); state.sel = dest; touch(sc); render();
+  if (dest === from) return;
+  const [it] = q.slots.splice(from, 1);
+  q.slots.splice(dest, 0, it);
+  if (state.open === from) state.open = dest;
+  else if (state.open >= 0) state.open = -1;
+  touch(q); renderQueueArea();
 }
-function slotSettings(slot) { const m = findMode(slot.mode); return { ...(m ? defaults(m) : FALLBACK_SETTINGS), ...slot.overrides }; }
+function removeItem(i) {
+  const q = queueOf(currentGame());
+  q.slots.splice(i, 1);
+  state.open = -1; touch(q); renderQueueArea();
+}
 
-function renderBuilder() {
-  const b = $('builder'); const g = currentGame();
-  b.hidden = !g; b.textContent = '';
-  if (!g) return;
-  const sc = ensureScheme(g);
-  const card = h('div', 'card mx-build');
-
-  const head = h('div', 'mx-head');
-  head.append(h('span', 'mx-tag mx-gametag', g.nickname), h('span', 'mx-rl2',
-    g.stuck_level ? `stuck at level ${g.stuck_level} of ${g.levels} · safe through ${g.safe_through} · ${g.n} runs` : `every level clears in 90% of ${g.n} runs`));
-  const close = h('button', 'mx-tool mx-close', 'Close'); close.onclick = () => { state.game = null; render(); };
-  head.append(close);
-  card.append(head);
-
-  // per-level clear rates; click a level to start the scheme there
-  card.append(h('h3', 'mx-subh', 'How often each level is cleared'));
-  const strip = h('div', 'mx-levels');
-  for (const p of g.per_level) {
-    const cell = h('button', 'mx-lvl' + (p.level === sc.start_level ? ' start' : '') + (p.level === g.stuck_level ? ' stuck' : ''));
-    cell.style.setProperty('--r', p.rate);
-    cell.title = `Level ${p.level}: cleared in ${p.cleared} of ${p.n} runs. Click to start the scheme here.`;
-    cell.append(h('span', 'mx-lvln', `L${p.level}`), h('span', 'mx-lvlr', `${p.cleared}/${p.n}`));
-    cell.onclick = () => { sc.start_level = p.level; touch(sc); render(); };
-    strip.append(cell);
-  }
-  card.append(strip);
-  const legend = h('p', 'mx-sum');
-  legend.textContent = `Outlined: the stuck level. Filled ring: where your scheme starts (level ${sc.start_level}). ` +
-    (g.older ? `Older line: safe through ${g.older.safe_through} of ${g.levels} over ${g.older.n} runs.` : '');
-  card.append(legend);
-
-  // the lane
-  card.append(h('h3', 'mx-subh', `Turn schedule from the first turn on level ${sc.start_level}`));
-  const lane = h('ol', 'mx-lane');
-  sc.slots.forEach((slot, i) => lane.append(slotNode(slot, i, sc)));
-  if (!sc.slots.length) lane.append(h('li', 'mx-empty', 'Drag a mode here from the bar above, or tap a mode to add it.'));
-  const tail = h('li', 'mx-slot mx-tail');
+// Redraws only the queue, its settings panel and the Play row; the results list keeps its own refresh cycle.
+function renderQueueArea() {
+  const g = currentGame();
+  const list = $('queue'); list.textContent = '';
+  const set = $('slotset'); set.textContent = ''; set.hidden = true;
+  if (!g) { $('playrow').textContent = ''; return; }
+  const q = queueOf(g);
+  q.slots.forEach((item, i) => list.append(itemNode(item, i)));
+  if (!q.slots.length) list.append(h('li', 'mx-qempty', 'Drag modes here from the bar above, or tap a mode to add it. An empty queue plays Stock only.'));
+  const tail = h('li', 'mx-qitem mx-qtail');
   const stock = DATA.modes.find(m => m.id === 'stock');
-  const ttag = h('span', 'mx-tag', 'Stock'); ttag.style.background = stock ? stock.color : '#8792a2';
-  tail.append(h('span', 'mx-turn', sc.slots.length ? `turn ${sc.slots.length + 1} on` : 'every turn'), ttag,
-    h('span', 'mx-slotsum', 'After the schedule runs out, play continues with Stock (the rest of this level and later levels).'));
-  lane.append(tail);
-  wireLane(lane, sc);
-  card.append(lane);
-
-  // settings for the selected slot
-  if (state.sel >= 0 && sc.slots[state.sel]) card.append(slotEditor(sc.slots[state.sel], state.sel, sc));
-
-  const foot = h('div', 'mx-buildfoot');
-  const clear = h('button', 'mx-tool', 'Clear schedule');
-  clear.disabled = !sc.slots.length;
-  clear.onclick = () => { if (confirm(`Remove all ${sc.slots.length} turns from the ${g.nickname} schedule?`)) { sc.slots = []; state.sel = -1; touch(sc); render(); } };
-  foot.append(clear);
-  card.append(foot);
-  const runner = h('div', 'mx-runner');
-  card.append(runner);
-  renderRunnerPanel(runner, { game: g, scheme: sc, variant: state.v, DATA, findMode, slotSettings, defaults });
-  b.append(card);
+  const ttag = h('span', 'mx-tag', q.slots.length ? 'then Stock' : 'Stock'); ttag.style.background = stock ? stock.color : '#8792a2';
+  tail.title = 'After the queue runs out, Stock plays every later turn until the level is cleared or a cap is hit.';
+  tail.append(ttag);
+  list.append(tail);
+  if (state.open >= 0 && q.slots[state.open]) { set.hidden = false; set.append(itemEditor(q.slots[state.open], state.open, q)); }
+  renderPlayRow($('playrow'), playCtx(g, q));
+  const opt = $('gamepick').selectedOptions[0];
+  if (opt) opt.textContent = `${g.nickname} · stuck at level ${g.stuck_level} of ${g.levels}${q.slots.length ? ` · ${q.slots.length} in queue` : ''}`;
 }
 
-function slotNode(slot, i, sc) {
-  const m = findMode(slot.mode);
-  const li = h('li', 'mx-slot' + (i === state.sel ? ' sel' : ''));
-  li.draggable = true; li.dataset.idx = i; li.tabIndex = 0;
-  li.ondragstart = (e) => { e.dataTransfer.setData('text/plain', 'slot:' + i); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); };
-  li.ondragend = () => li.classList.remove('dragging');
-  li.onclick = () => { state.sel = state.sel === i ? -1 : i; render(); };
-  li.onkeydown = (e) => { if (e.key === 'Enter') li.onclick(); };
-  const tag = h('span', 'mx-tag', m ? m.name : `${slot.mode} (missing)`);
-  tag.style.background = m ? m.color : '#6b7280';
-  const s = slotSettings(slot);
-  const changed = Object.keys(slot.overrides).length;
-  li.append(h('span', 'mx-turn', `turn ${i + 1}`), tag, h('span', 'mx-slotsum', settingsSummary(s) + (changed ? ' · edited' : '')));
-  const btns = h('span', 'mx-slotbtns');
-  for (const [label, title, fn, off] of [
-    ['↑', 'Move earlier', () => moveSlot(i, i - 1), i === 0],
-    ['↓', 'Move later', () => moveSlot(i, i + 2), i === sc.slots.length - 1],
-    ['✕', 'Remove this turn', () => { sc.slots.splice(i, 1); state.sel = -1; touch(sc); render(); }, false]]) {
-    const b = h('button', 'mx-mini', label); b.title = title; b.setAttribute('aria-label', title); b.disabled = off;
-    b.onclick = (e) => { e.stopPropagation(); fn(); };
-    btns.append(b);
-  }
-  li.append(btns);
+function itemNode(item, i) {
+  const m = findMode(item.mode);
+  const edited = Object.keys(item.overrides).length;
+  const li = h('li', 'mx-qitem' + (i === state.open ? ' open' : ''));
+  li.dataset.idx = i;
+  li.style.setProperty('--mc', m ? m.color : '#6b7280');
+  const grip = h('span', 'mx-grip', '⠿'); grip.title = 'Drag to reorder, or drag out of the queue to remove';
+  grip.setAttribute('aria-hidden', 'true');
+  li.append(grip, h('span', 'mx-qn', String(i + 1)), h('span', 'mx-qname', m ? m.name : `${item.mode} (missing)`));
+  li.title = settingsSummary(itemSettings(item)) + (edited ? ' (edited)' : ' (mode defaults)');
+  const gear = h('button', 'mx-qbtn' + (edited ? ' edited' : ''), '⚙');
+  gear.title = edited ? 'Settings (changed from the mode defaults)' : 'Settings';
+  gear.setAttribute('aria-label', `Settings for turn ${i + 1}`);
+  gear.setAttribute('aria-expanded', i === state.open ? 'true' : 'false');
+  gear.onclick = (e) => { e.stopPropagation(); state.open = state.open === i ? -1 : i; renderQueueArea(); };
+  const x = h('button', 'mx-qbtn', '✕');
+  x.title = 'Remove from the queue'; x.setAttribute('aria-label', `Remove turn ${i + 1}`);
+  x.onclick = (e) => { e.stopPropagation(); removeItem(i); };
+  li.append(gear, x);
+  // mouse: the whole item drags; touch: only the grip, so the page still scrolls under a finger
+  li.onpointerdown = (e) => {
+    if (e.target.closest('button')) return;
+    if (e.pointerType !== 'mouse' && e.target !== grip) return;
+    startDrag(e, { kind: 'item', idx: i, el: li });
+  };
   return li;
 }
 
-// Drops: a mode chip inserts a new turn, a slot moves; the insertion point is the first slot whose middle is below the pointer.
-function wireLane(lane, sc) {
-  const slots = () => [...lane.querySelectorAll('.mx-slot:not(.mx-tail)')];
-  const indexAt = (y) => { const list = slots(); for (let k = 0; k < list.length; k++) { const r = list[k].getBoundingClientRect(); if (y < r.top + r.height / 2) return k; } return list.length; };
-  const mark = (k) => { lane.querySelectorAll('.mx-slot').forEach((el, j) => el.classList.toggle('drop-before', j === k)); };
-  lane.ondragover = (e) => { e.preventDefault(); lane.classList.add('over'); mark(indexAt(e.clientY)); };
-  lane.ondragleave = (e) => { if (!lane.contains(e.relatedTarget)) { lane.classList.remove('over'); mark(-1); } };
-  lane.ondrop = (e) => {
-    e.preventDefault(); lane.classList.remove('over');
-    const data = e.dataTransfer.getData('text/plain') || '';
-    const at = indexAt(e.clientY); mark(-1);
-    if (data.startsWith('mode:')) addSlot(data.slice(5), at);
-    else if (data.startsWith('slot:')) moveSlot(+data.slice(5), at);
-  };
+function itemEditor(item, i, q) {
+  const m = findMode(item.mode);
+  const box = h('div', 'mx-editor');
+  const head = h('div', 'mx-edhead');
+  head.append(h('b', null, `Turn ${i + 1}: ${m ? m.name : item.mode}`), h('span', 'mx-rl2', 'starts from the mode defaults'));
+  const close = h('button', 'mx-qbtn', '✕'); close.title = 'Close settings'; close.setAttribute('aria-label', 'Close settings');
+  close.onclick = () => { state.open = -1; renderQueueArea(); };
+  head.append(close);
+  box.append(head);
+  const reset = h('button', 'mx-tool', 'Reset to mode defaults');
+  box.append(settingsGrid(() => itemSettings(item), (k, v) => {
+    const base = m ? defaults(m) : FALLBACK_SETTINGS;
+    if (base[k] === v) delete item.overrides[k]; else item.overrides[k] = v;
+    touch(q);
+    const edited = Object.keys(item.overrides).length;
+    const gear = $('queue').querySelector(`.mx-qitem[data-idx="${i}"] .mx-qbtn`);
+    if (gear) gear.classList.toggle('edited', !!edited);
+    reset.disabled = !edited;
+  }));
+  if (m && m.settings_why) box.append(h('p', 'mx-why', `Mode defaults: ${m.settings_why}`));
+  const btns = h('div', 'mx-edbtns');
+  reset.disabled = !Object.keys(item.overrides).length;
+  reset.onclick = () => { item.overrides = {}; touch(q); renderQueueArea(); };
+  const earlier = h('button', 'mx-tool', '← Earlier'); earlier.disabled = i === 0; earlier.onclick = () => moveItem(i, i - 1);
+  const later = h('button', 'mx-tool', 'Later →'); later.disabled = i === q.slots.length - 1; later.onclick = () => moveItem(i, i + 2);
+  btns.append(reset, earlier, later);
+  box.append(btns);
+  return box;
 }
+
+// ---------------------------------------------------------------- drag (pointer events: mouse and touch)
+
+// One drag at a time. A mode chip dropped on the queue inserts a new item there; a queue item dropped on the queue
+// moves, dropped anywhere else it is removed. A press that never moves past the threshold stays a click.
+const drag = { on: null, suppressClick: false };
+
+function startDrag(e, src) {
+  if (e.button > 0) return;
+  const d = { src, x0: e.clientX, y0: e.clientY, ghost: null, at: -1, pid: e.pointerId };
+  drag.on = d;
+  const move = (ev) => {
+    if (ev.pointerId !== d.pid) return;
+    if (!d.ghost) {
+      if (Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 6) return;
+      d.ghost = src.el.cloneNode(true);
+      d.ghost.classList.add('mx-ghost'); d.ghost.removeAttribute('data-idx');
+      document.body.append(d.ghost);
+      src.el.classList.add('dragging');
+      document.body.classList.add('mx-dragging');
+    }
+    ev.preventDefault();
+    d.ghost.style.transform = `translate(${ev.clientX + 8}px, ${ev.clientY + 8}px)`;
+    const over = overQueue(ev.clientX, ev.clientY);
+    d.at = over ? dropIndex(ev.clientX, ev.clientY) : -1;
+    markDrop(d.at, src.kind === 'item' && !over);
+  };
+  const end = (ev) => {
+    if (ev.pointerId !== d.pid) return;
+    removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end);
+    drag.on = null;
+    if (!d.ghost) return;                       // a plain click
+    d.ghost.remove(); src.el.classList.remove('dragging'); document.body.classList.remove('mx-dragging'); markDrop(-1, false);
+    drag.suppressClick = true; setTimeout(() => { drag.suppressClick = false; }, 0);
+    if (ev.type === 'pointercancel') return;
+    if (src.kind === 'mode') { if (d.at >= 0) addItem(src.id, d.at); }
+    else if (d.at >= 0) moveItem(src.idx, d.at);
+    else removeItem(src.idx);
+  };
+  addEventListener('pointermove', move, { passive: false });
+  addEventListener('pointerup', end); addEventListener('pointercancel', end);
+}
+
+function overQueue(x, y) {
+  const r = $('queue').getBoundingClientRect();
+  return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
+}
+// Items flow left to right and wrap: the drop goes before the first item the pointer is above or left of the middle of.
+function dropIndex(x, y) {
+  const items = [...$('queue').querySelectorAll('.mx-qitem:not(.mx-qtail)')];
+  for (let k = 0; k < items.length; k++) {
+    const r = items[k].getBoundingClientRect();
+    if (y < r.top || (y <= r.bottom && x < r.left + r.width / 2)) return k;
+  }
+  return items.length;
+}
+function markDrop(at, removing) {
+  const list = $('queue');
+  list.classList.toggle('over', at >= 0);
+  list.querySelectorAll('.mx-qitem').forEach((el, j) => el.classList.toggle('drop-before', j === at));
+  const src = drag.on && drag.on.src;
+  if (src && src.kind === 'item') src.el.classList.toggle('removing', removing);
+}
+
+// ---------------------------------------------------------------- settings inputs (queue items and the mode dialog)
 
 function fieldInput(f, value, onChange, disabled) {
   const wrap = h('label', 'mx-field');
@@ -508,27 +504,6 @@ function settingsGrid(get, set) {
   return grid;
 }
 
-function slotEditor(slot, i, sc) {
-  const m = findMode(slot.mode);
-  const box = h('div', 'mx-editor');
-  box.append(h('h3', 'mx-subh', `Turn ${i + 1}: ${m ? m.name : slot.mode} settings`));
-  const reset = h('button', 'mx-tool', 'Reset to mode defaults');
-  box.append(settingsGrid(() => slotSettings(slot), (k, v) => {
-    const base = m ? defaults(m) : FALLBACK_SETTINGS;
-    if (base[k] === v) delete slot.overrides[k]; else slot.overrides[k] = v;
-    touch(sc);
-    const edited = Object.keys(slot.overrides).length;
-    const sum = document.querySelector(`.mx-slot[data-idx="${i}"] .mx-slotsum`);
-    if (sum) sum.textContent = settingsSummary(slotSettings(slot)) + (edited ? ' · edited' : '');
-    reset.disabled = !edited;
-  }));
-  if (m && m.settings_why) box.append(h('p', 'mx-why', `Mode defaults: ${m.settings_why}`));
-  reset.disabled = !Object.keys(slot.overrides).length;
-  reset.onclick = () => { slot.overrides = {}; touch(sc); render(); };
-  box.append(reset);
-  return box;
-}
-
 // ---------------------------------------------------------------- custom modes
 
 function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'mode'; }
@@ -544,7 +519,7 @@ function openModeDialog(id) {
   const dlg = $('modedlg'); dlg.textContent = '';
   const form = h('form', 'mx-form'); form.method = 'dialog';
   form.append(h('h2', null, existing ? `Edit ${existing.name}` : 'New mode'));
-  form.append(h('p', 'mx-sum', 'Saved in this browser only. The prompt starts as Stock; add your focus lines where you want them. Use Export to keep or share it.'));
+  form.append(h('p', 'mx-sum', 'Saved in this browser only. The prompt starts as Stock; add your focus lines where you want them. It shows up in the mode bar, ready to drag into a queue.'));
 
   const row = h('div', 'mx-formrow');
   const name = h('input'); name.required = true; name.maxLength = 32; name.value = draft.name; name.placeholder = 'e.g. Map the board';
@@ -576,12 +551,12 @@ function openModeDialog(id) {
     const del = h('button', 'mx-tool mx-danger', 'Delete mode'); del.type = 'button';
     del.onclick = () => {
       const used = Object.values(store.schemes).filter(s => s.slots.some(x => x.mode === existing.id)).length;
-      if (!confirm(`Delete ${existing.name}?` + (used ? ` It is used in ${used} scheme(s); those turns will be removed.` : ''))) return;
+      if (!confirm(`Delete ${existing.name}?` + (used ? ` It is used in ${used} queue(s); it will be taken out of them.` : ''))) return;
       store.customModes = store.customModes.filter(c => c.id !== existing.id);
       for (const s of Object.values(store.schemes)) s.slots = s.slots.filter(x => x.mode !== existing.id);
       saveStore(); dlg.close();
       if (state.mode === existing.id) state.mode = 'probe';
-      state.sel = -1; render();
+      state.open = -1; render();
     };
     btns.append(del);
   }
@@ -610,13 +585,13 @@ function openModeDialog(id) {
 function exportJson() {
   const doc = { kind: 'arc3-mode-explorer', version: 1, exported: new Date().toISOString(), customModes: store.customModes, schemes: store.schemes };
   const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 1)], { type: 'application/json' }));
-  const a = h('a'); a.href = url; a.download = `arc3-modes-and-schemes-${new Date().toISOString().slice(0, 10)}.json`;
+  const a = h('a'); a.href = url; a.download = `arc3-modes-and-queues-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function validCustom(c) { return c && typeof c.id === 'string' && typeof c.name === 'string' && c.name.trim() && typeof c.prompt === 'string'; }
-function validScheme(s) { return s && Array.isArray(s.slots) && s.slots.every(x => x && typeof x.mode === 'string') && Number.isInteger(s.start_level); }
+function validScheme(s) { return s && Array.isArray(s.slots) && s.slots.every(x => x && typeof x.mode === 'string'); }
 
 async function importJson(file) {
   let doc;
@@ -632,27 +607,35 @@ async function importJson(file) {
     if (k >= 0) store.customModes[k] = rec; else store.customModes.push(rec);
   }
   for (const [k, s] of schemes) {
-    store.schemes[k] = { start_level: s.start_level, updated: s.updated || null,
+    store.schemes[k] = { start_level: Number.isInteger(s.start_level) ? s.start_level : null, updated: s.updated || null,
       slots: s.slots.map(x => ({ mode: x.mode, overrides: x.overrides && typeof x.overrides === 'object' ? x.overrides : {} })) };
   }
   saveStore();
   render();
-  flash(`Imported ${modes.length} custom mode(s) and ${schemes.length} scheme(s).`);
+  flash(`Imported ${modes.length} custom mode(s) and ${schemes.length} queue(s).`);
 }
 
 // ---------------------------------------------------------------- main
+
+function playCtx(g, q) { return { game: g, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults }; }
 
 function render() {
   syncUrl();
   renderDock();
   $('view-prompts').hidden = state.view !== 'prompts';
-  $('view-stuck').hidden = state.view !== 'stuck';
+  $('view-queue').hidden = state.view !== 'queue';
   if (state.view === 'prompts') {
     const m = modeById(state.mode);
     state.mode = m.id;
     renderCard(m);
     renderDiff(m);
-  } else renderStuck();
+    return;
+  }
+  renderPicker();
+  renderQueueArea();
+  const g = currentGame();
+  if (g) renderResults($('results'), playCtx(g, queueOf(g)));
+  else $('results').textContent = '';
 }
 
 // The dock pins just under the site tabs, whose height changes when they wrap or scroll sideways on a phone.
@@ -671,10 +654,11 @@ async function main() {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     DATA = await r.json();
   } catch (e) {
+    $('updated').textContent = `Could not load the mode prompts (${e.message}).`;
     $('card').textContent = `Could not load the mode prompts (${e.message}).`;
     return;
   }
-  $('updated').textContent = `Draft · ${DATA.meta.date}`;
+  $('updated').textContent = `Draft prompts · ${DATA.meta.date}`;
   $('finding').textContent = DATA.meta.finding;
   $('notation').textContent = `${DATA.meta.notation} ${DATA.meta.insert_rule} ${DATA.meta.settings_note || ''}`;
   $('copy').onclick = async () => {
@@ -682,8 +666,7 @@ async function main() {
     catch { $('copy').textContent = 'Copy failed'; }
     setTimeout(() => { $('copy').textContent = 'Copy prompt'; }, 1500);
   };
-  for (const b of $('tabs').querySelectorAll('.mx-tab')) b.onclick = () => { state.view = b.dataset.view; state.sel = -1; render(); };
-  $('newmode').onclick = () => openModeDialog(null);
+  for (const b of $('tabs').querySelectorAll('.mx-tab')) b.onclick = () => { state.view = b.dataset.view; state.open = -1; render(); };
   $('export').onclick = exportJson;
   $('import').onclick = () => $('importfile').click();
   $('importfile').onchange = (e) => { const f = e.target.files[0]; if (f) importJson(f); e.target.value = ''; };
@@ -693,10 +676,12 @@ async function main() {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     STUCK = await r.json();
   } catch { STUCK = false; }
-  if (state.game && !currentGame()) state.game = null;
+  // open the game from the link, else the last one used here, else the hardest
+  if (!currentGame()) state.game = store.game;
+  if (!currentGame()) state.game = stuckGames()[0]?.game || null;
   render();
   await loadRunnerInfo();
-  if (state.view === 'stuck' && currentGame()) render();
+  if (state.view === 'queue' && currentGame()) renderQueueArea();
 }
 
 main();

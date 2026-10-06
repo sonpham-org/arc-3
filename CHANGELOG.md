@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-queue]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Mode explorer is a queue now.** Son (#arc-3, 6-Oct 08:26 ET): drop the marketing banners; "the mode setup should just be a queue ... drag and drop the mode in and out and press play, and see the results for that level." The banner is gone (slim title line, pinned mode bar stays). New default Queue tab: pick a game from the stuck-levels list, drag modes from the bar into one queue (or tap to add), drag to reorder, drag out or x to remove; "then Stock" is the implicit tail. Each item uses its mode's defaults; per-item overrides sit behind a small settings toggle. Play sits under the queue with samples and turn cap inline (action and minute caps keep their defaults). Results for that game's stuck level sit right under it: live job, every past job newest first with the queue that ran, cleared vs not against the stock tally, levels gained, actions, turns.
+- Removed: the stuck-levels table, the start-level strip (only the stuck level has a starting point), the always-open slot editor, the version/action/minute/note fields of the old runner panel. "New mode" is a small button at the end of the mode bar; Export/Import moved to the footer. Saved queues and custom modes carry over (same browser store).
+- How: pointer-event drag (mouse anywhere on an item, a finger on its grip; chips are tapped in on a phone because the bar scrolls sideways). `docs/mode-explorer.html`, `docs/static/js/mode-explorer.js`, `docs/static/js/spark-runner.js` (split into Play row + results), `docs/static/css/mode-explorer.css`. Runner and site relay unchanged; the Play request is the same shape and was validated against the runner's request model.
+
 ## [2026.10.06-spark-runner-caps]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
