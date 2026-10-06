@@ -581,3 +581,9 @@ archived at `docs/static/ai-game-results-2026-10-05.json`. Each model/game cell 
 highest-scoring published run (ties: fewer actions, then session ID), with its own levels,
 actions and replay. Scores measure action efficiency, not completion percentage. Model
 columns can be selected; configurations may differ across games.
+
+The comparison UI is implemented by `docs/static/human-ai-comparison.js` and `.css`,
+mirrored to ARC Explainer's `client/public/static/`. It reads the dated snapshots locally;
+model/configuration selection, sorting, outcome filters and run inspection need no upstream
+requests. Separate score and shortest-complete-win modes prevent failed runs from appearing
+as cheap solutions. URL parameters retain the comparison settings.
