@@ -303,6 +303,17 @@ def scheduler() -> None:
         time.sleep(2)
 
 
+_MODEL_UP = {"t": 0.0, "ok": True}
+
+
+def model_up() -> bool:
+    """Cached model reachability (20 s), so the scheduler holds samples while the server is down."""
+    if time.time() - _MODEL_UP["t"] > 20:
+        _MODEL_UP["ok"] = bool(model_status().get("reachable"))
+        _MODEL_UP["t"] = time.time()
+    return _MODEL_UP["ok"]
+
+
 def tick() -> None:
     with LOCK:
         # reap finished processes
@@ -342,6 +353,9 @@ def tick() -> None:
             HARVEST["preemptions"] += len(harvest_procs)
             HARVEST["last_preempted"] = now()
             return   # reaped on the next tick, then Play gets every slot
+        # Model server down (e.g. Cletus off): hold every queued sample instead of letting it fail at the model.
+        if not model_up():
+            return
         # start Play samples of the job at the head of the line only; later jobs wait whole
         free = CONCURRENCY - play_running - len(harvest_procs)
         for job in [read_json(JOBS / jid / "job.json") for jid in line[:1]]:
