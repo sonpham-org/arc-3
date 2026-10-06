@@ -38,14 +38,17 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   Play (drawn by spark-runner.js) sets state.context, kept in this browser and in the link (?ctx=none). In No-context
   mode every level with a verified replay is playable, the level buttons' Spark bar counts only No-context jobs, and
   the board picture shows the replayed level start.
+  How-to and tips (the Boss, #arc-3 6-Oct 12:52 ET: "Are there tooltips or instructions on the page?"): a short "How to
+  use this page" panel under the title, open on a first visit and closed after that unless it was last opened by hand
+  (its own localStorage key), and a hover tip plus an accessible label on every control.
 SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-nc1';
-import { renderStartBoard } from './start-board.js?v=20261006-nc1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-ht1';
+import { renderStartBoard } from './start-board.js?v=20261006-ht1';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
@@ -54,12 +57,12 @@ const VARIANTS = { son: "Son's version", daniel: "Franzen's version" };
 const STORE_KEY = 'arc3-mode-explorer-v1';
 // The settings every mode and every queue item carries; defaults per mode come from modes.json.
 const FIELDS = [
-  { k: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05 },
-  { k: 'thinking', label: 'Thinking', type: 'bool' },
-  { k: 'effort', label: 'Effort', type: 'select', options: ['default', 'low', 'medium', 'high'], needsThinking: true },
-  { k: 'thinking_budget', label: 'Thinking budget (tokens)', type: 'number', min: 0, step: 256, empty: 'no cap', needsThinking: true },
-  { k: 'tool_calls', label: 'Tool calls this turn', type: 'number', min: 0, step: 1, empty: 'no limit' },
-  { k: 'actions', label: 'Action budget', type: 'number', min: 0, step: 1, empty: 'no limit' },
+  { k: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05, tip: 'How much the model varies its answers: lower is steadier, higher tries more different things.' },
+  { k: 'thinking', label: 'Thinking', type: 'bool', tip: 'Whether the model thinks privately before it answers this turn.' },
+  { k: 'effort', label: 'Effort', type: 'select', options: ['default', 'low', 'medium', 'high'], needsThinking: true, tip: 'How hard the model thinks (only with thinking on).' },
+  { k: 'thinking_budget', label: 'Thinking budget (tokens)', type: 'number', min: 0, step: 256, empty: 'no cap', needsThinking: true, tip: 'The most thinking the model may do this turn; empty means no cap (only with thinking on).' },
+  { k: 'tool_calls', label: 'Tool calls this turn', type: 'number', min: 0, step: 1, empty: 'no limit', tip: 'The most tool calls the model may make this turn; empty means no limit.' },
+  { k: 'actions', label: 'Action budget', type: 'number', min: 0, step: 1, empty: 'no limit', tip: 'The most game moves the model may make this turn; empty means no limit.' },
 ];
 const FALLBACK_SETTINGS = { temperature: 0.6, thinking: true, effort: 'default', thinking_budget: null, tool_calls: null, actions: null };
 // Kept out of prompt tuning; the runner refuses them (tools/spark_runner/server.py HELD_OUT), so the sidebar leaves them out.
@@ -207,7 +210,8 @@ function renderDock() {
     const b = h('button', 'mx-mode' + (picked ? ' on' : '') + (m.custom ? ' custom' : ''), m.name);
     b.style.setProperty('--mc', m.color);
     b.setAttribute('aria-pressed', picked ? 'true' : 'false');
-    b.title = (m.variants[state.v].purpose || '') + (state.view === 'queue' ? ' Drag into the queue, or tap to add it at the end.' : '');
+    b.title = (m.variants[state.v].purpose || '') + (state.view === 'queue' ? ' Drag into the queue, or tap to add it at the end.' : ' Show this mode\'s prompt.');
+    b.setAttribute('aria-label', `${m.name}${state.view === 'queue' ? ', add to the queue' : ', show its prompt'}`);
     b.onclick = () => { if (drag.suppressClick) return; onChip(m); };
     // a finger on the bar scrolls it sideways, so on touch a chip is tapped in rather than dragged
     if (state.view === 'queue') b.onpointerdown = (e) => { if (e.pointerType === 'mouse') startDrag(e, { kind: 'mode', id: m.id, el: b }); };
@@ -232,7 +236,7 @@ function renderDock() {
   for (const [k, label] of Object.entries(VARIANTS)) {
     const b = h('button', 'mx-seg' + (k === state.v ? ' on' : ''), label);
     b.setAttribute('aria-pressed', k === state.v ? 'true' : 'false');
-    b.title = state.view === 'queue' ? `Play sends ${label.replace("'s version", "'s")} wording of each mode` : '';
+    b.title = state.view === 'queue' ? `Play sends ${label.replace("'s version", "'s")} wording of each mode` : `Show ${label.replace("'s version", "'s")} wording`;
     b.onclick = () => { state.v = k; render(); };
     vb.append(b);
   }
@@ -241,6 +245,7 @@ function renderDock() {
   for (const [k, label] of [['stock', 'against Stock'], ['other', `against ${VARIANTS[other]}`]]) {
     const b = h('button', 'mx-seg' + (k === state.cmp ? ' on' : ''), label);
     b.setAttribute('aria-pressed', k === state.cmp ? 'true' : 'false');
+    b.title = k === 'stock' ? 'Compare this mode with the plain Stock prompt' : `Compare with ${VARIANTS[other]} of the same mode`;
     b.onclick = () => { state.cmp = k; render(); };
     cb.append(b);
   }
@@ -356,6 +361,7 @@ function renderGamebar() {
     txt.append(h('span', 'mx-gbsub', `${g.levels} levels${n ? ` · ${n} queued` : ''}`));
     b.append(txt);
     b.append(h('span', 'mx-gbstuck' + (g.stuck_level ? '' : ' none'), g.stuck_level ? `L${g.stuck_level}` : 'all'));
+    b.setAttribute('aria-label', `${g.nickname}, ${g.levels} levels` + (g.stuck_level ? `, stuck at level ${g.stuck_level}` : ''));
     b.onclick = () => pickGame(g.game);
     list.append(b);
   }
@@ -462,6 +468,7 @@ function renderQueueArea() {
   const stock = findMode('stock');
   const ttag = h('span', 'mx-tag', q.slots.length ? 'then Stock' : 'Stock'); ttag.style.background = stock ? stock.color : '#8792a2';
   tail.title = 'After the queue runs out, Stock plays every later turn until the level is cleared or a cap is hit.';
+  list.title = 'The queue: one mode per turn, in order. Drag modes in from the bar, drag items to reorder, drag one out or press its x to remove it.';
   tail.append(ttag);
   list.append(tail);
   if (state.open >= 0 && q.slots[state.open]) { set.hidden = false; set.append(itemEditor(q.slots[state.open], state.open, q)); }
@@ -510,6 +517,7 @@ function itemEditor(item, i, q) {
   head.append(close);
   box.append(head);
   const reset = h('button', 'mx-tool', 'Reset to mode defaults');
+  reset.title = "Undo this turn's changes and use the mode's own settings again";
   box.append(settingsGrid(() => itemSettings(item), (k, v) => {
     const base = m ? defaults(m) : FALLBACK_SETTINGS;
     if (base[k] === v) delete item.overrides[k]; else item.overrides[k] = v;
@@ -523,8 +531,8 @@ function itemEditor(item, i, q) {
   const btns = h('div', 'mx-edbtns');
   reset.disabled = !Object.keys(item.overrides).length;
   reset.onclick = () => { item.overrides = {}; touch(q); renderQueueArea(); };
-  const earlier = h('button', 'mx-tool', '← Earlier'); earlier.disabled = i === 0; earlier.onclick = () => moveItem(i, i - 1);
-  const later = h('button', 'mx-tool', 'Later →'); later.disabled = i === q.slots.length - 1; later.onclick = () => moveItem(i, i + 2);
+  const earlier = h('button', 'mx-tool', '← Earlier'); earlier.title = 'Move this turn one place earlier in the queue'; earlier.disabled = i === 0; earlier.onclick = () => moveItem(i, i - 1);
+  const later = h('button', 'mx-tool', 'Later →'); later.title = 'Move this turn one place later in the queue'; later.disabled = i === q.slots.length - 1; later.onclick = () => moveItem(i, i + 2);
   btns.append(reset, earlier, later);
   box.append(btns);
   return box;
@@ -623,6 +631,7 @@ function fieldInput(f, value, onChange, disabled) {
     };
   }
   input.disabled = !!disabled;
+  if (f.tip) { wrap.title = f.tip; input.title = f.tip; }
   wrap.append(input);
   return wrap;
 }
@@ -833,7 +842,24 @@ function trackNav() {
   else addEventListener('resize', set);
 }
 
+// The how-to panel at the top: open on a first visit, closed after that unless it was left open (its own key, so the
+// main store's field list stays as it is).
+const HOWTO_KEY = 'arc3-mode-explorer-howto';
+function setupHowto() {
+  const d = $('howto'); if (!d) return;
+  let seen = null;
+  try { seen = localStorage.getItem(HOWTO_KEY); } catch { /* private mode: open every time */ }
+  d.open = seen === null || seen === 'open';
+  // after the first visit it starts closed, even if it was never closed by hand
+  if (seen === null) try { localStorage.setItem(HOWTO_KEY, 'closed'); } catch { /* private mode */ }
+  // only a person's click (or Enter/Space, which clicks) is remembered; setting d.open above also fires 'toggle'
+  d.querySelector('summary').addEventListener('click', () => {
+    try { localStorage.setItem(HOWTO_KEY, d.open ? 'closed' : 'open'); } catch { /* private mode */ }
+  });
+}
+
 async function main() {
+  setupHowto();
   trackNav();
   try {
     const r = await fetch('./static/data/modes.json', { cache: 'no-cache' });
@@ -848,8 +874,8 @@ async function main() {
   await loadLibrary();
   $('updated').textContent = lib.ok ? 'Shared modes · anyone signed in can edit; every save is a new version'
     : `Draft prompts · ${DATA.meta.date} · shared modes could not load (${lib.error}), showing the built-in drafts`;
-  $('storenote').textContent = lib.ok ? 'Modes are shared and versioned for everyone signed in. Queues are saved in this browser only.'
-    : 'Custom modes and queues are saved in this browser only.';
+  $('storenote').textContent = lib.ok ? 'Modes are shared with everyone signed in, and every save keeps a new version. Your queues, chosen levels and the context choice are saved in this browser only.'
+    : 'The shared modes could not be reached, so custom modes made now, queues, chosen levels and the context choice are saved in this browser only.';
   $('finding').textContent = DATA.meta.finding;
   $('notation').textContent = `${DATA.meta.notation} ${DATA.meta.insert_rule} ${DATA.meta.settings_note || ''}`;
   $('copy').onclick = async () => {
@@ -857,6 +883,8 @@ async function main() {
     catch { $('copy').textContent = 'Copy failed'; }
     setTimeout(() => { $('copy').textContent = 'Copy prompt'; }, 1500);
   };
+  for (const b of $('tabs').querySelectorAll('.mx-tab')) b.title = b.dataset.view === 'queue' ? 'Build a queue of modes and play it on the Sparks' : 'Read each mode\'s prompt and how it differs from Stock';
+  $('copy').title = 'Copy the full prompt shown below';
   for (const b of $('tabs').querySelectorAll('.mx-tab')) b.onclick = () => { state.view = b.dataset.view; state.open = -1; render(); };
   $('export').onclick = exportJson;
   $('import').onclick = () => $('importfile').click();

@@ -15,7 +15,7 @@ PURPOSE: The Mode explorer's board picture (docs/mode-explorer.html, Queue view,
   tools/spark_runner/boards.py). When the runner cannot be reached, it falls back to the level's opening frame from
   the site's static copy (static/data/level-frames/<game>.json, written by boards.py --openings) and says so. Answers
   are kept per game, level, wording and start, so switching back is instant; a stale answer (the user moved on while
-  it loaded) is dropped.
+  it loaded) is dropped. The heading and the caption carry hover tips (6-Oct, with the page's how-to).
 SRP/DRY check: Pass - drawing only; which start Play uses comes from spark-runner.js levelStart (passed in as ls) and
   the runner's own answer. Palette is the canonical ARC-3 one (games-play.js COLORS, constants.py COLOR_MAP).
 */
@@ -113,12 +113,14 @@ export function renderStartBoard(box, ctx) {
   shown = key;
   box.textContent = '';
   const head = h('div', 'mx-bdhead');
+  head.title = 'The board the model sees on the first turn of a Play from this level, for the chosen game, level, wording and context. The line under the picture says where it comes from.';
   head.append(h('span', 'mx-bdtitle', `Level ${level} at the start`), h('span', 'mx-bdkind', ls && ls.ok ? (ls.kind === 'exact' ? 'exact start' : ls.kind === 'reset' ? 'fresh game' : ls.kind === 'rebuilt' ? 'snapshot' : ls.kind === 'replay' ? 'no context, replayed' : '') : ls && ls.unknown ? 'start not known' : 'no start yet'));
   const frame = h('div', 'mx-bdframe' + (ls && !ls.ok && !ls.unknown ? ' off' : ''));
   const canvas = h('canvas', 'mx-bdcanvas');
   canvas.setAttribute('role', 'img');
   frame.append(canvas, h('span', 'mx-bdwait', 'drawing the board…'));
   const note = h('p', 'mx-bdnote', '');
+  note.title = 'Where this picture comes from, and whether it was checked against the saved board.';
   box.append(head, frame, note);
 
   if (!runnerBoards.has(key)) {

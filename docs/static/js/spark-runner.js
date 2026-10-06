@@ -36,6 +36,8 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     Results are split by context: each kind gets its own section and its own Stock comparison (carried: the stock
     tally from full runs; no context: the Stock-only No-context Spark jobs at that level), and the Spark tally on the
     level buttons counts only jobs of the selected kind. Jobs from before the option carried context.
+  - Hover tips (added 6-Oct, the Boss: "Are there tooltips or instructions on the page?"): Play (or why it is off),
+    samples and turn cap, the runner line, each job's status or place in line, its queue, Cancel, and every column.
 SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
@@ -232,9 +234,10 @@ export function renderPlayRow(box, ctx) {
   }
   const play = h('button', 'mx-play', 'Play');
   play.disabled = !!why;
+  play.title = why ? `Play is off: ${why}` : 'Send this queue to the Sparks. One job runs at a time; if others are ahead, yours waits and its place in line is shown below.';
   const num = (label, key, min, max, title) => {
     const l = h('label', 'mx-inl'); l.title = title;
-    const i = h('input'); i.type = 'number'; i.min = min; i.max = max; i.step = 1; i.value = opts[key]; i.inputMode = 'numeric';
+    const i = h('input'); i.title = title; i.setAttribute('aria-label', `${label}: ${title}`); i.type = 'number'; i.min = min; i.max = max; i.step = 1; i.value = opts[key]; i.inputMode = 'numeric';
     i.onchange = () => { const n = Math.round(+i.value); if (Number.isFinite(n) && n >= min && n <= max) opts[key] = n; else i.value = opts[key]; };
     l.append(i, h('span', null, label));
     return l;
@@ -242,6 +245,7 @@ export function renderPlayRow(box, ctx) {
   const samples = num('samples', 'samples', 1, 20, 'How many times to play the level from the same starting point');
   const turns = num('turns max', 'max_turns', 1, 60, 'Model turns per sample before it stops (the queue counts toward this)');
   const status = h('span', 'mx-runstatus', runnerLine());
+  status.title = 'The Spark runner right now: whether the model answers, whose job is playing and how many wait in line.';
   const row = h('div', 'mx-playline');
   row.append(seg, play, samples, turns, status);
   box.append(row);
@@ -373,6 +377,18 @@ function drawResults(box, ctx, data) {
   if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown; pick that level above to see ${other === 1 ? 'it' : 'them'}.`));
 }
 
+const STATUS_TIP = { queued: 'Queued: sent to the Sparks and about to start.', running: 'Running on the Sparks now; this list refreshes by itself.',
+  done: 'Finished: every sample has a result.', cancelled: 'Cancelled: samples that had not finished were stopped.', failed: 'The job failed; see the rows for the error.',
+  preempted: 'Stopped early to make room on the Sparks; finished samples are kept.', interrupted: 'Cut short when the runner restarted; finished samples are kept.' };
+const COLUMNS = [
+  ['#', 'Sample number. Each sample plays the level once from the same start.'],
+  ['Result', 'How the sample ended: cleared the level, hit a cap (actions, turns or time), was stopped, or hit an error.'],
+  ['Levels', 'Levels this sample cleared.'],
+  ['Actions', 'Game actions the sample used.'],
+  ['Turns', 'Model turns the sample took (the queue plus the Stock turns after it).'],
+  ['Modes that ran', 'The modes actually used, turn by turn.'],
+  ['Time', 'How long the sample took, in minutes.'],
+];
 const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
 
 function queueTags(j, ctx, rec) {
@@ -422,7 +438,12 @@ function jobCard(j, ctx, rec, st) {
     : startKind === 'rebuilt' ? 'Started from the snapshot: the game state is exact, the conversation was rebuilt from stored transcripts'
     : startKind === 'reset' ? 'Started from the first frame of the game' : `Started from an exact checkpoint${j.start_checkpoint ? ' (' + j.start_checkpoint + ')' : ''}: the saved request, harness state and actions`;
   const waiting = j.place_in_line > 1;
-  top.append(h('span', `chip mx-js ${j.status}`, waiting ? `${ordinal(j.place_in_line)} in line` : j.status), sk, queueTags(j, ctx, rec));
+  const stChip = h('span', `chip mx-js ${j.status}`, waiting ? `${ordinal(j.place_in_line)} in line` : j.status);
+  stChip.title = waiting ? `Place in line: ${plural(j.jobs_ahead, 'job')} ahead. The Sparks play one job at a time, first come first served.`
+    : STATUS_TIP[j.status] || `Job status: ${j.status}`;
+  const qt = queueTags(j, ctx, rec);
+  qt.title = 'The queue this job ran, one mode per turn, with the version of each mode; Stock played the turns after it.';
+  top.append(stChip, sk, qt);
   card.append(top);
   const caps = j.caps || {};
   const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
@@ -454,7 +475,7 @@ function jobCard(j, ctx, rec, st) {
 
   const table = h('table', 'mx-table mx-results');
   const tr = h('tr');
-  for (const c of ['#', 'Result', 'Levels', 'Actions', 'Turns', 'Modes that ran', 'Time']) tr.append(h('th', null, c));
+  for (const [c, tip] of COLUMNS) { const th = h('th', null, c); th.title = tip; tr.append(th); }
   const thead = h('thead'); thead.append(tr); table.append(thead);
   const body = h('tbody');
   for (const row of rows) {
@@ -478,6 +499,7 @@ function jobCard(j, ctx, rec, st) {
 
   if (j.status === 'queued' || j.status === 'running') {
     const cancel = h('button', 'mx-tool mx-danger', 'Cancel this job');
+    cancel.title = 'Stop the samples of this job that have not finished. Finished samples and their results are kept.';
     cancel.onclick = async () => {
       if (!confirm('Cancel the samples of this job that have not finished?')) return;
       try { await call(`jobs/${j.id}/cancel`, { method: 'POST', body: {} }); await refreshResults(document.getElementById('results'), ctx); }
