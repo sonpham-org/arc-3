@@ -264,3 +264,24 @@ setting can put text. It also changes the cached prompt start, so first-turn cos
   rendered system prompt byte for byte; they were not rendered separately.
 - Ask Son: why the search wording was removed in the 18.99 line (A5), and whether he has any repeat-pass
   numbers for the fixes prompt on its own.
+
+## Variant built (5-Oct-2026, late)
+
+Built by Bubba (Claude Opus 5.5) at the Boss's request: one wording variant of Son's 31.63 notebook, **not run,
+not pushed to Kaggle**. It is that notebook plus one new cell after Son's port cell, edited with the same
+anchored find/replace (each anchor exactly once) as the toolfast cell. It puts back three bits of 18.99 wording
+in the system prompt and nothing else:
+
+- the edge bar as a hard move budget (candidate A3 above), replacing Franzen's "timer ... do not get
+  distracted" line; his "common failure mode ... DON'T DO THIS!" line stays;
+- the "Re-ground on the newest frame ..." line and the full WIN line with "Mid-run level completion ...". Both
+  were still in Franzen's text; his level-transfer rewrite was deleting them, so the cell drops those two
+  rewrites rather than adding copies (a copy would be stripped too);
+- "a settled frame that looks unchanged does not prove the action did nothing", appended to Franzen's
+  transient-pixels bullet, which states the mechanism but not this conclusion.
+
+Checked offline: Franzen's bundle from Kaggle + the notebook's harness patch + Son's toolfast edits + the new
+cell, every anchor matched once, files compile and import. The unchanged render matches `2894-system.txt`; the
+variant render differs in exactly those three places. Notebook, metadata, renders and diff are in
+`~/bubba-workspace/arc3-kaggle/son-31p6-wording/` on the Mac Mini. Next: run it against the unchanged 31.63
+notebook over several runs each before reading anything into a score.
