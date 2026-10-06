@@ -38,5 +38,5 @@ upper-left vertically aligned."
 - [x] Headless desktop and phone against the live data, every write caught in the browser: centred / full screen, one
       editable box, locked harness blocks, reminders marked, system prompt read-only, unedited save byte-identical,
       edit changes only the instruction, lean saved, history loads, new mode, Stock has no instruction box, tour step.
-- [ ] Runner deployed to Jethro with a backup while no Play sample runs; repo and Jethro identical.
-- [ ] Live page serves the new files; Stock (lean) seeded as a built-in.
+- [x] Runner deployed to Jethro with a backup while no Play sample runs; repo and Jethro identical.
+- [x] Live page serves the new files; Stock (lean) seeded as a built-in, second in the bar (checked headless with the signed-in session, desktop and phone, writes blocked).
