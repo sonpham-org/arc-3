@@ -8,9 +8,12 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   Sparks are off or busy.
     GET  /api/v1/spark-runner/health | stuck-points | exact-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
     POST /api/v1/spark-runner/play | jobs/<id>/cancel
-  The runner's own key (typed once into the page, kept in that browser) travels in the Authorization header and is
-  checked by the runner, not here; Play and Cancel also need a same-site Origin. The signed-in Google account is
-  sent along as the job's "by". When the runner cannot be reached, job reads are answered from storage and say so.
+  The runner's key never reaches the browser (the Boss, #arc-3 6-Oct 11:01 ET: "It needs a runner key?!?"): the
+  site sign-in is the only gate a person sees, and this relay adds the key itself, from the service variable
+  ARC3_SPARK_RUNNER_KEY, to every call it forwards; an Authorization header sent by a page is dropped. The runner
+  still checks the key on Play, Cancel and turn logs. Play and Cancel also need a same-site Origin. The signed-in
+  Google account is sent along as the job's "by". When the runner cannot be reached, job reads are answered from
+  storage and say so.
   After the runner accepts a Play, on_play (modes_store.ModeLibrary.record_play) keeps the exact mode versions sent.
   Exact level starts (6-Oct): the small per-level index of the runner's exact checkpoints (game, level, variant,
   the chosen one's actions from RESET, tokens, source job; never the checkpoints themselves) is kept in
@@ -60,6 +63,10 @@ class SparkRunnerRelay:
             handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
         self.opener = urllib.request.build_opener(*handlers)
         self.timeout = timeout
+        key = os.environ.get("ARC3_SPARK_RUNNER_KEY", "").strip()
+        self.auth = f"Bearer {key}" if key else None
+        if not key:
+            print("spark-runner: ARC3_SPARK_RUNNER_KEY is not set; the runner will refuse Play and Cancel", flush=True)
 
     @staticmethod
     def owns(path: str) -> bool:
@@ -185,9 +192,8 @@ class SparkRunnerRelay:
                 raw = json.dumps(payload).encode("utf-8")
             body = raw
         headers = {"Accept": "application/json", "X-ARC3-User": identity}
-        auth = handler.headers.get("Authorization") or ""
-        if auth.startswith("Bearer ") and len(auth) < 300:
-            headers["Authorization"] = auth
+        if self.auth:
+            headers["Authorization"] = self.auth
         if body is not None:
             headers["Content-Type"] = "application/json"
         url = f"{self.upstream}/api{sub}" + (f"?{parsed.query}" if parsed.query else "")

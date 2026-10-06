@@ -33,7 +33,7 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 | `settings.json` | runner settings changed at run time: `harvest` (on/off), `harvest_lanes` (0-2) |
 | `backups/` | tarballs of `code/` taken before each deploy |
 | `jobs/<job>/` | `spec.json`, `job.json`, `samples/<k>/` = `transcript.txt`, `turns.jsonl`, `viewer.json`, `progress.json`, `result.json`, `error.txt` if it failed; `samples/<k>.log` |
-| `runner.key` | the bearer key (0600). The Boss's copy: `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini |
+| `runner.key` | the bearer key (0600). The Boss's copy: `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini. The site relay sends it from the arc3-viewer Railway variable `ARC3_SPARK_RUNNER_KEY` (people never type it); change both together |
 | `venv/` | Python 3.12: fastapi, uvicorn, requests, arc-agi 0.9.9, arcengine 0.9.3, numpy, pillow, imageio, scipy |
 
 Old trajectories (`transcript.txt`, `viewer.json`) are deleted oldest-first when `jobs/` passes 40 GB

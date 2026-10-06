@@ -54,8 +54,12 @@ mode-explorer.html + static/js/spark-runner.js (signed in)
   -> sample.py per sample -> Flash-Next server on Cletus via ssh tunnel (Jethro 127.0.0.1:11234)
 ```
 
-- **Access.** Watching results needs only a site sign-in. Play and Cancel need the runner key, asked once and kept
-  in that browser; the runner checks it. People get the key from Son or the Boss. The key is not in the repo.
+- **Access.** A site sign-in is all anyone needs, to watch results and to press Play and Cancel. Since 6-Oct (the
+  Boss, 11:01 ET: "It needs a runner key?!?") the page never asks for the runner key: the site relay adds it on the
+  server from the arc3-viewer service variable `ARC3_SPARK_RUNNER_KEY`, and drops any Authorization header a page
+  sends. The runner still checks the key, so the tailnet address alone cannot start jobs. The key is not in the repo
+  or the browser; the Boss's copy is `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini, and a new key must
+  be written to Jethro's `runner.key` and the Railway variable together.
 - **Funnel.** Son's choice of a public Tailscale link stands, but it is not switched on: the tailnet policy has to
   allow the machine first (a tailnet admin clicks the approval link once). The page does not need it, because the
   site relays over the tailnet. With Funnel on, the same address becomes public for scripts; reads would be open

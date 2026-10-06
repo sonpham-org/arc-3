@@ -4,11 +4,12 @@ Date: 06-October-2026
 PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html, Queue view). Talks only to the
   site's own relay, /api/v1/spark-runner/* (railway/spark_runner.py), which forwards over the ARC tailnet to the
   Spark runner on Jethro (tools/spark_runner/server.py) and keeps every job it sees in the site's database.
-  - renderPlayRow: the Play button with two small inline fields (samples, turn cap) next to it, the runner key
-    button, and one line saying what Play will do or why it is off (runner unreachable, no starting point, replay
+  - renderPlayRow: the Play button with two small inline fields (samples, turn cap) next to it, and one line saying what Play will do or why it is off (runner unreachable, no starting point, replay
     not verified, held-out game). Play sends the queue (each item's mode text, the Stock text it is diffed against,
     and its settings), the Stock tail, the version, samples and caps; the action and minute caps keep their
-    defaults. It needs the runner key, asked once and kept in this browser; the runner checks it.
+    defaults. Signing in to the site is all Play and Cancel need: the relay adds the runner's key on the server
+    (the Boss, 6-Oct 11:01 ET: "It needs a runner key?!?"), so the page never asks for it or keeps it. A key left in
+    this browser by the earlier key prompt is deleted on load.
   - renderResults: everything that ran for the open game's selected level, newest first, for anyone signed in: the
     live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
     the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
@@ -32,7 +33,6 @@ SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared 
 */
 
 const API = new URL('../../api/v1/spark-runner/', import.meta.url);
-const KEY_STORE = 'arc3-spark-runner-key';
 const POLL_MS = 5000;
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -44,13 +44,12 @@ let resultsKey = null;       // the game and level the results box is showing; a
 // Play options survive the page's redraws (every queue edit redraws the Play row).
 const opts = { samples: 10, max_turns: 20, max_actions: 250, max_minutes: 120 };
 
-function runnerKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
-function setRunnerKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* private mode */ } }
+// The key prompt that used to be here kept the runner key in localStorage; nothing reads it now, so drop it.
+try { localStorage.removeItem('arc3-spark-runner-key'); } catch { /* private mode */ }
 
-async function call(path, { method = 'GET', body, auth = false } = {}) {
+async function call(path, { method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
   if (body) headers['Content-Type'] = 'application/json';
-  if (auth) headers.Authorization = `Bearer ${runnerKey()}`;
   const r = await fetch(new URL(path, API), { method, headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
   const type = r.headers.get('Content-Type') || '';
   if (r.redirected || !type.includes('json')) throw new Error(r.status === 401 || r.redirected ? 'sign in to the site again' : `HTTP ${r.status}`);
@@ -116,32 +115,6 @@ export function sparkTally(jobs) {
 
 function pct(a, b) { return b ? `${Math.round((100 * a) / b)}%` : '–'; }
 function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
-
-// ---------------------------------------------------------------- key dialog
-
-function askKey(onDone) {
-  const dlg = document.getElementById('runnerdlg');
-  dlg.textContent = '';
-  const form = h('form', 'mx-form'); form.method = 'dialog';
-  form.append(h('h2', null, 'Spark runner key'));
-  form.append(h('p', 'mx-sum', 'Playing runs real games on the two DGX Sparks, so it needs the runner key. Ask Son or the Boss for it. ' +
-    'It is kept in this browser only and sent with Play and Cancel; anyone signed in can watch results without it.'));
-  const input = h('input'); input.type = 'password'; input.autocomplete = 'off'; input.required = true; input.value = runnerKey();
-  input.placeholder = 'runner key';
-  const lab = h('label', 'mx-field wide'); lab.append(h('span', 'mx-flabel', 'Key'), input);
-  form.append(lab);
-  const btns = h('div', 'mx-formbtns');
-  const save = h('button', 'mx-play', 'Save key'); save.type = 'submit';
-  const cancel = h('button', 'mx-tool', 'Cancel'); cancel.type = 'button'; cancel.onclick = () => dlg.close();
-  const forget = h('button', 'mx-tool mx-danger', 'Forget key'); forget.type = 'button';
-  forget.onclick = () => { setRunnerKey(''); dlg.close(); onDone(false); };
-  btns.append(save, cancel); if (runnerKey()) btns.append(forget);
-  form.append(btns);
-  form.onsubmit = (e) => { e.preventDefault(); const v = input.value.trim(); if (!v) return; setRunnerKey(v); dlg.close(); onDone(true); };
-  dlg.append(form);
-  dlg.showModal();
-  input.focus();
-}
 
 // ---------------------------------------------------------------- play
 
@@ -224,12 +197,9 @@ export function renderPlayRow(box, ctx) {
   };
   const samples = num('samples', 'samples', 1, 20, 'How many times to play the level from the same starting point');
   const turns = num('turns max', 'max_turns', 1, 60, 'Model turns per sample before it stops (the queue counts toward this)');
-  const keyBtn = h('button', 'mx-tool mx-keybtn', runnerKey() ? 'Key ✓' : 'Key');
-  keyBtn.title = 'The Spark runner key, kept in this browser';
-  keyBtn.onclick = () => askKey(() => renderPlayRow(box, ctx));
   const status = h('span', 'mx-runstatus', runnerLine());
   const row = h('div', 'mx-playline');
-  row.append(play, samples, turns, keyBtn, status);
+  row.append(play, samples, turns, status);
   box.append(row);
   const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
   const note = h('p', 'mx-playnote', why || (q.slots.length
@@ -240,13 +210,12 @@ export function renderPlayRow(box, ctx) {
       : ' Start: the snapshot, with the conversation rebuilt from stored transcripts (no exact start for this level yet).'));
   box.append(note);
   play.onclick = async () => {
-    if (!runnerKey()) { askKey((ok) => { if (ok) play.onclick(); }); return; }
     // (exact or rebuilt is decided by the runner when the job is queued; the job card shows which)
     let req;
     try { req = buildRequest(ctx); } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }
     play.disabled = true; note.textContent = 'Sending to the runner…';
     try {
-      const r = await call('play', { method: 'POST', body: req, auth: true });
+      const r = await call('play', { method: 'POST', body: req });
       // One Play job at a time gets every lane on the Sparks; the rest wait whole, first come first served.
       note.textContent = r.place_in_line > 1
         ? `Queued on the Sparks: ${plural(r.queued_samples, 'sample')}, ${ordinal(r.place_in_line)} in line. It starts when the ${r.place_in_line === 2 ? 'job' : 'jobs'} ahead of it finish. Watch it below.`
@@ -254,7 +223,9 @@ export function renderPlayRow(box, ctx) {
       const res = document.getElementById('results');
       if (res) await refreshResults(res, ctx);
     } catch (e) {
-      note.textContent = e.status === 401 ? 'The runner refused the key. Check it with Son or the Boss, then set it again.' : `Not started: ${e.message}`;
+      note.textContent = e.status === 401 && /runner key/.test(e.message)
+        ? 'Not started: the Spark runner turned the site away. That is a site setup problem, not yours; tell Bubba.'
+        : `Not started: ${e.message}`;
     } finally { play.disabled = !!blocked(g, lv, ctx.variant); }
   };
 }
@@ -424,9 +395,8 @@ function jobCard(j, ctx, rec) {
   if (j.status === 'queued' || j.status === 'running') {
     const cancel = h('button', 'mx-tool mx-danger', 'Cancel this job');
     cancel.onclick = async () => {
-      if (!runnerKey()) { askKey(() => {}); return; }
       if (!confirm('Cancel the samples of this job that have not finished?')) return;
-      try { await call(`jobs/${j.id}/cancel`, { method: 'POST', body: {}, auth: true }); await refreshResults(document.getElementById('results'), ctx); }
+      try { await call(`jobs/${j.id}/cancel`, { method: 'POST', body: {} }); await refreshResults(document.getElementById('results'), ctx); }
       catch (e) { alert(`Cancel failed: ${e.message}`); }
     };
     card.append(cancel);

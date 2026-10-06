@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-spark-runner-no-key-for-people]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Play and Cancel no longer ask for the runner key.** The Boss (#arc-3, 6-Oct 11:01 ET): "It needs a runner key?!?" The site sign-in is the only gate a person sees; the site relay adds the runner's key itself from the arc3-viewer service variable `ARC3_SPARK_RUNNER_KEY` and drops any Authorization header from the page. The runner still checks the key. Signed-out visitors are still refused by the relay (and by oauth2-proxy before it).
+- The page's key prompt, Key button and dialog are gone, and a key the old prompt left in the browser's localStorage is deleted on load.
+- How: `railway/spark_runner.py` (key from the environment), `docs/static/js/spark-runner.js`, `docs/mode-explorer.html`, runner README and design doc.
+
 ## [2026.10.06-mode-explorer-game-sidebar-levels]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

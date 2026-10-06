@@ -37,7 +37,7 @@ SRP/DRY check: Pass — prompt text and default settings live in the shared mode
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-lv1';
+import { loadRunnerInfo, renderPlayRow, renderResults, levelStart } from './spark-runner.js?v=20261006-nk';
 import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
