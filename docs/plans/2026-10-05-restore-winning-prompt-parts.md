@@ -13,8 +13,9 @@ Status: PLAN. Read-only research; nothing was run on a GPU, nothing submitted, n
 > two ways. **(1) The animation feed is gone.** So "the feed is still on" below is wrong for the 31.63 base,
 > and the feed itself joins the lost list. **(2) Everything else Son added is speed**: an ARC hot-token map
 > for the drafter, the tuned MTP drafter, temperature 0.6 (was 0.7), toolfast, 11 streams over 10 slots with
-> a 32 GB host cache, and rejection sampling over the hot draft vocab. The 28.94→31.63 gain came from serving
-> and sampling, not from instructions. All candidates below should be tested against the **31.63** notebook.
+> a 32 GB host cache, and rejection sampling over the hot draft vocab. The instructions are identical, so the
+> 28.94→31.63 difference is not from instructions; but both scores are single submissions and the unchanged
+> Franzen code swings 27.6–31.5 on reruns, so the speed changes are NOT proven to be the cause either. Repeat runs decide. All candidates below should be tested against the **31.63** notebook.
 
 ## Bottom line first
 
