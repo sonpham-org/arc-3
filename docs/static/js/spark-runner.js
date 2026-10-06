@@ -15,6 +15,12 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
   Each slot also carries the mode version it came from; the site stores the exact text and versions with the job,
   and every job card shows them (versions on the queue tags, the full wording in a fold-out).
+  - Exact starts (added 6-Oct, Son): every job says whether it started from an EXACT level-start checkpoint (the
+    request body, harness state and actions saved when some run cleared the level before) or from the snapshot
+    whose conversation was rebuilt from stored transcripts; exact samples also say whether their first request
+    matched the saved one. The Play note says which start Play will use (the chosen checkpoint: fewest actions from
+    RESET, then fewest tokens) and the results header lists this game's levels that have exact starts. The runner
+    line shows harvest (idle-time Stock runs that collect exact starts).
 SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
@@ -121,8 +127,15 @@ function buildRequest(ctx) {
 }
 
 // Why Play is off for this game, or '' when it can run.
-function blocked(g) {
+function exactStart(g, variant) {
   const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
+  const row = point && (point.exact_levels || []).find(x => x.level === g.stuck_level && x.variant === variant);
+  return row ? row.chosen : null;
+}
+
+function blocked(g, variant) {
+  const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
+  if (point && exactStart(g, variant) && (point.playable || !point.held_out)) return '';
   if (stuckPoints === false) return health && health.message ? `${health.message} Nothing can start; past results still show below.`
     : 'The Spark runner cannot be reached from the site right now, so nothing can start. Past results still show below.';
   if (stuckPoints === null) return 'Checking the Spark runner…';
@@ -139,13 +152,17 @@ function runnerLine() {
   const m = health.model || {};
   const busy = health.samples_running || health.samples_queued
     ? ` · ${health.samples_running} running, ${health.samples_queued} waiting` : ' · idle';
-  return (m.reachable && m.serves_expected_model ? 'Sparks ready' : 'Runner up, model server not answering') + busy;
+  const hv = health.harvest;
+  const harvest = !hv ? '' : !hv.enabled ? ' · harvest off'
+    : (hv.running || []).length ? ` · harvesting exact starts (${hv.running.map(r => r.game).join(', ')})` : '';
+  return (m.reachable && m.serves_expected_model ? 'Sparks ready' : 'Runner up, model server not answering') + busy + harvest;
 }
 
 export function renderPlayRow(box, ctx) {
   box.textContent = '';
   const g = ctx.game, q = ctx.scheme;
-  const why = blocked(g);
+  const why = blocked(g, ctx.variant);
+  const ex = exactStart(g, ctx.variant);
   const play = h('button', 'mx-play', 'Play');
   play.disabled = !!why;
   const num = (label, key, min, max, title) => {
@@ -167,10 +184,13 @@ export function renderPlayRow(box, ctx) {
   const version = ctx.variant === 'son' ? "Son's" : "Franzen's";
   const note = h('p', 'mx-playnote', why || (q.slots.length
     ? `Plays the queue, one mode per turn from the start of level ${g.stuck_level}, then Stock until the level is cleared or a cap is hit. Uses ${version} wording.`
-    : `Empty queue: Play runs Stock only from level ${g.stuck_level}, a baseline from the same starting point.`));
+    : `Empty queue: Play runs Stock only from level ${g.stuck_level}, a baseline from the same starting point.`) +
+    (why ? '' : ex ? ` Exact start: the conversation, board pictures and tool state saved when a run reached this level in ${ex.actions_to_reach} actions.`
+      : ' Start: the snapshot, with the conversation rebuilt from stored transcripts (no exact start for this level yet).'));
   box.append(note);
   play.onclick = async () => {
     if (!runnerKey()) { askKey((ok) => { if (ok) play.onclick(); }); return; }
+    // (exact or rebuilt is decided by the runner when the job is queued; the job card shows which)
     let req;
     try { req = buildRequest(ctx); } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }
     play.disabled = true; note.textContent = 'Sending to the runner…';
@@ -181,7 +201,7 @@ export function renderPlayRow(box, ctx) {
       if (res) await refreshResults(res, ctx);
     } catch (e) {
       note.textContent = e.status === 401 ? 'The runner refused the key. Check it with Son or the Boss, then set it again.' : `Not started: ${e.message}`;
-    } finally { play.disabled = !!blocked(g); }
+    } finally { play.disabled = !!blocked(g, ctx.variant); }
   };
 }
 
@@ -226,6 +246,11 @@ function drawResults(box, ctx, data) {
   const st = stockTally(g);
   if (st) box.append(h('p', 'mx-sum', `Stock tally for this level: cleared in ${st.cleared} of ${st.n} full runs (${pct(st.cleared, st.n)}). Each run below starts at this level, so compare its cleared share with that.`));
   if (data.from_storage) box.append(h('p', 'mx-sum mx-warnline', `${data.message} Showing what the site stored earlier.`));
+  const point = Array.isArray(stuckPoints) ? stuckPoints.find(p => p.game === g.game) : null;
+  const exact = point ? (point.exact_levels || []).filter(x => x.variant === ctx.variant).sort((a, b) => a.level - b.level) : [];
+  box.append(h('p', 'mx-sum', exact.length
+    ? `Exact starts for ${g.nickname}: ${exact.map(x => `level ${x.level} (${x.chosen.actions_to_reach} actions from reset${x.count > 1 ? `, best of ${x.count}` : ''})`).join(', ')}.`
+    : `No exact starts for ${g.nickname} yet; idle Spark time collects them.`));
   const all = (data.jobs || []).slice().sort((a, b) => String(b.created).localeCompare(String(a.created)));
   const jobs = all.filter(j => j.stuck_level === g.stuck_level);
   if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${g.stuck_level} yet. Build a queue and press Play.`));
@@ -276,7 +301,11 @@ function jobCard(j, ctx, rec) {
   const card = h('div', 'card mx-job');
   const top = h('div', 'mx-jobtop');
   const when = new Date(j.created);
-  top.append(h('span', `chip mx-js ${j.status}`, j.status), queueTags(j, ctx, rec));
+  const startKind = j.start_kind || (j.conversation_exact ? 'exact' : 'rebuilt');
+  const sk = h('span', `chip mx-js ${startKind === 'rebuilt' ? 'queued' : 'done'}`, startKind === 'rebuilt' ? 'conversation rebuilt' : startKind === 'reset' ? 'from reset' : 'exact start');
+  sk.title = startKind === 'rebuilt' ? 'Started from the snapshot: the game state is exact, the conversation was rebuilt from stored transcripts'
+    : startKind === 'reset' ? 'Started from the first frame of the game' : `Started from an exact checkpoint${j.start_checkpoint ? ' (' + j.start_checkpoint + ')' : ''}: the saved request, harness state and actions`;
+  top.append(h('span', `chip mx-js ${j.status}`, j.status), sk, queueTags(j, ctx, rec));
   card.append(top);
   const caps = j.caps || {};
   const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
@@ -315,7 +344,9 @@ function jobCard(j, ctx, rec) {
     const r = row.result, p = row.progress || {};
     const t = h('tr');
     t.append(h('td', null, String(row.sample + 1)));
-    if (r) t.append(h('td', `mx-out ${r.outcome}`, (OUTCOME[r.outcome] || r.outcome) + (r.error ? `: ${r.error.slice(0, 120)}` : '')));
+    const fr = r && r.first_request;
+    const check = !fr ? '' : fr.equal ? ' · first request = saved' : fr.context_equal_except_last_message ? ' · context = saved' : ' · first request differs';
+    if (r) t.append(h('td', `mx-out ${r.outcome}`, (OUTCOME[r.outcome] || r.outcome) + (r.error ? `: ${r.error.slice(0, 120)}` : '') + check));
     else if (row.state === 'running') t.append(h('td', 'mx-live', `running · turn ${p.turn ?? 0}${p.mode ? ' · ' + p.mode : ''} · level ${p.level ?? '–'}`));
     else t.append(h('td', 'muted', row.state || '–'));
     t.append(h('td', null, r ? String(r.levels_cleared) : '–'));

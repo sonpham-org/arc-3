@@ -506,3 +506,16 @@ CREATE TABLE IF NOT EXISTS arc3_spark_runner_job_modes (
 
 CREATE INDEX IF NOT EXISTS arc3_spark_runner_job_modes_game_idx
 ON arc3_spark_runner_job_modes (game, job_id DESC);
+
+-- Exact level starts on the Spark runner (tools/spark_runner/checkpoints.py): only the small index per game, level
+-- and version (how many checkpoints, and the chosen one's actions from reset, tokens and source job). The
+-- checkpoints themselves stay on the Sparks.
+CREATE TABLE IF NOT EXISTS arc3_spark_runner_exact_starts (
+    game text NOT NULL CHECK (game ~ '^[a-z0-9]{4}$'),
+    level integer NOT NULL,
+    variant text NOT NULL,
+    count integer NOT NULL DEFAULT 0,
+    chosen jsonb,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (game, level, variant)
+);

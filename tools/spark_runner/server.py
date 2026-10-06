@@ -13,8 +13,16 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     POST /api/play                    queue a job (bearer key)
     POST /api/jobs/{id}/cancel        cancel queued/running samples (bearer key)
     GET  /api/jobs/{id}/samples/{k}/turns   per-turn log of one sample (bearer key)
-  A job = one game's stuck point, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
-  and N samples (default 10). Samples run as separate sample.py processes, at most ARC3_RUNNER_CONCURRENCY at a
+    GET  /api/exact-starts            exact level-start checkpoints: per game, level and variant, the chosen one (public)
+    POST /api/settings                harvest on/off and lanes (bearer key)
+  A job = one game's starting level, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
+  and N samples (default 10). The start is EXACT when an exact checkpoint exists for that game, level and variant
+  (checkpoints.py: full request body, harness state, actions from RESET, written whenever a level is cleared);
+  otherwise the stuck-level snapshot with its conversation rebuilt from the site's transcripts ("rebuilt").
+  Harvest (default on, ARC3_RUNNER_HARVEST / settings.json): while no Play sample is queued or running, one or two
+  one-sample Stock runs from RESET on the public games outside the held-out eight, only to collect exact checkpoints
+  for every level they clear. A queued Play sample pre-empts them at once (process group killed, job "preempted";
+  checkpoints already written stay). Samples run as separate sample.py processes, at most ARC3_RUNNER_CONCURRENCY at a
   time across all jobs (default 4, sized for the two-Spark server speed), first queued first served. State lives
   in ~/arc3-runner/jobs/<id>/ (spec.json, job.json, samples/<k>/...); a restart marks running samples as
   interrupted and requeues them. Old trajectories are pruned when the jobs folder passes ARC3_RUNNER_MAX_GB.
@@ -44,6 +52,7 @@ from pydantic import BaseModel, Field, field_validator
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import checkpoints  # noqa: E402
 from modes import ModeError, build_delta  # noqa: E402
 
 HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
@@ -61,6 +70,14 @@ CODE_RE = re.compile(r"^[a-z0-9]{4}$")
 HELD_OUT = ("vc33", "ar25", "sb26", "re86", "su15", "tr87", "tu93", "as66")
 ALLOW_HELD_OUT = os.environ.get("ARC3_RUNNER_ALLOW_HELD_OUT", "") == "1"
 JOB_RE = re.compile(r"^[a-z0-9-]{8,40}$")
+ENV_DIR = Path(os.environ.get("ARC3_RUNNER_ENVIRONMENTS", HOME / "environment_files"))
+SETTINGS_FILE = HOME / "settings.json"
+DEFAULT_SETTINGS = {"harvest": os.environ.get("ARC3_RUNNER_HARVEST", "1") == "1",
+                    "harvest_lanes": int(os.environ.get("ARC3_RUNNER_HARVEST_LANES", "2"))}
+# Harvest sample caps: long enough to clear early levels from RESET, short enough to rotate through the games.
+HARVEST_CAPS = {"max_actions": 400, "max_turns": 40, "max_minutes": 150, "levels_to_play": 9}
+HARVEST_VARIANT = os.environ.get("ARC3_RUNNER_HARVEST_VARIANT", "son")
+TERMINAL = ("done", "failed", "cancelled", "preempted", "interrupted")
 
 app = FastAPI(title="ARC-3 Spark runner", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["GET", "POST"],
@@ -137,6 +154,31 @@ class PlayRequest(BaseModel):
 
 # ------------------------------------------------------------------ helpers
 
+def runner_settings() -> dict:
+    return {**DEFAULT_SETTINGS, **(read_json(SETTINGS_FILE, {}) or {})}
+
+
+def public_games() -> list[str]:
+    """Games harvest may play: the public games on disk minus the held-out eight (never those, whatever the
+    Play setting says)."""
+    return sorted(p.name for p in ENV_DIR.iterdir() if p.is_dir() and CODE_RE.fullmatch(p.name) and p.name not in HELD_OUT)
+
+
+def game_id_for(game: str) -> str | None:
+    d = ENV_DIR / game
+    for meta in d.glob("*/metadata.json"):
+        m = read_json(meta, {}) or {}
+        if m.get("game_id"):
+            return m["game_id"]
+    subs = [p.name for p in d.iterdir() if p.is_dir()] if d.is_dir() else []
+    return f"{game}-{subs[0]}" if len(subs) == 1 else None
+
+
+def exact_levels(game: str) -> list[dict]:
+    return [{"level": r["level"], "variant": r["variant"], "count": r["count"], "chosen": r["chosen"]}
+            for r in checkpoints.index().get("levels", []) if r["game"] == game and r.get("chosen")]
+
+
 def snapshot_path(game: str) -> Path:
     return SNAPSHOTS / f"{game}.json"
 
@@ -148,7 +190,8 @@ def stuck_points() -> list[dict]:
     for s in index.get("snapshots", []):
         v = verified.get(s["game"])
         out.append({**s, "replay_verified": bool(v and v.get("ok")), "replay_checked": v.get("checked") if v else None,
-                    "held_out": s["game"] in HELD_OUT, "playable": bool(v and v.get("ok")) and (ALLOW_HELD_OUT or s["game"] not in HELD_OUT)})
+                    "held_out": s["game"] in HELD_OUT, "playable": bool(v and v.get("ok")) and (ALLOW_HELD_OUT or s["game"] not in HELD_OUT),
+                    "exact_levels": exact_levels(s["game"])})
     return out
 
 
@@ -179,10 +222,15 @@ def job_view(job_id: str, *, full: bool = False) -> dict | None:
             row["progress"] = {x: prog.get(x) for x in ("status", "turn", "mode", "actions", "level", "levels_cleared", "updated", "error")}
         if res:
             row["result"] = {x: res.get(x) for x in ("outcome", "levels_cleared", "actions_used", "turns", "modes_run",
-                                                       "final_level", "seconds", "error", "replay_verified", "generated_tokens")}
+                                                       "final_level", "seconds", "error", "replay_verified", "generated_tokens",
+                                                       "start_kind", "start_checkpoint", "first_request",
+                                                       "checkpoints_written", "checkpoint_errors")}
         samples.append(row)
-    view = {k: job[k] for k in ("id", "created", "game", "stuck_level", "variant", "samples", "status", "label", "by",
-                                "caps", "scheme_summary", "model", "conversation_exact", "finished")}
+    view = {k: job.get(k) for k in ("id", "created", "game", "stuck_level", "variant", "samples", "status", "label", "by",
+                                    "caps", "scheme_summary", "model", "conversation_exact", "finished", "kind",
+                                    "start_kind", "start_checkpoint", "preempted")}
+    view["kind"] = view["kind"] or "play"
+    view["start_kind"] = view["start_kind"] or ("exact" if job.get("conversation_exact") else "rebuilt")
     view["sample_rows"] = samples
     done = [s["result"] for s in samples if s.get("result")]
     view["summary"] = {
@@ -247,18 +295,38 @@ def tick() -> None:
 
             def mark(j, k=k, res=res):
                 if j["sample_state"][k] == "running":
-                    j["sample_state"][k] = "done" if res else ("cancelled" if j.get("cancel") else "failed")
+                    j["sample_state"][k] = ("done" if res else "preempted" if j.get("preempted")
+                                            else "cancelled" if j.get("cancel") else "failed")
             update_job(job_id, mark)
         # finish jobs
         jobs = sorted((read_json(p / "job.json") for p in JOBS.iterdir() if (p / "job.json").exists()),
                       key=lambda j: j["created"])
         for job in jobs:
-            if job["status"] in ("queued", "running") and all(s in ("done", "failed", "cancelled") for s in job["sample_state"]):
-                update_job(job["id"], lambda j: j.update(status="cancelled" if j.get("cancel") else "done", finished=now()))
+            if job["status"] in ("queued", "running") and all(s in TERMINAL for s in job["sample_state"]):
+                update_job(job["id"], lambda j: j.update(
+                    status="preempted" if j.get("preempted") else "cancelled" if j.get("cancel")
+                    else "interrupted" if "interrupted" in j["sample_state"] else "done",
+                    finished=now()))
                 prune_disk()
-        # start samples, oldest job first
-        free = CONCURRENCY - len(PROCS)
-        for job in jobs:
+        play_jobs = [j for j in jobs if j.get("kind", "play") == "play"]
+        play_waiting = any(j["status"] in ("queued", "running") and not j.get("cancel") and "queued" in j["sample_state"]
+                           for j in play_jobs)
+        play_running = sum(1 for (jid, _k) in PROCS if (read_json(JOBS / jid / "job.json", {}) or {}).get("kind", "play") == "play")
+        harvest_procs = [(jid, k) for (jid, k) in PROCS if (read_json(JOBS / jid / "job.json", {}) or {}).get("kind") == "harvest"]
+        # Play always pre-empts harvest: a queued Play sample stops every harvest sample right away.
+        if play_waiting and harvest_procs:
+            for jid, k in harvest_procs:
+                update_job(jid, lambda j: j.__setitem__("preempted", now()))
+                try:
+                    os.killpg(PROCS[(jid, k)].pid, 15)
+                except ProcessLookupError:
+                    pass
+            HARVEST["preemptions"] += len(harvest_procs)
+            HARVEST["last_preempted"] = now()
+            return   # reaped on the next tick, then Play gets every slot
+        # start Play samples, oldest job first
+        free = CONCURRENCY - play_running - len(harvest_procs)
+        for job in play_jobs:
             if free <= 0:
                 break
             if job["status"] not in ("queued", "running") or job.get("cancel"):
@@ -279,6 +347,58 @@ def tick() -> None:
                     j["sample_state"][k] = "running"
                     j["status"] = "running"
                 update_job(job["id"], started)
+        # harvest when idle: no Play sample queued or running
+        settings = runner_settings()
+        HARVEST["enabled"] = bool(settings["harvest"])
+        if not settings["harvest"] or play_waiting or play_running:
+            return
+        lanes = max(0, min(2, int(settings["harvest_lanes"])))
+        for _ in range(lanes - len(harvest_procs)):
+            start_harvest()
+
+
+def start_harvest() -> None:
+    """One-sample Stock run from RESET on the public game that has been harvested least (runs that were not
+    pre-empted; fewest exact levels as the tie-break), started straight away."""
+    games = public_games()
+    if not games:
+        return
+    counts = {g: 0 for g in games}
+    for p in JOBS.iterdir():
+        j = read_json(p / "job.json")
+        # a pre-empted or interrupted run did not get to play, so it does not count: that game is tried again first
+        if j and j.get("kind") == "harvest" and j["game"] in counts \
+                and j.get("status") not in ("preempted", "interrupted"):
+            counts[j["game"]] += 1
+    busy = {jid.split("--")[-1] for (jid, _k) in PROCS}
+    exact = {g: len(exact_levels(g)) for g in games}
+    choices = [g for g in games if g not in busy and game_id_for(g)]
+    if not choices:
+        return
+    game = min(choices, key=lambda g: (counts[g], exact[g], g))
+    job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4] + "--" + game
+    d = JOBS / job_id
+    (d / "samples" / "0").mkdir(parents=True)
+    stock = {"key": "0:stock", "mode": "stock", "name": "Stock", "base": "turn", "prompt": "stock",
+             "stock_template": "stock", "settings": dict(checkpoints.STOCK_SETTINGS)}
+    spec = {"kind": "harvest", "game": game, "game_id": game_id_for(game), "stuck_level": 1, "variant": HARVEST_VARIANT,
+            "scheme": [], "stock": stock, "start": {"kind": "reset"}, "caps": dict(HARVEST_CAPS),
+            "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
+    write_json(d / "spec.json", spec)
+    job = {"id": job_id, "kind": "harvest", "created": now(), "game": game, "stuck_level": 1, "variant": HARVEST_VARIANT,
+           "samples": 1, "status": "running", "label": "harvest: Stock from RESET for exact level starts", "by": "runner",
+           "caps": spec["caps"], "scheme_summary": [], "model": {"model_id": MODEL_ID}, "conversation_exact": True,
+           "start_kind": "reset", "sample_state": ["running"], "finished": None}
+    write_json(d / "job.json", job)
+    log = open(d / "samples" / "0.log", "ab")
+    PROCS[(job_id, 0)] = subprocess.Popen([PYTHON, str(HERE / "sample.py"), str(d), "0"], stdout=log,
+                                          stderr=subprocess.STDOUT, cwd=str(d), start_new_session=True)
+    HARVEST["started"] += 1
+    HARVEST["last_started"] = {"job": job_id, "game": game, "at": now()}
+
+
+HARVEST = {"enabled": DEFAULT_SETTINGS["harvest"], "started": 0, "preemptions": 0, "last_started": None,
+           "last_preempted": None}
 
 
 def recover() -> None:
@@ -290,7 +410,9 @@ def recover() -> None:
 
         def fix(j):
             for k, s in enumerate(j["sample_state"]):
-                if s == "running":   # the process died with the service; play it again from the snapshot
+                if s == "running" and j.get("kind") == "harvest":   # harvest is not replayed, just closed
+                    j["sample_state"][k] = "interrupted"
+                elif s == "running":   # the process died with the service; play it again from its start
                     j["sample_state"][k] = "queued"
                     shutil.rmtree(p / "samples" / str(k), ignore_errors=True)
             j.setdefault("restarts", []).append(now())
@@ -314,9 +436,20 @@ def health() -> dict:
         j = read_json(p / "job.json")
         if j and j["status"] in ("queued", "running"):
             queued += sum(1 for s in j["sample_state"] if s == "queued")
-    return {"ok": True, "time": now(), "concurrency": CONCURRENCY, "samples_running": running, "samples_queued": queued,
+    with LOCK:
+        harvest_running = [{"job": jid, "game": jid.split("--")[-1]} for (jid, _k) in PROCS if "--" in jid]
+    settings = runner_settings()
+    idx = checkpoints.index()
+    return {"ok": True, "time": now(), "concurrency": CONCURRENCY,
+            "samples_running": running - len(harvest_running), "samples_queued": queued,
             "model": {"base_url_kind": "two-Spark Flash-Next server (via tunnel)", "model_id": MODEL_ID, **model_status()},
-            "snapshots": len(stuck_points())}
+            "snapshots": len(stuck_points()),
+            "harvest": {"enabled": bool(settings["harvest"]), "lanes": settings["harvest_lanes"],
+                        "running": harvest_running, "started_since_restart": HARVEST["started"],
+                        "preemptions_since_restart": HARVEST["preemptions"], "last_started": HARVEST["last_started"],
+                        "last_preempted": HARVEST["last_preempted"], "games": public_games()},
+            "exact_starts": {"levels": sum(1 for r in idx.get("levels", []) if r.get("chosen")),
+                             "checkpoints": sum(r["count"] for r in idx.get("levels", [])), "built": idx.get("built")}}
 
 
 @app.get("/api/stuck-points")
@@ -324,12 +457,31 @@ def get_stuck_points() -> dict:
     return {"stuck_points": stuck_points()}
 
 
+@app.get("/api/exact-starts")
+def get_exact_starts(game: str | None = None) -> dict:
+    idx = checkpoints.index()
+    rows = [r for r in idx.get("levels", []) if game is None or r["game"] == game]
+    return {"rule": idx.get("rule"), "built": idx.get("built"), "levels": rows}
+
+
+class RunnerSettings(BaseModel):
+    harvest: bool | None = None
+    harvest_lanes: int | None = Field(default=None, ge=0, le=2)
+
+
+@app.post("/api/settings", dependencies=[Depends(require_key)])
+def set_settings(req: RunnerSettings) -> dict:
+    cur = {**runner_settings(), **{k: v for k, v in req.model_dump().items() if v is not None}}
+    write_json(SETTINGS_FILE, cur)
+    return cur
+
+
 @app.get("/api/jobs")
-def list_jobs(game: str | None = None, limit: int = 50) -> dict:
+def list_jobs(game: str | None = None, limit: int = 50, kind: Literal["play", "harvest", "all"] = "play") -> dict:
     rows = []
     for p in JOBS.iterdir():
         j = read_json(p / "job.json")
-        if j and (game is None or j["game"] == game):
+        if j and (game is None or j["game"] == game) and (kind == "all" or j.get("kind", "play") == kind):
             rows.append(j)
     rows.sort(key=lambda j: j["created"], reverse=True)
     return {"jobs": [job_view(j["id"]) for j in rows[: max(1, min(limit, 200))]]}
@@ -360,16 +512,25 @@ def play(req: PlayRequest) -> dict:
     if req.game in HELD_OUT and not ALLOW_HELD_OUT:
         raise HTTPException(403, f"{req.game} is one of the eight held-out games, which this runner does not play "
                                  "(they stay out of prompt tuning); Son can switch that off on the runner")
+    # Exact checkpoint for this game, level and variant if there is one; else the rebuilt stuck-level snapshot.
     snap_file = snapshot_path(req.game)
     snap = read_json(snap_file)
-    if snap is None:
-        raise HTTPException(404, f"no starting point for {req.game}: nothing to play from")
-    if snap["stuck_level"] != req.stuck_level:
-        raise HTTPException(409, f"the snapshot for {req.game} starts at level {snap['stuck_level']}, "
-                                 f"not {req.stuck_level}; only the stuck level is available for now")
-    verified = (read_json(SNAPSHOTS / "verified.json", {}) or {}).get(req.game)
-    if not verified or not verified.get("ok"):
-        raise HTTPException(409, f"the snapshot for {req.game} has not passed its replay check")
+    cp = checkpoints.chosen(req.game, req.stuck_level, req.variant)
+    if cp is not None:
+        start = {"kind": "checkpoint", "path": cp["path"], "id": cp["id"]}
+        start_kind, game_id = "exact", cp["game_id"]
+    else:
+        if snap is None:
+            raise HTTPException(404, f"no starting point for {req.game}: nothing to play from")
+        if snap["stuck_level"] != req.stuck_level:
+            raise HTTPException(409, f"{req.game} has no exact start at level {req.stuck_level} yet, and its snapshot "
+                                     f"starts at level {snap['stuck_level']}")
+        verified = (read_json(SNAPSHOTS / "verified.json", {}) or {}).get(req.game)
+        if not verified or not verified.get("ok"):
+            raise HTTPException(409, f"the snapshot for {req.game} has not passed its replay check")
+        bare = not snap["actions"] and not snap["turns"]
+        start = {"kind": "snapshot", "path": str(snap_file)}
+        start_kind, game_id = ("reset" if bare else "rebuilt"), snap["game_id"]
     slots = []
     for i, s in enumerate(req.scheme + [req.stock]):
         try:
@@ -383,18 +544,19 @@ def play(req: PlayRequest) -> dict:
     job_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     d = JOBS / job_id
     (d / "samples").mkdir(parents=True)
-    spec = {"game": req.game, "stuck_level": req.stuck_level, "variant": req.variant, "scheme": slots[:-1],
-            "stock": slots[-1], "snapshot_path": str(snap_file),
+    spec = {"kind": "play", "game": req.game, "game_id": game_id, "stuck_level": req.stuck_level, "variant": req.variant,
+            "scheme": slots[:-1], "stock": slots[-1], "start": start,
             "caps": {"max_actions": req.max_actions, "max_turns": req.max_turns, "max_minutes": req.max_minutes, "levels_to_play": req.levels_to_play},
             "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
     write_json(d / "spec.json", spec)
     job = {"id": job_id, "created": now(), "game": req.game, "stuck_level": req.stuck_level, "variant": req.variant,
            "samples": req.samples, "status": "queued", "label": req.label, "by": req.by, "caps": spec["caps"],
            "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"]} for s in slots[:-1]],
-           "model": {"model_id": MODEL_ID}, "conversation_exact": bool(snap["conversation"]["exact"]),
+           "model": {"model_id": MODEL_ID}, "conversation_exact": start_kind != "rebuilt", "kind": "play",
+           "start_kind": start_kind, "start_checkpoint": start.get("id"),
            "sample_state": ["queued"] * req.samples, "finished": None}
     write_json(d / "job.json", job)
-    return {"job": job_id, "queued_samples": req.samples}
+    return {"job": job_id, "queued_samples": req.samples, "start_kind": start_kind, "start_checkpoint": start.get("id")}
 
 
 @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_key)])

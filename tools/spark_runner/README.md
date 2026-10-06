@@ -25,10 +25,13 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 
 | Path | What |
 |---|---|
-| `code/` | `server.py`, `sample.py`, `modes.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
+| `code/` | `server.py`, `sample.py`, `modes.py`, `checkpoints.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
 | `harness/` | Franzen's bundle + the notebook's patch + Son's toolfast edits, `notebook_env.json` with the notebook's flags (built by `build_harness.py`) |
 | `environment_files/` | the 25 public games (copy of `~/GitHub/arc-3/environment_files`) |
-| `snapshots/` | starting points (`<game>.json`, `index.json`) from `docs/static/data/snapshots/`, plus `verified.json` (replay check) |
+| `snapshots/` | rebuilt starting points (`<game>.json`, `index.json`) from `datasets/spark-runner-snapshots/`, plus `verified.json` (replay check) |
+| `checkpoints/<game>/<level>/<variant>-<id>/` | EXACT level starts: `request.json.gz` (the full request body), `state.pkl.gz` (harness agent + session state), `actions.json` (from RESET), `meta.json`; `checkpoints/index.json` = per game, level and variant, the chosen one. Never pruned by the jobs sweep; at most 8 kept per level (best first) |
+| `settings.json` | runner settings changed at run time: `harvest` (on/off), `harvest_lanes` (0-2) |
+| `backups/` | tarballs of `code/` taken before each deploy |
 | `jobs/<job>/` | `spec.json`, `job.json`, `samples/<k>/` = `transcript.txt`, `turns.jsonl`, `viewer.json`, `progress.json`, `result.json`, `error.txt` if it failed; `samples/<k>.log` |
 | `runner.key` | the bearer key (0600). The Boss's copy: `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini |
 | `venv/` | Python 3.12: fastapi, uvicorn, requests, arc-agi 0.9.9, arcengine 0.9.3, numpy, pillow, imageio, scipy |
@@ -41,7 +44,7 @@ Old trajectories (`transcript.txt`, `viewer.json`) are deleted oldest-first when
 ```bash
 # Jethro
 systemctl --user status arc3-runner          # the API + scheduler
-systemctl --user restart arc3-runner         # running samples are requeued and replayed from the snapshot
+systemctl --user restart arc3-runner         # running Play samples are requeued from their start; harvest samples are closed
 journalctl --user -u arc3-runner -n 50
 tailscale serve status                       # https://gx10-a424.tail1528b6.ts.net -> 127.0.0.1:8787 (tailnet only)
 curl -s http://127.0.0.1:8787/api/health     # runner + model server reachability
@@ -59,6 +62,37 @@ caps default to 20 model turns (the main limit, so results do not depend on how 
 and 120 minutes as a safety net (well clear of twenty turns at about three minutes each). A Play request may override max_turns (1-60), max_actions, max_minutes (5-180).
 A default 10-sample job takes roughly one to three hours. Outcome "turn_cap" means the sample used its turns.
 
+## Exact level starts and harvest (added 6-Oct-2026, Son)
+
+Every sample (Play and harvest) saves an exact checkpoint the first time it starts a turn after clearing a level:
+the full request body the harness posts for that turn (system prompt, every message, board images, tool calls and
+results, sampling settings), the harness agent's own attributes (conversation, retained functions, world model,
+ledgers, counters) and the session's (runtime-state history, animation record), and every action from RESET. The
+Python tool runs a fresh subprocess per call seeded only with the retained functions, so those are the whole REPL
+state. If that turn runs a non-Stock mode, or the sample stops right after the clear, the Stock request is built
+without being sent and the state put back. A sample that started from a rebuilt snapshot writes checkpoints marked
+"not exact lineage"; they are kept but never chosen.
+
+Choosing: per game, level and variant, exact lineage only, then fewest actions from RESET, then fewest tokens.
+Play uses the chosen checkpoint for that level when there is one (job `start_kind` "exact"; each sample records
+whether its first request equalled the saved one); otherwise the snapshot ("rebuilt").
+
+Harvest: while no Play sample is queued or running, up to two one-sample Stock runs from RESET on the public games
+outside the held-out eight (game with the fewest harvest runs first), caps 40 turns / 400 actions / 150 minutes.
+A queued Play sample kills every harvest sample at once (job "preempted"; checkpoints already written stay).
+Harvest jobs are hidden from `GET /api/jobs` unless `?kind=harvest|all`.
+
+```bash
+curl -s localhost:8787/api/health | python3 -m json.tool      # "harvest" block and "exact_starts" counts
+curl -s localhost:8787/api/exact-starts                          # the index
+K=$(cat ~/arc3-runner/runner.key)
+curl -s -X POST localhost:8787/api/settings -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \
+  -d '{"harvest": false}'                                         # or {"harvest": true, "harvest_lanes": 1}
+venv/bin/python code/sample.py --verify-checkpoint checkpoints/<game>/<level>/<id> /tmp/cpcheck   # replay + restore, no model
+```
+
+KV cache: not stored. See docs/2026-10-06-spark-runner.md for the measured re-prefill time.
+
 ## Public link (Funnel)
 
 Son agreed to a Tailscale Funnel link. It is not on yet: the tailnet policy has to allow this machine first
@@ -75,8 +109,8 @@ the address; Play, Cancel and per-turn logs still need the key.
 
 ## API
 
-`GET /api/health`, `GET /api/stuck-points`, `GET /api/jobs[?game=]`, `GET /api/jobs/<id>`;
-with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`,
+`GET /api/health`, `GET /api/stuck-points`, `GET /api/exact-starts[?game=]`, `GET /api/jobs[?game=&kind=]`, `GET /api/jobs/<id>`;
+with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`, `POST /api/settings`,
 `GET /api/jobs/<id>/samples/<k>/turns`. The Play body is built by `docs/static/js/spark-runner.js`.
 
 ## Rebuilding pieces

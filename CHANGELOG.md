@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-spark-runner-exact-starts]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Exact level starts.** Son (#arc-3, 6-Oct 08:33 ET): restart a level "with the context as if it played the game and completed the level up to that point", keep the REPL state, pick one when there are several. Every Spark sample now saves, at the first turn after each level it clears, the full request body as posted (images and raw tool results included), the harness agent's and session's own state (retained functions are the whole REPL state: the tool runs a fresh subprocess per call), and all actions from RESET. Play starts from the chosen one (fewest actions from RESET, then fewest tokens) and records whether its first request equalled the saved one; without one it falls back to the snapshot and the job says "conversation rebuilt". Tested on the cluster: byte-identical first requests from both capture paths.
+- **Harvest.** Idle Spark time plays Stock from RESET on the public non-held-out games (two lanes at most) to collect exact starts for every level; any Play job pre-empts it at once. On by default, `POST /api/settings`, status on `/api/health`.
+- **KV cache not stored:** measured cold re-prefill of a checkpoint about 22 s at 63k tokens (warm about 2 s); see docs/2026-10-06-spark-runner.md.
+- How: `tools/spark_runner/checkpoints.py` (new), `sample.py`, `server.py`, `README.md`; page labels and the exact-starts line in `docs/static/js/spark-runner.js`; relay keeps the small index in `arc3_spark_runner_exact_starts` (`railway/spark_runner.py`, `railway/catalog_schema.sql`).
+
 ## [2026.10.06-shared-modes]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

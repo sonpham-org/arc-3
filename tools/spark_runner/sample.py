@@ -8,29 +8,44 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
        setup cell for the "daniel" variant, plus Son's port cell (noborder, temperature 0.6) for "son". Server address
        and model id point at the two-Spark Flash-Next server. Priority scheduling and the warm-up RESET are off: one
        game per process, nothing to schedule.
-    2. Import the patched bundle exactly as the notebook does, unpickle its benchmark for the solver, start the game
-       in the offline arc_agi engine, then replay the snapshot's action line through the harness's own
-       _execute_action (so history, frames and animation records are the harness's own) and refuse to play if the
-       board, level or action count differ from what the recorded run had at that point.
-    3. Give the agent the snapshot's rebuilt conversation and retained functions, then play with session.play(),
-       the harness's own loop, with five narrow hooks:
+    2. Start (spec["start"]), three kinds:
+         - "checkpoint" (EXACT): an exact level-start checkpoint (checkpoints.py). The game is replayed from RESET
+           through the harness's own _execute_action with the recorded automatic flags and checked against the saved
+           board hash, level and action count; then the harness agent's and session's own saved attributes are put
+           back (conversation, retained functions, world model, ledgers, runtime-state history, counters). The first
+           request the sample sends is compared with the saved request body and the result recorded per sample.
+         - "snapshot" (REBUILT): today's stuck-level snapshot: replay its action line, refuse to play if the board,
+           level or action count differ, then hand the agent the conversation rebuilt from the site's transcripts and
+           the retained functions. Labelled "conversation rebuilt" (unless the snapshot is a bare game start).
+         - "reset": play from the first RESET (harvest runs).
+    3. Play with session.play(), the harness's own loop, with narrow hooks:
          - _build_user_prompt: the scheduled mode's delta (modes.py) is applied to the prompt the harness built;
          - _chat_completion / build_chat_payload: temperature, thinking on/off, reasoning effort of the slot;
          - _tool_steps and _yield_tokens: tool-call limit and thinking budget of the slot;
          - step_env: the slot's action budget (a batch is cut to what is left; nothing past it executes);
-         - should_stop: stop when the target level is cleared, the game ends, or the sample's action/time cap is hit.
+         - should_stop: stop when the target level is cleared, the game ends, or the sample's action/turn/time cap
+           is hit;
+         - _execute_action: every engine action is logged (name, data, automatic) from RESET.
        A "turn" is one opener prompt; a yield continuation of the same turn keeps the same slot. When the scheme
        runs out, Stock (with the Stock settings the page sent) plays every later turn.
-    4. Trajectory under <job>/samples/<k>/: transcript.txt (the harness's own transcript: every prompt, thinking,
-       tool call and tool result), turns.jsonl (per turn: mode, settings, how the delta applied, actions, level,
-       tokens), viewer.json (frames), progress.json while running, result.json at the end.
+    4. Exact capture (every sample, Play and harvest): at the start of the first turn after a level was completed,
+       the agent's and session's state are saved and the turn's request body is captured as it is posted. When that
+       turn runs under a non-Stock slot, or the sample stops right after the clear, the Stock request for that turn is
+       built without sending it (the post is intercepted), and the saved state is put back. Checkpoints written by a
+       sample that started from a rebuilt snapshot are kept but marked as not exact lineage, so they are never chosen.
+    5. Trajectory under <job>/samples/<k>/: transcript.txt (the harness's own transcript), turns.jsonl (per turn:
+       mode, settings, how the delta applied, actions, level, tokens), viewer.json (frames), progress.json while
+       running, result.json at the end, first_request.json.gz for an exact start.
   Usage: sample.py <job_dir> <sample_index>   (reads <job_dir>/spec.json; written by server.py)
          sample.py --verify-all <snapshots dir>   (replay check of every snapshot, no model; writes verified.json)
+         sample.py --verify-checkpoint <checkpoint dir> <out dir>   (replay + state restore check, no model)
 SRP/DRY check: Pass - no harness logic is copied; everything runs through the bundle's ToolAgent and
-  _HarnessGameSession. Mode text math lives in modes.py, queueing in server.py.
+  _HarnessGameSession. Mode text math lives in modes.py, checkpoint storage in checkpoints.py, queueing in server.py.
 """
 from __future__ import annotations
 
+import copy
+import gzip
 import hashlib
 import json
 import os
@@ -44,6 +59,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import checkpoints  # noqa: E402
 from modes import apply_delta, build_delta  # noqa: E402
 
 RUNNER_HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
@@ -100,9 +116,20 @@ def import_harness():
     return ta, sv
 
 
-def replay_to_snapshot(spec: dict, snap: dict, out: Path, k: int, flush=lambda **kw: None):
-    """Start the game in the offline engine and replay the snapshot's action line through the harness's own
-    _execute_action. Raises if the board, level or action count differ from the recorded run."""
+ACTION_LOG: list[dict] = []   # every engine action this process executed, from the first RESET
+
+
+class DryStop(BaseException):
+    """Raised by the post interceptor to stop a dry build right before the request would go out. BaseException so
+    the harness's ordinary error handling (which rolls a failed turn back and retries) never swallows it."""
+
+
+def grid_hash(sv, game) -> str:
+    return hashlib.sha256(json.dumps(sv._grid_from_state(game.current_state)).encode()).hexdigest()
+
+
+def start_session(spec: dict, out: Path, k: int):
+    """Fresh game in the offline engine and a harness session around it, at the first frame (nothing played)."""
     setup_environment(spec)
     ta, sv = import_harness()
     import arc_agi
@@ -119,7 +146,7 @@ def replay_to_snapshot(spec: dict, snap: dict, out: Path, k: int, flush=lambda *
     solver.save_request_logs = False
     arcade_spec = taaf.game_api.ArcadeSpec(operation_mode=arc_agi.OperationMode.OFFLINE,
                                            environments_dir=str(ENV_DIR))
-    game = taaf.game_api.GameAPI(env_name=snap["game_id"], arcade_spec=arcade_spec)
+    game = taaf.game_api.GameAPI(env_name=spec["game_id"], arcade_spec=arcade_spec)
     game.start_game(taaf.game.RunSession())
     agent = solver._make_analyzer(game, 0, None)
     stem = solver._run_stem(game.game_run.game_id, k)
@@ -128,19 +155,58 @@ def replay_to_snapshot(spec: dict, snap: dict, out: Path, k: int, flush=lambda *
         state_path=solver._artifacts_dir() / f"{stem}_{sv.RUNTIME_STATE_FILENAME}",
         transcript_path=out / "transcript.txt", analysis_html_relpath=f"solver_analysis/{stem}.html",
         stop_event=threading.Event(), viewer_data_path=out / "viewer.json")
-    flush(status="replaying")
+    original_execute = session._execute_action
+
+    def execute(self, action, **kw):
+        ACTION_LOG.append({"name": action.id.name, "data": dict(action.data or {}),
+                           "automatic": bool(kw.get("automatic", False))})
+        return original_execute(action, **kw)
+    session._execute_action = types.MethodType(execute, session)
     session.seed_initial_history()
-    for a in snap["actions"]:
-        data = {"x": a["col"], "y": a["row"]} if a["name"] == "ACTION6" else {}
+    return solver, game, agent, session, sv, ta
+
+
+def replay(session, sv, actions: list[dict]) -> None:
+    for a in actions:
+        if "data" in a:
+            data = a["data"]
+        else:   # snapshot format
+            data = {"x": a["col"], "y": a["row"]} if a["name"] == "ACTION6" else {}
         action = sv.arcengine.ActionInput(id=sv.arcengine.GameAction.from_name(a["name"]), data=data)
-        session._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0,
-                                flush_viewer_payload=False, automatic=a["name"] == "RESET")
+        session._execute_action(action, batch_index=1, batch_size=1, generated_tokens=0, flush_viewer_payload=False,
+                                automatic=a.get("automatic", a["name"] == "RESET"))
+
+
+def replay_to_snapshot(spec: dict, snap: dict, out: Path, k: int, flush=lambda **kw: None):
+    """Start the game in the offline engine and replay the snapshot's action line through the harness's own
+    _execute_action. Raises if the board, level or action count differ from the recorded run."""
+    solver, game, agent, session, sv, ta = start_session({**spec, "game_id": snap["game_id"]}, out, k)
+    flush(status="replaying")
+    replay(session, sv, snap["actions"])
     exp = snap["expected"]
     got_board = board_ascii(sv._grid_from_state(game.current_state), exp["color_chars"])
     got = {"level": sv._level_number(game), "action_count": session.action_count,
            "board_sha256": hashlib.sha256(got_board.encode()).hexdigest()}
     if (got["level"], got["action_count"], got["board_sha256"]) != (exp["level"], exp["action_count"], exp["board_sha256"]):
         raise RuntimeError(f"snapshot replay mismatch: expected {exp}, engine gave {got}")
+    return solver, game, agent, session, sv, ta
+
+
+def restore_checkpoint(spec: dict, cp: dict, out: Path, k: int, flush=lambda **kw: None):
+    """Exact start: replay the checkpoint's actions from RESET, check the board, then put the harness's own saved
+    agent and session state back."""
+    meta = cp["meta"]
+    solver, game, agent, session, sv, ta = start_session({**spec, "game_id": meta["game_id"]}, out, k)
+    flush(status="replaying")
+    replay(session, sv, cp["actions"])
+    got = {"level": sv._level_number(game), "action_count": session.action_count, "board_sha256": grid_hash(sv, game)}
+    exp = {"level": meta["level"], "action_count": meta["actions_to_reach"], "board_sha256": meta["board_sha256"]}
+    if got != exp:
+        raise RuntimeError(f"checkpoint replay mismatch: expected {exp}, engine gave {got}")
+    agent._ensure_session(session.state_path)
+    checkpoints.restore_state(cp["state"], agent, session)
+    # Saved at the start of a turn, after the harness had already counted that turn; play() counts it again.
+    session.analysis_step = max(0, int(session.analysis_step) - 1)
     return solver, game, agent, session, sv, ta
 
 
@@ -157,11 +223,17 @@ def verify(snapshot_file: Path, out: Path) -> dict:
         return {"ok": False, "game": snap["game"], "error": f"{type(exc).__name__}: {exc}"}
 
 
+def settings_are_stock(s: dict) -> bool:
+    """The Stock settings the page sends and harvest uses (modes.json, stock.settings)."""
+    want = checkpoints.STOCK_SETTINGS
+    return all((s.get(k) if s.get(k) is not None else None) == want[k] for k in want)
+
+
 def main(job_dir: Path, k: int) -> int:
     spec = json.loads((job_dir / "spec.json").read_text())
     out = job_dir / "samples" / str(k)
     out.mkdir(parents=True, exist_ok=True)
-    snap = json.loads(Path(spec["snapshot_path"]).read_text())
+    start = spec.get("start") or {"kind": "snapshot", "path": spec["snapshot_path"]}
     started = time.time()
     progress = {"sample": k, "status": "starting", "turn": 0, "mode": None, "actions": 0, "level": None,
                 "levels_cleared": 0, "started": started, "updated": started}
@@ -172,34 +244,64 @@ def main(job_dir: Path, k: int) -> int:
 
     flush()
     result = {"sample": k, "game": spec["game"], "stuck_level": spec["stuck_level"], "variant": spec["variant"],
-              "outcome": "error", "levels_cleared": 0, "actions_used": 0, "turns": 0, "modes_run": [],
-              "conversation_exact": snap["conversation"]["exact"], "seconds": 0, "error": None}
+              "kind": spec.get("kind", "play"), "start_kind": None, "outcome": "error", "levels_cleared": 0,
+              "actions_used": 0, "turns": 0, "modes_run": [], "conversation_exact": False, "seconds": 0,
+              "error": None, "checkpoints_written": []}
     try:
-        solver, game, agent, session, sv, ta = replay_to_snapshot(spec, snap, out, k, flush)
+        cp = None
+        if start["kind"] == "checkpoint":
+            cp = checkpoints.load(start["path"])
+            solver, game, agent, session, sv, ta = restore_checkpoint(spec, cp, out, k, flush)
+            exact_lineage = bool(cp["meta"].get("exact_lineage"))
+            result.update(start_kind="exact", start_checkpoint=cp["meta"]["id"], conversation_exact=exact_lineage)
+        elif start["kind"] == "reset":
+            solver, game, agent, session, sv, ta = start_session(spec, out, k)
+            exact_lineage = True
+            result.update(start_kind="reset", conversation_exact=True)
+        else:
+            snap = json.loads(Path(start["path"]).read_text())
+            solver, game, agent, session, sv, ta = replay_to_snapshot(spec, snap, out, k, flush)
+            # a bare game start (no actions, no turns) is the same as a RESET start
+            exact_lineage = not snap["actions"] and not snap["turns"]
+            result.update(start_kind="reset" if exact_lineage else "rebuilt",
+                          conversation_exact=bool(snap["conversation"]["exact"]) or exact_lineage)
+            agent._ensure_session(session.state_path)
+            agent._history_messages = [m for t in snap["turns"] for m in t["messages"]]
+            if ta._persistent_functions():
+                agent._kept_functions = dict(snap.get("retained_functions") or {})
+        result["replay_verified"] = True
         start_actions = session.action_count
         start_completed = int(game.current_state.levels_completed)
-        target_completed = int(spec["stuck_level"]) - 1 + int(spec["caps"]["levels_to_play"])
-        result["replay_verified"] = True
-
-        # ---- conversation and retained functions from the snapshot
-        agent._ensure_session(session.state_path)
-        history = [m for t in snap["turns"] for m in t["messages"]]
-        agent._history_messages = history
-        if ta._persistent_functions():
-            agent._kept_functions = dict(snap.get("retained_functions") or {})
+        start_tokens = agent.generated_tokens
+        if spec.get("kind") == "harvest":
+            target_completed = int(game.number_of_levels)
+        else:
+            target_completed = int(spec["stuck_level"]) - 1 + int(spec["caps"]["levels_to_play"])
 
         # ---- per-turn scheduling hooks
         stock_slot = spec["stock"]
         scheme = spec["scheme"]
-        deltas = {}
+        capture_slot = {"key": "__capture_stock__", "mode": "stock", "settings": dict(checkpoints.STOCK_SETTINGS)}
+        deltas = {capture_slot["key"]: build_delta("stock", "stock", "stock")}
         for slot in scheme + [stock_slot]:
             key = slot["key"]
             if key not in deltas:
                 deltas[key] = build_delta(slot["mode"], slot["stock_template"], slot["prompt"])
         base_tool_steps, base_yield_tokens = agent._tool_steps, agent._yield_tokens
         state = {"turn": 0, "slot": None, "slot_index": -1, "actions_in_turn": 0, "delta_report": None,
-                 "turn_started_actions": start_actions, "turn_started_tokens": 0}
+                 "turn_started_actions": start_actions, "turn_started_tokens": start_tokens}
+        cap = {"enabled": spec.get("capture", True), "done_completed": start_completed, "pending": None,
+               "dry": False, "dry_body": None, "in_analyze": False, "clear_action_count": None,
+               "compare": cp["request"] if cp else None}
         turns_log = open(out / "turns.jsonl", "a", encoding="utf-8")
+
+        def slot_is_stock(slot) -> bool:
+            return deltas[slot["key"]].empty and settings_are_stock(slot["settings"])
+
+        def apply_slot_limits(slot):
+            s = slot["settings"]
+            agent._tool_steps = int(s["tool_calls"]) if s.get("tool_calls") else base_tool_steps
+            agent._yield_tokens = int(s["thinking_budget"]) if s.get("thinking_budget") else base_yield_tokens
 
         def close_turn():
             if state["slot"] is None:
@@ -221,35 +323,139 @@ def main(job_dir: Path, k: int) -> int:
             state.update(turn=idx + 1, slot=slot, slot_index=idx if idx < len(scheme) else -1, actions_in_turn=0,
                          delta_report=None, turn_started_actions=session.action_count,
                          turn_started_tokens=agent.generated_tokens)
-            s = slot["settings"]
-            agent._tool_steps = int(s["tool_calls"]) if s.get("tool_calls") else base_tool_steps
-            agent._yield_tokens = int(s["thinking_budget"]) if s.get("thinking_budget") else base_yield_tokens
+            apply_slot_limits(slot)
             if slot["mode"] not in result["modes_run"]:
                 result["modes_run"].append(slot["mode"])
             flush(status="playing", turn=state["turn"], mode=slot["mode"],
                   actions=session.action_count - start_actions, level=sv._level_number(game),
                   levels_cleared=int(game.current_state.levels_completed) - start_completed)
 
+        # ---- exact capture
+        def snapshot_now() -> dict:
+            blob, skipped = checkpoints.capture_state(agent, session)
+            completed = int(game.current_state.levels_completed)
+            return {"blob": blob, "skipped": skipped, "level": completed + 1, "actions": copy.deepcopy(ACTION_LOG),
+                    "tokens": agent.generated_tokens, "board": grid_hash(sv, game),
+                    "actions_into_level": (session.action_count - cap["clear_action_count"]
+                                           if cap["clear_action_count"] is not None else None)}
+
+        def save_checkpoint(snap: dict, body: dict, how: str) -> None:
+            try:
+                d = checkpoints.save(
+                    game=spec["game"], game_id=game.game_run.game_id, level=snap["level"], variant=spec["variant"],
+                    request_body=body, state_blob=snap["blob"], skipped=snap["skipped"], actions=snap["actions"],
+                    meta={"exact_lineage": exact_lineage, "source_job": job_dir.name, "source_sample": k,
+                          "source_kind": spec.get("kind", "play"), "start_kind": result["start_kind"],
+                          "parent_checkpoint": result.get("start_checkpoint"), "tokens_to_reach": snap["tokens"],
+                          "actions_into_level": snap["actions_into_level"], "board_sha256": snap["board"],
+                          "captured": how, "model_id": spec["model"]["model_id"],
+                          "stock_settings": checkpoints.STOCK_SETTINGS,
+                          "notebook_env": {k2: os.environ.get(k2) for k2 in sorted(os.environ)
+                                           if k2.startswith(("ARC3_", "LOCAL_ANALYZER_", "MULTIMODAL_", "EXPOSE_"))
+                                           and "KEY" not in k2},
+                          "levels_total": int(game.number_of_levels)})
+                result["checkpoints_written"].append({"level": snap["level"], "id": d.name, "how": how,
+                                                      "actions_to_reach": len(snap["actions"])})
+            except Exception as exc:  # noqa: BLE001 - a failed save must not end the sample; it is recorded
+                result.setdefault("checkpoint_errors", []).append(f"{type(exc).__name__}: {exc}")
+
+        def dry_build(args, kwargs, snap: dict) -> dict | None:
+            """Build the Stock request for this turn without sending it, then put the saved state back."""
+            saved_slot = state["slot"]
+            size = session.transcript_path.stat().st_size if session.transcript_path.exists() else 0
+            state["slot"] = capture_slot
+            apply_slot_limits(capture_slot)
+            cap.update(dry=True, dry_body=None)
+            try:
+                original_analyze(*args, **{**kwargs, "should_stop": lambda: False})
+            except DryStop:
+                pass
+            finally:
+                cap["dry"] = False
+                checkpoints.restore_state(snap["blob"], agent, session)
+                if session.transcript_path.exists():
+                    with open(session.transcript_path, "r+b") as fh:
+                        fh.truncate(size)
+                state["slot"] = saved_slot
+                if saved_slot is not None:
+                    apply_slot_limits(saved_slot)
+                state["delta_report"] = None
+            return cap["dry_body"]
+
+        def maybe_capture(args, kwargs, *, at_end: bool = False) -> None:
+            completed = int(game.current_state.levels_completed)
+            run = game.game_run
+            if not cap["enabled"] or completed <= cap["done_completed"] or run is None or run.state != "playing" \
+                    or completed >= int(game.number_of_levels) or sv._is_engine_game_over(game):
+                return
+            cap["done_completed"] = completed
+            snap = snapshot_now()
+            if not at_end and slot_is_stock(state["slot"]):
+                cap["pending"] = snap        # captured as the real request goes out
+                return
+            body = dry_build(args, kwargs, snap)
+            if body is not None:
+                save_checkpoint(snap, body, "dry")
+            else:
+                result.setdefault("checkpoint_errors", []).append(f"level {snap['level']}: dry build sent nothing")
+
+        import requests as requests_mod
+        real_post = requests_mod.post
+
+        def post(url, *a, **kw):
+            body = kw.get("json")
+            if isinstance(body, dict) and str(url).endswith("/chat/completions"):
+                if cap["dry"]:
+                    cap["dry_body"] = copy.deepcopy(body)
+                    raise DryStop()
+                if cap["pending"] is not None:
+                    snap, cap["pending"] = cap["pending"], None
+                    save_checkpoint(snap, copy.deepcopy(body), "natural")
+                if cap["compare"] is not None:
+                    saved, cap["compare"] = cap["compare"], None
+                    with gzip.open(out / "first_request.json.gz", "wt", encoding="utf-8") as fh:
+                        json.dump(body, fh)
+                    diff = checkpoints.diff_requests(saved, body)
+                    diff["first_slot_is_stock"] = slot_is_stock(state["slot"] or stock_slot)
+                    result["first_request"] = diff
+            return real_post(url, *a, **kw)
+        requests_mod.post = post
+
+        original_execute = session._execute_action
+
+        def execute(self, action, **kw):
+            before = int(game.current_state.levels_completed)
+            payload = original_execute(action, **kw)
+            if int(game.current_state.levels_completed) > before:
+                cap["clear_action_count"] = session.action_count
+            return payload
+        session._execute_action = types.MethodType(execute, session)
+
         original_analyze = agent.analyze
 
         def analyze(self, *a, **kw):
             if not getattr(self, "_resume_after_yield", False):
                 begin_turn()
-            out = original_analyze(*a, **kw)
+                maybe_capture(a, kw)
+            cap["in_analyze"] = True
+            try:
+                out_ = original_analyze(*a, **kw)
+            finally:
+                cap["in_analyze"] = False
             # A turn counts toward the turn cap only once it has finished: not a retryable failure, and not
             # yielding into a continuation of the same turn. should_stop also runs mid-turn, so it must not
             # look at the turn that is still in progress.
-            if out is not None and not getattr(out, "retryable_failure", False) \
+            if out_ is not None and not getattr(out_, "retryable_failure", False) \
                     and not getattr(self, "_resume_after_yield", False):
                 state["turns_done"] = state["turn"]
-            return out
+            return out_
         agent.analyze = types.MethodType(analyze, agent)
 
         original_build = agent._build_user_prompt
 
         def build_user_prompt(self, *a, **kw):
             text = original_build(*a, **kw)
-            slot = state["slot"]
+            slot = state["slot"] or stock_slot
             new, report = apply_delta(deltas[slot["key"]], text)
             state["delta_report"] = report
             return new
@@ -311,14 +517,32 @@ def main(job_dir: Path, k: int) -> int:
         # however busy the cluster is. The time cap stays as a safety net. Older specs have no max_turns.
         cap_turns = int(spec["caps"].get("max_turns") or 0)
 
-        def should_stop(self):
+        def stop_now() -> bool:
             if original_should_stop():
                 return True
             if int(game.current_state.levels_completed) >= target_completed:
                 return True
             if cap_turns and state.get("turns_done", 0) >= cap_turns:
                 return True
-            return self.action_count - start_actions >= cap_actions
+            return session.action_count - start_actions >= cap_actions
+
+        def should_stop(self):
+            stop = stop_now()
+            if stop and not cap["in_analyze"] and not cap["dry"]:
+                # Stopping right after a clear: there is no next turn to capture from, so build its Stock request
+                # the way the harness's loop would (count the turn, write the runtime state) without sending it.
+                completed = int(game.current_state.levels_completed)
+                if cap["enabled"] and completed > cap["done_completed"]:
+                    self.analysis_step += 1
+                    self.write_runtime_state()
+                    kwargs = {"valid_actions": sv._engine_action_names(game), "step_env": self.step_env,
+                              "transcript_path": self.transcript_path, "analysis_step": self.analysis_step,
+                              "request_timeout_seconds": self.request_timeout_seconds()}
+                    try:
+                        maybe_capture((self.state_path, self.action_count), kwargs, at_end=True)
+                    finally:
+                        self.analysis_step -= 1
+            return stop
         session.should_stop = types.MethodType(should_stop, session)
 
         flush(status="playing")
@@ -331,7 +555,7 @@ def main(job_dir: Path, k: int) -> int:
         cleared = completed - start_completed
         used = session.action_count - start_actions
         if completed >= target_completed:
-            outcome = "cleared"
+            outcome = "cleared" if spec.get("kind") != "harvest" else "won"
         elif run is not None and str(run.state) in ("won",):
             outcome = "won"
         elif used >= cap_actions:
@@ -346,7 +570,7 @@ def main(job_dir: Path, k: int) -> int:
         else:
             outcome = "stopped"
         result.update(outcome=outcome, levels_cleared=cleared, actions_used=used, turns=state["turn"],
-                      final_level=sv._level_number(game), generated_tokens=agent.generated_tokens,
+                      final_level=sv._level_number(game), generated_tokens=agent.generated_tokens - start_tokens,
                       solver_note=getattr(run, "solver_note", None))
         flush(status="done", actions=used, levels_cleared=cleared, level=sv._level_number(game))
     except Exception as exc:  # recorded, never hidden: the job page shows it per sample
@@ -358,9 +582,26 @@ def main(job_dir: Path, k: int) -> int:
     return 0 if result["outcome"] != "error" else 1
 
 
+def verify_checkpoint(path: Path, out: Path) -> dict:
+    """Replay + restore check of one checkpoint, no model call."""
+    cp = checkpoints.load(path)
+    spec = {"variant": cp["meta"]["variant"], "caps": {"max_minutes": 40},
+            "model": {"base_url": "http://127.0.0.1:9/v1", "model_id": "none"}}
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        _, game, agent, session, sv, _ = restore_checkpoint(spec, cp, out, 0)
+        return {"ok": True, "id": cp["meta"]["id"], "level": cp["meta"]["level"], "actions": session.action_count,
+                "history_messages": len(agent._history_messages), "kept_functions": len(agent._kept_functions)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "id": cp["meta"]["id"], "error": f"{type(exc).__name__}: {exc}"}
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "--verify":
         print(json.dumps(verify(Path(sys.argv[2]), Path(sys.argv[3]))))
+        sys.exit(0)
+    if sys.argv[1] == "--verify-checkpoint":
+        print(json.dumps(verify_checkpoint(Path(sys.argv[2]), Path(sys.argv[3]))))
         sys.exit(0)
     if sys.argv[1] == "--verify-all":   # every snapshot in a folder, one process each; writes verified.json there
         import subprocess

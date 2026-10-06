@@ -6,12 +6,16 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   to the Spark runner on Jethro (tools/spark_runner/server.py, published tailnet-only by `tailscale serve`), and
   keeps every job view it sees in Postgres (arc3_spark_runner_jobs) so the results table still loads when the
   Sparks are off or busy.
-    GET  /api/v1/spark-runner/health | stuck-points | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
+    GET  /api/v1/spark-runner/health | stuck-points | exact-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
     POST /api/v1/spark-runner/play | jobs/<id>/cancel
   The runner's own key (typed once into the page, kept in that browser) travels in the Authorization header and is
   checked by the runner, not here; Play and Cancel also need a same-site Origin. The signed-in Google account is
   sent along as the job's "by". When the runner cannot be reached, job reads are answered from storage and say so.
   After the runner accepts a Play, on_play (modes_store.ModeLibrary.record_play) keeps the exact mode versions sent.
+  Exact level starts (6-Oct): the small per-level index of the runner's exact checkpoints (game, level, variant,
+  the chosen one's actions from RESET, tokens, source job; never the checkpoints themselves) is kept in
+  arc3_spark_runner_exact_starts whenever stuck-points or exact-starts is relayed, and exact-starts is answered from
+  there when the runner is off.
 SRP/DRY check: Pass - relay shape follows harness_relay.py and debugger_relay.py (identity from oauth2-proxy,
   narrow route list, size caps, no redirects); storage is one upsert table in catalog_schema.sql. No game logic.
 """
@@ -28,7 +32,7 @@ from urllib.parse import parse_qs, urlsplit
 from psycopg2.extras import Json
 
 PREFIX = "/api/v1/spark-runner"
-GET_ROUTES = re.compile(r"/(?:health|stuck-points|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
+GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
 POST_ROUTES = re.compile(r"/(?:play|jobs/[a-z0-9-]{8,40}/cancel)")
 JOB_ROUTE = re.compile(r"/jobs/([a-z0-9-]{8,40})")
 EMAIL_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,255}$")
@@ -85,6 +89,41 @@ class SparkRunnerRelay:
                 connection.close()
         except Exception as exc:  # storage must never break a live relay
             print(f"spark-runner: storing {len(rows)} job view(s) failed: {exc}", flush=True)
+
+    def _store_exact(self, rows: list[dict]) -> None:
+        rows = [r for r in rows if isinstance(r, dict) and re.fullmatch(r"[a-z0-9]{4}", str(r.get("game") or ""))
+                and isinstance(r.get("level"), int) and r.get("variant") in ("son", "daniel")]
+        if not rows:
+            return
+        try:
+            connection = self.connect()
+            try:
+                with connection.cursor() as cursor:
+                    for r in rows:
+                        cursor.execute(
+                            """
+                            INSERT INTO arc3_spark_runner_exact_starts (game, level, variant, count, chosen, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, now())
+                            ON CONFLICT (game, level, variant) DO UPDATE SET
+                                count = EXCLUDED.count, chosen = EXCLUDED.chosen, updated_at = now()
+                            """,
+                            (r["game"], r["level"], r["variant"], int(r.get("count") or 0), Json(r.get("chosen"))),
+                        )
+                connection.commit()
+            finally:
+                connection.close()
+        except Exception as exc:  # storage must never break a live relay
+            print(f"spark-runner: storing {len(rows)} exact start(s) failed: {exc}", flush=True)
+
+    def _stored_exact(self) -> list[dict]:
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT game, level, variant, count, chosen FROM arc3_spark_runner_exact_starts "
+                               "ORDER BY game, level, variant")
+                return [{"game": g, "level": lv, "variant": v, "count": c, "chosen": ch} for g, lv, v, c, ch in cursor.fetchall()]
+        finally:
+            connection.close()
 
     def _stored(self, job_id: str | None, game: str | None) -> list[dict]:
         connection = self.connect()
@@ -174,6 +213,12 @@ class SparkRunnerRelay:
         if method == "GET" and status == 200 and (sub == "/jobs" or JOB_ROUTE.fullmatch(sub)):
             data = json.loads(content.decode("utf-8"))
             self._store(data.get("jobs", []) if sub == "/jobs" else [data])
+        elif method == "GET" and status == 200 and sub == "/exact-starts":
+            self._store_exact(json.loads(content.decode("utf-8")).get("levels", []))
+        elif method == "GET" and status == 200 and sub == "/stuck-points":
+            points = json.loads(content.decode("utf-8")).get("stuck_points", [])
+            self._store_exact([{**x, "game": p.get("game")} for p in points if isinstance(p, dict)
+                               for x in (p.get("exact_levels") or []) if isinstance(x, dict)])
         handler.send_relay_response(status, "application/json; charset=utf-8", content)
         return True
 
@@ -181,6 +226,14 @@ class SparkRunnerRelay:
         message = "The Spark runner cannot be reached from the site right now (Sparks off, busy restarting, or the tailnet is down)."
         if method == "GET" and sub == "/health":
             handler.send_json(200, {"ok": False, "runner_reachable": False, "message": message})
+            return
+        if method == "GET" and sub == "/exact-starts":
+            try:
+                rows = self._stored_exact()
+            except Exception as exc:
+                print(f"spark-runner: stored exact starts read failed: {exc}", flush=True)
+                rows = []
+            handler.send_json(200, {"levels": rows, "from_storage": True, "runner_reachable": False, "message": message})
             return
         m = JOB_ROUTE.fullmatch(sub)
         if method == "GET" and (sub == "/jobs" or m):

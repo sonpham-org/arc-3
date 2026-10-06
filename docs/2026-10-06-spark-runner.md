@@ -5,6 +5,9 @@ PURPOSE: How the Mode explorer's Play button works (Son's go, #arc-3, 6-Oct 01:1
   so that others can start running on it"; his calls at 00:23 ET: a Tailscale public link is fine, and it all lives
   as part of the arc3 page). Covers the path from the page to the DGX Sparks, the starting points (snapshots), what a
   sample does, where trajectories and results live, how to restart it, and what is not exact.
+  Updated 6-Oct 09:00 ET (Son, 08:33 ET: restart "with the context as if it played the game and completed the level
+  up to that point ... store KV cache and REPL state of each level that has level completed. If there has been
+  multiple completions, pick one."): exact level-start checkpoints, how one is chosen, harvest, the KV measurement.
 SRP/DRY check: Pass - operations detail is in tools/spark_runner/README.md; stuck levels in
   docs/2026-10-06-stuck-levels-tally.md; mode wording in docs/static/data/modes.json.
 -->
@@ -58,7 +61,68 @@ mode-explorer.html + static/js/spark-runner.js (signed in)
   site relays over the tailnet. With Funnel on, the same address becomes public for scripts; reads would be open
   (game, scheme settings, progress, results) and Play, Cancel and turn logs would still need the key.
 
-## Starting points (snapshots)
+## Exact level starts (added 6-Oct-2026)
+
+**What a starting point contains now.** Whenever any Spark sample (a Play job or an idle-time harvest run) clears a
+level, the runner saves an exact checkpoint for the start of the next level, taken from the live harness process at
+the start of the first turn on that level:
+
+| Part | Exact? |
+|---|---|
+| The full request body the harness sends for that turn: system prompt, every message with its board images (base64), tool calls and raw tool results as sent, sampling settings, chat-template kwargs | **Yes**: captured as it is posted (`request.json.gz`) |
+| Harness memory: the agent's own attributes (conversation history, world model, death ledger, pending images, effort rung, token counters, ...) and the session's (runtime-state history the harness reloads every turn, animation record) | **Yes**: pickled from the process (`state.pkl.gz`) |
+| REPL state | **Yes**: the Python tool runs a fresh subprocess per call, seeded only with the retained functions (and their imports), which are part of the agent state above. There is no other live interpreter to save |
+| Game state | **Yes**: every engine action from RESET with the harness's automatic flag (`actions.json`), replayed and checked against the saved board hash, level and action count |
+| Model, variant, notebook flags, Stock settings, source job, actions and tokens to reach | recorded in `meta.json` |
+
+When the turn after the clear runs a non-Stock mode, or the sample stops right after the clear, the Stock request for
+that turn is built without being sent (the post is intercepted) and the saved state is put back, so every
+checkpoint holds the Stock request. A sample that itself started from a rebuilt snapshot writes checkpoints marked
+"not exact lineage"; they are kept but never chosen.
+
+**Picking one.** Per game, level and version (Son's or Franzen's wording): exact lineage only, then the fewest actions
+from RESET, then the fewest tokens. Up to eight are kept per level on Jethro; the page shows which one is used (its
+action count, and how many there were).
+
+**Starting from one.** Play uses the chosen exact checkpoint for that level when one exists: replay the actions,
+check the board, put the harness state back. The job is labelled "exact start" and each sample records whether
+the first request it sent equalled the saved one (for a scheme whose first slot is not Stock, only the context
+before the last message is expected to match). Without one, Play falls back to the snapshot below and the job says
+"conversation rebuilt".
+
+**Tested 6-Oct on the real cluster (Flash-Next, two Sparks).** A harvest run on Functional Tiles (ft09) from RESET cleared
+level 1 and wrote the level-2 checkpoint. A Play job (one sample, two turns, Stock) from that checkpoint sent a first
+request byte-identical to the saved one and cleared level 2, writing a level-3 checkpoint by the dry build. A second
+Play from that one also matched exactly and cleared level 3. Level 3 then had two checkpoints and the one with fewer
+actions was chosen. A third Play from the level-4 checkpoint matched exactly too. A queued Play job stopped both running harvest samples within a second, and harvest picked up again when it finished.
+
+**KV cache: not stored, not needed.** Measured on the idle cluster with one-token requests from a saved checkpoint,
+cold (prefix cache defeated by a nonce at the start) and then warm:
+
+| Prompt | Cold re-prefill | Warm (prefix cache) |
+|---|---|---|
+| level-2 checkpoint, 16k tokens | 5.3 s | 2.3 s |
+| level-4 checkpoint, 34k tokens | 11.8 s | 3.3 s |
+| same, history doubled, 63k tokens (about where the harness drains its history) | 22.0 s | 2.4 s |
+| same, history x4, 121k tokens (near the window limit) | 43.7 s | 2.6 s |
+
+So rebuilding the model's memory from a checkpoint costs about twenty seconds on the first sample of a job at a deep
+level and a couple of seconds on every later sample, next to minutes per turn of generation. Exporting vLLM's
+KV tensors (or adding a disk offload connector such as LMCache) would save seconds and add a fragile dependency on
+the server build; not pursued. Flash-Next is a hybrid model whose recurrent state is only cacheable at aligned prefix
+blocks (`--mamba-cache-mode align`), which is another reason the request body, not the cache, is the thing to keep.
+
+**Harvest.** While no Play sample is queued or running, the runner plays up to two one-sample Stock runs from RESET
+on the public games outside the held-out eight, the least-harvested game first, purely to collect exact checkpoints
+for every level they clear (caps 40 turns, 400 actions, 150 minutes). Play always comes first: a queued Play sample
+kills every harvest sample at once. On by default; switched with `POST /api/settings` (runner key); state on
+`/api/health`. Harvest jobs are not listed with Play jobs.
+
+**Site.** The page reads exact starts from the runner's stuck-points answer; the relay keeps the small index
+(game, level, version, count, the chosen one's actions, tokens and source job) in `arc3_spark_runner_exact_starts`.
+The checkpoints themselves (request bodies with model thinking and board images) stay on Jethro.
+
+## Starting points (snapshots, "conversation rebuilt")
 
 `datasets/spark-runner-snapshots/<game>.json`, built by `scripts/build_spark_snapshots.py`. One per game that has a stuck
 level (21 of 25; the four that clear every level have none). Source: the seven 2-Oct-2026 stock runs of the
@@ -79,7 +143,8 @@ exactly what a real run sees.
 The snapshots are small JSON (3.2 MB in all) and live in the repo, not on the site's volume or in its static
 files: the site serves its static folder without sign-in, and these files hold verbatim model thinking and code
 from Son's runs, whose run data is sign-in only. The runner keeps its own copy; the page never needs them. The model's prompt cache is not stored anywhere: the server's prefix caching warms on
-the first sample of a job and the later samples reuse it.
+the first sample of a job and the later samples reuse it (measured above). Snapshots are now only the fallback for
+levels that have no exact start yet.
 
 ## Where things are kept
 
@@ -107,7 +172,7 @@ More in `tools/spark_runner/README.md` (also `~/arc3-runner/README.md` on Jethro
 
 ## Not done / limits
 
-- Only the stuck level can be played; other start levels need their own snapshots.
+- The page plays the stuck level. The runner itself accepts any level that has an exact start (API `stuck_level`).
 - Funnel waits for the tailnet admin's approval (above).
 - The runner does not start or stop the model server. If the cluster is being rebuilt, samples fail their requests,
   retry, and end with an error after repeated failures; the page shows that per sample.
