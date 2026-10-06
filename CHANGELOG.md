@@ -15,6 +15,21 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-mode-explorer-howto]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **What:** a short "How to use this page" panel at the top of the Mode explorer and a hover tip on every control. The
+  Boss, #arc-3 6-Oct 12:52 ET: "Are there tooltips or instructions on the page?" The footer's storage line was stale
+  ("Custom modes and queues are saved in this browser only"); it now says modes are shared and versioned for everyone
+  signed in, and that queues, chosen levels and the context choice stay in this browser.
+- **How:** a `<details>` panel in docs/mode-explorer.html, opened on a first visit and closed after that unless it was
+  last opened by hand (its own localStorage key). Tips and accessible labels added where they were missing: Play (or
+  why it is off), samples and turn cap inputs, the runner line, job status / place-in-line chip, a job's queue tags,
+  Cancel, every results column, the board panel heading and caption, the queue, the per-turn settings fields and
+  buttons, view tabs, version and compare switches, game items, Export and Import. Script and style versions bumped
+  to 20261006-ht1 (page and module imports).
+- **Why:** nothing on the page said how to use it; first-time users had to guess.
+
 ## [2026.10.06-mode-explorer-no-context]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 
