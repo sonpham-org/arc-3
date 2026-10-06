@@ -31,6 +31,7 @@ from model_backfill import backfill_catalog_models
 from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
 from harness_relay import relay as relay_harness
 from spark_runner import SparkRunnerRelay
+from modes_store import ModeLibrary
 from games_store import GamesApi
 from trace_feedback import TraceFeedbackApi
 from rl_review import RlReviewApi
@@ -274,6 +275,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
     rl_review_api: RlReviewApi | None = None
     trace_triage_api: TraceTriageApi | None = None
     spark_runner: SparkRunnerRelay | None = None
+    mode_library: ModeLibrary | None = None
 
     def handle_games(self, method: str) -> bool:
         """Route /api/v1/games/* and /api/v1/public/games/* to games_store. True if handled."""
@@ -400,10 +402,24 @@ class CatalogHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "spark_runner_unavailable"})
             return True
 
+    def handle_modes(self, method: str) -> bool:
+        """Route /api/v1/modes/* to the shared Mode explorer modes. True if handled."""
+        path = urlparse(self.path).path
+        if self.mode_library is None or not ModeLibrary.owns(path):
+            return False
+        try:
+            return self.mode_library.handle(self, method)
+        except Exception as exc:  # Full detail to Railway logs; the client gets a small error.
+            print(f"modes request failed for {method} {path}: {exc}", flush=True)
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "modes_unavailable"})
+            return True
+
     def do_GET(self) -> None:  # noqa: N802
         if relay_harness(self, "GET"):
             return
         if self.handle_spark_runner("GET"):
+            return
+        if self.handle_modes("GET"):
             return
         if self.handle_games("GET"):
             return
@@ -628,6 +644,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             return
         if self.handle_spark_runner("POST"):
             return
+        if self.handle_modes("POST"):
+            return
         if self.handle_games("POST"):
             return
         if self.handle_trace_feedback("POST"):
@@ -668,6 +686,12 @@ def parse_args() -> argparse.Namespace:
         help="the image's baked game catalog; reviews of these ids are accepted before upload",
     )
     parser.add_argument("--bootstrap-root", type=Path, default=Path("/srv/data"))
+    parser.add_argument(
+        "--modes-seed",
+        type=Path,
+        default=Path("/srv/static/data/modes.json"),
+        help="built-in Mode explorer modes, seeded as version 1 of each mode the database does not have yet",
+    )
     return parser.parse_args()
 
 
@@ -685,7 +709,12 @@ def main() -> int:
     CatalogHandler.trace_feedback_api = TraceFeedbackApi(connect, CatalogHandler.publish_token)
     CatalogHandler.trace_triage_api = TraceTriageApi(connect, CatalogHandler.publish_token)
     CatalogHandler.rl_review_api = RlReviewApi(connect, args.bootstrap_root, CatalogHandler.publish_token)
-    CatalogHandler.spark_runner = SparkRunnerRelay(connect)
+    CatalogHandler.mode_library = ModeLibrary(connect, args.modes_seed)
+    try:
+        print(f"modes: seeded {CatalogHandler.mode_library.seed()} built-in mode(s) as version 1", flush=True)
+    except Exception as exc:  # the rest of the site must still start
+        print(f"modes: seeding failed: {exc}", flush=True)
+    CatalogHandler.spark_runner = SparkRunnerRelay(connect, on_play=CatalogHandler.mode_library.record_play)
     CatalogHandler.max_upload_bytes = int(
         os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))
     )

@@ -29,6 +29,7 @@ COPY railway/catalog_server.py /catalog_server.py
 COPY railway/debugger_relay.py /debugger_relay.py
 COPY railway/harness_relay.py /harness_relay.py
 COPY railway/spark_runner.py /spark_runner.py
+COPY railway/modes_store.py /modes_store.py
 COPY railway/catalog_schema.sql /catalog_schema.sql
 COPY railway/games_schema.sql /games_schema.sql
 COPY railway/games_store.py /games_store.py
@@ -54,6 +55,10 @@ RUN test -s /etc/oauth2-proxy/templates/sign_in.html \
     && grep -q "DebuggerRelay" /catalog_server.py \
     && grep -q "SparkRunnerRelay" /catalog_server.py \
     && grep -q "arc3_spark_runner_jobs" /catalog_schema.sql \
+    && test -s /modes_store.py \
+    && grep -q "ModeLibrary" /catalog_server.py \
+    && grep -q "arc3_mode_versions" /catalog_schema.sql \
+    && test -s /srv/static/data/modes.json \
     && grep -q "GamesApi" /catalog_server.py \
     && grep -q "arc3_game_feedback" /games_schema.sql \
     && grep -q "TraceFeedbackApi" /catalog_server.py \

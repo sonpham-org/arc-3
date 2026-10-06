@@ -479,3 +479,30 @@ CREATE TABLE IF NOT EXISTS arc3_spark_runner_jobs (
 
 CREATE INDEX IF NOT EXISTS arc3_spark_runner_jobs_game_idx
 ON arc3_spark_runner_jobs (game, job_id DESC);
+
+-- Mode explorer shared modes (railway/modes_store.py). Append-only: every save of a mode is a new row, the current
+-- mode is its highest version, restore copies an old version forward, delete is a version with hidden = true.
+-- Version 1 of each built-in mode is seeded from docs/static/data/modes.json.
+CREATE TABLE IF NOT EXISTS arc3_mode_versions (
+    mode_id text NOT NULL CHECK (mode_id ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
+    version integer NOT NULL CHECK (version >= 1),
+    body jsonb NOT NULL,
+    hidden boolean NOT NULL DEFAULT false,
+    note text NOT NULL DEFAULT '' CHECK (length(note) <= 500),
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (mode_id, version)
+);
+
+-- What each Play sent: the exact mode versions (full prompt text, settings, version, editor) per slot, keyed by the
+-- runner's job id, so a result keeps pointing at the wording it ran even after the mode is edited.
+CREATE TABLE IF NOT EXISTS arc3_spark_runner_job_modes (
+    job_id text PRIMARY KEY CHECK (job_id ~ '^[a-z0-9-]{8,40}$'),
+    game text NOT NULL,
+    record jsonb NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS arc3_spark_runner_job_modes_game_idx
+ON arc3_spark_runner_job_modes (game, job_id DESC);

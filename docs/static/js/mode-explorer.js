@@ -15,16 +15,21 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). A slim title li
   - Prompts: each mode from modes.json (Stock, Probe, Hypothesize, Execute, Re-examine, Challenge, Recover, Level
     start, plus the user's custom modes) in two variants, "son" and "daniel" (Franzen's public notebook), with a
     side-by-side line diff against Stock or against the other variant.
-  Custom modes (name, colour, prompt based on Stock, settings) and queues are saved in localStorage and can be
+  Modes are shared (Son's ask, #arc-3 6-Oct 08:42 ET): they come from the site's database through mode-library.js,
+  the same for everyone signed in; the pencil on each chip (and "+ New mode") opens the editor there, every save is a
+  new version, and Play sends each slot's version so the job keeps the exact wording. If the database cannot be
+  reached the page falls back to modes.json plus this browser's own custom modes, as before. Queues stay in
+  localStorage; custom modes from the old browser store are offered for upload once. Queues and modes can be
   exported and imported as JSON. View state lives in the URL (?view=&mode=&v=&cmp=&game=). The diff is a plain
   longest-common-subsequence over lines.
-SRP/DRY check: Pass — prompt text and default settings live only in modes.json, the tally only in stuck-levels.json;
+SRP/DRY check: Pass — prompt text and default settings live in the shared mode store (seeded from modes.json), the tally only in stuck-levels.json;
   mode ids and colours follow RL2's vocabulary (carried per mode as `rl2`/`color` in the JSON); layout classes come
   from rl-shell.css; Play, polling and results drawing stay in spark-runner.js. The store key and shape are the
   ones the earlier scheme builder used, so saved queues and custom modes carry over.
 */
 
-import { loadRunnerInfo, renderPlayRow, renderResults } from './spark-runner.js?v=20261006-q1';
+import { loadRunnerInfo, renderPlayRow, renderResults } from './spark-runner.js?v=20261006-m1';
+import { lib, initLibrary, loadLibrary, openEditor, applySaved, uploadLocal, versionOf, versionTag, whoWhen, loadRuns } from './mode-library.js?v=20261006-m1';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -59,7 +64,8 @@ let store = loadStore();
 function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {}, game: s.game || null };
+    return { customModes: Array.isArray(s.customModes) ? s.customModes : [], schemes: s.schemes && typeof s.schemes === 'object' ? s.schemes : {}, game: s.game || null, migrated: s.migrated || null,
+      uploaded: Array.isArray(s.uploaded) ? s.uploaded : [] };
   } catch { return { customModes: [], schemes: {}, game: null }; }
 }
 function saveStore() {
@@ -79,9 +85,14 @@ function asMode(c) {
   return { id: c.id, name: c.name, color: c.color, base: 'turn', custom: true, base_variant: c.base_variant,
     settings: { ...FALLBACK_SETTINGS, ...(c.settings || {}) }, settings_why: c.settings_why || '', variants: { son: v, daniel: v } };
 }
-function allModes() { return DATA.modes.concat(store.customModes.map(asMode)); }
-function findMode(id) { return allModes().find(m => m.id === id) || null; }
-function modeById(id) { return findMode(id) || DATA.modes[1] || DATA.modes[0]; }
+// Shared modes from the site's database when it answers (everyone sees the same ones); otherwise modes.json plus this
+// browser's own custom modes, read-only for the built-ins, as before.
+function allModes() { return lib.ok ? lib.modes.filter(m => !m.hidden) : DATA.modes.concat(store.customModes.map(asMode)); }
+// deleted (hidden) shared modes still resolve, so queues and past results keep their names and colours
+function findMode(id) { return (lib.ok ? lib.modes : allModes()).find(m => m.id === id) || null; }
+function modeById(id) { const all = allModes(); return all.find(m => m.id === id) || all[1] || all[0]; }
+// The harness's own Stock text for a surface: what the diff is drawn against and what the runner diffs against.
+function stockText(variant, base) { return DATA.stock[variant][base]; }
 function defaults(m) { return { ...FALLBACK_SETTINGS, ...(m.settings || {}) }; }
 function budgetText(s) { return s && s.actions != null ? `up to ${s.actions} action${s.actions === 1 ? '' : 's'}` : 'no limit'; }
 
@@ -168,11 +179,20 @@ function renderDock() {
     b.onclick = () => { if (drag.suppressClick) return; onChip(m); };
     // a finger on the bar scrolls it sideways, so on touch a chip is tapped in rather than dragged
     if (state.view === 'queue') b.onpointerdown = (e) => { if (e.pointerType === 'mouse') startDrag(e, { kind: 'mode', id: m.id, el: b }); };
-    box.append(b);
+    if (!lib.ok) { box.append(b); continue; }
+    const wrap = h('span', 'mx-chip' + (picked ? ' on' : ''));
+    wrap.style.setProperty('--mc', m.color);
+    const ed = h('button', 'mx-chipedit', '✎');
+    ed.title = `Edit ${m.name} (${versionTag(m)}, ${whoWhen(m.created_by, m.created_at)}); saving makes a new version`;
+    ed.setAttribute('aria-label', `Edit ${m.name}`);
+    ed.onclick = () => editMode(m.id);
+    wrap.append(b, ed);
+    box.append(wrap);
   }
   const add = h('button', 'mx-mode mx-newmode', '+ New mode');
-  add.title = 'Make your own mode: a name, a colour, a prompt based on Stock, and settings. Saved in this browser.';
-  add.onclick = () => openModeDialog(null);
+  add.title = lib.ok ? 'Add a mode for everyone: starts from Stock; you set the name, colour, wording and settings.'
+    : 'Make your own mode: a name, a colour, a prompt based on Stock, and settings. Saved in this browser.';
+  add.onclick = () => (lib.ok ? editMode(null) : openModeDialog(null));
   box.append(add);
 
   $('compare').hidden = state.view !== 'prompts';
@@ -208,7 +228,11 @@ function renderCard(m) {
   const head = h('div', 'mx-head');
   const tag = h('span', 'mx-tag', m.name); tag.style.background = m.color;
   head.append(tag);
-  if (m.custom) {
+  if (m.shared) {
+    head.append(h('span', 'chip draft', versionTag(m)), h('span', 'mx-rl2', `${m.version > 1 ? 'edited by' : m.builtin ? 'draft,' : 'added by'} ${whoWhen(m.created_by, m.created_at)}`));
+    const edit = h('button', 'mx-tool', 'Edit mode'); edit.onclick = () => editMode(m.id);
+    head.append(edit);
+  } else if (m.custom) {
     head.append(h('span', 'chip draft', 'Custom'), h('span', 'mx-rl2', `yours, built on ${VARIANTS[m.base_variant] || 'Stock'}, saved in this browser`));
     const edit = h('button', 'mx-tool', 'Edit mode'); edit.onclick = () => openModeDialog(m.id);
     head.append(edit);
@@ -220,7 +244,7 @@ function renderCard(m) {
   card.append(head);
   const dl = h('dl', 'mx-facts');
   const rows = [['Purpose', v.purpose], ['When to use', v.trigger], ['Action budget', v.budget],
-    ['Built on', m.custom ? `Stock, ${VARIANTS[m.base_variant] || ''}` : DATA.surfaces[m.base]],
+    ['Built on', m.base_variant ? `${DATA.surfaces[m.base]}, ${VARIANTS[m.base_variant]} only` : DATA.surfaces[m.base]],
     ['Settings', settingsSummary(defaults(m))]];
   if (m.settings_why) rows.push(['Why these settings', m.settings_why]);
   for (const [k, val] of rows) dl.append(h('dt', null, k), h('dd', null, val));
@@ -229,9 +253,9 @@ function renderCard(m) {
 
 function renderDiff(m) {
   const other = state.v === 'son' ? 'daniel' : 'son';
-  const leftText = state.cmp === 'other' ? m.variants[other].prompt : DATA.stock[state.v][m.base];
+  const leftText = state.cmp === 'other' ? m.variants[other].prompt : stockText(m.base_variant || state.v, m.base);
   const rightText = m.variants[state.v].prompt;
-  const leftLabel = state.cmp === 'other' ? `${m.name} · ${VARIANTS[other]}` : `Stock · ${VARIANTS[state.v]}`;
+  const leftLabel = state.cmp === 'other' ? `${m.name} · ${VARIANTS[other]}` : `Harness Stock · ${VARIANTS[m.base_variant || state.v]}`;
   const rightLabel = `${m.name} · ${m.custom ? 'your prompt' : VARIANTS[state.v]}`;
   const rows = diffLines(leftText.split('\n'), rightText.split('\n'));
   const counts = { add: 0, del: 0, chg: 0 };
@@ -327,7 +351,7 @@ function renderQueueArea() {
   q.slots.forEach((item, i) => list.append(itemNode(item, i)));
   if (!q.slots.length) list.append(h('li', 'mx-qempty', 'Drag modes here from the bar above, or tap a mode to add it. An empty queue plays Stock only.'));
   const tail = h('li', 'mx-qitem mx-qtail');
-  const stock = DATA.modes.find(m => m.id === 'stock');
+  const stock = findMode('stock');
   const ttag = h('span', 'mx-tag', q.slots.length ? 'then Stock' : 'Stock'); ttag.style.background = stock ? stock.color : '#8792a2';
   tail.title = 'After the queue runs out, Stock plays every later turn until the level is cleared or a cap is hit.';
   tail.append(ttag);
@@ -346,7 +370,7 @@ function itemNode(item, i) {
   li.style.setProperty('--mc', m ? m.color : '#6b7280');
   const grip = h('span', 'mx-grip', '⠿'); grip.title = 'Drag to reorder, or drag out of the queue to remove';
   grip.setAttribute('aria-hidden', 'true');
-  li.append(grip, h('span', 'mx-qn', String(i + 1)), h('span', 'mx-qname', m ? m.name : `${item.mode} (missing)`));
+  li.append(grip, h('span', 'mx-qn', String(i + 1)), h('span', 'mx-qname', m ? m.name + (m.hidden ? ' (deleted)' : '') : `${item.mode} (missing)`));
   li.title = settingsSummary(itemSettings(item)) + (edited ? ' (edited)' : ' (mode defaults)');
   const gear = h('button', 'mx-qbtn' + (edited ? ' edited' : ''), '⚙');
   gear.title = edited ? 'Settings (changed from the mode defaults)' : 'Settings';
@@ -611,13 +635,55 @@ async function importJson(file) {
       slots: s.slots.map(x => ({ mode: x.mode, overrides: x.overrides && typeof x.overrides === 'object' ? x.overrides : {} })) };
   }
   saveStore();
+  if (lib.ok && modes.length) {
+    const up = await uploadLocal(store.customModes.filter(c => modes.some(x => x.id === c.id)));
+    remapQueues(up.ids);
+    render();
+    flash(`Imported ${schemes.length} queue(s); ${Object.keys(up.ids).length} mode(s) added to the shared modes.` + (up.failed.length ? ` Not added: ${up.failed.join(', ')}.` : ''));
+    return;
+  }
   render();
   flash(`Imported ${modes.length} custom mode(s) and ${schemes.length} queue(s).`);
 }
 
 // ---------------------------------------------------------------- main
 
-function playCtx(g, q) { return { game: g, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults }; }
+function playCtx(g, q) { return { game: g, scheme: q, variant: state.v, DATA, findMode, slotSettings: itemSettings, defaults, stockText, versionOf, loadRuns, whoWhen }; }
+
+// ---------------------------------------------------------------- shared modes
+
+function editMode(id) {
+  openEditor(id, { variant: state.v, stockMode: findMode('stock'), onSaved: (row) => {
+    const m = applySaved(row);
+    flash(m.hidden ? `${m.name} deleted for everyone; its history is kept.` : `${m.name} saved as version ${m.version}, shared with everyone.`);
+    if (state.view === 'prompts' && !m.hidden) state.mode = m.id;
+    render();
+  } });
+}
+
+function remapQueues(ids) {
+  for (const q of Object.values(store.schemes)) for (const x of q.slots) if (ids[x.mode]) x.mode = ids[x.mode];
+  saveStore();
+}
+
+// Custom modes made before modes were shared live only in this browser. Offer once to upload them; keep the copy.
+async function migrateLocal() {
+  const uploaded = store.uploaded || (store.uploaded = []);
+  const todo = store.customModes.filter(c => !uploaded.includes(c.id));
+  if (!lib.ok || store.migrated || !todo.length) return;
+  const names = todo.map(c => c.name).join(', ');
+  const yes = confirm(`This browser has ${todo.length === 1 ? 'a custom mode' : todo.length + ' custom modes'} saved only here (${names}). ` +
+    'Modes are now shared with everyone signed in. Upload them so everyone sees them? Your queues will keep using them.');
+  store.migrated = yes ? 'uploaded' : 'declined';
+  saveStore();
+  if (!yes) return;
+  const up = await uploadLocal(todo);
+  uploaded.push(...Object.keys(up.ids));          // a retry after a partial failure skips what already went up
+  remapQueues(up.ids);
+  if (up.failed.length) { store.migrated = null; saveStore(); }
+  flash(`Uploaded ${Object.keys(up.ids).length} mode(s) to the shared modes.` + (up.failed.length ? ` Not uploaded: ${up.failed.join(', ')} (asked again next time).` : ''));
+  render();
+}
 
 function render() {
   syncUrl();
@@ -658,7 +724,12 @@ async function main() {
     $('card').textContent = `Could not load the mode prompts (${e.message}).`;
     return;
   }
-  $('updated').textContent = `Draft prompts · ${DATA.meta.date}`;
+  initLibrary({ h, settingsGrid, diffLines, settingsSummary, FALLBACK_SETTINGS, stockText });
+  await loadLibrary();
+  $('updated').textContent = lib.ok ? 'Shared modes · anyone signed in can edit; every save is a new version'
+    : `Draft prompts · ${DATA.meta.date} · shared modes could not load (${lib.error}), showing the built-in drafts`;
+  $('storenote').textContent = lib.ok ? 'Modes are shared and versioned for everyone signed in. Queues are saved in this browser only.'
+    : 'Custom modes and queues are saved in this browser only.';
   $('finding').textContent = DATA.meta.finding;
   $('notation').textContent = `${DATA.meta.notation} ${DATA.meta.insert_rule} ${DATA.meta.settings_note || ''}`;
   $('copy').onclick = async () => {
@@ -680,6 +751,7 @@ async function main() {
   if (!currentGame()) state.game = store.game;
   if (!currentGame()) state.game = stuckGames()[0]?.game || null;
   render();
+  migrateLocal();
   await loadRunnerInfo();
   if (state.view === 'queue' && currentGame()) renderQueueArea();
 }

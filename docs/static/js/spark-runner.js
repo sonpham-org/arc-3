@@ -13,7 +13,9 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     live job (queued / running, per-sample turn, mode, actions, level) and every past job from the runner or, when
     the Sparks are off, from the site's storage — the queue that was run, samples cleared vs not, levels gained,
     actions, turns, next to the stock tally for that level. While anything is live it refreshes every few seconds.
-SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (modes.json + the queue); the tally from
+  Each slot also carries the mode version it came from; the site stores the exact text and versions with the job,
+  and every job card shows them (versions on the queue tags, the full wording in a fold-out).
+SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
 
@@ -96,19 +98,21 @@ function clampSettings(s) {
 
 function buildRequest(ctx) {
   const v = ctx.variant;
+  // A mode with one wording is diffed against the Stock of that wording (base_variant), as custom modes always were.
+  // `version` names the stored mode version the text came from; the site keeps it with the job (modes_store.py).
   const slotFor = (mode, settings) => {
-    const custom = !!mode.custom;
+    const base = mode.base || 'turn';
     const prompt = mode.variants[v].prompt;
-    const base = custom ? 'turn' : mode.base;
-    const stockTemplate = custom ? ctx.DATA.stock[mode.base_variant || v].turn : ctx.DATA.stock[v][base];
-    return { mode: mode.id, name: mode.name, base, prompt, stock_template: stockTemplate, settings: clampSettings(settings) };
+    const stockTemplate = ctx.stockText(mode.base_variant || v, base);
+    return { mode: mode.id, name: mode.name, base, prompt, stock_template: stockTemplate, settings: clampSettings(settings),
+      version: ctx.versionOf(mode, v) };
   };
   const scheme = ctx.scheme.slots.map((slot) => {
     const m = ctx.findMode(slot.mode);
     if (!m) throw new Error(`the queue uses a mode that no longer exists (${slot.mode})`);
     return slotFor(m, ctx.slotSettings(slot));
   });
-  const stock = ctx.DATA.modes.find(m => m.id === 'stock');
+  const stock = ctx.findMode('stock');
   return {
     game: ctx.game.game, stuck_level: ctx.game.stuck_level, variant: v, scheme,
     stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
@@ -196,7 +200,8 @@ async function refreshResults(box, ctx) {
   clearTimeout(pollTimer);
   const game = ctx.game.game;
   let data;
-  try { data = await call(`jobs?game=${encodeURIComponent(game)}`); }
+  const runs = ctx.loadRuns ? ctx.loadRuns(game) : Promise.resolve({});
+  try { data = await call(`jobs?game=${encodeURIComponent(game)}`); data.records = await runs; }
   catch (e) {
     if (resultsGame !== game) return;
     box.textContent = '';
@@ -224,30 +229,54 @@ function drawResults(box, ctx, data) {
   const all = (data.jobs || []).slice().sort((a, b) => String(b.created).localeCompare(String(a.created)));
   const jobs = all.filter(j => j.stuck_level === g.stuck_level);
   if (!jobs.length) box.append(h('p', 'mx-qempty mx-noruns', `Nothing has run on ${g.nickname} level ${g.stuck_level} yet. Build a queue and press Play.`));
-  for (const j of jobs) box.append(jobCard(j, ctx));
+  for (const j of jobs) box.append(jobCard(j, ctx, (data.records || {})[j.id]));
   const other = all.length - jobs.length;
   if (other) box.append(h('p', 'mx-sum', `${plural(other, 'other job')} for ${g.nickname} started from a different level and ${other === 1 ? 'is' : 'are'} not shown.`));
 }
 
 const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
 
-function queueTags(j, ctx) {
+function queueTags(j, ctx, rec) {
   const wrap = h('span', 'mx-jobq');
-  const tag = (name, id) => {
+  const tag = (name, id, slot) => {
     const m = ctx.findMode(id);
-    const t = h('span', 'mx-jtag', name); t.style.setProperty('--mc', m ? m.color : '#6b7280');
+    const t = h('span', 'mx-jtag', name + (slot && slot.version ? ` v${slot.version}` : ''));
+    t.style.setProperty('--mc', m ? m.color : '#6b7280');
     return t;
   };
-  for (const s of j.scheme_summary || []) wrap.append(tag(s.name || s.mode, s.mode), h('span', 'mx-arrow', '→'));
-  wrap.append(tag(j.scheme_summary && j.scheme_summary.length ? 'then Stock' : 'Stock only', 'stock'));
+  (j.scheme_summary || []).forEach((s, i) => wrap.append(tag(s.name || s.mode, s.mode, rec && rec.scheme[i]), h('span', 'mx-arrow', '→')));
+  wrap.append(tag(j.scheme_summary && j.scheme_summary.length ? 'then Stock' : 'Stock only', 'stock', rec && rec.stock));
   return wrap;
 }
 
-function jobCard(j, ctx) {
+// The exact wording a job ran, as recorded by the site when Play was pressed: each slot's mode version, who saved
+// that version and when, its settings and full prompt text. Jobs from before recording started say so.
+function wordingBlock(rec, ctx) {
+  const det = h('details', 'mx-wording');
+  if (!rec) { det.append(h('summary', 'muted', 'Wording: not recorded (started before mode versions were kept)')); return det; }
+  const slots = rec.scheme.concat([{ ...rec.stock, name: (rec.scheme.length ? 'then ' : '') + (rec.stock.name || 'Stock') }]);
+  const label = (s) => `${s.name || s.mode}${s.version ? ' v' + s.version : ''}`;
+  const odd = slots.some(s => s.version_check === 'differs');
+  det.append(h('summary', null, `Wording sent: ${slots.map(label).join(' → ')}${odd ? ' (some text differed from the saved version; the text below is what ran)' : ''}`));
+  for (const s of slots) {
+    const box = h('div', 'mx-wslot');
+    const who = s.edited_by ? ctx.whoWhen(s.edited_by, s.edited_at) : 'not a saved version';
+    box.append(h('div', 'mx-whead', `${label(s)} · ${who}${s.version_check === 'differs' ? ' · text differs from that saved version' : ''}`));
+    const st = s.settings || {};
+    box.append(h('div', 'mx-wset', `temp ${st.temperature ?? '–'} · ${st.thinking ? 'thinking' + (st.effort && st.effort !== 'default' ? ', ' + st.effort + ' effort' : '') + (st.thinking_budget ? ', ≤' + st.thinking_budget + ' tokens' : '') : 'no thinking'}` +
+      ` · ${st.tool_calls != null ? st.tool_calls + ' tool calls' : 'any tool calls'} · ${st.actions != null ? '≤' + st.actions + ' actions' : 'any actions'}`));
+    const pre = h('pre', 'mx-wtext', s.prompt || '');
+    box.append(pre);
+    det.append(box);
+  }
+  return det;
+}
+
+function jobCard(j, ctx, rec) {
   const card = h('div', 'card mx-job');
   const top = h('div', 'mx-jobtop');
   const when = new Date(j.created);
-  top.append(h('span', `chip mx-js ${j.status}`, j.status), queueTags(j, ctx));
+  top.append(h('span', `chip mx-js ${j.status}`, j.status), queueTags(j, ctx, rec));
   card.append(top);
   const caps = j.caps || {};
   const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
@@ -256,6 +285,7 @@ function jobCard(j, ctx) {
   if (j.by) meta.push(j.by);
   card.append(h('p', 'mx-jobmeta', meta.join(' · ')));
   if (j.label) card.append(h('p', 'mx-sum', j.label));
+  card.append(wordingBlock(rec, ctx));
 
   const rows = j.sample_rows || [];
   const results = rows.map(r => r.result).filter(Boolean);

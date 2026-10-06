@@ -11,6 +11,7 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   The runner's own key (typed once into the page, kept in that browser) travels in the Authorization header and is
   checked by the runner, not here; Play and Cancel also need a same-site Origin. The signed-in Google account is
   sent along as the job's "by". When the runner cannot be reached, job reads are answered from storage and say so.
+  After the runner accepts a Play, on_play (modes_store.ModeLibrary.record_play) keeps the exact mode versions sent.
 SRP/DRY check: Pass - relay shape follows harness_relay.py and debugger_relay.py (identity from oauth2-proxy,
   narrow route list, size caps, no redirects); storage is one upsert table in catalog_schema.sql. No game logic.
 """
@@ -43,8 +44,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class SparkRunnerRelay:
-    def __init__(self, connect, *, upstream: str | None = None, proxy_url: str | None = None, timeout: float = 60.0):
+    def __init__(self, connect, *, upstream: str | None = None, proxy_url: str | None = None, timeout: float = 60.0,
+                 on_play=None):
         self.connect = connect
+        self.on_play = on_play   # (job_id, payload, identity): keeps the exact mode versions a Play sent (modes_store.py)
         self.upstream = (upstream or os.environ.get("ARC3_SPARK_RUNNER_UPSTREAM") or DEFAULT_UPSTREAM).rstrip("/")
         proxy = proxy_url if proxy_url is not None else os.environ.get("ARC3_DEBUGGER_PROXY", "http://127.0.0.1:1055")
         handlers: list = [_NoRedirect()]
@@ -113,6 +116,7 @@ class SparkRunnerRelay:
             handler.send_json(404, {"error": "not_found", "message": "unknown Spark runner route"})
             return True
         body = None
+        payload = None
         if method == "POST":
             if handler.headers.get("Origin") != SITE_ORIGIN:
                 handler.send_json(403, {"error": "bad_origin", "message": "invalid request origin"})
@@ -160,6 +164,13 @@ class SparkRunnerRelay:
             print(f"spark-runner relay {method} {sub} failed: {exc}", flush=True)
             self._unreachable(handler, method, sub, parsed.query)
             return True
+        if sub == "/play" and status == 200 and self.on_play is not None:
+            try:
+                job_id = json.loads(content.decode("utf-8")).get("job")
+                if isinstance(job_id, str):
+                    self.on_play(job_id, payload, identity)
+            except Exception as exc:  # recording must never fail a Play the runner already accepted
+                print(f"spark-runner: recording the modes of a play failed: {exc}", flush=True)
         if method == "GET" and status == 200 and (sub == "/jobs" or JOB_ROUTE.fullmatch(sub)):
             data = json.loads(content.decode("utf-8"))
             self._store(data.get("jobs", []) if sub == "/jobs" else [data])

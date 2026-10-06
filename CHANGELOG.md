@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-shared-modes]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Modes are shared and versioned.** Son (#arc-3, 6-Oct 08:42 ET): "Mark needs a way to edit and add new modes, is it there? And when will the mode be recorded?" Modes now live in the site's Postgres (`arc3_mode_versions`, append-only), the same for everyone signed in. A pencil on every chip in the pinned bar opens a small editor: name, colour, the prompt in Son's and Franzen's wording, a live diff against the harness's Stock prompt (the text the Spark runner diffs against), the settings, a note. Save makes a new version with who and when; History lists every version with Restore (copies it forward); Delete hides the mode for everyone and keeps its history ("+ New mode" lists deleted modes to bring back). Built-in modes, Stock included, are version 1 from `modes.json`, seeded only for ids the database does not have. "+ New mode" starts from the current Stock. The editor warns when an edit would be refused by the runner (removing a templated line, adding a placeholder or `[when]` line). Two people saving the same mode: the second gets a clear refusal, not a silent overwrite.
+- **Recorded at Play.** Each Play sends the version of every slot; after the runner accepts it the site stores the exact text, Stock template, settings, version, editor and time per slot with the job id (`arc3_spark_runner_job_modes`) and checks the text against the stored version. Every job card shows the versions on its queue tags and the full wording in a fold-out; jobs from before this say the wording was not recorded.
+- Browser-only custom modes are offered for upload once on first load (kept in the browser too); queues that used them follow the upload. Import uploads imported modes. Queues stay in the browser. If the modes API cannot be reached the page falls back to `modes.json` plus the browser's own modes, as before.
+- How: `railway/modes_store.py` (new; routes under `/api/v1/modes`), `railway/catalog_schema.sql`, `railway/catalog_server.py` (wiring, seed path), `railway/spark_runner.py` (an `on_play` hook after an accepted Play), `Dockerfile`, `docs/static/js/mode-library.js` (new: API, editor, history, upload), `docs/static/js/mode-explorer.js`, `docs/static/js/spark-runner.js`, `docs/static/css/mode-explorer.css`, `docs/mode-explorer.html`. The runner on Jethro is unchanged (it ignores the extra version field). Tested locally against the real catalog server and a throwaway Postgres with a stub runner, desktop and phone widths.
+
 ## [2026.10.06-mode-explorer-queue]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

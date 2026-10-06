@@ -87,6 +87,10 @@ the first sample of a job and the later samples reuse it.
   prompt, thinking, tool call and result (`transcript.txt`), one line per turn with mode, settings, how the mode
   text was applied, actions, level and tokens (`turns.jsonl`), frames (`viewer.json`). Oldest trajectories are
   pruned past 40 GB; results and turn logs stay.
+- **Mode wording per job:** when the runner accepts a Play, the site stores what was sent per slot (full prompt text,
+  Stock template, settings) with the shared mode version it came from, who saved that version and when
+  (`arc3_spark_runner_job_modes`, see `railway/modes_store.py`). Modes themselves are shared and versioned in
+  `arc3_mode_versions`; editing a mode later never changes what a past job points at.
 - **Results summaries:** the runner's `job.json` / `result.json`, and a copy of every job view in the site's
   Postgres (`arc3_spark_runner_jobs`), so a game's results still load when the Sparks are off.
 
