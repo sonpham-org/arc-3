@@ -53,7 +53,9 @@ systemctl --user status arc3-runner-tunnel   # ssh -R 11234 -> Cletus 127.0.0.1:
 ```
 
 Settings are `Environment=` lines in `~/.config/systemd/user/arc3-runner.service`: model URL and id, concurrency
-(default 4 samples at once across all jobs), python path.
+(default 4 samples at once), python path. Only one Play job runs at a time: the oldest unfinished one gets all
+the lanes, later jobs wait whole, first come first served (`place_in_line` on each job, `play_queue` on
+`/api/health`). Harvest only runs when no Play job is running or waiting.
 
 Speed and limits (set 6-Oct after Son said about 40 tokens/s is good enough): measured on the two-Spark server,
 one stream gets about 33 tokens/s, three get about 25 each (75 total), six get about 18 each (104 total). Four at

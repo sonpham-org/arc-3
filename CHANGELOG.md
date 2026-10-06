@@ -15,6 +15,13 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-spark-runner-one-job-at-a-time]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **One Play job at a time.** Son (#arc-3, 6-Oct 08:40 ET): "queue up so that only one person's request gets filled at once." The runner now plays only the oldest unfinished Play job, which gets all four lanes; later jobs wait whole, first come first served (ties within a second broken by queue time). Each job view carries `place_in_line`; `/api/health` lists `play_queue`. The page shows "2nd in line" and how many jobs are ahead. Harvest waits for an empty line.
+- Tested on the cluster: a second job waited whole while the first played, then took both its lanes; harvest stayed off until the line emptied.
+- How: `tools/spark_runner/server.py` (`play_line`, scheduler), `docs/static/js/spark-runner.js`, runner README and design doc.
+
 ## [2026.10.06-spark-runner-exact-starts]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

@@ -146,12 +146,19 @@ function blocked(g, variant) {
   return '';
 }
 
+function ordinal(n) {
+  const t = n % 100, e = n % 10;
+  return n + (t >= 11 && t <= 13 ? 'th' : e === 1 ? 'st' : e === 2 ? 'nd' : e === 3 ? 'rd' : 'th');
+}
+
 function runnerLine() {
   if (!health) return '';
   if (health.ok === false) return '';
   const m = health.model || {};
-  const busy = health.samples_running || health.samples_queued
-    ? ` · ${health.samples_running} running, ${health.samples_queued} waiting` : ' · idle';
+  const pq = health.play_queue || [];
+  const busy = pq.length
+    ? ` · playing ${pq[0].game}${pq[0].by ? ' for ' + pq[0].by : ''}${pq.length > 1 ? `, ${plural(pq.length - 1, 'job')} waiting in line` : ''}`
+    : health.samples_running || health.samples_queued ? ` · ${health.samples_running} running, ${health.samples_queued} waiting` : ' · idle';
   const hv = health.harvest;
   const harvest = !hv ? '' : !hv.enabled ? ' · harvest off'
     : (hv.running || []).length ? ` · harvesting exact starts (${hv.running.map(r => r.game).join(', ')})` : '';
@@ -196,7 +203,10 @@ export function renderPlayRow(box, ctx) {
     play.disabled = true; note.textContent = 'Sending to the runner…';
     try {
       const r = await call('play', { method: 'POST', body: req, auth: true });
-      note.textContent = `Queued on the Sparks: ${plural(r.queued_samples, 'sample')}. Watch it below.`;
+      // One Play job at a time gets every lane on the Sparks; the rest wait whole, first come first served.
+      note.textContent = r.place_in_line > 1
+        ? `Queued on the Sparks: ${plural(r.queued_samples, 'sample')}, ${ordinal(r.place_in_line)} in line. It starts when the ${r.place_in_line === 2 ? 'job' : 'jobs'} ahead of it finish. Watch it below.`
+        : `Queued on the Sparks: ${plural(r.queued_samples, 'sample')}, starting now with the whole cluster. Watch it below.`;
       const res = document.getElementById('results');
       if (res) await refreshResults(res, ctx);
     } catch (e) {
@@ -305,7 +315,8 @@ function jobCard(j, ctx, rec) {
   const sk = h('span', `chip mx-js ${startKind === 'rebuilt' ? 'queued' : 'done'}`, startKind === 'rebuilt' ? 'conversation rebuilt' : startKind === 'reset' ? 'from reset' : 'exact start');
   sk.title = startKind === 'rebuilt' ? 'Started from the snapshot: the game state is exact, the conversation was rebuilt from stored transcripts'
     : startKind === 'reset' ? 'Started from the first frame of the game' : `Started from an exact checkpoint${j.start_checkpoint ? ' (' + j.start_checkpoint + ')' : ''}: the saved request, harness state and actions`;
-  top.append(h('span', `chip mx-js ${j.status}`, j.status), sk, queueTags(j, ctx, rec));
+  const waiting = j.place_in_line > 1;
+  top.append(h('span', `chip mx-js ${j.status}`, waiting ? `${ordinal(j.place_in_line)} in line` : j.status), sk, queueTags(j, ctx, rec));
   card.append(top);
   const caps = j.caps || {};
   const meta = [isNaN(when) ? j.created : when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
@@ -332,7 +343,8 @@ function jobCard(j, ctx, rec) {
       (turns != null ? ` · mean turns ${Math.round(turns * 10) / 10}` : '') +
       (s.errors ? ` · ${plural(s.errors, 'error')}` : '') +
       (done < j.samples ? ` · ${j.samples - done} still to finish` : '')));
-  } else line.textContent = j.status === 'queued' ? 'Waiting for a free slot on the Sparks.' : 'No sample has finished yet.';
+  } else line.textContent = waiting ? `Waiting in line: ${plural(j.jobs_ahead, 'job')} ahead. The Sparks play one person's job at a time, first come first served.`
+    : j.status === 'queued' ? 'Starting on the Sparks.' : 'No sample has finished yet.';
   card.append(line);
 
   const table = h('table', 'mx-table mx-results');

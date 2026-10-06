@@ -256,7 +256,8 @@ def play_line() -> list[str]:
     jobs = [read_json(p / "job.json") for p in JOBS.iterdir() if (p / "job.json").exists()]
     line = [j for j in jobs if j and j.get("kind", "play") == "play" and j["status"] in ("queued", "running")
             and not j.get("cancel") and any(s in ("queued", "running") for s in j["sample_state"])]
-    return [j["id"] for j in sorted(line, key=lambda j: j["created"])]
+    # created is to the second; queued_ns breaks ties between jobs sent in the same second
+    return [j["id"] for j in sorted(line, key=lambda j: (j["created"], j.get("queued_ns", 0), j["id"]))]
 
 
 def update_job(job_id: str, fn) -> dict:
@@ -574,7 +575,7 @@ def play(req: PlayRequest) -> dict:
            "scheme_summary": [{"mode": s["mode"], "name": s.get("name"), "settings": s["settings"]} for s in slots[:-1]],
            "model": {"model_id": MODEL_ID}, "conversation_exact": start_kind != "rebuilt", "kind": "play",
            "start_kind": start_kind, "start_checkpoint": start.get("id"),
-           "sample_state": ["queued"] * req.samples, "finished": None}
+           "sample_state": ["queued"] * req.samples, "finished": None, "queued_ns": time.time_ns()}
     write_json(d / "job.json", job)
     line = play_line()
     return {"job": job_id, "queued_samples": req.samples,

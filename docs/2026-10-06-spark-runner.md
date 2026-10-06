@@ -36,7 +36,7 @@ N samples (default 10) of that game from its stuck level:
 4. **Results.** Per sample: cleared or not, levels gained, actions used, turns, which modes ran, time. The page
    shows them right under the queue next to the stock tally for that level, for everyone signed in to the site.
 
-Four samples run at once across all jobs; the rest queue. Measured 6-Oct on the two-Spark server: one stream
+**One person's job at a time** (Son, #arc-3 6-Oct 08:40 ET: "only one person's request gets filled at once"). The oldest unfinished Play job gets all four lanes; every later job waits whole, first come first served, and the page shows its place in line (the runner's job views carry `place_in_line`, 1 = playing now, and `/api/health` lists `play_queue`). Lanes left over at the tail of a job (fewer samples left than lanes) stay idle rather than start the next person's job. Harvest runs only when no Play job is running or waiting. Four samples at once: Measured 6-Oct on the two-Spark server: one stream
 gets about 33 tokens/s, three about 25 each, six about 18 each. Son said about 40 tokens/s is good enough, so four at
 once keeps each sample near 22 tokens/s (a turn takes about three minutes) and a default 10-sample job finishes in
 roughly one to three hours. A sample process is light (about 160 MB, one CPU core at
