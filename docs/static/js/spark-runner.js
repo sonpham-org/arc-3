@@ -145,6 +145,7 @@ export function renderRunnerPanel(box, ctx) {
   else if (stuckPoints === null) why = 'Checking which starting points exist…';
   else if (!point) why = `No starting point exists for ${g.nickname}${g.stuck_level ? '' : ' (every level clears, so there is no stuck level)'}.`;
   else if (!point.replay_verified) why = `The starting point for ${g.nickname} has not passed its replay check.`;
+  else if (point.held_out && !point.playable) why = `${g.nickname} is one of the eight held-out games; the runner keeps them out of prompt tuning, so it does not play them.`;
   else if (sc.start_level !== point.stuck_level) why = `Only the stuck level (level ${point.stuck_level}) has a starting point. Click it in the level strip to play from there.`;
 
   const form = h('div', 'mx-runform');

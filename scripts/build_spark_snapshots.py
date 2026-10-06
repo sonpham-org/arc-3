@@ -3,7 +3,8 @@
 Author: Claude Opus 5.5 (Bubba)
 Date: 06-October-2026
 PURPOSE: Build the Spark runner's starting points ("snapshots"), one small JSON per game, written to
-  docs/static/data/snapshots/<game>.json plus an index.json. A snapshot is the state a recorded stock run of the
+  datasets/spark-runner-snapshots/<game>.json plus an index.json (kept out of docs/static on purpose: the site
+  serves docs/static to anyone without sign-in, and these hold verbatim model transcripts from Son's runs). A snapshot is the state a recorded stock run of the
   Franzen-notebook line was in at the end of the turn in which it first reached the game's stuck level
   (docs/static/data/stuck-levels.json):
     - actions: the exact engine action line (including the automatic RESETs after a game over) from the run's
@@ -19,7 +20,7 @@ PURPOSE: Build the Spark runner's starting points ("snapshots"), one small JSON 
   Games stuck at level 1 get a snapshot with no actions and no turns: the stuck point is the start of the game.
   Inputs (read-only copies pulled from the arc3-viewer volume with `railway ssh ... tar | base64`):
     <runs-dir>/<run>/run-overview.json and <runs-dir>/<run>/files/game-N*.json for the seven 2-Oct runs.
-  Usage: python3 scripts/build_spark_snapshots.py --runs-dir <dir> [--out docs/static/data/snapshots]
+  Usage: python3 scripts/build_spark_snapshots.py --runs-dir <dir> --plan <plan.json> [--out datasets/spark-runner-snapshots]
 SRP/DRY check: Pass - stuck levels come only from stuck-levels.json (scripts/stuck_levels_tally.py builds it); the
   runner (tools/spark_runner) consumes these files and does the replay check; nothing here talks to a model.
 """
@@ -195,7 +196,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-dir", type=Path, required=True)
     ap.add_argument("--plan", type=Path, required=True, help="game -> {run, index} chosen from the runs' overviews")
-    ap.add_argument("--out", type=Path, default=ROOT / "docs/static/data/snapshots")
+    ap.add_argument("--out", type=Path, default=ROOT / "datasets/spark-runner-snapshots")
     args = ap.parse_args()
     stuck = json.loads((ROOT / "docs/static/data/stuck-levels.json").read_text())
     plan = json.loads(args.plan.read_text())

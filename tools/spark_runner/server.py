@@ -57,6 +57,9 @@ MAX_GB = float(os.environ.get("ARC3_RUNNER_MAX_GB", "40"))
 PYTHON = os.environ.get("ARC3_RUNNER_PYTHON", sys.executable)
 ORIGINS = [o for o in os.environ.get("ARC3_RUNNER_ORIGINS", "https://arc3.sonpham.net").split(",") if o]
 CODE_RE = re.compile(r"^[a-z0-9]{4}$")
+# House rule of this repo's run scripts: the eight held-out games stay out of prompt tuning.
+HELD_OUT = ("vc33", "ar25", "sb26", "re86", "su15", "tr87", "tu93", "as66")
+ALLOW_HELD_OUT = os.environ.get("ARC3_RUNNER_ALLOW_HELD_OUT", "") == "1"
 JOB_RE = re.compile(r"^[a-z0-9-]{8,40}$")
 
 app = FastAPI(title="ARC-3 Spark runner", docs_url=None, redoc_url=None, openapi_url=None)
@@ -143,7 +146,8 @@ def stuck_points() -> list[dict]:
     out = []
     for s in index.get("snapshots", []):
         v = verified.get(s["game"])
-        out.append({**s, "replay_verified": bool(v and v.get("ok")), "replay_checked": v.get("checked") if v else None})
+        out.append({**s, "replay_verified": bool(v and v.get("ok")), "replay_checked": v.get("checked") if v else None,
+                    "held_out": s["game"] in HELD_OUT, "playable": bool(v and v.get("ok")) and (ALLOW_HELD_OUT or s["game"] not in HELD_OUT)})
     return out
 
 
@@ -352,6 +356,9 @@ def sample_turns(job_id: str, k: int) -> dict:
 
 @app.post("/api/play", dependencies=[Depends(require_key)])
 def play(req: PlayRequest) -> dict:
+    if req.game in HELD_OUT and not ALLOW_HELD_OUT:
+        raise HTTPException(403, f"{req.game} is one of the eight held-out games, which this runner does not play "
+                                 "(they stay out of prompt tuning); Son can switch that off on the runner")
     snap_file = snapshot_path(req.game)
     snap = read_json(snap_file)
     if snap is None:

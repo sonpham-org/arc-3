@@ -56,7 +56,7 @@ mode-explorer.html + static/js/spark-runner.js (signed in)
 
 ## Starting points (snapshots)
 
-`docs/static/data/snapshots/<game>.json`, built by `scripts/build_spark_snapshots.py`. One per game that has a stuck
+`datasets/spark-runner-snapshots/<game>.json`, built by `scripts/build_spark_snapshots.py`. One per game that has a stuck
 level (21 of 25; the four that clear every level have none). Source: the seven 2-Oct-2026 stock runs of the
 Franzen-notebook line that are on the site's volume (the four 3-Oct runs in the tally are not stored there as
 full runs). Per game the first of those runs that reached the stuck level is used; the snapshot is the end of the
@@ -72,8 +72,9 @@ turn in which it got there (that batch stops at the level change).
 Games stuck at level 1 (Skewer Kebabs, Ghost Twin) start at the beginning of the game with no history, which is
 exactly what a real run sees.
 
-The snapshots are small JSON (3.2 MB in all) and live with the site's static files, so they deploy with the site;
-the runner keeps its own copy. The model's prompt cache is not stored anywhere: the server's prefix caching warms on
+The snapshots are small JSON (3.2 MB in all) and live in the repo, not on the site's volume or in its static
+files: the site serves its static folder without sign-in, and these files hold verbatim model thinking and code
+from Son's runs, whose run data is sign-in only. The runner keeps its own copy; the page never needs them. The model's prompt cache is not stored anywhere: the server's prefix caching warms on
 the first sample of a job and the later samples reuse it.
 
 ## Where things are kept
@@ -102,5 +103,6 @@ More in `tools/spark_runner/README.md` (also `~/arc3-runner/README.md` on Jethro
 - Funnel waits for the tailnet admin's approval (above).
 - The runner does not start or stop the model server. If the cluster is being rebuilt, samples fail their requests,
   retry, and end with an error after repeated failures; the page shows that per sample.
-- Held-out games are playable here: the tally includes them and Son decides what to run. Results on them should not
-  be used to tune prompts for the held-out score.
+- The eight held-out games (vc33 ar25 sb26 re86 su15 tr87 tu93 as66) are refused, as in the repo's other run
+  scripts; four of them have snapshots (re86, su15, tr87, tu93). Son can lift this with
+  `Environment=ARC3_RUNNER_ALLOW_HELD_OUT=1` in the service file.

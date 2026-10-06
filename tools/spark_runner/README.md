@@ -28,7 +28,7 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 | `code/` | `server.py`, `sample.py`, `modes.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
 | `harness/` | Franzen's bundle + the notebook's patch + Son's toolfast edits, `notebook_env.json` with the notebook's flags (built by `build_harness.py`) |
 | `environment_files/` | the 25 public games (copy of `~/GitHub/arc-3/environment_files`) |
-| `snapshots/` | starting points (`<game>.json`, `index.json`) from `docs/static/data/snapshots/`, plus `verified.json` (replay check) |
+| `snapshots/` | starting points (`<game>.json`, `index.json`) from `datasets/spark-runner-snapshots/`, plus `verified.json` (replay check) |
 | `jobs/<job>/` | `spec.json`, `job.json`, `samples/<k>/` = `transcript.txt`, `turns.jsonl`, `viewer.json`, `progress.json`, `result.json`, `error.txt` if it failed; `samples/<k>.log` |
 | `runner.key` | the bearer key (0600). The Boss's copy: `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini |
 | `venv/` | Python 3.12: fastapi, uvicorn, requests, arc-agi 0.9.9, arcengine 0.9.3, numpy, pillow, imageio, scipy |
@@ -81,7 +81,7 @@ python3.13 tools/spark_runner/build_harness.py --bundle <bundle dir> \
 rsync -a --delete <dir>/ son@100.106.31.61:arc3-runner/harness/
 # snapshots (needs the run files pulled from the arc3-viewer volume, see scripts/build_spark_snapshots.py)
 python3 scripts/build_spark_snapshots.py --runs-dir <dir> --plan <plan.json>
-rsync -a --delete docs/static/data/snapshots/ son@100.106.31.61:arc3-runner/snapshots/
+rsync -a --delete datasets/spark-runner-snapshots/ son@100.106.31.61:arc3-runner/snapshots/
 # then on Jethro, re-run the replay check for every snapshot (writes snapshots/verified.json; no model calls):
 cd ~/arc3-runner && venv/bin/python code/sample.py --verify-all snapshots
 ```
