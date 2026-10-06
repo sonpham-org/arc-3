@@ -15,7 +15,7 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     GET  /api/jobs/{id}/samples/{k}/turns   per-turn log of one sample (bearer key)
   A job = one game's stuck point, one variant (son|daniel), one scheme (ordered slots of mode + prompt + settings)
   and N samples (default 10). Samples run as separate sample.py processes, at most ARC3_RUNNER_CONCURRENCY at a
-  time across all jobs (default 5; the Flash-Next server runs 10 sequences), first queued first served. State lives
+  time across all jobs (default 4, sized for the two-Spark server speed), first queued first served. State lives
   in ~/arc3-runner/jobs/<id>/ (spec.json, job.json, samples/<k>/...); a restart marks running samples as
   interrupted and requeues them. Old trajectories are pruned when the jobs folder passes ARC3_RUNNER_MAX_GB.
 SRP/DRY check: Pass - the game is played only by sample.py through Son's harness; prompts come from the page's
@@ -52,7 +52,7 @@ SNAPSHOTS = Path(os.environ.get("ARC3_RUNNER_SNAPSHOTS", HOME / "snapshots"))
 KEY_FILE = Path(os.environ.get("ARC3_RUNNER_KEY_FILE", HOME / "runner.key"))
 MODEL_BASE_URL = os.environ.get("ARC3_RUNNER_MODEL_URL", "http://127.0.0.1:11234/v1")
 MODEL_ID = os.environ.get("ARC3_RUNNER_MODEL_ID", "qwen3.8-flash-next")
-CONCURRENCY = int(os.environ.get("ARC3_RUNNER_CONCURRENCY", "5"))
+CONCURRENCY = int(os.environ.get("ARC3_RUNNER_CONCURRENCY", "4"))
 MAX_GB = float(os.environ.get("ARC3_RUNNER_MAX_GB", "40"))
 PYTHON = os.environ.get("ARC3_RUNNER_PYTHON", sys.executable)
 ORIGINS = [o for o in os.environ.get("ARC3_RUNNER_ORIGINS", "https://arc3.sonpham.net").split(",") if o]
@@ -121,7 +121,8 @@ class PlayRequest(BaseModel):
     stock: Slot
     samples: int = Field(default=10, ge=1, le=20)
     max_actions: int = Field(default=250, ge=10, le=1000)
-    max_minutes: int = Field(default=40, ge=5, le=120)
+    max_turns: int = Field(default=20, ge=1, le=60)
+    max_minutes: int = Field(default=75, ge=5, le=180)
     levels_to_play: int = Field(default=1, ge=1, le=9)
     label: str | None = Field(default=None, max_length=120)
     by: str | None = Field(default=None, max_length=120)
@@ -384,7 +385,7 @@ def play(req: PlayRequest) -> dict:
     (d / "samples").mkdir(parents=True)
     spec = {"game": req.game, "stuck_level": req.stuck_level, "variant": req.variant, "scheme": slots[:-1],
             "stock": slots[-1], "snapshot_path": str(snap_file),
-            "caps": {"max_actions": req.max_actions, "max_minutes": req.max_minutes, "levels_to_play": req.levels_to_play},
+            "caps": {"max_actions": req.max_actions, "max_turns": req.max_turns, "max_minutes": req.max_minutes, "levels_to_play": req.levels_to_play},
             "model": {"base_url": MODEL_BASE_URL, "model_id": MODEL_ID}}
     write_json(d / "spec.json", spec)
     job = {"id": job_id, "created": now(), "game": req.game, "stuck_level": req.stuck_level, "variant": req.variant,

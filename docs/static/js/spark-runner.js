@@ -26,7 +26,7 @@ let health = null;
 let pollTimer = null;
 const jobsByGame = new Map();
 // Play options survive the page's frequent redraws (every scheme edit redraws the builder).
-const opts = { variant: null, samples: 10, max_actions: 250, max_minutes: 40, label: '' };
+const opts = { variant: null, samples: 10, max_turns: 20, max_actions: 250, max_minutes: 75, label: '' };
 
 function runnerKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
 function setRunnerKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* private mode */ } }
@@ -115,8 +115,8 @@ function buildRequest(ctx, opts) {
   const stock = ctx.DATA.modes.find(m => m.id === 'stock');
   return {
     game: ctx.game.game, stuck_level: ctx.scheme.start_level, variant: v, scheme,
-    stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_actions: opts.max_actions,
-    max_minutes: opts.max_minutes, label: opts.label || null,
+    stock: slotFor(stock, ctx.defaults(stock)), samples: opts.samples, max_turns: opts.max_turns,
+    max_actions: opts.max_actions, max_minutes: opts.max_minutes, label: opts.label || null,
   };
 }
 
@@ -155,13 +155,16 @@ export function renderRunnerPanel(box, ctx) {
   variant.value = opts.variant || ctx.variant;
   variant.onchange = () => { opts.variant = variant.value; };
   const num = (val, min, max) => { const i = h('input'); i.type = 'number'; i.min = min; i.max = max; i.step = 1; i.value = val; i.inputMode = 'numeric'; return i; };
-  const samples = num(opts.samples, 1, 20), maxActions = num(opts.max_actions, 10, 1000), maxMinutes = num(opts.max_minutes, 5, 120);
+  const samples = num(opts.samples, 1, 20), maxTurns = num(opts.max_turns, 1, 60), maxActions = num(opts.max_actions, 10, 1000),
+    maxMinutes = num(opts.max_minutes, 5, 180);
   const label = h('input'); label.maxLength = 120; label.placeholder = 'optional note, e.g. probe twice then execute'; label.value = opts.label;
   samples.onchange = () => { opts.samples = +samples.value; };
+  maxTurns.onchange = () => { opts.max_turns = +maxTurns.value; };
   maxActions.onchange = () => { opts.max_actions = +maxActions.value; };
   maxMinutes.onchange = () => { opts.max_minutes = +maxMinutes.value; };
   label.oninput = () => { opts.label = label.value; };
-  form.append(field('Version', variant), field('Samples', samples), field('Action cap per sample', maxActions),
+  form.append(field('Version', variant), field('Samples', samples), field('Turns per sample', maxTurns),
+    field('Action cap per sample', maxActions),
     field('Minutes per sample', maxMinutes));
   const lab = field('Note', label); lab.classList.add('grow'); form.append(lab);
   box.append(form);
@@ -178,7 +181,8 @@ export function renderRunnerPanel(box, ctx) {
     if (!runnerKey()) { askKey((ok) => { if (ok) play.onclick(); }); return; }
     let req;
     try {
-      req = buildRequest(ctx, { variant: variant.value, samples: +samples.value, max_actions: +maxActions.value,
+      req = buildRequest(ctx, { variant: variant.value, samples: +samples.value, max_turns: +maxTurns.value,
+        max_actions: +maxActions.value,
         max_minutes: +maxMinutes.value, label: label.value.trim() });
     } catch (e) { note.textContent = `Not sent: ${e.message}`; return; }
     play.disabled = true; note.textContent = 'Sending to the runner…';
@@ -233,7 +237,7 @@ function drawJobs(box, ctx, data) {
   for (const j of jobs) box.append(jobCard(j, ctx));
 }
 
-const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
+const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
 
 function jobCard(j, ctx) {
   const card = h('div', 'card mx-job');

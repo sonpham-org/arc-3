@@ -28,11 +28,15 @@ N samples (default 10) of that game from its stuck level:
    effort, tool-call limit, thinking budget and action budget apply. A turn is one opening prompt; a continuation
    of the same turn keeps its slot.
 3. **Stock after the scheme.** When the scheme runs out, Stock plays every later turn until the stuck level is
-   cleared, the game ends, or the sample's cap (default 250 actions or 40 minutes) is hit.
+   cleared, the game ends, or the sample's cap is hit: 20 model turns by default (the main limit, so a sample gets the same
+   number of turns however busy the cluster is), 250 actions, or 75 minutes as a safety net.
 4. **Results.** Per sample: cleared or not, levels gained, actions used, turns, which modes ran, time. The page
    shows them under the game next to the stock tally for that level, for everyone signed in to the site.
 
-Five samples run at once across all jobs; the rest queue. A sample process is light (about 160 MB, one CPU core at
+Four samples run at once across all jobs; the rest queue. Measured 6-Oct on the two-Spark server: one stream
+gets about 33 tokens/s, three about 25 each, six about 18 each. Son said about 40 tokens/s is good enough, so four at
+once keeps each sample near 22 tokens/s (a turn takes about three minutes) and a default 10-sample job finishes in
+roughly one to three hours. A sample process is light (about 160 MB, one CPU core at
 most): the games and harness only. The model work is on the two-Spark Flash-Next server.
 
 ## Path

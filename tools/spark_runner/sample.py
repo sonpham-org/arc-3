@@ -235,7 +235,14 @@ def main(job_dir: Path, k: int) -> int:
         def analyze(self, *a, **kw):
             if not getattr(self, "_resume_after_yield", False):
                 begin_turn()
-            return original_analyze(*a, **kw)
+            out = original_analyze(*a, **kw)
+            # A turn counts toward the turn cap only once it has finished: not a retryable failure, and not
+            # yielding into a continuation of the same turn. should_stop also runs mid-turn, so it must not
+            # look at the turn that is still in progress.
+            if out is not None and not getattr(out, "retryable_failure", False) \
+                    and not getattr(self, "_resume_after_yield", False):
+                state["turns_done"] = state["turn"]
+            return out
         agent.analyze = types.MethodType(analyze, agent)
 
         original_build = agent._build_user_prompt
@@ -300,11 +307,16 @@ def main(job_dir: Path, k: int) -> int:
 
         original_should_stop = session.should_stop
         cap_actions = int(spec["caps"]["max_actions"])
+        # Turn cap (added 6-Oct): the main per-sample limit, so a sample gets the same number of model turns
+        # however busy the cluster is. The time cap stays as a safety net. Older specs have no max_turns.
+        cap_turns = int(spec["caps"].get("max_turns") or 0)
 
         def should_stop(self):
             if original_should_stop():
                 return True
             if int(game.current_state.levels_completed) >= target_completed:
+                return True
+            if cap_turns and state.get("turns_done", 0) >= cap_turns:
                 return True
             return self.action_count - start_actions >= cap_actions
         session.should_stop = types.MethodType(should_stop, session)
@@ -324,6 +336,8 @@ def main(job_dir: Path, k: int) -> int:
             outcome = "won"
         elif used >= cap_actions:
             outcome = "action_cap"
+        elif cap_turns and state.get("turns_done", 0) >= cap_turns:
+            outcome = "turn_cap"
         elif session.runtime_limit_reached():
             outcome = "time_cap"
         elif run is not None and (run.solver_note or "").startswith(("error", "analyzer failed")):

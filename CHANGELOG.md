@@ -15,6 +15,12 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-spark-runner-caps]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Runner sized for the two-Spark speed.** Son (#arc-3, 6-Oct 01:14 ET): about 40 tokens/s is good enough, make it work reliably at that speed. Measured on the Flash-Next server: one stream about 33 tokens/s, three about 25 each, six about 18 each. Concurrency 5 -> 4 (about 22 tokens/s per sample).
+- **Turn cap.** New per-sample `max_turns` (default 20, 1-60), counted only on finished turns, outcome `turn_cap`. Why: a time cap alone gives a sample fewer turns when the cluster is busy, so results would depend on load. Time cap default 40 -> 75 minutes (max 180) as a safety net. Page: "Turns per sample" field, new defaults. `tools/spark_runner/sample.py`, `server.py`, `docs/static/js/spark-runner.js`.
+
 ## [2026.10.06-spark-runner]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

@@ -28,7 +28,7 @@ browser (arc3.sonpham.net/mode-explorer.html, signed in)
 | `code/` | `server.py`, `sample.py`, `modes.py`, `build_harness.py` (copy of `tools/spark_runner/` in sonpham-org/arc-3) |
 | `harness/` | Franzen's bundle + the notebook's patch + Son's toolfast edits, `notebook_env.json` with the notebook's flags (built by `build_harness.py`) |
 | `environment_files/` | the 25 public games (copy of `~/GitHub/arc-3/environment_files`) |
-| `snapshots/` | starting points (`<game>.json`, `index.json`) from `datasets/spark-runner-snapshots/`, plus `verified.json` (replay check) |
+| `snapshots/` | starting points (`<game>.json`, `index.json`) from `docs/static/data/snapshots/`, plus `verified.json` (replay check) |
 | `jobs/<job>/` | `spec.json`, `job.json`, `samples/<k>/` = `transcript.txt`, `turns.jsonl`, `viewer.json`, `progress.json`, `result.json`, `error.txt` if it failed; `samples/<k>.log` |
 | `runner.key` | the bearer key (0600). The Boss's copy: `~/bubba-workspace/secrets/arc3-runner.key` on the Mac Mini |
 | `venv/` | Python 3.12: fastapi, uvicorn, requests, arc-agi 0.9.9, arcengine 0.9.3, numpy, pillow, imageio, scipy |
@@ -50,7 +50,14 @@ systemctl --user status arc3-runner-tunnel   # ssh -R 11234 -> Cletus 127.0.0.1:
 ```
 
 Settings are `Environment=` lines in `~/.config/systemd/user/arc3-runner.service`: model URL and id, concurrency
-(default 5 samples at once across all jobs; the server runs 10 sequences), python path.
+(default 4 samples at once across all jobs), python path.
+
+Speed and limits (set 6-Oct after Son said about 40 tokens/s is good enough): measured on the two-Spark server,
+one stream gets about 33 tokens/s, three get about 25 each (75 total), six get about 18 each (104 total). Four at
+once is the compromise: each sample still gets about 22 tokens/s, so a turn takes about three minutes. Per-sample
+caps default to 20 model turns (the main limit, so results do not depend on how busy the cluster is), 250 actions,
+and 75 minutes as a safety net. A Play request may override max_turns (1-60), max_actions, max_minutes (5-180).
+A default 10-sample job takes roughly one to three hours. Outcome "turn_cap" means the sample used its turns.
 
 ## Public link (Funnel)
 
@@ -81,7 +88,7 @@ python3.13 tools/spark_runner/build_harness.py --bundle <bundle dir> \
 rsync -a --delete <dir>/ son@100.106.31.61:arc3-runner/harness/
 # snapshots (needs the run files pulled from the arc3-viewer volume, see scripts/build_spark_snapshots.py)
 python3 scripts/build_spark_snapshots.py --runs-dir <dir> --plan <plan.json>
-rsync -a --delete datasets/spark-runner-snapshots/ son@100.106.31.61:arc3-runner/snapshots/
+rsync -a --delete docs/static/data/snapshots/ son@100.106.31.61:arc3-runner/snapshots/
 # then on Jethro, re-run the replay check for every snapshot (writes snapshots/verified.json; no model calls):
 cd ~/arc3-runner && venv/bin/python code/sample.py --verify-all snapshots
 ```
