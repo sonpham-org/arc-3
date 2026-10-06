@@ -10,7 +10,8 @@ PURPOSE: Draws the Mode explorer page (docs/mode-explorer.html). Two views share
     hardest first. Opening a game shows its per-level clear rates and a scheme builder: an ordered lane of per-turn
     modes, dragged (or tapped) in from the dock, starting at the game's stuck level and followed by Stock. Every
     slot carries the mode's settings (temperature, thinking, effort, thinking budget, tool calls, action budget),
-    editable per slot. Play is shown but disabled until the Spark runner exists (phase 2); no results are faked.
+    editable per slot. Play (spark-runner.js) sends the scheme to the Spark runner on the two DGX Sparks through the
+    site's relay and lists every job's progress and results for the game; no results are faked.
   Custom modes (name, colour, prompt based on Stock, settings) and schemes are saved in localStorage and can be
   exported and imported as JSON, since the site has no backend for them yet. View state lives in the URL
   (?view=&mode=&v=&cmp=&game=) so a view can be linked. The diff is a plain longest-common-subsequence over lines.
@@ -19,11 +20,12 @@ SRP/DRY check: Pass — prompt text and default settings live only in modes.json
   from rl-shell.css. Checked rl2.js and sprints.js: neither has a drag lane or a local store to reuse.
 */
 
+import { loadRunnerInfo, renderRunnerPanel } from './spark-runner.js?v=20261006-sr1';
+
 const $ = (id) => document.getElementById(id);
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const VARIANTS = { son: "Son's version", daniel: "Franzen's version" };
 const STORE_KEY = 'arc3-mode-explorer-v1';
-const PLAY_TIP = 'Needs the Spark runner (phase 2). Nothing plays from this page yet.';
 // The settings every mode and every scheme slot carries; defaults per mode come from modes.json.
 const FIELDS = [
   { k: 'temperature', label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05 },
@@ -413,12 +415,11 @@ function renderBuilder() {
   const clear = h('button', 'mx-tool', 'Clear schedule');
   clear.disabled = !sc.slots.length;
   clear.onclick = () => { if (confirm(`Remove all ${sc.slots.length} turns from the ${g.nickname} schedule?`)) { sc.slots = []; state.sel = -1; touch(sc); render(); } };
-  const playWrap = h('span', 'mx-playwrap'); playWrap.title = PLAY_TIP;
-  const play = h('button', 'mx-play', 'Play this scheme'); play.disabled = true; play.setAttribute('aria-describedby', 'playnote');
-  playWrap.append(play);
-  const note = h('span', 'mx-playnote', 'Needs the Spark runner (phase 2) — switched off until it is built.'); note.id = 'playnote';
-  foot.append(clear, playWrap, note);
+  foot.append(clear);
   card.append(foot);
+  const runner = h('div', 'mx-runner');
+  card.append(runner);
+  renderRunnerPanel(runner, { game: g, scheme: sc, variant: state.v, DATA, findMode, slotSettings, defaults });
   b.append(card);
 }
 
@@ -694,6 +695,8 @@ async function main() {
   } catch { STUCK = false; }
   if (state.game && !currentGame()) state.game = null;
   render();
+  await loadRunnerInfo();
+  if (state.view === 'stuck' && currentGame()) render();
 }
 
 main();

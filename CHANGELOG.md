@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.06-spark-runner]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
+
+- **Mode explorer Play is on.** Stuck levels tab: Play sends a game's scheme (mode text, Stock text it is diffed against, per-slot settings), variant, sample count and caps to the Spark runner; the panel lists every job for the game with live per-sample progress and the results table next to the stock tally. Runner key asked once per browser. Why: Son's go (#arc-3, 6-Oct 01:12 ET) to let others run schemes. How: `docs/static/js/spark-runner.js`, hooked into `mode-explorer.js`.
+- **Site relay + storage** `railway/spark_runner.py`: signed-in `/api/v1/spark-runner/*` relayed over the ARC tailnet to the runner on Jethro (tailnet-only `tailscale serve`); every job view stored in new table `arc3_spark_runner_jobs` and served from there when the runner cannot be reached. Wired in `catalog_server.py`, `catalog_schema.sql`, `Dockerfile`.
+- **Runner** `tools/spark_runner/` (deployed to Jethro `~/arc3-runner`, systemd user service `arc3-runner`): FastAPI queue, one process per sample running Son's 31.63 notebook harness (`build_harness.py` rebuilds it from the notebook: Franzen bundle + patch + toolfast + flags), mode prompts applied as a delta to the real per-turn prompt (`modes.py`), per-slot temperature / thinking / effort / tool calls / thinking budget / action budget, Stock after the scheme, trajectories on Jethro.
+- **Starting points** `docs/static/data/snapshots/` from `scripts/build_spark_snapshots.py`: 21 games, game state replayed and verified against the recorded board; conversation rebuilt from stored transcripts (not exact). Write-up: `docs/2026-10-06-spark-runner.md`.
+
 ## [2026.10.05-trace-moments]
 *Author: Codex | 2026-10-05*
 

@@ -30,6 +30,7 @@ from publication_store import (
 from model_backfill import backfill_catalog_models
 from debugger_relay import DebuggerRelay, PUBLIC_PREFIX, RelayProblem
 from harness_relay import relay as relay_harness
+from spark_runner import SparkRunnerRelay
 from games_store import GamesApi
 from trace_feedback import TraceFeedbackApi
 from rl_review import RlReviewApi
@@ -272,6 +273,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
     trace_feedback_api: TraceFeedbackApi | None = None
     rl_review_api: RlReviewApi | None = None
     trace_triage_api: TraceTriageApi | None = None
+    spark_runner: SparkRunnerRelay | None = None
 
     def handle_games(self, method: str) -> bool:
         """Route /api/v1/games/* and /api/v1/public/games/* to games_store. True if handled."""
@@ -386,8 +388,22 @@ class CatalogHandler(BaseHTTPRequestHandler):
         )
         self.send_relay_response(response.status, response.content_type, response.body)
 
+    def handle_spark_runner(self, method: str) -> bool:
+        """Route /api/v1/spark-runner/* to the Spark runner relay. True if handled."""
+        path = urlparse(self.path).path
+        if self.spark_runner is None or not SparkRunnerRelay.owns(path):
+            return False
+        try:
+            return self.spark_runner.handle(self, method)
+        except Exception as exc:  # Full detail to Railway logs; the client gets a small error.
+            print(f"spark runner request failed for {method} {path}: {exc}", flush=True)
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "spark_runner_unavailable"})
+            return True
+
     def do_GET(self) -> None:  # noqa: N802
         if relay_harness(self, "GET"):
+            return
+        if self.handle_spark_runner("GET"):
             return
         if self.handle_games("GET"):
             return
@@ -610,6 +626,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if relay_harness(self, "POST"):
             return
+        if self.handle_spark_runner("POST"):
+            return
         if self.handle_games("POST"):
             return
         if self.handle_trace_feedback("POST"):
@@ -667,6 +685,7 @@ def main() -> int:
     CatalogHandler.trace_feedback_api = TraceFeedbackApi(connect, CatalogHandler.publish_token)
     CatalogHandler.trace_triage_api = TraceTriageApi(connect, CatalogHandler.publish_token)
     CatalogHandler.rl_review_api = RlReviewApi(connect, args.bootstrap_root, CatalogHandler.publish_token)
+    CatalogHandler.spark_runner = SparkRunnerRelay(connect)
     CatalogHandler.max_upload_bytes = int(
         os.environ.get("ARC3_MAX_UPLOAD_BYTES", str(4 * 1024 * 1024 * 1024))
     )

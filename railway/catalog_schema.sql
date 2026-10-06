@@ -466,3 +466,16 @@ CREATE TABLE IF NOT EXISTS trace_triage_decisions (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS trace_triage_decisions_cluster_idx ON trace_triage_decisions (cluster_key, created_at);
+
+-- Mode explorer Play button: every Spark runner job view the site relays (railway/spark_runner.py) is kept here,
+-- so a game's results table still loads when the runner on the Sparks cannot be reached.
+CREATE TABLE IF NOT EXISTS arc3_spark_runner_jobs (
+    job_id text PRIMARY KEY CHECK (job_id ~ '^[a-z0-9-]{8,40}$'),
+    game text NOT NULL,
+    status text NOT NULL,
+    view jsonb NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS arc3_spark_runner_jobs_game_idx
+ON arc3_spark_runner_jobs (game, job_id DESC);
