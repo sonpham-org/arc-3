@@ -21,9 +21,11 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
   otherwise the stuck-level snapshot with its conversation rebuilt from the site's transcripts ("rebuilt").
   Harvest (default on, ARC3_RUNNER_HARVEST / settings.json): while no Play sample is queued or running, one or two
   one-sample Stock runs from RESET on the public games outside the held-out eight, only to collect exact checkpoints
-  for every level they clear. A queued Play sample pre-empts them at once (process group killed, job "preempted";
-  checkpoints already written stay). Samples run as separate sample.py processes, at most ARC3_RUNNER_CONCURRENCY at a
-  time across all jobs (default 4, sized for the two-Spark server speed), first queued first served. State lives
+  for every level they clear. A queued Play job pre-empts them at once (process group killed, job "preempted";
+  checkpoints already written stay). One Play job at a time (Son, 6-Oct): the oldest unfinished Play job gets every
+  lane (ARC3_RUNNER_CONCURRENCY, default 4, sized for the two-Spark server speed) and the others wait whole, first
+  come first served, each job view carrying its place_in_line (1 = playing now). Samples run as separate sample.py
+  processes. State lives
   in ~/arc3-runner/jobs/<id>/ (spec.json, job.json, samples/<k>/...); a restart marks running samples as
   interrupted and requeues them. Old trajectories are pruned when the jobs folder passes ARC3_RUNNER_MAX_GB.
 SRP/DRY check: Pass - the game is played only by sample.py through Son's harness; prompts come from the page's
@@ -206,7 +208,7 @@ def model_status() -> dict:
         return {"reachable": False, "error": type(exc).__name__}
 
 
-def job_view(job_id: str, *, full: bool = False) -> dict | None:
+def job_view(job_id: str, *, full: bool = False, line: list[str] | None = None) -> dict | None:
     d = JOBS / job_id
     job = read_json(d / "job.json")
     if job is None:
@@ -231,6 +233,11 @@ def job_view(job_id: str, *, full: bool = False) -> dict | None:
                                     "start_kind", "start_checkpoint", "preempted")}
     view["kind"] = view["kind"] or "play"
     view["start_kind"] = view["start_kind"] or ("exact" if job.get("conversation_exact") else "rebuilt")
+    if view["kind"] == "play" and view["status"] in ("queued", "running"):
+        line = play_line() if line is None else line
+        if job_id in line:
+            view["place_in_line"] = line.index(job_id) + 1    # 1 = being played now
+            view["jobs_ahead"] = line.index(job_id)
     view["sample_rows"] = samples
     done = [s["result"] for s in samples if s.get("result")]
     view["summary"] = {
@@ -241,6 +248,15 @@ def job_view(job_id: str, *, full: bool = False) -> dict | None:
         "levels_gained": sum(r["levels_cleared"] or 0 for r in done),
     }
     return view
+
+
+def play_line() -> list[str]:
+    """The Play queue: unfinished, uncancelled Play jobs, oldest first. The first one is the job being played; only
+    its samples start, the rest wait whole (one person's request at a time keeps every lane on it)."""
+    jobs = [read_json(p / "job.json") for p in JOBS.iterdir() if (p / "job.json").exists()]
+    line = [j for j in jobs if j and j.get("kind", "play") == "play" and j["status"] in ("queued", "running")
+            and not j.get("cancel") and any(s in ("queued", "running") for s in j["sample_state"])]
+    return [j["id"] for j in sorted(line, key=lambda j: j["created"])]
 
 
 def update_job(job_id: str, fn) -> dict:
@@ -275,9 +291,6 @@ def prune_disk() -> None:
 
 # ------------------------------------------------------------------ scheduler
 
-ONE_JOB_SEEN = [None]
-
-
 def scheduler() -> None:
     while True:
         try:
@@ -288,7 +301,6 @@ def scheduler() -> None:
 
 
 def tick() -> None:
-    ONE_JOB_SEEN[0] = None
     with LOCK:
         # reap finished processes
         for (job_id, k), proc in list(PROCS.items()):
@@ -312,12 +324,11 @@ def tick() -> None:
                     else "interrupted" if "interrupted" in j["sample_state"] else "done",
                     finished=now()))
                 prune_disk()
-        play_jobs = [j for j in jobs if j.get("kind", "play") == "play"]
-        play_waiting = any(j["status"] in ("queued", "running") and not j.get("cancel") and "queued" in j["sample_state"]
-                           for j in play_jobs)
+        line = play_line()
+        play_waiting = bool(line)
         play_running = sum(1 for (jid, _k) in PROCS if (read_json(JOBS / jid / "job.json", {}) or {}).get("kind", "play") == "play")
         harvest_procs = [(jid, k) for (jid, k) in PROCS if (read_json(JOBS / jid / "job.json", {}) or {}).get("kind") == "harvest"]
-        # Play always pre-empts harvest: a queued Play sample stops every harvest sample right away.
+        # Play always pre-empts harvest: a queued Play job stops every harvest sample right away.
         if play_waiting and harvest_procs:
             for jid, k in harvest_procs:
                 update_job(jid, lambda j: j.__setitem__("preempted", now()))
@@ -328,17 +339,9 @@ def tick() -> None:
             HARVEST["preemptions"] += len(harvest_procs)
             HARVEST["last_preempted"] = now()
             return   # reaped on the next tick, then Play gets every slot
-        # start Play samples, oldest job first
+        # start Play samples of the job at the head of the line only; later jobs wait whole
         free = CONCURRENCY - play_running - len(harvest_procs)
-        for job in play_jobs:
-            if free <= 0:
-                break
-            if job["status"] not in ("queued", "running") or job.get("cancel"):
-                continue
-            # One Play job at a time (Son, 6-Oct): only the oldest active job gets lanes; later jobs wait whole.
-            if ONE_JOB_SEEN[0] and ONE_JOB_SEEN[0] != job["id"]:
-                break
-            ONE_JOB_SEEN[0] = job["id"]
+        for job in [read_json(JOBS / jid / "job.json") for jid in line[:1]]:
             for k, s in enumerate(job["sample_state"]):
                 if free <= 0:
                     break
@@ -355,7 +358,7 @@ def tick() -> None:
                     j["sample_state"][k] = "running"
                     j["status"] = "running"
                 update_job(job["id"], started)
-        # harvest when idle: no Play sample queued or running
+        # harvest when idle: no Play job in line and no Play sample still running
         settings = runner_settings()
         HARVEST["enabled"] = bool(settings["harvest"])
         if not settings["harvest"] or play_waiting or play_running:
@@ -448,8 +451,16 @@ def health() -> dict:
         harvest_running = [{"job": jid, "game": jid.split("--")[-1]} for (jid, _k) in PROCS if "--" in jid]
     settings = runner_settings()
     idx = checkpoints.index()
+    line = play_line()
+    play_queue = []
+    for place, jid in enumerate(line, 1):
+        j = read_json(JOBS / jid / "job.json", {}) or {}
+        play_queue.append({"place": place, "job": jid, "game": j.get("game"), "level": j.get("stuck_level"),
+                           "samples": j.get("samples"), "by": j.get("by"), "created": j.get("created")})
     return {"ok": True, "time": now(), "concurrency": CONCURRENCY,
             "samples_running": running - len(harvest_running), "samples_queued": queued,
+            "scheduling": "one Play job at a time, first come first served; it gets every lane",
+            "play_queue": play_queue,
             "model": {"base_url_kind": "two-Spark Flash-Next server (via tunnel)", "model_id": MODEL_ID, **model_status()},
             "snapshots": len(stuck_points()),
             "harvest": {"enabled": bool(settings["harvest"]), "lanes": settings["harvest_lanes"],
@@ -492,7 +503,8 @@ def list_jobs(game: str | None = None, limit: int = 50, kind: Literal["play", "h
         if j and (game is None or j["game"] == game) and (kind == "all" or j.get("kind", "play") == kind):
             rows.append(j)
     rows.sort(key=lambda j: j["created"], reverse=True)
-    return {"jobs": [job_view(j["id"]) for j in rows[: max(1, min(limit, 200))]]}
+    line = play_line()
+    return {"jobs": [job_view(j["id"], line=line) for j in rows[: max(1, min(limit, 200))]]}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -564,7 +576,9 @@ def play(req: PlayRequest) -> dict:
            "start_kind": start_kind, "start_checkpoint": start.get("id"),
            "sample_state": ["queued"] * req.samples, "finished": None}
     write_json(d / "job.json", job)
-    return {"job": job_id, "queued_samples": req.samples, "start_kind": start_kind, "start_checkpoint": start.get("id")}
+    line = play_line()
+    return {"job": job_id, "queued_samples": req.samples,
+            "place_in_line": line.index(job_id) + 1 if job_id in line else None, "start_kind": start_kind, "start_checkpoint": start.get("id")}
 
 
 @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_key)])
