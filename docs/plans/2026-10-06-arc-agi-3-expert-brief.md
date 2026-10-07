@@ -15,6 +15,19 @@ SRP/DRY check: Pass - the system prompt cleanup lives in 2026-10-06-system-promp
 
 Status: idea and first draft. Not built, not tested, not live. For the Boss and Son to shape.
 
+## The aim, as the Boss put it (6-Oct, 21:43 ET)
+
+Not overfitting. A generic rulebook of out-of-distribution ideas for the model to try when it is truly
+stuck: the tricky mechanics that turn up in the later levels of the public games, and mechanics we suspect
+the private games use. It is a list of things to test, not answers about any game. Length is not a worry:
+Son notes prefill is very fast on our setup, so a longer rulebook costs little.
+
+Son's concern (21:41 ET): if the rulebook is just the seven hard public games' mechanics, it bets that the
+private set looks like them, and unlike the wording ideas it needs a Kaggle submission to judge. Answer in
+this design: keep it generic (mechanic families, not game rules), fire it only when the model is stuck, and
+judge it first on the Sparks at the stuck levels in the Mode explorer, where it would fire, before spending
+a Kaggle submission.
+
 ## Why
 
 The Boss asked Qwen 3.8 27B, with our system prompt loaded, what it knows about ARC-AGI-3. It said plainly
@@ -86,8 +99,9 @@ Length: about two hundred words. Every claim needs checking against the public g
 - **Retrieval.** Pick the few brief lines that match what the board shows. Only worth it if the brief grows
   much longer than one screen.
 
-Starting point to propose: persona plus the short brief in the system prompt, the rest as Mode explorer
-modes, so Stock moves only by the persona and the brief.
+Starting point to propose: persona plus a few lines in the system prompt; the full stuck rulebook injected
+whole into the user turn only when the model is stuck (a mode, or a trigger after a run of moves with no
+new information), so normal turns stay as they are.
 
 ## Fence
 
