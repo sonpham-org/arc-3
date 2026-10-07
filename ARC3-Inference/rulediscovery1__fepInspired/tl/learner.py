@@ -26,6 +26,9 @@
 #     mover_model(): the controlled sprite's arrows and learned walls from the hardened program, for the
 #     explorer's trips when the templates are off.
 #   Called by hypotheses.HypothesisProposer (propose -> fit -> export) and explore.ObjectContactExplorer.
+#   24-Sep-2026 debate pick 2 (Claude Opus 5.5 (Bubba)): WP is allocated for six self relations (the sixth, Facing, only
+#   gets entries when TLConfig.facing is on); exported rules are priced with the number of self relations in use, so the
+#   default (five) prices every rule exactly as before.
 # SRP/DRY check: Pass -- relations and rows from tl/relations.py, the equation algebra and gradients from
 #   tl/engine.py, the exported rule from tl/rule.py; nothing here duplicates the template fitter.
 """Tensor-logic rule learner: join-shape bank, sparse gradient fit, structure by gradient test, T=0 export."""
@@ -40,7 +43,7 @@ from typing import Optional
 import numpy as np
 
 from .engine import Adam, Param, SparseEq, grads, logits, softmax_xent
-from .relations import (ACTIONS, LINK_RELS, SELF_RELS, E_MAX, F_BIAS, F_COL, F_CTL, F_TYPE, K_HIST, N_ACT, N_COL, N_F, NONE, OTHER,
+from .relations import (ACTIONS, LINK_RELS, SELF_RELS, SELF_RELS_ALL, E_MAX, F_BIAS, F_COL, F_CTL, F_TYPE, K_HIST, N_ACT, N_COL, N_F, NONE, OTHER,
                         TAPE_LAGS, Rows, mv_delta)
 
 EQUATIONS = ("A", "B", "P", "K", "H", "G")
@@ -48,7 +51,7 @@ HEADS = ("WA", "WP", "WK", "WH")        # parameters with a dense effect axis: c
 FAMILIES = {"move": lambda nm: nm.startswith("mv"),
             "change": lambda nm: nm in ("van", "grow", "shrink", "reshape") or nm.startswith("rc>"),
             "appear": lambda nm: nm == "app"}
-SHAPES = {"W0": (1,), "WA": (N_F * N_ACT, E_MAX), "WB": (2 * N_COL,), "WP": (len(SELF_RELS) * N_COL * N_ACT, E_MAX),
+SHAPES = {"W0": (1,), "WA": (N_F * N_ACT, E_MAX), "WB": (2 * N_COL,), "WP": (len(SELF_RELS_ALL) * N_COL * N_ACT, E_MAX),
           "WK": (len(LINK_RELS) * N_COL * N_COL, E_MAX), "LagH": (K_HIST,), "WH": (E_MAX, E_MAX),
           "LagG": (len(TAPE_LAGS),), "WG": (N_F,)}
 EQ_PARAMS = {"Z": ("W0",), "A": ("WA",), "B": ("WB",), "P": ("WP",), "K": ("WK",), "H": ("LagH", "WH"), "G": ("LagG", "WG")}
@@ -70,6 +73,7 @@ class TLConfig:
     prune: bool = True           # after thresholding, drop weights that fix fewer than min_gain training decisions
     min_gain: int = 2            # (the templates' min_support, as a reduction test on the hardened program)
     prune_window: int = 150      # steps the reduction test looks at
+    facing: bool = False         # debate pick 2: the Facing relation is materialised (priced as a sixth self relation)
 
 
 def _eqs_for(rows_list, active: frozenset, E_used: int):
@@ -140,6 +144,7 @@ class TLLearner:
         self.dirs: dict = {}
         self.vocab_size = 3
         self._prune_memo: dict = {}
+        self.n_self = len(SELF_RELS_ALL) if self.cfg.facing else len(SELF_RELS)   # self relations the price counts
 
     def E_used(self) -> int:
         return max(self.n_classes, self.vocab_size)
@@ -371,6 +376,8 @@ class TLLearner:
         dirs = tuple(sorted((a, int(d[0]), int(d[1])) for a, d in self.dirs.items() if d is not None))
         common = dict(effects=effects, types=types, movable=movable, dirs=dirs, seen_ahead=frozenset(self.seen_ahead),
                       lags=(int(np.argmax(H["LagH"])), int(np.argmax(H["LagG"]))))
+        if self.n_self != len(SELF_RELS):
+            common["n_self"] = self.n_self
 
         pruned = {f: (self.prune(H, f, effects) if self.cfg.prune else H) for f in ("move", "change", "appear", "all")}
         for f in cols:

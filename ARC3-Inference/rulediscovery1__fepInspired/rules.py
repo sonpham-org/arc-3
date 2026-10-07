@@ -1,5 +1,5 @@
 # Author: Claude Opus 5.5 (Bubba)
-# Date: 23-September-2026 (tensor-logic hooks 24-September-2026)
+# Date: 23-September-2026 (tensor-logic hooks 24-September-2026, debate three and four 25-September-2026)
 # PURPOSE: The small rule language of the rule discovery prototype (OpenMind, #arc-3, 23-Sep-2026
 #   21:03 ET). A Rule looks at (board, action, what happened before) and either stays SILENT (None:
 #   "I have nothing to say here", the back-off count model then predicts) or returns a list of
@@ -35,6 +35,15 @@
 #   tl/relations.TLState (AgentConfig.use_tl; None otherwise or on imagined boards); ContextBuilder keeps the TLState and
 #   hands it each finished step with the context it was predicted with; tl/rule.TLRule sits in the decision list
 #   before the move templates (PRIMARY_ORDER "tl"). With use_tl off nothing changes.
+#   24-Sep-2026 debate picks (OpenMind 22:49 ET; Author of this change: Claude Opus 5.5 (Bubba)): ContextBuilder may keep a
+#   selfmodel.ContingentSelf (AgentConfig.use_self): it observes each step first, the live board's self parts are frozen into
+#   RuleContext.self_ids and replace rc.agent / agent_type (anchor = largest self part), and the button directions come
+#   from the self's own tallies. With facing on (tl_facing / use_epistemic) RuleContext.facing carries the learned facing
+#   (last pressed button with a learned move); the TLState gets the self model and a facing_src hook. All off = unchanged.
+#   25-Sep-2026 stage one (Claude Opus 5.5 (Bubba)): ContextBuilder.budget holds the budget.BudgetModel the policy reads
+#   (AgentConfig.use_budget); None otherwise. 25-Sep-2026 debate three pick 2: ContextBuilder.contact holds the
+#   epistemic.ContactContext (AgentConfig.contact_context); None otherwise. 25-Sep-2026 debate four pick 2 (Claude Opus 5.5
+#   (Bubba)): ContextBuilder.babble holds the babble.GoalBabbler the policy reads (AgentConfig.goal_babble); None otherwise.
 # SRP/DRY check: Pass -- look-ahead and touching from agency_contexts; play history, handcolour context
 #   and View from feature_detectors; labels from object_events via perception.py. The rule classes,
 #   decision-list semantics and description lengths are new (nothing in distill/ has rules).
@@ -81,6 +90,11 @@ class RuleContext:
     walls: Optional[Any] = None
     fate: Optional[dict] = None
     tl: Optional[Any] = None             # tl/relations.TLView (tensor-logic overhaul, AgentConfig.use_tl)
+    # Debate picks (24-Sep-2026): the contingency self's part ids on this board (selfmodel.ContingentSelf,
+    # AgentConfig.use_self) and the facing (dy, dx, confidence) of the last pressed button with a learned move
+    # (AgentConfig.tl_facing / use_epistemic). None when off or on an imagined board.
+    self_ids: Optional[frozenset] = None
+    facing: Optional[tuple] = None
 
     def replace(self, **kw) -> "RuleContext":
         return dataclasses.replace(self, **kw)
@@ -98,17 +112,41 @@ class ContextBuilder:
     """Builds RuleContexts and advances the play history. Mirrors feature_detectors.run_trace: the
     context is computed first, then hc.observe, PlayState.observe, last_by_ctx."""
 
-    def __init__(self, hdc: Optional[Any] = None, tl: Optional[Any] = None):
+    def __init__(self, hdc: Optional[Any] = None, tl: Optional[Any] = None, selfm: Optional[Any] = None,
+                 facing: bool = False):
         self.hdc = hdc                   # hdc_bridge.HdcState or None (AgentConfig.use_hdc)
         self.tl = tl                     # tl/relations.TLState or None (AgentConfig.use_tl)
+        self.selfm = selfm               # selfmodel.ContingentSelf or None (AgentConfig.use_self, debate pick 1)
+        self.track_facing = facing       # keep the facing (debate picks 2 and 3)
+        self.facing_button: Optional[str] = None   # facing without the self model: last button with a tracker move
+        self.lnov = None                 # epistemic.LocalNovelty (debate pick 3), set by the agent
+        self.budget = None               # budget.BudgetModel (stage one, AgentConfig.use_budget), set by the agent
+        self.contact = None              # epistemic.ContactContext (debate three pick 2, AgentConfig.contact_context)
+        self.babble = None               # babble.GoalBabbler (debate four pick 2, AgentConfig.goal_babble), set by the agent
+        if tl is not None:
+            tl.selfm = selfm
+            if facing:
+                tl.facing_src = self.facing
         self.reset_play()
 
     def begin(self, scene: Scene) -> None:
-        """The play's first board (only the HDC / tensor-logic states need it)."""
+        """The play's first board (only the HDC / tensor-logic / self states need it)."""
+        if self.selfm is not None:
+            self.selfm.prev, self.selfm.cur = None, self.selfm.acquire(scene, self.state.agency.tracker)
         if self.hdc is not None:
             self.hdc.begin(scene)
         if self.tl is not None:
             self.tl.begin(scene)
+
+    def facing(self) -> Optional[tuple]:
+        """(dy, dx, confidence) the controlled piece faces: the learned move of the last pressed button that has one
+        (contingency self when on, else the agency tracker's button directions with confidence 1)."""
+        if self.selfm is not None:
+            return self.selfm.facing()
+        if self.facing_button is None:
+            return None
+        d = self.controlled_direction(self.facing_button)
+        return None if d is None else (int(d[0]), int(d[1]), 1.0)
 
     def reset_play(self) -> None:
         self.state = fd.PlayState()
@@ -130,9 +168,22 @@ class ContextBuilder:
             level=self.state.level, level_age=self.state.age,
             **(self.hdc.annotate(scene) if self.hdc is not None else {}),
             **(self.tl.annotate(scene) if self.tl is not None else {}))
+        if self.selfm is not None:
+            f = self.selfm.frame(scene)
+            if f is not None:              # the contingency self replaces the type-keyed controlled instance
+                rc = rc.replace(agent=f.anchor, agent_type=f.anchor.type_key, self_ids=f.ids)
+        if self.track_facing:
+            rc = rc.replace(facing=self.facing())
         return rc.replace(**override) if override else rc
 
     def observe(self, tr: Transition) -> None:
+        if self.selfm is not None:         # first: the post board's self is what the relational view freezes
+            self.selfm.observe(tr, self.state.agency.tracker)
+        if self.track_facing and self.selfm is None:
+            if tr.reset:
+                self.facing_button = None
+            elif tr.action.is_button and self.controlled_direction(tr.action.name) is not None:
+                self.facing_button = tr.action.name
         if self.tl is not None:            # before the history advances: the context the step was predicted with
             dirs = {b: self.controlled_direction(b) for b in ag.BUTTONS}
             self.tl.observe(tr, self.context(tr.pre, tr.action) if tr.pre is not None else None, dirs)
@@ -157,6 +208,8 @@ class ContextBuilder:
         self.since = advance_since(self.since, tr.action, tr.parts())
 
     def controlled_direction(self, button: str) -> Optional[tuple]:
+        if self.selfm is not None:
+            return self.selfm.direction(button)
         return self.state.agency.tracker.direction(button)
 
 

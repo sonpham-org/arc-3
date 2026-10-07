@@ -20,6 +20,8 @@
 #     - description_length: literal code lengths from the DLContext alphabets + a universal code per rounded
 #       weight (engine.ln_code_real), the same currency as the templates' prices.
 #     - clauses() / describe(): the weights in plain words ("ACTION1: the controlled piece -> moves (-5,+0)").
+#   24-Sep-2026 debate pick 2 (Claude Opus 5.5 (Bubba)): n_self (default 5) prices the self-relation literal; 6 when the
+#   Facing relation is on; clauses() reads "a colour-c piece that is ahead of the controlled piece (facing)".
 # SRP/DRY check: Pass -- relations from tl/relations.py, evaluation from tl/engine.py, Effect / Rule / DL helpers
 #   from perception.py and rules.py. New: the frozen program and its readable form.
 """TLRule: a thresholded tensor-logic program as a rule the posterior can score."""
@@ -36,7 +38,7 @@ from ..rules import Rule, ln_int
 from .engine import Param, ln_code_real, logits
 from .learner import SHAPES, _eqs_for, family_ok
 from .relations import (ACTIONS, E_MAX, EDGE, F_BIAS, F_COL, F_CTL, F_TYPE, F_WORLD, K_HIST, LINK_RELS, N_ACT,
-                        N_COL, N_F, SELF_RELS, TAPE_LAGS, build_rows, mv_delta)
+                        N_COL, N_F, SELF_RELS, SELF_RELS_ALL, TAPE_LAGS, build_rows, mv_delta)
 
 
 def effect_words(name: str) -> str:
@@ -85,6 +87,7 @@ class TLRule(Rule):
     lags: tuple                     # (hardened own-history lag index, hardened tape lag index)
     seen_ahead: frozenset
     modifier: bool = False
+    n_self: int = len(SELF_RELS)    # self relations priced (6 with the debate-pick-2 Facing relation)
 
     @property
     def kind(self) -> str:                      # type: ignore[override]
@@ -200,7 +203,7 @@ class TLRule(Rule):
         nf = math.log(dl.n_colours + dl.n_types + 3)
         na = dl.ln(dl.n_actions)
         ne = math.log(max(len(self.effects), 2))
-        lit = {"W0": 0.0, "WA": nf + na + ne, "WB": math.log(2 * N_COL), "WP": math.log(len(SELF_RELS) * N_COL) + na + ne,
+        lit = {"W0": 0.0, "WA": nf + na + ne, "WB": math.log(2 * N_COL), "WP": math.log(self.n_self * N_COL) + na + ne,
                "WK": math.log(len(LINK_RELS) * N_COL * N_COL) + ne, "WH": 2 * ne, "WG": nf}
         cost = dl.ln(6) + ln_int(len(self.weights) + 1) + math.log(4)          # template, count, scope
         for k, _, w in self.weights:
@@ -242,7 +245,8 @@ class TLRule(Rule):
                 r, c = divmod(rc_, N_COL)
                 what = {"contact": "is run into by the controlled piece", "on": "is stood on", "clicked": "is clicked",
                         "adjacent": "is next to the controlled piece",
-                        "comoved": "moved along with the controlled piece last step"}[SELF_RELS[r]]
+                        "comoved": "moved along with the controlled piece last step",
+                        "facing": "is ahead of the controlled piece (facing)"}[SELF_RELS_ALL[r]]
                 s = f"{ACTIONS[a] if a < len(ACTIONS) else 'other'}: a colour-{c} piece that {what} -> {eff}"
             elif k == "WK":
                 rc2, c = divmod(row, N_COL)

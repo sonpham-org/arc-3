@@ -1,5 +1,5 @@
 # Author: Claude Opus 5.5 (Bubba)
-# Date: 23-September-2026
+# Date: 23-September-2026 (debate four and five 25-September-2026)
 # PURPOSE: Goal inference and preferences for the rule discovery prototype (OpenMind, #arc-3,
 #   23-Sep-2026 21:03 ET). In active-inference terms: beliefs about the hidden goal (a slow-timescale
 #   state) and the prior preferences C over outcomes that give the pragmatic term of expected free
@@ -23,6 +23,24 @@
 #   Round-four evidence says the label-only pragmatic signal is weak (within-play AUC 0.59, no
 #   transfer across games); the goal-progress term is the new, untested part.
 #   Not run yet: only py_compile was used.
+#   24-Sep-2026 debate pick 5 (OpenMind 22:49 ET; Claude Opus 5.5 (Bubba)): GoalBeliefs(contrast=True) keeps the level's
+#   boards (thinned to max_boards) and, on a clear, adds contrast evidence per goal:
+#     contrast_w * ln[(eps + p_win^kappa) / (eps + mean over the level's other boards of p^kappa)]
+#   so a goal that is distinctive of the clearing board gains and one that held all along does not. Off by default.
+#   25-Sep-2026 debate four, pick 2 (docs 2026-09-25-warehouse-expert-debate-4.md, OpenMind #arc-3 11:24 ET; Claude Opus 5.5
+#   (Bubba)), both off by default: soft_reach=True: a goal whose resulting board satisfies it without a clear loses
+#   ln(soft_fa) once per stretch of being satisfied (not on every step), and its total such loss is floored at ln(fa_floor)
+#   (reaching it weakens it, never kills it; the Warehouse target is fully covered one step before the win). With
+#   track_prog the scored step's progress per goal is kept in last_prog (babble.CausedChange / GoalBabbler read it).
+#   caused (a babble.CausedChange, set by the agent under caused_contrast): on a clear, a goal's progress on the clearing
+#   board is multiplied by its action-caused share before both the clear likelihood and the contrast use it, so a goal
+#   whose progress changes whatever the agent does (a step bar, a clock) cannot explain the clear.
+#   25-Sep-2026 debate five, pick 2 (docs 2026-09-25-openmind-agent-expert-debate-5.md, OpenMind #arc-3 17:14 ET; Claude
+#   Opus 5.5 (Bubba)), off by default: Preferences(flat_until_clear=True): until the play's first clear every ordinary
+#   outcome's log preference is 0 (the learned "p(clear soon | outcome) / base rate" is uninformative with no clear and
+#   priced the most common outcome as the least wanted); the fixed clear / game-over preferences, the game-over aversion
+#   (c_avoid on outcomes seen before a game over) and the budget term (policy.py, c_game_over) stay. After the first clear
+#   log_pref is the learned one, from counts kept all along. The goal-progress half of pragmatic() is unchanged.
 # SRP/DRY check: Pass -- box gap from feature_detectors.gap, clear-window length from heldout_yardstick
 #   (PRAG_K); the online clear table re-states hy.clear_table's estimator incrementally (hy's version
 #   needs whole training traces, not usable online). Goal templates are new.
@@ -220,16 +238,35 @@ class GoalBeliefs:
     """Posterior over goal hypotheses, carried across the levels of one play."""
 
     def __init__(self, eps_clear: float = 0.05, false_alarm: float = 0.1, kappa: float = 2.0,
-                 satisfied: float = 0.999):
+                 satisfied: float = 0.999, contrast: bool = False, contrast_w: float = 1.0, max_boards: int = 64,
+                 soft_reach: bool = False, soft_fa: float = 0.5, fa_floor: float = 0.05, track_prog: bool = False):
         self.eps_clear, self.false_alarm, self.kappa, self.satisfied = eps_clear, false_alarm, kappa, satisfied
         self.goals: dict = {}                  # key -> Goal
         self.loglik: dict = {}                 # key -> accumulated log likelihood
         self.base = LevelBaseline()
         self.n_clears = 0
+        # debate pick 5 (24-Sep-2026): goals from contrast. The boards of the current level (thinned to max_boards) are
+        # the "rest" the clearing board is contrasted with.
+        self.contrast, self.contrast_w, self.max_boards = contrast, contrast_w, max_boards
+        self.boards: list = []
+        self.board_level: Optional[int] = None
+        self._thin = 1
+        self._seen = 0
+        self.contrast_log: list = []           # (clear number, top goal after the contrast update, its mass)
+        # debate four pick 2: soft reach (see the header), per-step progress, caused-change weighting of contrast
+        self.soft_reach, self.soft_fa, self.fa_floor = soft_reach, soft_fa, fa_floor
+        self.track_prog = track_prog or soft_reach
+        self.sat: set = set()                  # goals satisfied on the previous scored board (soft reach)
+        self.fa_loss: dict = {}                # goal key -> total soft false-alarm loss so far (<= 0)
+        self.last_prog: Optional[dict] = None  # goal key -> progress on the last scored step's board
+        self.caused = None                     # babble.CausedChange (AgentConfig.caused_contrast)
 
     def bind_level(self, scene: Scene) -> None:
         """New level: new baseline; goals for colours not seen before join at the median evidence."""
         self.base = LevelBaseline.of(scene)
+        self.sat = set()
+        if self.contrast and scene.level != self.board_level:
+            self.boards, self.board_level, self._thin, self._seen = [], scene.level, 1, 0
         start = statistics.median(self.loglik.values()) if self.loglik else 0.0
         for g in enumerate_goals(scene):
             k = g.key()
@@ -259,17 +296,51 @@ class GoalBeliefs:
     def observe(self, tr: Transition, imagined: Optional[Scene] = None) -> None:
         """imagined: the MAP rule set's predicted board after tr.action on tr.pre (for clears the real
         post board belongs to the next level, so this is the best guess of the winning board)."""
+        self.last_prog = None
         if tr.reset or not self.goals:
             return
         if tr.level_completed:
             self.n_clears += 1
+            rest = self.boards
             for k, g in self.goals.items():
                 p = g.progress(tr.pre, self.base)
                 if imagined is not None:
                     p = max(p, g.progress(imagined, self.base))
+                if self.caused is not None:           # debate four pick 2: only the action-caused part of the progress
+                    p *= self.caused.share(k)
                 self.loglik[k] += math.log(self.eps_clear + (1 - self.eps_clear) * p ** self.kappa)
+                if self.contrast and rest:
+                    # contrast: how much more the clearing board satisfies g than the level's other boards did
+                    # (a goal that holds all the time explains nothing about the clear)
+                    typical = sum(g.progress(b, self.base) ** self.kappa for b in rest) / len(rest)
+                    self.loglik[k] += self.contrast_w * math.log((self.eps_clear + p ** self.kappa)
+                                                                 / (self.eps_clear + typical))
+            if self.contrast:
+                top = self.top_goal()
+                if top is not None:
+                    self.contrast_log.append((self.n_clears, top[0].describe(), round(top[1], 3)))
             return
-        if tr.scored and tr.post is not None:
+        if self.contrast and tr.scored and tr.post is not None:
+            self._seen += 1
+            if self._seen % self._thin == 0:
+                self.boards.append(tr.post)
+                if len(self.boards) > self.max_boards:          # keep every other board, sample half as often
+                    self.boards = self.boards[::2]
+                    self._thin *= 2
+        if tr.scored and tr.post is not None and self.track_prog:
+            self.last_prog = {k: g.progress(tr.post, self.base) for k, g in self.goals.items()}
+            for k, p in self.last_prog.items():
+                if p < self.satisfied:
+                    self.sat.discard(k)
+                elif not self.soft_reach:
+                    self.loglik[k] += math.log(self.false_alarm)
+                elif k not in self.sat:               # debate four: once per stretch, floored (weakens, never kills)
+                    lost = self.fa_loss.get(k, 0.0)
+                    step = max(math.log(self.soft_fa), math.log(self.fa_floor) - lost)
+                    self.loglik[k] += min(step, 0.0)
+                    self.fa_loss[k] = lost + min(step, 0.0)
+                    self.sat.add(k)
+        elif tr.scored and tr.post is not None:
             for k, g in self.goals.items():
                 if g.progress(tr.post, self.base) >= self.satisfied:
                     self.loglik[k] += math.log(self.false_alarm)
@@ -290,13 +361,17 @@ class Preferences:
     """ln C(o): what outcomes the agent prefers (pragmatic value = expected ln C)."""
 
     def __init__(self, c_clear: float = 3.0, c_game_over: float = -6.0, c_avoid: float = -2.0,
-                 k: int = hy.PRAG_K, prior_n: float = 5.0):
+                 k: int = hy.PRAG_K, prior_n: float = 5.0, flat_until_clear: bool = False):
         self.c_clear, self.c_game_over, self.c_avoid = c_clear, c_game_over, c_avoid
         self.k, self.prior_n = k, prior_n
         self.recent: deque = deque(maxlen=k)
         self.hits: Counter = Counter()
         self.n: Counter = Counter()
         self.avoid: Counter = Counter()
+        # debate five pick 2: before the play's first clear the learned relative preference is flat (0 for every ordinary
+        # outcome); counts are still kept, so after the first clear log_pref is exactly the learned one
+        self.flat_until_clear = flat_until_clear
+        self.cleared = False
 
     def observe(self, tr: Transition) -> None:
         if tr.reset:
@@ -305,6 +380,7 @@ class Preferences:
         self.n[tr.label] += 1
         self.recent.append(tr.label)
         if tr.level_completed:
+            self.cleared = True
             for lab in self.recent:
                 self.hits[lab] += 1
             self.recent.clear()
@@ -323,6 +399,10 @@ class Preferences:
             return self.c_clear
         if label == "game_over":
             return self.c_game_over
+        if self.flat_until_clear and not self.cleared:
+            # no clear yet = no evidence about what is wanted: "the most common outcome is the least wanted" (log v/b
+            # with no hits) is a self-made prior; only the game-over aversion (outcomes seen before a game over) stays
+            return self.c_avoid if self.avoid[label] else 0.0
         b = self.base_rate()
         v = (self.hits[label] + self.prior_n * b) / (self.n[label] + self.prior_n)
         return math.log(v / b) + (self.c_avoid if self.avoid[label] else 0.0)

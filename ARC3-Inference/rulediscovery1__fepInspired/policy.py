@@ -1,5 +1,5 @@
 # Author: Claude Opus 5.5 (Bubba)
-# Date: 23-September-2026
+# Date: 23-September-2026 (debate three and four 25-September-2026)
 # PURPOSE: Action selection for the rule discovery prototype (OpenMind, #arc-3, 23-Sep-2026 21:03 ET),
 #   following Parr, Pezzulo & Friston, "Active Inference" (eq. 2.6, sections 7.4-7.5, habits and
 #   precision). For every candidate action a on the current board:
@@ -22,6 +22,28 @@
 #   Candidate actions: valid buttons (RESET too since 23-Sep-2026, with its own cost) plus one click per distinct (colour, shape) object,
 #   at a cell of the object nearest its centre.
 #   Not run yet: only py_compile was used.
+#   24-Sep-2026 debate pick 3 (OpenMind 22:49 ET; Claude Opus 5.5 (Bubba)): two more epistemic terms, both 0 by default:
+#       G -= w_dis * disagreement(a) + w_lnov * local_novelty(a)
+#     disagreement = Jensen-Shannon information among rule sets drawn Thompson-style from the tempered posterior (one draw
+#     per decision, own random stream), local_novelty = epistemic.LocalNovelty over (action, soft local-context code).
+#   25-Sep-2026 stage one, budget in EFE (docs 2026-09-25-warehouse-expert-debate-2.md pick 2; Claude Opus 5.5 (Bubba)): with
+#   w_budget > 0 and a budget.BudgetModel on the ContextBuilder, the pragmatic term gains the forecast risk of running out
+#   of the learned gauge soon after the action, priced by the existing preference for a game over:
+#       G -= w_prag * w_budget * risk(a) * c_game_over        (c_game_over < 0, goals.Preferences)
+#   0 by default = the old G exactly.
+#   25-Sep-2026 debate three (docs 2026-09-25-warehouse-expert-debate-3.md, OpenMind #arc-3 05:47 ET; Claude Opus 5.5
+#   (Bubba)): pick 2, with w_ceig > 0 and an epistemic.ContactContext on the ContextBuilder, a button that does not move
+#   the self takes its local novelty from its CONTACT code (the colours the self touches, facing bound apart) instead of
+#   the facing strip alone, and its disagreement term gains w_ceig x the information one press gives about "this button
+#   changes something in this contact" (soft Beta memory). Pick 3, with a budget.BudgetModel whose learn_end is on, the
+#   run-out term becomes w_prag x w_budget x (risk(a) x -c_game_over - info(a)): risk from the learnable end belief and
+#   the lives reader, info = the belief's entropy for an action that lets the gauge run out while spare lives show.
+#   0 / off by default = the old G exactly.
+#   25-Sep-2026 debate four, pick 2 (docs 2026-09-25-warehouse-expert-debate-4.md, OpenMind #arc-3 11:24 ET; Claude Opus 5.5
+#   (Bubba)): with w_babble > 0 and a babble.GoalBabbler on the ContextBuilder that is on (no clear yet, budget not urgent),
+#   the goal it sampled is a preference: G -= w_prag * w_babble * sum_h w_h [progress(goal, board h imagines) - progress now].
+#   BeamPlanner.plan takes an optional goal (the babbled one) instead of the top goal. 0 / None by default = as before.
+#   Pick 3: the contact terms apply only while the ContactContext's gate is open (always open unless contact_gated).
 # SRP/DRY check: Pass -- EIG from efe_trace_analysis (via beliefs.NoveltyModel), handcolour contexts via
 #   rules.ContextBuilder (agency_contexts), predictive distributions from beliefs.BeliefState, goal
 #   progress / preferences from goals.py, imagination from perception.Scene.apply. New: the EFE sum,
@@ -110,6 +132,16 @@ class PolicyConfig:
     max_clicks: int = 24
     allow_reset: bool = True         # RESET is a candidate action (it restarts the level)
     cost_reset: float = 0.5
+    # debate pick 3 (24-Sep-2026, epistemic.py): all 0 = off (the old G exactly)
+    w_dis: float = 0.0               # disagreement among rule sets sampled from the tempered posterior, in this context
+    dis_samples: int = 8
+    dis_temp: float = 5.0            # posterior temperature for the Thompson draws
+    w_lnov: float = 0.0              # novelty over (action, soft local context) (epistemic.LocalNovelty)
+    epi_preempt: float = 0.0         # > 0: a button with no learned move whose epistemic value reaches this preempts the
+    #                                  explorer's trip for one step (the explorer can only walk)
+    w_budget: float = 0.0            # stage one (25-Sep-2026, budget.py): weight of the run-out risk x c_game_over; 0 = off
+    w_ceig: float = 0.0              # debate three pick 2: information about a non-moving button's effect in this contact
+    w_babble: float = 0.0            # debate four pick 2: weight of the babbled goal's imagined progress (babble.py)
 
 
 @dataclass
@@ -123,6 +155,9 @@ class ActionScore:
     G: float
     log_p: float = 0.0
     map_label: Optional[str] = None
+    disagreement: float = 0.0
+    local_novelty: float = 0.0
+    budget_risk: float = 0.0
 
 
 @dataclass
@@ -150,6 +185,8 @@ class EFEPolicy:
     def __init__(self, cfg: Optional[PolicyConfig] = None, seed: int = 0):
         self.cfg = cfg or PolicyConfig()
         self.rng = random.Random(seed)
+        self.rng_dis = random.Random(seed * 7919 + 17)   # own stream: the Thompson draws never shift the policy's
+        self.sample: list = []                           # the current decision's sampled rule sets (indices)
 
     def cost(self, a: Action) -> float:
         if a.is_click:
@@ -168,19 +205,57 @@ class EFEPolicy:
         mix = mixture(dists, ws)
         sal = max(entropy(mix) - sum(w * entropy(d) for w, d in zip(ws, dists)), 0.0)
         nov = beliefs.novelty.novelty(rc.hc_ctx)
-        prag = 0.0
+        prag = bgain = 0.0
+        cfg = self.cfg
+        bb = getattr(ctx, "babble", None)
+        babble = cfg.w_babble > 0 and bb is not None and bb.on and bb.key is not None
         for (h, w, pred, d) in preds:
             gain = 0.0
             if pred is not None and pred.effects:
-                gain = goals.expected_gain(rc.scene, rc.scene.apply(pred.effects))
+                nxt = rc.scene.apply(pred.effects)
+                gain = goals.expected_gain(rc.scene, nxt)
+                if babble:                              # debate four pick 2: progress on the babbled goal
+                    bgain += w * bb.gain(goals, rc.scene, nxt)
             prag += w * prefs.pragmatic(d, gain)
         emp = empowerment_bonus(ctx, rc.action, rc.level_age, self.cfg.emp_horizon)
         c = self.cost(rc.action)
-        cfg = self.cfg
         G = -(cfg.w_sal * sal + cfg.w_nov * nov + cfg.w_prag * prag + cfg.w_emp * emp) + c
+        if babble:
+            G -= cfg.w_prag * cfg.w_babble * bgain
+        dis = lnov = 0.0
+        if cfg.w_dis > 0 or cfg.w_lnov > 0 or cfg.w_ceig > 0:   # debate pick 3 (off: G above is the old one, untouched)
+            dis, lnov = self.epistemic(rc, dists, ctx)
+            G -= cfg.w_dis * dis + cfg.w_lnov * lnov
+        risk = 0.0
+        bm = getattr(ctx, "budget", None)
+        if cfg.w_budget > 0 and bm is not None:        # stage one (off: G above is the old one, untouched)
+            risk = bm.risk(rc.action)
+            G -= cfg.w_prag * cfg.w_budget * risk * prefs.c_game_over
+            if getattr(getattr(bm, "cfg", None), "learn_end", False):   # debate three pick 3: the test is informative
+                G -= cfg.w_prag * cfg.w_budget * bm.info(rc.action)
         top = max(preds, key=lambda t: t[1])
         return ActionScore(rc.action, sal, nov, prag, emp, c, G,
-                           map_label=top[2].label if top[2] is not None else None)
+                           map_label=top[2].label if top[2] is not None else None,
+                           disagreement=dis, local_novelty=lnov, budget_risk=risk)
+
+    def epistemic(self, rc: RuleContext, dists: list, ctx: ContextBuilder) -> tuple:
+        """(disagreement of the sampled rule sets about this action here, local-context novelty)."""
+        from .epistemic import disagreement
+        dis = disagreement(dists, self.sample) if self.cfg.w_dis > 0 else 0.0
+        ln = getattr(ctx, "lnov", None)
+        cc = getattr(ctx, "contact", None)
+        if cc is not None and self.cfg.w_ceig > 0 and cc.open and cc.applies(rc, ctx.controlled_direction):
+            # debate three pick 2: a non-moving button is keyed on the self's contact neighbourhood
+            lnov = cc.novelty(rc, ctx.controlled_direction) if self.cfg.w_lnov > 0 else 0.0
+            return dis + self.cfg.w_ceig * cc.eig(rc, ctx.controlled_direction), lnov
+        lnov = ln.novelty(rc, ctx.controlled_direction) if (ln is not None and self.cfg.w_lnov > 0) else 0.0
+        return dis, lnov
+
+    def draw(self, beliefs: BeliefState) -> None:
+        """Thompson draws of rule sets for this decision (debate pick 3); a no-op when disagreement is off."""
+        if self.cfg.w_dis > 0:
+            from .epistemic import sample_hypotheses
+            self.sample = sample_hypotheses(beliefs, self.rng_dis, self.cfg.dis_samples, self.cfg.dis_temp)
 
     def choose(self, scene: Scene, valid: list[str], beliefs: BeliefState, goals: GoalBeliefs,
                prefs: Preferences, ctx: ContextBuilder, habits: HabitPrior, greedy: bool = False) -> Decision:
@@ -191,6 +266,7 @@ class EFEPolicy:
             return self.thompson(scene, cands, beliefs, goals, prefs, ctx)
         kinds = sorted({action_kind(a) for a in cands})
         gamma = precision(self.cfg.gamma0, beliefs.posterior_entropy(), len(beliefs.hyps))
+        self.draw(beliefs)
         scores = [self.score(ctx.context(scene, a), beliefs, goals, prefs, ctx) for a in cands]
         for s in scores:
             s.log_p = habits.log_prior(s.action, kinds) - gamma * s.G
@@ -243,11 +319,12 @@ class BeamPlanner:
         self.max_depth, self.beam, self.max_expansions = max_depth, beam, max_expansions
 
     def plan(self, scene: Scene, valid: list[str], ruleset: RuleSet, goals: GoalBeliefs,
-             ctx: ContextBuilder, rc0: RuleContext) -> Optional[Plan]:
-        top = goals.top_goal()
-        if top is None:
-            return None
-        goal, _ = top
+             ctx: ContextBuilder, rc0: RuleContext, goal=None) -> Optional[Plan]:
+        if goal is None:                              # debate four: the babbled goal may be given instead
+            top = goals.top_goal()
+            if top is None:
+                return None
+            goal, _ = top
         start = goal.progress(scene, goals.base)
         frontier = [(scene, rc0.last_label, rc0.since, rc0.level_age, [], [])]
         seen = {scene.signature()}
