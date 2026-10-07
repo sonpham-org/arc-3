@@ -116,3 +116,20 @@ new information), so normal turns stay as they are.
 - Can arm C be re-run cleanly on today's baseline before anything new is added, so we know whether the old
   signal holds?
 - Is the oracle run from 18 Sep still on Cletus' disk, and is it worth scoring now?
+
+## How "public wisdom" fits (draft 6-Oct, 21:50 ET; name from Son)
+
+Text: docs/plans/2026-10-06-public-wisdom/public-wisdom.txt. Built from arm C's six possibilities, the nine
+latent mechanics read out of the public games (autoresearch-arena arc3games/LATENT_MECHANICS_IN_THE_PUBLIC_25.md),
+and general stuck habits. Every line is a mechanic family or a habit, phrased as a possibility with a probe to
+run. No game names, nothing from held-out games.
+
+- Stock is untouched. Public wisdom never appears on a normal turn.
+- It is injected whole, once, at the bottom of the user turn message when the model is stuck. After that it
+  sits in the conversation history, so it does not need repeating; a later stuck stretch adds one line
+  pointing back to it.
+- "Stuck" for the first test: a human places it with the Mode explorer as a "Public wisdom" mode at the
+  stuck levels. If it helps, an automatic trigger comes next (a run of turns with no level progress and no
+  new board state, or repeated deaths at the same point).
+- First test: on the Sparks, Public wisdom against Stock from the same saved stuck-level starting points.
+  Kaggle only if that shows something.
