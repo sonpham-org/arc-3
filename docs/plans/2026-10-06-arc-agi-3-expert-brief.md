@@ -133,3 +133,12 @@ run. No game names, nothing from held-out games.
   new board state, or repeated deaths at the same point).
 - First test: on the Sparks, Public wisdom against Stock from the same saved stuck-level starting points.
   Kaggle only if that shows something.
+
+## Holdouts for this line (Boss, #arc-3, 6-Oct 23:06 ET)
+
+The old fence held eight official public games out of tuning. For the rulebook the Boss changed it: hold out
+Functional Tiles (ft09) and one other easy official game, plus synthetic games (WS03, WS04 or any of the
+others) as the main holdouts. His reasoning: the private set will look different from the public set, but
+not by much, which is what the synthetic games are too. Every other official game, including the old
+held-out ones, can feed the rulebook. The runner's own held-out list (tools/spark_runner) is unchanged
+until Son agrees, since it also governs what harvest plays.
