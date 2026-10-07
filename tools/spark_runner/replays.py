@@ -37,7 +37,10 @@ import checkpoints  # noqa: E402
 HOME = Path(os.environ.get("ARC3_RUNNER_HOME", Path.home() / "arc3-runner"))
 SOLUTIONS = Path(os.environ.get("ARC3_RUNNER_SOLUTIONS", HOME / "solutions"))
 VERIFIED = Path(os.environ.get("ARC3_RUNNER_REPLAYS", HOME / "replays")) / "verified.json"
-HELD_OUT = ("vc33", "ar25", "sb26", "re86", "su15", "tr87", "tu93", "as66")
+# 7-Oct-2026 (Boss, agreed by Son, #arc-3): the old eight-game fence is lifted. Synthetic games are the main
+# holdouts now; Functional Tiles (ft09) and one more easy official game are held out only from WRITING the
+# public-wisdom rulebook and stay playable here, since measuring on them is the point.
+HELD_OUT: tuple = ()
 
 
 def _read(path: Path, default=None):

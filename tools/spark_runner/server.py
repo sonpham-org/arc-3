@@ -82,8 +82,10 @@ MAX_GB = float(os.environ.get("ARC3_RUNNER_MAX_GB", "40"))
 PYTHON = os.environ.get("ARC3_RUNNER_PYTHON", sys.executable)
 ORIGINS = [o for o in os.environ.get("ARC3_RUNNER_ORIGINS", "https://arc3.sonpham.net").split(",") if o]
 CODE_RE = re.compile(r"^[a-z0-9]{4}$")
-# House rule of this repo's run scripts: the eight held-out games stay out of prompt tuning.
-HELD_OUT = ("vc33", "ar25", "sb26", "re86", "su15", "tr87", "tu93", "as66")
+# 7-Oct-2026 (Boss, agreed by Son, #arc-3): the old eight-game fence is lifted. Synthetic games are the main
+# holdouts now; Functional Tiles (ft09) and one more easy official game are held out only from WRITING the
+# public-wisdom rulebook and stay playable here, since measuring on them is the point.
+HELD_OUT: tuple = ()
 ALLOW_HELD_OUT = os.environ.get("ARC3_RUNNER_ALLOW_HELD_OUT", "") == "1"
 JOB_RE = re.compile(r"^[a-z0-9-]{8,40}$")
 ENV_DIR = Path(os.environ.get("ARC3_RUNNER_ENVIRONMENTS", HOME / "environment_files"))
