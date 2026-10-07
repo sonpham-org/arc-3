@@ -15,6 +15,19 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.07-spark-watch]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-07*
+
+- **What:** every Spark sample in the Mode explorer's job list has a Watch link (Son, #arc-3 7-Oct: "Allow me to click
+  on each currently being played game and view it too"). It opens the sample in the site's existing trace viewer in a
+  new tab: every board, action and the model's reasoning per turn, following a running sample as it plays.
+- **How:** the runner has a key-protected `GET /api/jobs/<id>/samples/<k>/events?after=` that returns the sample's own
+  trace-viewer events (complete lines only, integer boards dropped, about 4 MB per answer at most); the site relay
+  passes it through unstored and adds the key. `docs/static/js/spark-watch.js` pulls only new events each poll and
+  shapes them into the viewer's existing payloads (overview, game, frames, steps), using the same frame and transcript
+  rules as `ARC3-Inference/viewer/data.py`; `api.js` sends "spark:<job>:<sample>" runs there. `main.js` skips trace
+  votes for these and shows a load error instead of hanging on "Loading".
+
 ## [2026.10.06-prompt-dedup]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-06*
 

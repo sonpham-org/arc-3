@@ -1,6 +1,6 @@
 /*
 Author: Claude Opus 5.5
-Date: 06-October-2026
+Date: 07-October-2026 (Watch links; first written 06-October-2026)
 PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html, Queue view). Talks only to the
   site's own relay, /api/v1/spark-runner/* (railway/spark_runner.py), which forwards over the ARC tailnet to the
   Spark runner on Jethro (tools/spark_runner/server.py) and keeps every job it sees in the site's database.
@@ -50,9 +50,15 @@ PURPOSE: The Mode explorer's Play row and results list (docs/mode-explorer.html,
     samples and turn cap, the runner line, each job's status or place in line, its queue, Cancel, and every column.
   - Guided tour (added 6-Oct, Son: "Have like a 'Help' icon, and do a demo"): playRequest hands the tour the request
     Play would send, to show it without sending; Play does nothing while ctx.demo() says the tour is running.
+  - Watch (added 7-Oct, Son: "Allow me to click on each currently being played game and view it too"): every sample
+    that has started gets a Watch link that opens it in the site's trace viewer in a new tab (spark-watch.js feeds
+    viewer.html from the runner): boards, actions and the model's reasoning, following along while it still runs.
+    The links show once the runner's health lists the sample_events feature (a runner without it cannot serve them).
 SRP/DRY check: Pass - mode text and settings come from mode-explorer.js (shared modes + the queue); the tally from
   stuck-levels.json; this file only sends, polls and draws. No results are invented: empty states say nothing ran.
 */
+
+import { watchHref } from './spark-watch.js?v=20261007-watch';
 
 const API = new URL('../../api/v1/spark-runner/', import.meta.url);
 const POLL_MS = 5000;
@@ -417,6 +423,7 @@ const COLUMNS = [
   ['Turns', 'Model turns the sample took (the queue plus the Stock turns after it).'],
   ['Modes that ran', 'The modes actually used, turn by turn.'],
   ['Time', 'How long the sample took, in minutes.'],
+  ['', 'Open the sample in the trace viewer: every board, action and the model\'s reasoning. A running sample keeps updating there.'],
 ];
 const OUTCOME = { cleared: 'cleared', won: 'cleared', action_cap: 'action cap', turn_cap: 'turn cap', time_cap: 'time cap', stopped: 'stopped', error: 'error' };
 
@@ -530,6 +537,18 @@ function jobCard(j, ctx, rec, st) {
     t.append(h('td', null, r ? String(r.turns) : (row.state === 'running' ? String(p.turn ?? 0) : '–')));
     t.append(h('td', 'mx-modescol', r ? (r.modes_run || []).join(', ') : '–'));
     t.append(h('td', null, r ? `${Math.round((r.seconds || 0) / 60)} min` : '–'));
+    const watch = h('td');
+    if (row.state !== 'queued' && (health?.features || []).includes('sample_events')) {
+      const a = h('a', 'mx-watch', 'Watch');
+      a.href = watchHref(j.id, row.sample);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = row.state === 'running'
+        ? 'Open this sample in the trace viewer and follow it live: boards, actions and the model\'s reasoning.'
+        : 'Open this sample in the trace viewer: every board, action and the model\'s reasoning.';
+      watch.append(a);
+    }
+    t.append(watch);
     body.append(t);
   }
   table.append(body);

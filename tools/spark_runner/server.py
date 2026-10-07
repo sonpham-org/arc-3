@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Claude Opus 5.5 (Bubba)
-Date: 06-October-2026
+Date: 07-October-2026 (Watch events endpoint; first written 06-October-2026)
 PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.sonpham.net/mode-explorer.html).
   Runs on Jethro (DGX Spark gx10-a424) as the systemd user service arc3-runner, published over HTTPS with Tailscale
   Funnel. FastAPI on 127.0.0.1:8787.
@@ -13,6 +13,9 @@ PURPOSE: The Spark runner service behind the Mode explorer's Play button (arc3.s
     POST /api/play                    queue a job (bearer key)
     POST /api/jobs/{id}/cancel        cancel queued/running samples (bearer key)
     GET  /api/jobs/{id}/samples/{k}/turns   per-turn log of one sample (bearer key)
+    GET  /api/jobs/{id}/samples/{k}/events?after=&limit=   the sample's trace-viewer events from index `after`, for the
+                                      site's Watch view (7-Oct, Son: "click on each currently being played game and
+                                      view it"); bearer key
     GET  /api/exact-starts            exact level-start checkpoints: per game, level and variant, the chosen one (public)
     POST /api/settings                harvest on/off and lanes (bearer key)
     GET  /api/start-board?game=&level=&variant=&context=   the board at the start Play would use there (boards.py; public)
@@ -522,6 +525,7 @@ def health() -> dict:
                            "prompt_profile": j.get("prompt_profile") or prompt_profiles.DEFAULT_PROFILE,
                            "samples": j.get("samples"), "by": j.get("by"), "created": j.get("created")})
     return {"ok": True, "time": now(), "concurrency": CONCURRENCY,
+            "features": ["sample_events"],   # the page shows Watch links only when the runner says it can serve them
             "samples_running": running - len(harvest_running), "samples_queued": queued,
             "scheduling": "one Play job at a time, first come first served; it gets every lane",
             "play_queue": play_queue,
@@ -620,6 +624,49 @@ def sample_turns(job_id: str, k: int) -> dict:
     if not path.exists():
         return {"turns": []}
     return {"turns": [json.loads(x) for x in path.read_text().splitlines() if x.strip()]}
+
+
+EVENTS_MAX_BYTES = 4 * 1024 * 1024   # per answer; the site relay caps answers at 16 MB
+
+
+@app.get("/api/jobs/{job_id}/samples/{k}/events", dependencies=[Depends(require_key)])
+def sample_events(job_id: str, k: int, after: int = 0, limit: int = 400) -> dict:
+    """The sample's own trace-viewer events (viewer_events.jsonl, one per action or analysis step) from index `after`,
+    for the site's Watch view (docs/static/js/spark-watch.js), which polls with after = the last answer's `next`.
+    Only complete lines count: the harness appends while the sample runs, so a half-written last line waits for the
+    next poll. The integer board is dropped (the viewer paints board_ascii). Answers stop at `limit` events or about
+    4 MB, whichever first, so a long sample's first load comes in pieces."""
+    if not JOB_RE.fullmatch(job_id):
+        raise HTTPException(404, "no such job")
+    job = read_json(JOBS / job_id / "job.json")
+    if job is None or not 0 <= k < int(job.get("samples") or 0):
+        raise HTTPException(404, "no such sample")
+    sd = JOBS / job_id / "samples" / str(k)
+    try:
+        raw = (sd / "viewer_events.jsonl").read_bytes()
+    except OSError:
+        raw = b""
+    lines = raw.split(b"\n")[:-1]   # the part after the last newline is unfinished (or empty)
+    after = max(0, after)
+    events, size = [], 0
+    for line in lines[after: after + max(1, min(limit, 1000))]:
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            ev = {"type": "unreadable"}
+        ev.pop("board", None)
+        size += len(line)
+        if events and size > EVENTS_MAX_BYTES:
+            break
+        events.append(ev)
+    viewer = read_json(sd / "viewer.json", {}) or {}
+    state = (job.get("sample_state") or [None] * (k + 1))[k]
+    status = viewer.get("status") or "playing"
+    if state != "running" and status == "playing":
+        status = state or "stopped"   # killed, cancelled or still queued: nothing more will come
+    return {"job": job_id, "sample": k, "game": job.get("game"), "game_id": viewer.get("game_id"), "state": state,
+            "status": status, "levels_completed": viewer.get("levels_completed"), "total_levels": viewer.get("total_levels"),
+            "after": after, "next": after + len(events), "total": len(lines), "events": events}
 
 
 def resolve_start(game: str, level: int, variant: str, context: str) -> tuple[dict, str, str, str | None]:

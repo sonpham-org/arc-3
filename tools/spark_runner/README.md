@@ -170,7 +170,7 @@ the address; Play, Cancel and per-turn logs still need the key.
 `GET /api/start-board?game=&level=&variant=&context=` (the board at the start Play would use there, from `boards.py`; cached in
 `~/arc3-runner/boards/`), `GET /api/replay-starts` (levels a No-context job can start from);
 with `Authorization: Bearer <key>`: `POST /api/play`, `POST /api/jobs/<id>/cancel`, `POST /api/settings`,
-`GET /api/jobs/<id>/samples/<k>/turns`, `POST /api/preview-request`. The Play body is built by `docs/static/js/spark-runner.js`.
+`GET /api/jobs/<id>/samples/<k>/turns`, `GET /api/jobs/<id>/samples/<k>/events?after=` (the Watch view's trace-viewer events, docs/static/js/spark-watch.js), `POST /api/preview-request`. The Play body is built by `docs/static/js/spark-runner.js`.
 
 ## Rebuilding pieces
 

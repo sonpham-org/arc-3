@@ -1,4 +1,14 @@
-import { fetchGame, fetchGameFrames, fetchGameStep, fetchRunOverview, fetchRunsIndex, fetchViewerVersion } from "./api.js";
+/*
+Author: Claude Opus 5.5 (Bubba) (7-Oct changes only; the file predates headers)
+Date: 07-October-2026
+PURPOSE: The trace viewer page (viewer.html): routes a run/game/turn link to the overview or one game's replay and
+  draws the board, event log, scrubber and decision pane from api.js payloads, live-tailing a game still playing.
+  7-Oct: Spark samples (run "spark:<job>:<sample>", fed by spark-watch.js) get no trace votes and re-read their
+  in-page steps each refresh; a route that fails now says so in the header instead of staying on "Loading".
+SRP/DRY check: Pass - the Spark source lives in spark-watch.js behind api.js; this file only gained the two checks.
+*/
+import { fetchGame, fetchGameFrames, fetchGameStep, fetchRunOverview, fetchRunsIndex, fetchViewerVersion } from "./api.js?v=20261007-watch";
+import { isSparkRun } from "./spark-watch.js?v=20261007-watch";
 
 // run name -> {avg_score, actions, ...}; empty when the index is unavailable (live mode).
 const runsIndex = new Map();
@@ -228,6 +238,8 @@ async function refreshGame({ resetToLive = false, target = null } = {}) {
   ]);
   state.game = game;
   state.frames = frames.frames || [];
+  // A live Spark sample's latest turn keeps growing; its steps are built in the page, so re-reading them is free.
+  if (isSparkRun(state.run)) state.stepCache.clear();
 
   const ended = game.status !== "playing";
   el.crumb.innerHTML = `<b>${game.game_id}</b> · <span class="status-${game.status}">${game.status}</span> · level ${game.levels_completed ?? 0}/${game.total_levels ?? "?"}`;
@@ -308,7 +320,8 @@ async function selectFrame(index) {
     currentClick: frame.click,
     previousStep: previous,
     mode: decisionMode,
-    feedback: {
+    // Votes are filed against stored runs; a Spark sample (spark-watch.js) is watched, not voted on.
+    feedback: isSparkRun(state.run) ? null : {
       run: state.run,
       gameIndex: state.gameIndex,
       gameId: state.game.game_id,
@@ -384,5 +397,8 @@ window.addEventListener("resize", () => {
 });
 
 syncRunTabs();
-route();
+route().catch((error) => {
+  console.error("route failed", error);
+  el.crumb.textContent = `Could not load this run: ${error.message}`;
+});
 setInterval(poll, POLL_MS);

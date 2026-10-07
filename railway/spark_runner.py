@@ -1,6 +1,6 @@
 """
 Author: Claude Opus 5.5 (Bubba)
-Date: 06-October-2026
+Date: 07-October-2026 (sample events route for Watch; first written 06-October-2026)
 PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages call /api/v1/spark-runner/*; this
   relays the call over the ARC tailnet (the container's Tailscale HTTP proxy, the same one the debugger relay uses)
   to the Spark runner on Jethro (tools/spark_runner/server.py, published tailnet-only by `tailscale serve`), and
@@ -8,7 +8,8 @@ PURPOSE: The site's side of the Mode explorer's Play button. Signed-in pages cal
   Sparks are off or busy.
     POST /api/v1/spark-runner/preview-request (6-Oct: the exact first request Play would send, rendered by the runner
       with no model, passed through unstored)
-    GET  /api/v1/spark-runner/health | stuck-points | exact-starts | start-board?game=&level=&variant=&context= | replay-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns
+    GET  /api/v1/spark-runner/health | stuck-points | exact-starts | start-board?game=&level=&variant=&context= | replay-starts | jobs[?game=] | jobs/<id> | jobs/<id>/samples/<k>/turns | jobs/<id>/samples/<k>/events?after=&limit=
+      (7-Oct, the Watch view: a sample's trace-viewer events, passed through unstored; docs/static/js/spark-watch.js)
     POST /api/v1/spark-runner/play | jobs/<id>/cancel
   The runner's key never reaches the browser (the Boss, #arc-3 6-Oct 11:01 ET: "It needs a runner key?!?"): the
   site sign-in is the only gate a person sees, and this relay adds the key itself, from the service variable
@@ -40,7 +41,7 @@ from urllib.parse import parse_qs, urlsplit
 from psycopg2.extras import Json
 
 PREFIX = "/api/v1/spark-runner"
-GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|start-board|replay-starts|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/turns)")
+GET_ROUTES = re.compile(r"/(?:health|stuck-points|exact-starts|start-board|replay-starts|jobs|jobs/[a-z0-9-]{8,40}|jobs/[a-z0-9-]{8,40}/samples/\d{1,2}/(?:turns|events))")
 POST_ROUTES = re.compile(r"/(?:play|preview-request|jobs/[a-z0-9-]{8,40}/cancel)")
 JOB_ROUTE = re.compile(r"/jobs/([a-z0-9-]{8,40})")
 EMAIL_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,255}$")
