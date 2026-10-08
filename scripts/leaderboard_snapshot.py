@@ -4,10 +4,11 @@
 # PURPOSE: Preserve Kaggle snapshots, score events, and continuous history for the
 # public leaderboard's leaders, pinned team, and featured competitors at any rank.
 # SRP/DRY check: Pass — extends the existing snapshot collector and publishing pipeline.
-"""Pull the public ARC-AGI-3 Kaggle leaderboard and keep our own history of it.
+"""Pull a public ARC Kaggle leaderboard and keep its observed history.
 
 Writes into $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data; kept out of git
-since 05-Oct-2026, when the page moved to ARC Explainer):
+since 05-Oct-2026, when the page moved to ARC Explainer). ARC-2 uses its arc-2/ child
+directory; select it with LEADERBOARD_COMPETITION=arc-prize-2026-arc-agi-2:
   latest.json   every team right now (+ where each stood at the end of the previous UTC day)
   history.json  one line per snapshot, plus a score/rank trail for the top teams and ours
   events.json   who changed score between snapshots (feed on the page)
@@ -16,25 +17,16 @@ Prints ALERT lines for things worth a notification; leaderboard_publish.sh shows
 Run on a schedule; leaderboard_push_explainer.py then sends them to the public page at
 https://arc.markbarney.net/kaggle-leaderboard.
 """
-import csv, io, json, os, subprocess, sys, tempfile, zipfile
-from datetime import datetime, timezone
+import csv, io, json, subprocess, sys, tempfile, zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from leaderboard_config import COMP, DATA, OUR_TEAM_ID, PINNED_TEAM_IDS, FEATURED_TEAM_IDS, check_competition
 
-COMP = "arc-prize-2026-arc-agi-3"
-OUR_TEAM_ID = "15605182"          # Son Pham & Mark Barney
-FEATURED_TEAM_IDS = frozenset({
-    OUR_TEAM_ID,
-    "15770880",                   # NVARC3
-    "16032816",                   # David Hartmann
-    "15501006",                   # Jan Disselhoff
-    "16371045",                   # Lord Han Solo
-    "16021367",                   # the last dance
-})
 TRAIL_TOP = 300                   # teams with a kept score/rank trail
 EVENT_RANK = 500                  # score changes kept in the feed when the team is this high
 EVENT_CAP = 3000
 BIG_JUMP = 3.0                    # a top-20 team gaining this many points raises an alert
-OUT = Path(os.environ.get("LEADERBOARD_DATA_DIR") or Path.home() / ".cache/arc3-leaderboard-data")
+OUT = DATA
 
 
 def medal_ranks(n):
@@ -75,13 +67,18 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     lp, bp, hp, ep = (OUT / f for f in ("latest.json", "base.json", "history.json", "events.json"))
     prev = load(lp, None)
+    check_competition(prev)
+    if prev is None and any(p.exists() for p in (bp, hp, ep)):
+        raise ValueError("saved history has no latest.json to establish its competition")
     prev_by_id = {r[1]: r for r in prev["rows"]} if prev else {}
 
     # "Today" baseline: standings at the end of the previous UTC day. Rolls forward once per UTC day.
     today = now[:10]
     base = load(bp, None)
     if base is None or base["date"] != today:
-        src = prev["rows"] if prev else rows
+        yesterday = (datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(days=1)).date().isoformat()
+        # No previous-day observation means an unknown comparison, not zero movement.
+        src = prev["rows"] if prev and prev["fetched"][:10] == yesterday else []
         base = {"date": today, "ranks": {r[1]: [r[0], r[4]] for r in src}}
         bp.write_text(json.dumps(base, separators=(",", ":")))
     for r in rows:
@@ -103,14 +100,15 @@ def main():
             events.append({"t": now, "id": r[1], "name": r[2], "from": o[4] if o else None, "to": r[4],
                            "rankFrom": o[0] if o else None, "rankTo": r[0]})
             if r[1] == OUR_TEAM_ID and o and medal(o[0], old_cuts) != medal(r[0], cuts):
-                alerts.append(f"We are now {medal(r[0], cuts) or 'outside the medals'} (rank {r[0]}, score {r[4]:.2f})")
+                alerts.append(f"{r[2]} is now {medal(r[0], cuts) or 'outside the medals'} (rank {r[0]}, score {r[4]:.2f})")
             elif o and r[0] <= 20 and r[4] - o[4] >= BIG_JUMP:
                 alerts.append(f"{r[2]} jumped {o[4]:.2f} -> {r[4]:.2f} (rank {o[0]} -> {r[0]})")
             elif not o and r[0] <= 50:
                 alerts.append(f"New team {r[2]} enters at rank {r[0]} with {r[4]:.2f}")
     ep.write_text(json.dumps(events[-EVENT_CAP:], separators=(",", ":")))
 
-    lp.write_text(json.dumps({"fetched": now, "teams": n, "medalRanks": cuts, "ourTeamId": OUR_TEAM_ID,
+    lp.write_text(json.dumps({"competition": COMP, "fetched": now, "teams": n, "medalRanks": cuts, "ourTeamId": OUR_TEAM_ID,
+                              "pinnedTeamIds": PINNED_TEAM_IDS,
                               "rows": rows}, separators=(",", ":")))
 
     hist = load(hp, {"snaps": [], "trails": {}})

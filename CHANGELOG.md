@@ -22,6 +22,11 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   pinned team at any rank, so competitor cards and evening recaps retain useful data
   after a team leaves the top 300. Existing JSON formats and ordinary-team limits stay
   compatible. See `docs/2026-10-07-featured-leaderboard-history.md`.
+- Extend the same half-hour collector/pusher to ARC-2 with separate local data and
+  competition-specific team identities. A failure on either board leaves the other
+  able to refresh. Pin both ARC-2 teams and keep featured competitors' history at any
+  rank. First-day and missing-day comparisons remain unknown until a real preceding-day
+  observation exists. Five pipeline regression tests and shell syntax checks pass.
 
 ## [2026.10.07-spark-watch]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-07*

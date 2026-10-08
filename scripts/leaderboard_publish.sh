@@ -8,9 +8,15 @@ export PATH="/Users/macmini/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 export LEADERBOARD_DATA_DIR="${LEADERBOARD_DATA_DIR:-$HOME/.cache/arc3-leaderboard-data}"
 cd "$(dirname "$0")/.."
 git pull -q --rebase --autostash origin main || echo "git pull failed; running the scripts already here"
-out=$(python3.13 scripts/leaderboard_snapshot.py)
-echo "$out"
-echo "$out" | grep '^ALERT ' | while read -r _ msg; do
-  osascript -e "display notification \"${msg//\"/}\" with title \"ARC-3 leaderboard\"" || true
-done || true   # no ALERT lines makes grep exit 1, which set -e/pipefail would turn into a silent stop
-python3.13 scripts/leaderboard_push_explainer.py || true   # never blocks the save
+for arc in 3 2; do
+  export LEADERBOARD_COMPETITION="arc-prize-2026-arc-agi-$arc"
+  if out=$(python3.13 scripts/leaderboard_snapshot.py); then
+    echo "$LEADERBOARD_COMPETITION: $out"
+    echo "$out" | grep '^ALERT ' | while read -r _ msg; do
+      osascript -e "display notification \"${msg//\"/}\" with title \"ARC-$arc leaderboard\"" || true
+    done || true
+    python3.13 scripts/leaderboard_push_explainer.py || true
+  else
+    echo "$LEADERBOARD_COMPETITION snapshot failed; continuing to the other competition" >&2
+  fi
+done

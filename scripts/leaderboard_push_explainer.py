@@ -5,6 +5,8 @@ Run by leaderboard_publish.sh straight after leaderboard_snapshot.py. Reads the 
 script keeps in $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data) (latest, history, events, backfill) and POSTs
 them to arc-explainer's /api/kaggle/board, which serves the public page at
 https://arc.markbarney.net/kaggle-leaderboard (added 05-Oct-2026).
+LEADERBOARD_COMPETITION selects ARC-3 (default) or ARC-2; ARC-2 reads the arc-2/
+child directory and sends its own competition key to the same API.
 
 NON-FATAL. If the site is mid-deploy or unreachable, this prints one line and exits 0;
 the snapshot is still saved locally. The next run sends the newest files anyway.
@@ -14,11 +16,9 @@ otherwise from this Mac's login keychain (service arc3-community-admin-token), t
 credential the old standing pusher used. Never pass it on the command line.
 """
 import gzip, json, os, subprocess, sys, urllib.error, urllib.request
-from pathlib import Path
+from leaderboard_config import COMP, DATA, check_competition
 
-COMP = "arc-prize-2026-arc-agi-3"
 URL = os.environ.get("EXPLAINER_BOARD_URL", "https://arc3.markbarney.net/api/kaggle/board")
-DATA = Path(os.environ.get("LEADERBOARD_DATA_DIR") or Path.home() / ".cache/arc3-leaderboard-data")
 DOCS = ("latest", "history", "events", "backfill")
 
 
@@ -44,6 +44,7 @@ def main():
     if "latest" not in documents:
         print("explainer push skipped: no latest.json")
         return
+    check_competition(documents["latest"])
     body = gzip.compress(json.dumps({"competition": COMP, "documents": documents},
                                     separators=(",", ":")).encode())
     req = urllib.request.Request(URL, data=body, method="POST", headers={
@@ -52,7 +53,7 @@ def main():
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             out = json.loads(r.read() or b"{}").get("data", {})
-            print(f"explainer push ok: {out.get('capturedAt')} ({', '.join(out.get('documents', []))})")
+            print(f"{COMP} explainer push ok: {out.get('capturedAt')} ({', '.join(out.get('documents', []))})")
     except urllib.error.HTTPError as e:
         print(f"explainer push failed: HTTP {e.code} {e.read()[:200]!r}")
     except Exception as e:  # network, DNS, timeout: never break the snapshot job
