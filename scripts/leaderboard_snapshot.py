@@ -1,4 +1,9 @@
 #!/usr/bin/env python3.13
+# Author: GPT-6.1 Sol
+# Date: 07-October-2026
+# PURPOSE: Preserve Kaggle snapshots, score events, and continuous history for the
+# public leaderboard's leaders, pinned team, and featured competitors at any rank.
+# SRP/DRY check: Pass — extends the existing snapshot collector and publishing pipeline.
 """Pull the public ARC-AGI-3 Kaggle leaderboard and keep our own history of it.
 
 Writes into $LEADERBOARD_DATA_DIR (default ~/.cache/arc3-leaderboard-data; kept out of git
@@ -17,6 +22,14 @@ from pathlib import Path
 
 COMP = "arc-prize-2026-arc-agi-3"
 OUR_TEAM_ID = "15605182"          # Son Pham & Mark Barney
+FEATURED_TEAM_IDS = frozenset({
+    OUR_TEAM_ID,
+    "15770880",                   # NVARC3
+    "16032816",                   # David Hartmann
+    "15501006",                   # Jan Disselhoff
+    "16371045",                   # Lord Han Solo
+    "16021367",                   # the last dance
+})
 TRAIL_TOP = 300                   # teams with a kept score/rank trail
 EVENT_RANK = 500                  # score changes kept in the feed when the team is this high
 EVENT_CAP = 3000
@@ -83,9 +96,9 @@ def main():
             o = prev_by_id.get(r[1])
             if o and o[4] == r[4]:
                 continue
-            if not o and r[0] > EVENT_RANK:
+            if not o and r[0] > EVENT_RANK and r[1] not in FEATURED_TEAM_IDS:
                 continue
-            if o and r[0] > EVENT_RANK and o[0] > EVENT_RANK and r[1] != OUR_TEAM_ID:
+            if o and r[0] > EVENT_RANK and o[0] > EVENT_RANK and r[1] not in FEATURED_TEAM_IDS:
                 continue
             events.append({"t": now, "id": r[1], "name": r[2], "from": o[4] if o else None, "to": r[4],
                            "rankFrom": o[0] if o else None, "rankTo": r[0]})
@@ -104,7 +117,7 @@ def main():
     hist["snaps"].append({"t": now, "teams": n, "top": rows[0][4], "gold": by_rank.get(cuts["gold"]),
                           "silver": by_rank.get(cuts["silver"]), "bronze": by_rank.get(cuts["bronze"])})
     for r in rows:
-        if r[0] <= TRAIL_TOP or r[1] == OUR_TEAM_ID:
+        if r[0] <= TRAIL_TOP or r[1] in FEATURED_TEAM_IDS:
             trail = hist["trails"].setdefault(r[1], {"name": r[2], "pts": []})
             trail["name"] = r[2]
             if not trail["pts"] or trail["pts"][-1][1:] != [r[4], r[0]]:

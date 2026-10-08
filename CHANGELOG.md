@@ -15,6 +15,14 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.07-featured-leaderboard-history]
+*Author: GPT-6.1 Sol | 2026-10-07*
+
+- Keep history and score events for the five featured leaderboard competitors and the
+  pinned team at any rank, so competitor cards and evening recaps retain useful data
+  after a team leaves the top 300. Existing JSON formats and ordinary-team limits stay
+  compatible. See `docs/2026-10-07-featured-leaderboard-history.md`.
+
 ## [2026.10.07-spark-watch]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-07*
 
