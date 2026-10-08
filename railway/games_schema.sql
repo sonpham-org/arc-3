@@ -158,3 +158,9 @@ ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_by text;
 ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS train_ok_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS arc3_game_versions_train_idx ON arc3_game_versions (train_ok) WHERE train_ok;
+
+-- The trainability checklist (8-Oct-2026): four yes/no checks a reviewer ticks alongside the
+-- verdict above, as {"<check>": true|false}. NULL means nobody has saved one on this version.
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS review_checks jsonb;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS review_by text;
+ALTER TABLE arc3_game_versions ADD COLUMN IF NOT EXISTS review_at timestamptz;

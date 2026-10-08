@@ -12,12 +12,13 @@
 // a stale copy in someone's browser silently keeps old behaviour (a fixed game-over
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
-import * as api from "./games-api.js?v=20261004-copycats";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20261004-copycats";
+import * as api from "./games-api.js?v=20261008-trainable";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20261008-trainable";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
 import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
+import { createReview } from "./games-review.js?v=20261008-trainable";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -102,6 +103,7 @@ const player = {
   stop: () => stopLiveIfRunning(),
 };
 let feedback = null;
+let trainReview = null;     // the trainability review: Trainable board, checklist, next game (team only)
 
 // ── Boot ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +142,14 @@ async function init() {
   me = await api.whoAmI();
   paintWhoAmI();
   if (me) createIdeasBoard({ api, onOpenGame: playGameId }).show();
+  if (me) {
+    trainReview = createReview({
+      api,
+      shortDate,
+      onOpen: playById,
+      currentTreeId: () => (current && !$("playView").hidden ? current.tree.treeId : null),
+    });
+  }
   window.addEventListener("hashchange", route);
   await route();
 }
@@ -183,6 +193,8 @@ function showBrowse() {
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   showView("browse");
   if (!listRendered) renderList();
+  // Fresh on every return, so a game just ticked shows up in the box.
+  if (trainReview) trainReview.showBoard();
 }
 
 function enterFeedback(options = {}) {
@@ -472,8 +484,9 @@ async function playVersion(version, tree, detail) {
   }
 }
 
-// The team's panels under the version list: the training tick for the version on screen, and
-// the game's comments, newest first. Signed out, neither exists (both are team-only reads).
+// The team's panels under the version list: the training verdict and checklist for the version
+// on screen (games-review.js), and the game's comments, newest first. Signed out, neither
+// exists (both are team-only reads).
 async function renderTeamPanels(context) {
   const box = $("commentsBox");
   const trainBox = $("trainBox");
@@ -487,29 +500,8 @@ async function renderTeamPanels(context) {
     }
   }
   if (current !== context) return;
-  paintTrainTick(context);
+  trainReview.attach(context);
   paintComments(context);
-}
-
-function paintTrainTick(context) {
-  const note = (context.notes.notes || {})[context.version.versionId] || {};
-  const tick = $("trainOk");
-  tick.checked = note.trainOk === true;
-  $("trainWho").textContent = note.trainOk && note.trainOkBy ? `${note.trainOkBy}, ${shortDate(note.trainOkAt)}` : "";
-  tick.onchange = async () => {
-    const good = tick.checked;
-    tick.disabled = true;
-    try {
-      const result = await api.setTrainOk(context.version.versionId, good);
-      context.notes.notes[context.version.versionId] = { ...note, trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt };
-      $("trainWho").textContent = result.trainOk ? `${result.trainOkBy}, ${shortDate(result.trainOkAt)}` : "";
-    } catch (err) {
-      tick.checked = !good; // the tick means what the server holds, not what was clicked
-      $("trainWho").textContent = `could not save (${err.message})`;
-    } finally {
-      tick.disabled = false;
-    }
-  };
 }
 
 function commentText(review) {

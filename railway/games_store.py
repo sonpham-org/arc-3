@@ -15,6 +15,9 @@ The route prefix decides who is calling, and every handler below trusts nothing 
                                    lines, for whatever GPT/Claude loop writes the next version.
   /api/v1/games/ideas/publication  machines holding ARC3_PUBLISH_TOKEN: add or refresh game
                                    ideas for the ideas board, in bulk.
+  /api/v1/games/review-status      the signed-in team: every tree's current version with its
+                                   trainability review, for the Trainable box, the progress
+                                   count and "Next unreviewed game".
 
 A version is immutable and content-addressed: version_id = "<game_id>@<sha12>", where sha12
 is the first 12 hex of sha256(source bytes). That is the same stamp arc-explainer records as
@@ -93,6 +96,10 @@ TEXT_LIMITS = {"comment": 4000, "goal_guess": 2000, "liked": 2000, "disliked": 2
 COUNT_FIELDS = ("levels_completed", "levels_total", "actions", "resets", "undos", "seconds")
 OUTCOMES = ("won", "lost", "gave_up", "in_progress")
 VERDICTS = ("keep", "revise", "branch", "retire")
+# The trainability checklist (Son, 8-Oct-2026), in the order the page shows it: a rising
+# difficulty curve with mechanics added over time; good mechanics; ARC-like graphics and feel;
+# a reasonable number of actions (10-20 early on, 80-120 in later levels).
+REVIEW_CHECKS = ("difficulty_curve", "good_mechanics", "arc_like", "action_count")
 
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_THUMB_BYTES = 512 * 1024
@@ -1086,7 +1093,8 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
     cursor.execute(
         """
         SELECT version_id, reason, details, author_kind, author_model, author_name,
-               origin, provenance, published_at, train_ok, train_ok_by, train_ok_at
+               origin, provenance, published_at, train_ok, train_ok_by, train_ok_at,
+               review_checks, review_by, review_at
         FROM arc3_game_versions WHERE tree_id = %s
         """,
         (tree_id,),
@@ -1106,6 +1114,9 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
             "trainOk": row["train_ok"],
             "trainOkBy": row["train_ok_by"],
             "trainOkAt": iso(row["train_ok_at"]),
+            "reviewChecks": row["review_checks"],
+            "reviewBy": row["review_by"],
+            "reviewAt": iso(row["review_at"]),
         }
         for row in _rows(cursor)
     }
@@ -1211,6 +1222,126 @@ def training_set(cursor: Any) -> dict[str, Any]:
         for row in _rows(cursor)
     ]
     return {"apiVersion": 1, "count": len(versions), "versions": versions}
+
+
+# ── The trainability review ──────────────────────────────────────────────────
+
+
+def clean_review_checks(value: Any) -> dict[str, bool]:
+    """The checklist as the page sends it, every check present: {"<check>": true|false}."""
+
+    if not isinstance(value, dict):
+        raise GamesProblem(400, "invalid_checks", "send {\"checks\": {<check>: true|false}}")
+    unknown = sorted(set(value) - set(REVIEW_CHECKS))
+    if unknown:
+        raise GamesProblem(400, "invalid_checks", f"unknown checks: {', '.join(unknown)}")
+    if any(not isinstance(flag, bool) for flag in value.values()):
+        raise GamesProblem(400, "invalid_checks", "every check is true or false")
+    return {check: value.get(check, False) for check in REVIEW_CHECKS}
+
+
+def set_review_checks(cursor: Any, version_id: str, checks: Any, *, email: str) -> dict[str, Any]:
+    """Save the trainability checklist on one exact version, with who saved it and when.
+    Per version, like the training tick it sits under."""
+
+    version_id = _version_id(version_id, "version_id")
+    checks = clean_review_checks(checks)
+    cursor.execute(
+        """
+        UPDATE arc3_game_versions
+           SET review_checks = %s, review_by = %s, review_at = now()
+         WHERE version_id = %s
+        RETURNING version_id, game_id, tree_id, review_checks, review_by, review_at
+        """,
+        (json.dumps(checks), email, version_id),
+    )
+    row = _one(cursor)
+    if not row:
+        raise GamesProblem(404, "version_not_found", f"not published: {version_id}")
+    print(f"games: review checks {checks} on {version_id} by {email}", flush=True)
+    return {
+        "apiVersion": 1,
+        "versionId": row["version_id"],
+        "gameId": row["game_id"],
+        "treeId": row["tree_id"],
+        "reviewChecks": row["review_checks"],
+        "reviewBy": row["review_by"],
+        "reviewAt": iso(row["review_at"]),
+    }
+
+
+def review_status(cursor: Any) -> dict[str, Any]:
+    """Every tree the Games page lists, with its current version's review state and the
+    tree's latest training verdict. Team-only: the verdicts are the team's.
+
+    A current version counts as reviewed once anyone has saved its checklist or a training
+    verdict on it -- an unticked verdict (train_ok = false) included, since someone looked and
+    said no. A newer version lands unreviewed, so a game comes back round when it changes.
+    The official 25 come first: they are the starting set of the Trainable box and the first
+    games "Next unreviewed game" walks."""
+
+    cursor.execute(
+        f"""
+        WITH RECURSIVE {LINE_CTES}
+        SELECT t.tree_id, t.family AS tree_family,
+               g.family, g.title, g.description, g.tags,
+               v.version_id, v.game_id, v.sha256, v.has_thumbnail, th.number,
+               (v.train_ok IS NOT NULL OR v.review_checks IS NOT NULL) AS reviewed,
+               vd.version_id AS verdict_version_id, vd.game_id AS verdict_game_id,
+               vd.sha256 AS verdict_sha256, vd.has_thumbnail AS verdict_has_thumbnail,
+               vd.train_ok AS verdict_ok, vd.train_ok_by AS verdict_by, vd.train_ok_at AS verdict_at,
+               vd.family AS verdict_family, vd.title AS verdict_title
+        FROM arc3_game_trees AS t
+        JOIN tree_heads AS th ON th.tree_id = t.tree_id
+        JOIN arc3_game_versions AS v ON v.version_id = th.version_id
+        JOIN arc3_games AS g ON g.game_id = v.game_id AND NOT g.hidden
+        LEFT JOIN LATERAL (
+            SELECT tv.version_id, tv.game_id, tv.sha256, tv.has_thumbnail,
+                   tv.train_ok, tv.train_ok_by, tv.train_ok_at, tg.family, tg.title
+            FROM arc3_game_versions AS tv
+            JOIN arc3_games AS tg ON tg.game_id = tv.game_id AND NOT tg.hidden
+            WHERE tv.tree_id = t.tree_id AND tv.train_ok IS NOT NULL
+            ORDER BY tv.train_ok_at DESC NULLS LAST, tv.published_at DESC, tv.version_id DESC
+            LIMIT 1
+        ) AS vd ON TRUE
+        ORDER BY (t.family = 'official') DESC, t.tree_id
+        """
+    )
+    trees = []
+    for row in _rows(cursor):
+        verdict = None
+        if row["verdict_version_id"]:
+            verdict = {
+                "versionId": row["verdict_version_id"],
+                "gameId": row["verdict_game_id"],
+                "title": _game_public(row["verdict_family"], row["verdict_game_id"], row["verdict_title"], None, None)["title"],
+                "thumbUrl": thumb_url(row["verdict_game_id"], row["verdict_sha256"]) if row["verdict_has_thumbnail"] else None,
+                "trainOk": row["verdict_ok"],
+                "trainOkBy": row["verdict_by"],
+                "trainOkAt": iso(row["verdict_at"]),
+            }
+        trees.append(
+            {
+                "treeId": row["tree_id"],
+                "family": row["tree_family"],
+                "title": _game_public(row["family"], row["game_id"], row["title"], None, None)["title"],
+                "head": {
+                    "versionId": row["version_id"],
+                    "gameId": row["game_id"],
+                    "number": row["number"],
+                    "thumbUrl": thumb_url(row["game_id"], row["sha256"]) if row["has_thumbnail"] else None,
+                },
+                "reviewed": row["reviewed"],
+                "verdict": verdict,
+            }
+        )
+    return {
+        "apiVersion": 1,
+        "checks": list(REVIEW_CHECKS),
+        "total": len(trees),
+        "reviewed": sum(1 for tree in trees if tree["reviewed"]),
+        "trees": trees,
+    }
 
 
 def feedback_record(row: dict[str, Any], *, include_ip: bool = False) -> dict[str, Any]:
@@ -1799,6 +1930,9 @@ class GamesApi:
             if path == f"{team}/next":
                 with self._cursor() as cursor:
                     return _json(200, next_version(cursor, query, reviewer=email))
+            if path == f"{team}/review-status":
+                with self._cursor() as cursor:
+                    return _json(200, review_status(cursor))
             if path == f"{team}/feedback":
                 return self._jsonl(query, include_ip=True)
             if path == f"{team}/training-set":
@@ -1830,6 +1964,12 @@ class GamesApi:
                     raise GamesProblem(400, "invalid_good", "send {\"good\": true|false}")
                 with self._cursor(commit=True) as cursor:
                     return _json(200, set_train_ok(cursor, unquote(match.group(1)), good, email=email))
+            match = re.fullmatch(rf"{re.escape(team)}/versions/([^/]+)/review", path)
+            if match:
+                body = self._read(read_body, headers, 1024)
+                checks = clean_review_checks(body.get("checks") if isinstance(body, dict) else None)
+                with self._cursor(commit=True) as cursor:
+                    return _json(200, set_review_checks(cursor, unquote(match.group(1)), checks, email=email))
             match = re.fullmatch(rf"{re.escape(team)}/feedback/(\d+)/hidden", path)
             if match:
                 body = self._read(read_body, headers, 1024)

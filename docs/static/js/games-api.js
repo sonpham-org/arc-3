@@ -130,6 +130,11 @@ export const setFeedbackHidden = (feedbackId, hidden) =>
 // The training tick is team-only, like change notes.
 export const setTrainOk = (versionId, good) =>
   postJson(`${TEAM}/versions/${encodeURIComponent(versionId)}/train`, { good });
+// The trainability checklist under that tick (8-Oct-2026), and every tree's review state for
+// the Trainable box, the progress count and "Next unreviewed game". Team-only as well.
+export const setReviewChecks = (versionId, checks) =>
+  postJson(`${TEAM}/versions/${encodeURIComponent(versionId)}/review`, { checks });
+export const reviewStatus = () => getJson(`${TEAM}/review-status`);
 
 export const listIdeas = (params) => getJson(`${TEAM}/ideas?${new URLSearchParams(params)}`);
 export const updateIdea = (ideaId, change) => postJson(`${TEAM}/ideas/${encodeURIComponent(ideaId)}`, change);

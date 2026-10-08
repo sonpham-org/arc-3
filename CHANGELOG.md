@@ -15,6 +15,25 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.08-trainable-review]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-08*
+
+- **What:** a trainability review on the Games page, for the team (Son, #arc3-game-ideas-brain-dump, 8-Oct). A
+  "Trainable" box at the top of the page shows thumbnails of every game ticked trainable, led by the official games as
+  the starting set (an official game leaves the box only if someone unticks it; none are pre-ticked in the database).
+  Under the per-version tick, now labelled "Trainable" and still the final verdict, is Son's four-item checklist,
+  saved per version with who and when. "Next unreviewed game" (in the box and under the checklist) opens the next game,
+  official games first and then by id, whose current version has no checklist or verdict saved by anyone, and both
+  places show how many current versions are reviewed out of the total.
+- **How:** three nullable columns on `arc3_game_versions` (`review_checks` jsonb, `review_by`, `review_at`), added with
+  `ADD COLUMN IF NOT EXISTS`, so existing versions and ticks are untouched. Team-only routes `POST
+  /api/v1/games/versions/<id>/review` and `GET /api/v1/games/review-status`; tree notes carry the checklist. Reviewed =
+  a checklist or a verdict saved on the current version (an untick counts: someone looked and said no); a new version
+  starts unreviewed. Front end in the new `docs/static/js/games-review.js`, which also takes over the tick from
+  `games-play.js`. Ticking now hands the keyboard straight back to the game. Two new database tests (the review and
+  the next-game order, and the columns arriving on an existing catalog) pass on a local Postgres along with the rest
+  of `scripts/test_games_store.py`; the whole flow was clicked through in headless Chromium against a local copy.
+
 ## [2026.10.07-featured-leaderboard-history]
 *Author: GPT-6.1 Sol | 2026-10-07*
 

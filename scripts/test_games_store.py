@@ -31,6 +31,8 @@ from railway.games_store import (
     list_trees,
     next_version,
     publish_version,
+    review_status,
+    set_review_checks,
     set_train_ok,
     training_set,
     tree_detail,
@@ -174,6 +176,8 @@ class RouteAuthTests(unittest.TestCase):
             ("POST", "/api/v1/games/feedback/3/hidden"),
             ("GET", "/api/v1/games/ideas"),
             ("POST", "/api/v1/games/ideas/gpt:q001"),
+            ("GET", "/api/v1/games/review-status"),
+            ("POST", "/api/v1/games/versions/ng01@000000000000/review"),
         ):
             with self.subTest(path=path):
                 status, body = self.call(method, path, {})
@@ -392,6 +396,77 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(GamesProblem) as caught:
             self.query(set_train_ok, "c1-v1@000000000000", True, email="son@example.com")
         self.assertEqual(caught.exception.code, "version_not_found")
+
+    def test_the_trainability_review_drives_the_trainable_box_and_the_next_unreviewed_game(self) -> None:
+        self.publish(upload("rv-off", "o1", created_at="2026-09-01T00:00:00Z", family="official", title="Off"))
+        self.publish(upload("rv-a", "a1", created_at="2026-09-01T00:00:00Z", family="arena", title="A Spoiler"))
+        self.publish(upload("rv-a", "a2", created_at="2026-09-02T00:00:00Z"))
+        self.publish(upload("rv-b", "b1", created_at="2026-09-01T00:00:00Z"))
+        old_a, head_a, head_b = vid("rv-a", "a1"), vid("rv-a", "a2"), vid("rv-b", "b1")
+
+        def mine(status):
+            return {t["treeId"]: t for t in status["trees"] if t["treeId"].startswith("rv-")}
+
+        status = self.query(review_status)
+        self.assertEqual(status["checks"], ["difficulty_curve", "good_mechanics", "arc_like", "action_count"])
+        trees = mine(status)
+        self.assertEqual(list(trees), ["rv-off", "rv-a", "rv-b"])  # the official games lead
+        self.assertEqual(status["trees"][0]["family"], "official")
+        self.assertFalse(any(t["reviewed"] for t in trees.values()))
+        self.assertEqual(trees["rv-a"]["title"], "rv-a")  # blind family: the name never reaches the page
+        self.assertEqual(trees["rv-a"]["head"]["versionId"], head_a)
+
+        # The checklist alone marks the current version reviewed, and every check is stored.
+        saved = self.query(set_review_checks, head_a, {"difficulty_curve": True, "arc_like": True}, email="son@example.com")
+        self.assertEqual(saved["reviewChecks"], {"difficulty_curve": True, "good_mechanics": False,
+                                                 "arc_like": True, "action_count": False})
+        self.assertEqual(saved["reviewBy"], "son@example.com")
+        note = self.query(tree_notes, "rv-a")["notes"]
+        self.assertEqual((note[head_a]["reviewChecks"]["arc_like"], note[head_a]["reviewBy"]), (True, "son@example.com"))
+        self.assertIsNone(note[old_a]["reviewChecks"])
+        trees = mine(self.query(review_status))
+        self.assertTrue(trees["rv-a"]["reviewed"])
+        self.assertIsNone(trees["rv-a"]["verdict"])  # checked, but no verdict yet: not in the box
+
+        # A verdict on an older version puts the game in the box under that version, but the
+        # current version is still the one waiting for review if nobody looked at it.
+        self.query(set_train_ok, vid("rv-b", "b1"), True, email="mark@example.com")
+        self.query(set_train_ok, old_a, True, email="mark@example.com")
+        trees = mine(self.query(review_status))
+        self.assertEqual((trees["rv-b"]["reviewed"], trees["rv-b"]["verdict"]["trainOk"]), (True, True))
+        self.assertEqual(trees["rv-a"]["verdict"]["versionId"], old_a)
+        self.assertEqual(trees["rv-b"]["verdict"]["trainOkBy"], "mark@example.com")
+
+        # An unticked verdict is still a review: someone looked and said no.
+        self.query(set_train_ok, head_b, False, email="mark@example.com")
+        trees = mine(self.query(review_status))
+        self.assertEqual((trees["rv-b"]["reviewed"], trees["rv-b"]["verdict"]["trainOk"]), (True, False))
+        self.assertFalse(trees["rv-off"]["reviewed"])
+
+        for bad in (None, [], {"nonsense": True}, {"arc_like": "yes"}):
+            with self.subTest(checks=bad), self.assertRaises(GamesProblem) as caught:
+                self.query(set_review_checks, head_a, bad, email="son@example.com")
+            self.assertEqual(caught.exception.code, "invalid_checks")
+        with self.assertRaises(GamesProblem) as caught:
+            self.query(set_review_checks, "rv-a@000000000000", {}, email="son@example.com")
+        self.assertEqual(caught.exception.code, "version_not_found")
+
+    def test_the_review_columns_arrive_on_an_existing_catalog_without_touching_its_rows(self) -> None:
+        self.publish(upload("old-1", "o", created_at="2026-09-01T00:00:00Z"))
+        self.query(set_train_ok, vid("old-1", "o"), True, email="son@example.com")
+        schema = (ROOT / "railway" / "games_schema.sql").read_text(encoding="utf-8")
+
+        def as_before_the_checklist(cursor):
+            cursor.execute("ALTER TABLE arc3_game_versions DROP COLUMN review_checks, DROP COLUMN review_by, "
+                           "DROP COLUMN review_at")
+            cursor.execute(schema)  # every boot applies the whole schema again
+            cursor.execute(schema)
+
+        self.query(as_before_the_checklist)
+        note = self.query(tree_notes, "old-1")["notes"][vid("old-1", "o")]
+        self.assertEqual((note["trainOk"], note["trainOkBy"], note["reviewChecks"]), (True, "son@example.com", None))
+        tree = next(t for t in self.query(review_status)["trees"] if t["treeId"] == "old-1")
+        self.assertTrue(tree["reviewed"])
 
 
 if __name__ == "__main__":
