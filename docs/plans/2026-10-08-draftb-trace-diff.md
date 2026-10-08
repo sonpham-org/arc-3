@@ -106,6 +106,9 @@ Recover), not a shorter system prompt.
   where lossless (`=` for flag meanings, `0..63`, short field lists).
 - The `board_changed` / `gameplay_changed` paragraph is included because the draftB and control arms run the daniel
   flag set. Drop it for the son flag set, where the harness does not explain it.
+- Three values are frozen as text, as in `live-now.txt`: the edge-guard distance (4, `ARC3_NOOP_GUARD_BORDER`), the
+  tool-output cap (about 3072 tokens) and the colour legend (`grid_utils.ARC_COLOR_LEGEND`). Whoever wires this
+  into a builder should fill them from the harness, not paste them.
 - The death sentence also carries the original turn message's "record the correction ... instead of retesting it".
 - Checked against the dedup profile's `STANDING_LINES`: every fact those lines carry is in the restored text, so it
   is safe under deduplicated turn messages too.
