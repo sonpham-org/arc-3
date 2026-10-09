@@ -32,6 +32,8 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   the box in headless Chrome against the live review-status answer (all trees, family and state filters, opening a
   non-official game, Next unreviewed); `scripts/test_games_tree.mjs` and `scripts.test_games_store` pass (database
   round trip skipped, no local Postgres; no server change).
+- **Also:** a selected filter chip (here and in the main tree list) took the theme's white active-button text on a
+  pale wash and was hard to read; it now uses the normal text colour.
 
 ## [2026.10.09-kaggle-gpu-hours]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
