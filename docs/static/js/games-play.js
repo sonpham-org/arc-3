@@ -1,8 +1,11 @@
 // Author: Claude Opus 5.5 (Bubba)
 // Date: 09-October-2026
-// PURPOSE: The Games page's main module (described below). 9-Oct-2026 change: only the cache tag on
-//   the games-review.js import, so browsers load the review board that now lists every game.
-// SRP/DRY check: Pass -- no logic change in this file.
+// PURPOSE: The Games page's main module (described below). 9-Oct-2026 changes: the cache tag on the
+//   games-review.js import (the review board that lists every game, then the Trainable / Untrainable
+//   verdict toggle), and the game's comments moved out of their own right-hand column into the
+//   review box in the left sidebar, under the checklist (Son, #arc-3). The comment code below is
+//   unchanged; it finds its elements by id wherever index.html puts them.
+// SRP/DRY check: Pass -- no logic change in this file beyond the comment wording.
 //
 // Games tab -- the evolution-tree catalog, the in-browser player, and "Feedback games".
 //
@@ -24,7 +27,7 @@ import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
 import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
-import { createReview } from "./games-review.js?v=20261009-review-all";
+import { createReview } from "./games-review.js?v=20261009-review-left";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -490,9 +493,9 @@ async function playVersion(version, tree, detail) {
   }
 }
 
-// The team's panels under the version list: the training verdict and checklist for the version
-// on screen (games-review.js), and the game's comments, newest first. Signed out, neither
-// exists (both are team-only reads).
+// The team's review box under the version list: the training verdict and checklist for the version
+// on screen (games-review.js), then the game's comments, newest first. Signed out, none of it
+// exists (all team-only reads).
 async function renderTeamPanels(context) {
   const box = $("commentsBox");
   const trainBox = $("trainBox");

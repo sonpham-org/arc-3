@@ -5,20 +5,24 @@
 //   answer from the team-only review-status route (railway/games_store.py review_status):
 //   - the review board on the browse view: a thumbnail of every game tree in the catalog, every
 //     family, official first (the server's order), each marked with its review state -- a dot for
-//     a current version nobody has reviewed, a green tick for "trainable", a red cross for "not
-//     trainable". Family chips, verdict chips and a search box narrow the list; a click opens the
-//     game in the player, where the review sits in the sidebar. Until 9-Oct the board held only the
-//     official games plus anything ticked, so the rest of the catalog could not be reviewed from it;
-//   - the sidebar review of the version on screen: the "Trainable" verdict tick and, under it,
-//     Son's four-item checklist, each saved per version with who and when;
+//     a current version nobody has reviewed, a green tick for "trainable", a red cross for
+//     "untrainable". Family chips, verdict chips and a search box narrow the list; a click opens the
+//     game in the player, where the review sits in the left sidebar;
+//   - the sidebar review of the version on screen: a two-way Trainable / Untrainable verdict
+//     (9-Oct, Son: "have a toggle for Trainable vs. Untrainable"; it replaced a single tick), unset
+//     until someone decides and clearable by clicking the chosen side again, then Son's four-item
+//     checklist, each saved per version with who and when. The game's comments sit under the
+//     checklist in the same box (markup in index.html; games-play.js paints them);
 //   - "Next unreviewed game": the next tree, in board order (official first, then by id), whose
 //     current version has no checklist or verdict saved by anyone, plus a reviewed-of-total count.
-//     It walks every tree, whatever the board's filters show.
+//     It walks every tree, whatever the board's filters show. After any save the review state is
+//     reloaded, so the board, its filters, the count and this walk all match the verdict.
 //   games-play.js owns the player and calls attach() for each version it opens. Signed out, none
 //   of this is shown; the API refuses these routes to anyone without a team session.
 // SRP/DRY check: Pass -- the board, filters and review stay in this one module; reuses
 //   games-api.js for every request, games-tree.js's shortDate, and games.css's .chip styling for
-//   the filters. No server change: review-status already returned every tree.
+//   the filters. The verdict saves through the existing train route (trainOk true / false, or null
+//   to clear).
 
 const OFFICIAL = "official";
 
@@ -40,7 +44,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     ["", "Any state"],
     ["unreviewed", "Unreviewed"],
     ["trainable", "Trainable"],
-    ["rejected", "Not trainable"],
+    ["rejected", "Untrainable"],
     ["noverdict", "No verdict"],
   ];
   const verdictOf = (tree) => (!tree.verdict ? "noverdict" : tree.verdict.trainOk ? "trainable" : "rejected");
@@ -125,7 +129,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     const trees = boardTrees();
     const ticked = all.filter((t) => verdictOf(t) === "trainable").length;
     const rejected = all.filter((t) => verdictOf(t) === "rejected").length;
-    $("tbSummary").textContent = `Showing ${trees.length} of ${all.length} games, official first · ${ticked} trainable · ${rejected} not trainable · a dot marks a current version nobody has reviewed`;
+    $("tbSummary").textContent = `Showing ${trees.length} of ${all.length} games, official first · ${ticked} trainable · ${rejected} untrainable · a dot marks a current version nobody has reviewed`;
     if (!trees.length) grid.appendChild(el("p", "tb-empty", "No games match."));
     for (const tree of trees) {
       const verdict = verdictOf(tree);
@@ -135,8 +139,8 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
       item.type = "button";
       const by = tree.verdict ? `${tree.verdict.trainOkBy || "the team"}${tree.verdict.trainOkAt ? `, ${shortDate(tree.verdict.trainOkAt)}` : ""}` : "";
       item.title = `${shown.title} · ${tree.family} · ` + (verdict === "trainable"
-        ? `ticked trainable by ${by}`
-        : verdict === "rejected" ? `marked not trainable by ${by}` : "no verdict yet");
+        ? `marked trainable by ${by}`
+        : verdict === "rejected" ? `marked untrainable by ${by}` : "no verdict yet");
       const img = el("img");
       img.alt = "";
       img.loading = "lazy";
@@ -180,20 +184,14 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     }
   }
 
-  // A save on the version on screen: keep the count honest without another round trip.
-  function noteSaved(context, change) {
-    if (!status) return;
-    const tree = status.trees.find((t) => t.treeId === context.tree.treeId);
-    if (!tree) return;
-    if (tree.head.versionId === context.version.versionId && !tree.reviewed) {
-      tree.reviewed = true;
-      status.reviewed += 1;
-    }
-    if (change.verdict) tree.verdict = { ...change.verdict, title: tree.title, thumbUrl: context.version.thumbUrl };
-    paintProgress();
+  // A save on the version on screen: reload the review state so the board, its filters, the count
+  // and "Next unreviewed game" all agree with it (a cleared verdict can hand the tree back to an
+  // older version's verdict, or make the current version unreviewed again).
+  function noteSaved() {
+    refresh();
   }
 
-  // The sidebar review of one version: the verdict tick and the checklist under it.
+  // The sidebar review of one version: the verdict toggle and the checklist under it.
   function attach(context) {
     const versionId = context.version.versionId;
     const notes = context.notes.notes || (context.notes.notes = {});
@@ -203,30 +201,43 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     if (!status) refresh();
   }
 
+  // The verdict: two buttons, Trainable and Untrainable, both off until someone decides. Clicking
+  // the side already chosen clears it back to no verdict (the route takes good: null for that).
   function paintTick(context, note, versionId) {
-    const tick = $("trainOk");
+    const seg = $("trainVerdict");
+    const buttons = [...seg.querySelectorAll("button[data-verdict]")];
     const who = $("trainWho");
     const paint = () => {
-      tick.checked = note().trainOk === true;
-      who.textContent = note().trainOk && note().trainOkBy ? `${note().trainOkBy}, ${shortDate(note().trainOkAt)}` : "";
+      const verdict = note().trainOk; // true, false, or unset (null / undefined)
+      for (const button of buttons) {
+        const side = button.dataset.verdict === "true";
+        button.setAttribute("aria-pressed", String(verdict === side));
+        button.title = verdict === side ? "Click again to clear the verdict" : "";
+      }
+      who.textContent = typeof verdict === "boolean"
+        ? `${verdict ? "Trainable" : "Untrainable"}${note().trainOkBy ? ` · ${note().trainOkBy}` : ""}${note().trainOkAt ? `, ${shortDate(note().trainOkAt)}` : ""}`
+        : "No verdict yet";
     };
     paint();
-    tick.onchange = async () => {
-      const good = tick.checked;
-      tick.disabled = true;
-      tick.blur(); // hand the arrow keys straight back to the game
-      try {
-        const result = await api.setTrainOk(versionId, good);
-        Object.assign(note(), { trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt });
-        paint();
-        noteSaved(context, { verdict: { versionId, gameId: result.gameId, trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt } });
-      } catch (err) {
-        paint(); // the tick means what the server holds, not what was clicked
-        who.textContent = `could not save (${err.message})`;
-      } finally {
-        tick.disabled = false;
-      }
-    };
+    for (const button of buttons) {
+      button.onclick = async () => {
+        const side = button.dataset.verdict === "true";
+        const good = note().trainOk === side ? null : side;
+        buttons.forEach((b) => (b.disabled = true));
+        button.blur(); // hand the arrow keys straight back to the game
+        try {
+          const result = await api.setTrainOk(versionId, good);
+          Object.assign(note(), { trainOk: result.trainOk, trainOkBy: result.trainOkBy, trainOkAt: result.trainOkAt });
+          paint();
+          noteSaved();
+        } catch (err) {
+          paint(); // the buttons show what the server holds, not what was clicked
+          who.textContent = `could not save (${err.message})`;
+        } finally {
+          buttons.forEach((b) => (b.disabled = false));
+        }
+      };
+    }
   }
 
   function paintChecks(context, note, versionId) {
@@ -247,7 +258,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
           const result = await api.setReviewChecks(versionId, checks);
           Object.assign(note(), { reviewChecks: result.reviewChecks, reviewBy: result.reviewBy, reviewAt: result.reviewAt });
           paint();
-          noteSaved(context, {});
+          noteSaved();
         } catch (err) {
           paint();
           who.textContent = `could not save (${err.message})`;

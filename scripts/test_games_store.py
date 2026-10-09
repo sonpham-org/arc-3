@@ -390,9 +390,14 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(self.query(tree_notes, "c1-v1")["notes"][second]["trainOk"])
         self.assertIsNone(self.query(tree_notes, "c1-v1")["notes"][first]["trainOk"])
 
-        # Unticking clears the name with it, and an unknown version is a 404.
-        self.assertFalse(self.query(set_train_ok, second, False, email="son@example.com")["trainOk"])
+        # Untrainable is a verdict too: it keeps who said so, and leaves the training set.
+        rejected = self.query(set_train_ok, second, False, email="son@example.com")
+        self.assertEqual((rejected["trainOk"], rejected["trainOkBy"]), (False, "son@example.com"))
+        self.assertIsNotNone(rejected["trainOkAt"])
         self.assertEqual(self.query(training_set)["count"], 0)
+        # Clearing goes back to no verdict at all, who and when included; an unknown version is a 404.
+        cleared = self.query(set_train_ok, second, None, email="son@example.com")
+        self.assertEqual((cleared["trainOk"], cleared["trainOkBy"], cleared["trainOkAt"]), (None, None, None))
         with self.assertRaises(GamesProblem) as caught:
             self.query(set_train_ok, "c1-v1@000000000000", True, email="son@example.com")
         self.assertEqual(caught.exception.code, "version_not_found")

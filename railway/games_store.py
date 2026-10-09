@@ -1,3 +1,9 @@
+# Author: Claude Opus 5.5 (Bubba)
+# Date: 09-October-2026
+# PURPOSE: The Games page's API and Postgres store (described in the docstring below). 9-Oct-2026
+#   change: the training verdict route also takes good: null to clear a verdict, and an
+#   untrainable verdict now keeps who and when, for the Trainable / Untrainable toggle (Son, #arc-3).
+# SRP/DRY check: Pass -- the same set_train_ok and train route, widened; no new route or table.
 """Game evolution trees and human feedback for the Games page.
 
 The route prefix decides who is calling, and every handler below trusts nothing else:
@@ -1166,19 +1172,21 @@ def tree_notes(cursor: Any, tree_id: str) -> dict[str, Any]:
 # ── The training tick ────────────────────────────────────────────────────────
 
 
-def set_train_ok(cursor: Any, version_id: str, good: bool, *, email: str) -> dict[str, Any]:
-    """Tick one exact version as fit to train on. Per version, not per game: the pipeline
-    trains on exact bytes, and the next version of the same game may not be fit at all."""
+def set_train_ok(cursor: Any, version_id: str, good: bool | None, *, email: str) -> dict[str, Any]:
+    """Set one exact version's training verdict: True trainable, False untrainable, None to clear
+    it back to no verdict. Per version, not per game: the pipeline trains on exact bytes, and the
+    next version of the same game may not be fit at all. Who and when are kept for either
+    verdict (an untrainable call is a review too) and wiped with a clear."""
 
     version_id = _version_id(version_id, "version_id")
     cursor.execute(
         """
         UPDATE arc3_game_versions
-           SET train_ok = %s, train_ok_by = %s, train_ok_at = now()
+           SET train_ok = %s, train_ok_by = %s, train_ok_at = CASE WHEN %s::boolean IS NULL THEN NULL ELSE now() END
          WHERE version_id = %s
         RETURNING version_id, game_id, tree_id, train_ok, train_ok_by, train_ok_at
         """,
-        (good, email if good else None, version_id),
+        (good, None if good is None else email, good, version_id),
     )
     row = _one(cursor)
     if not row:
@@ -1959,9 +1967,11 @@ class GamesApi:
             match = re.fullmatch(rf"{re.escape(team)}/versions/([^/]+)/train", path)
             if match:
                 body = self._read(read_body, headers, 1024)
-                good = body.get("good") if isinstance(body, dict) else None
-                if not isinstance(good, bool):
-                    raise GamesProblem(400, "invalid_good", "send {\"good\": true|false}")
+                if not isinstance(body, dict) or "good" not in body:
+                    raise GamesProblem(400, "invalid_good", "send {\"good\": true|false|null}")
+                good = body["good"]
+                if good is not None and not isinstance(good, bool):
+                    raise GamesProblem(400, "invalid_good", "send {\"good\": true|false|null}")
                 with self._cursor(commit=True) as cursor:
                     return _json(200, set_train_ok(cursor, unquote(match.group(1)), good, email=email))
             match = re.fullmatch(rf"{re.escape(team)}/versions/([^/]+)/review", path)

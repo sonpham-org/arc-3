@@ -15,6 +15,26 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.09-review-left-toggle]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
+
+- **What:** on the Games page player, the comments no longer have their own column on the right. They sit in the
+  review box in the left sidebar, under the trainability checklist, so the verdict, the checklist and the comments are
+  together (Son, #arc-3, 9-Oct: "Remove the comment section on the right and just have it on the left along side other
+  checkbox"). The "Trainable" tick is now a two-way toggle, Trainable or Untrainable ("have a toggle for Trainable vs.
+  Untrainable"). Both sides start off for a version nobody has judged; clicking the chosen side again clears it.
+- **Board and Next:** the review board says "Untrainable" where it said "Not trainable" (filter chip, summary,
+  tooltips). After any verdict or checklist save the page reloads the review state, so the board, its filters, the
+  reviewed count and "Next unreviewed game" agree with what was just saved, including a cleared verdict.
+- **Server:** same route. `POST /api/v1/games/versions/{id}/train` also takes `{"good": null}` to clear a verdict
+  (who and when cleared with it), and an Untrainable verdict now keeps who set it and when; before, a false verdict
+  dropped the name, which would leave the toggle's "who" line blank.
+- **No data loss:** the comment markup moved with every element id unchanged, so the existing comment code
+  (`games-play.js`) loads, shows and posts comments as before. Sidebar widened a little to fit them.
+- **How:** `index.html`, `games.css`, `games-review.js`, `games-play.js` (import tag), `railway/games_store.py`,
+  `scripts/test_games_store.py`. Cache tags bumped to `20261009-review-left`. `scripts.test_games_store` passes in
+  full against a throwaway local Postgres, round trip included; `scripts/test_games_tree.mjs` passes.
+
 ## [2026.10.09-review-all-games]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
 
