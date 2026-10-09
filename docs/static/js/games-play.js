@@ -4,8 +4,10 @@
 //   games-review.js import (the review board that lists every game, then the Trainable / Untrainable
 //   verdict toggle), and the game's comments moved out of their own right-hand column into the
 //   review box in the left sidebar, under the checklist (Son, #arc-3). The comment code below is
-//   unchanged; it finds its elements by id wherever index.html puts them.
-// SRP/DRY check: Pass -- no logic change in this file beyond the comment wording.
+//   unchanged; it finds its elements by id wherever index.html puts them. Also imports longDate
+//   from games-tree.js: the comment list called it without importing it, so any game that had a
+//   comment threw while painting and showed none.
+// SRP/DRY check: Pass -- reuses games-tree.js's longDate rather than a local copy.
 //
 // Games tab -- the evolution-tree catalog, the in-browser player, and "Feedback games".
 //
@@ -22,7 +24,7 @@
 // overlay looked broken for a whole session because of exactly this). Bump on release.
 import { ensureGameEngine, gameEngineReady, onEngineProgress, gameLoad, gameStep, gameReset, gameUndo, gameJumpLevel, gameSetTileMode, gameSetFilter } from "./games-engine.js?v=20260830-nocache-catalog";
 import * as api from "./games-api.js?v=20261008-trainable";
-import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate } from "./games-tree.js?v=20261008-trainable";
+import { renderTreeRow, openVersionDrawer, closeVersionDrawer, authorBadge, shortDate, longDate } from "./games-tree.js?v=20261008-trainable";
 import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";

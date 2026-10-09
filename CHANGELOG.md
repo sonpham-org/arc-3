@@ -30,9 +30,12 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
   (who and when cleared with it), and an Untrainable verdict now keeps who set it and when; before, a false verdict
   dropped the name, which would leave the toggle's "who" line blank.
 - **No data loss:** the comment markup moved with every element id unchanged, so the existing comment code
-  (`games-play.js`) loads, shows and posts comments as before. Sidebar widened a little to fit them.
+  (`games-play.js`) loads and posts comments as before. Sidebar widened a little to fit them.
+- **Fix:** comments never actually showed on a game that had any. The comment list called `longDate` without
+  importing it from `games-tree.js`, so painting the first comment threw and the list stayed empty (saves worked).
+  Found in the live check; the import is added.
 - **How:** `index.html`, `games.css`, `games-review.js`, `games-play.js` (import tag), `railway/games_store.py`,
-  `scripts/test_games_store.py`. Cache tags bumped to `20261009-review-left`. `scripts.test_games_store` passes in
+  `scripts/test_games_store.py`. Cache tags bumped to `20261009-review-left` (`games-play.js` in `index.html`: `20261009-review-left2`). `scripts.test_games_store` passes in
   full against a throwaway local Postgres, round trip included; `scripts/test_games_tree.mjs` passes.
 
 ## [2026.10.09-review-all-games]
