@@ -1,3 +1,8 @@
+# Author: GPT-6 / Codex
+# Date: 2026-10-08
+# PURPOSE: Competition identities, separate storage, and featured-team coverage for
+# the scheduled leaderboard collector, including the continuing reporter watch list.
+# SRP/DRY check: Pass — both collection jobs import this shared configuration.
 """Competition identities and separate local storage for the leaderboard jobs."""
 import os
 from pathlib import Path
@@ -13,9 +18,9 @@ DATA = ROOT if COMP == ARC3 else ROOT / "arc-2"
 OUR_TEAM_ID = "15605182" if COMP == ARC3 else "17023174"
 PINNED_TEAM_IDS = [OUR_TEAM_ID] if COMP == ARC3 else [OUR_TEAM_ID, "15605185"]
 FEATURED_TEAM_IDS = frozenset(
-    {OUR_TEAM_ID, "15770880", "16032816", "15501006", "16371045", "16021367"}
+    {OUR_TEAM_ID, "15770880", "16032816", "15501006", "16371045", "16021367", "15508513"}
     if COMP == ARC3 else
-    {OUR_TEAM_ID, "15605185", "15507730", "15486939"}
+    {OUR_TEAM_ID, "15605185", "15507730", "15486939", "15487968", "15486728", "15526034"}
 )
 
 
