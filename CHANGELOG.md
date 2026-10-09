@@ -15,6 +15,24 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.09-kaggle-gpu-hours]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
+
+- **What:** a "GPU hours" page (`docs/kaggle-gpu-hours.html`, tab after Leaderboard on the Games and Internal runs
+  pages), ordered by the Boss in #arc-3 on 9-Oct. It shows the weekly Kaggle GPU quota of the three team accounts
+  (markbarney = the Boss, sonphamorg = Son, scizical = Ronen): hours used and left, the refresh time, what is running,
+  the submission reserve and whether it is at risk, hours that will expire unused at the refresh, and a trend line of
+  hours used per tracker run. The snapshot's age is at the top and turns red once it is older than one tracker cycle.
+- **Why the reserve is two runs:** scoring a competition submission bills the submitting account's weekly GPU quota
+  (the Boss, 9-Oct), so a submission reserve covers the version run plus the scoring run.
+- **How:** no server change. Bubba's tracker on the Mac Mini (`~/bubba-workspace/tools/kaggle/kaggle_gpu_hours.py`,
+  every 8 hours) reads each account's real quota through the official Kaggle API, then PUTs a sanitized snapshot
+  (numbers, times, kernel titles, flags, three weeks of history; no credentials, no raw error text) to the existing
+  token-guarded named-document route `/api/v1/rl2/publication/kaggle-gpu-hours`, the same store `climb.js` reads
+  `score-climb` from. The page reads it back from `/api/v1/rl2/doc/kaggle-gpu-hours` behind the team sign-in. Kaggle
+  tokens never leave the Mac; the page holds no secret. Checked by rendering the page against the live snapshot in
+  headless Chrome.
+
 ## [2026.10.08-trainable-review]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-08*
 
