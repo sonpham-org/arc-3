@@ -15,6 +15,24 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.09-review-all-games]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
+
+- **What:** the review box at the top of the Games page (renamed "Review · Trainable") now lists every game tree in
+  the catalog, every family, official first, instead of only the official games plus anything already ticked
+  (Son, #arc-3, 9-Oct: "you need to show all of the games there"). Each thumbnail shows its review state: a dot for
+  a current version nobody has reviewed, a green tick for "trainable", a red cross for "not trainable" (those were
+  hidden from the box before). Family chips with counts, review-state chips (Unreviewed, Trainable, Not trainable,
+  No verdict) and a search box narrow the list; the grid scrolls inside the box. Clicking any game opens it in the
+  player with the verdict tick and checklist in the sidebar, as before.
+- **Unchanged:** "Next unreviewed game" already walked every tree and still does, whatever the filters show. The box
+  and the saves stay team-only (sign-in), as the review-status, train and review routes require.
+- **How:** front end only (`games-review.js`, `index.html`, `games.css`, the import tag in `games-play.js`); the
+  review-status route already returned every tree. Cache tags bumped to `20261009-review-all`. Checked by rendering
+  the box in headless Chrome against the live review-status answer (all trees, family and state filters, opening a
+  non-official game, Next unreviewed); `scripts/test_games_tree.mjs` and `scripts.test_games_store` pass (database
+  round trip skipped, no local Postgres; no server change).
+
 ## [2026.10.09-kaggle-gpu-hours]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
 

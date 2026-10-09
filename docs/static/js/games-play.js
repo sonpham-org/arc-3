@@ -1,3 +1,9 @@
+// Author: Claude Opus 5.5 (Bubba)
+// Date: 09-October-2026
+// PURPOSE: The Games page's main module (described below). 9-Oct-2026 change: only the cache tag on
+//   the games-review.js import, so browsers load the review board that now lists every game.
+// SRP/DRY check: Pass -- no logic change in this file.
+//
 // Games tab -- the evolution-tree catalog, the in-browser player, and "Feedback games".
 //
 // Browse: one row per game tree (games-tree.js), newest evolution first, from the Railway API;
@@ -18,7 +24,7 @@ import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
 import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
-import { createReview } from "./games-review.js?v=20261008-trainable";
+import { createReview } from "./games-review.js?v=20261009-review-all";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
