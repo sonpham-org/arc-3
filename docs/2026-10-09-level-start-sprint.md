@@ -107,7 +107,19 @@ notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's 
   cleared Skewer Kebabs level 5 from the replay start and Buoyant Pontoons level 2 from its exact checkpoint, whose
   first request matched the saved one in all 66 messages (only the model name differed); the checkpoint was saved by
   the older harness and restores into the newer one.
-- **Kaggle**: see the results section below once the first run finishes.
+- **Kaggle, stock control, version 1** (`sonphamorg/arc3-level-start-sprint`, Son's account, 9-Oct 22:47-23:29 ET,
+  0.6 GPU hours; his reserve untouched). Card checked in the log: NVIDIA RTX PRO 6000 Blackwell Server Edition. Server
+  healthy 7 minutes after the notebook started (jit cache restored from his kernel source), then all eleven lanes
+  played 30 minutes at once, about 150k generated tokens each, no errors, no request timeouts except the one cut off
+  by the clock at the end. **Cleared 0 of 11.** Every lane ended on the clock: Buoyant Pontoons 3 (23 actions, 14
+  turns), Skewer Kebabs 5 (398, 33), Leapfrog 6 (107, 54), Warehouse Associates 5 (58, 20), Ghost Twin 6 (103, 23),
+  Sliding Indicator 7 (133, 31), Streaming Purple 5 (85, 26), Coded Notches 5 (186, 43), Deck Control 5 (304, 35),
+  Locksmith 5 (109, 24), Kick Away 7 (93, 31). Output kept on the Mini under
+  `/Volumes/Samsung 9100 SSD/data/arc3-level-sprint/kaggle-v1/`.
+- **What that means**: the plumbing works, but as a yardstick a no-context, 30-minute, one-pass control at these levels
+  reads zero everywhere, so a variant can only show up by clearing something. Two levers, in order: carried context
+  (`warmup` lanes now; exact checkpoints once harvest has a server), and a longer clock or two lanes per level for the
+  levels closest to the line (Buoyant Pontoons 3, Ghost Twin 6, Coded Notches 5, Locksmith 5 at 67%).
 
 ## 4. What is missing
 
