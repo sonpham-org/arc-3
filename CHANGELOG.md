@@ -15,6 +15,25 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.09-level-start-sprint]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
+
+- **What:** a "level-start sprint" (Son, #arc-3, 9-Oct 22:30 ET): every stuck level played at once, one lane per
+  level, from that level's start, under one prompt/harness variant, with a 30-minute clock; output is cleared or not
+  per level plus actions used. New `tools/level_sprint/` (`sprint.py` plans lanes, runs them, enforces the clock,
+  tallies; `lanes.json` = the first level under ~80% per game in Son's nine-hour heatmap; `variants/stock.json`;
+  `build_notebook.py` makes the Kaggle notebook from Son's own notebook, serving and harness cells copied verbatim;
+  `build_dataset.py` packs runner code, replays and checkpoints for Kaggle). Notebook source in
+  `kaggle/level-start-sprint/` (Kaggle `sonphamorg/arc3-level-start-sprint`, data `sonphamorg/arc3-level-sprint`).
+- **Why:** test a prompt or harness change on just the levels we fail, in about half an hour of play, before Kaggle
+  hours go to fine-tuning.
+- **How:** each lane is one Spark runner `sample.py` process with the same spec the runner's server writes, so starts
+  (exact checkpoint restore, or winning-line replay with board checks), turn hooks and results are the runner's code.
+  `sample.py` now applies an optional `spec["env_overrides"]` (harness flags for a variant; runner jobs never set it).
+  `build_harness.py` ends the toolfast block at the next section header (Son's newer notebooks put a drafter section
+  with Kaggle-only paths after it; the 31.63 build is unchanged) and passes git an absolute patch path.
+- Tally, tests and what is missing: `docs/2026-10-09-level-start-sprint.md`.
+
 ## [2026.10.09-review-left-toggle]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
 

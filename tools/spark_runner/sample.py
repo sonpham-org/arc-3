@@ -47,7 +47,9 @@ PURPOSE: Play ONE sample of a Spark runner job, in its own process (the harness 
     5. Trajectory under <job>/samples/<k>/: transcript.txt (the harness's own transcript), turns.jsonl (per turn:
        mode, settings, how the delta applied, actions, level, tokens), viewer.json (frames), progress.json while
        running, result.json at the end, first_request.json.gz for an exact start.
-  Usage: sample.py <job_dir> <sample_index>   (reads <job_dir>/spec.json; written by server.py)
+  9-Oct-2026: spec["env_overrides"] (optional) is applied over the notebook flags; the level-start sprint
+  (tools/level_sprint/sprint.py) uses it for harness-flag variants. Runner jobs never set it.
+  Usage: sample.py <job_dir> <sample_index>   (reads <job_dir>/spec.json; written by server.py or level_sprint)
          sample.py --verify-all <snapshots dir>   (replay check of every snapshot, no model; writes verified.json)
          sample.py --verify-checkpoint <checkpoint dir> <out dir>   (replay + state restore check, no model)
          sample.py --render-first <game> <level> <variant> <out dir>   (No-context start + its first request, no model)
@@ -101,6 +103,8 @@ def setup_environment(spec: dict) -> dict:
     env = dict(flags["daniel"])
     if spec["variant"] == "son":
         env.update(flags["son_port"])
+    # Level-start sprint variants (tools/level_sprint, 9-Oct-2026): harness flag overrides; runner jobs have none.
+    env.update({k: str(v) for k, v in (spec.get("env_overrides") or {}).items()})
     for k in DROP_KEYS:
         env.pop(k, None)
     base_url = spec["model"]["base_url"]

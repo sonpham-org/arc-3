@@ -86,9 +86,13 @@ def main() -> None:
     shutil.copytree(args.bundle, args.out)
     patch = args.out / "harness-changes.patch"
     patch.write_text(patch_cell.split("\n", 1)[1] + "\n")
-    subprocess.run(["git", "apply", "--include=ARC3-Inference/*", "-v", str(patch)], cwd=args.out / "src", check=True)
+    subprocess.run(["git", "apply", "--include=ARC3-Inference/*", "-v", str(patch.resolve())], cwd=args.out / "src",
+                   check=True)
 
-    toolfast = block(port_cell, "# --- daniel-base port cell, part 2: toolfast", "\n# --- port: host tier")
+    # The toolfast block ends at the next "# --- " section header (9-Oct-2026: Son's later notebooks put a drafter
+    # section, which asserts Kaggle-only paths, between toolfast and the host tier; in the 31.63 notebook the next
+    # header is the host tier, so that build is unchanged).
+    toolfast = block(port_cell, "# --- daniel-base port cell, part 2: toolfast", "\n# --- ")
     exec(compile(toolfast, "toolfast-cell", "exec"), {"Path": Path, "BUNDLE_DIR": args.out, "os": os})
 
     env = notebook_env(setup_cell, port_cell)
