@@ -66,9 +66,11 @@ newest notebook `sonphamorg/arc3-daniel-int8v2-l12-ct1`. Source in the repo: `ka
   the first-request check, or the winning-line replay with its board check), the turn hooks and `result.json` are the
   runner's own code. The harness is the patched bundle the notebook just built, and its flags are frozen from the
   notebook process (`sprint.py freeze-env`), so nothing is retyped.
-- **Start per lane** (`lanes.json` "start"): `auto` (default) = exact checkpoint if one is saved for that level start,
-  else no-context replay; `exact`; `replay`; `warmup` = winning line to the level BEFORE, the model plays that level
-  and carries its own context into the target level (cleared = both levels; the clock covers both).
+- **Start per lane**: the notebook's `LANE_START` (default `warmup` since version 2) overrides `lanes.json`.
+  `warmup` = winning line to the level BEFORE, the model plays that level and carries its own context into the target
+  level (cleared = both levels; the clock covers both; checked offline: Skewer Kebabs from level 4 cleared it and
+  entered level 5 with the conversation carried); `replay` = the stuck level with no context; `exact` = a saved
+  checkpoint; `auto` = exact if one is saved for that level start, else replay.
 - **Clock**: `WALL_MINUTES` (default 30) is play time per lane; the model server's startup (about 12-20 minutes on
   Kaggle) comes on top. A lane still running at the clock plus three minutes is killed and counts as not cleared.
 - **Output**: `/kaggle/working/sprint/results.md` + `results.json` (per level: cleared, outcome, actions used, turns,

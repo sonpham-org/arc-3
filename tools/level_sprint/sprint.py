@@ -24,7 +24,7 @@ PURPOSE: Level-start sprint (Son, #arc-3, 9-Oct-2026 22:30 ET): play every stuck
   Paths come from the runner's own variables: ARC3_RUNNER_HOME (solutions/, replays/, checkpoints/),
   ARC3_RUNNER_HARNESS (built harness + notebook_env.json), ARC3_RUNNER_ENVIRONMENTS (game files).
   Usage: sprint.py run --lanes lanes.json --variant variants/stock.json --out <dir> --base-url <url> --model-id <id>
-                       [--wall-minutes 30] [--max-turns 0] [--max-actions 1000] [--only sk48,lf52]
+                       [--wall-minutes 30] [--max-turns 0] [--max-actions 1000] [--only sk48,lf52] [--start warmup]
 SRP/DRY check: Pass - no game, harness or checkpoint logic here: starts come from checkpoints.chosen and
   replays.start_for, play from sample.main. This file only plans lanes, runs processes, enforces the clock and tallies.
 """
@@ -174,11 +174,18 @@ def markdown(summary: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run(args) -> int:
+def load_lanes(args) -> list[dict]:
     lanes = read_json(args.lanes)["lanes"]
     if args.only:
         keep = set(args.only.split(","))
         lanes = [l for l in lanes if l["game"] in keep]
+    if args.start:      # one start kind for every lane (the notebook's LANE_START)
+        lanes = [{**l, "start": args.start} for l in lanes]
+    return lanes
+
+
+def run(args) -> int:
+    lanes = load_lanes(args)
     var = read_json(args.variant)
     out = Path(args.out)
     rows = plan(lanes, var)
@@ -250,6 +257,8 @@ def main() -> int:
         p.add_argument("--lanes", type=Path, default=HERE / "lanes.json")
         p.add_argument("--variant", type=Path, default=HERE / "variants" / "stock.json")
         p.add_argument("--only", default="")
+        p.add_argument("--start", default="", choices=["", "auto", "exact", "replay", "warmup"],
+                       help="override every lane's start")
         if name == "run":
             p.add_argument("--out", required=True)
             p.add_argument("--base-url", required=True)
@@ -264,10 +273,7 @@ def main() -> int:
     f.add_argument("harness", type=Path)
     args = ap.parse_args()
     if args.cmd == "plan":
-        lanes = read_json(args.lanes)["lanes"]
-        if args.only:
-            lanes = [l for l in lanes if l["game"] in set(args.only.split(","))]
-        for row in plan(lanes, read_json(args.variant)):
+        for row in plan(load_lanes(args), read_json(args.variant)):
             print(f"{row['name']:22s} level {row['level']}: {row.get('start_label') or 'ERROR ' + row['plan_error']}")
         return 0
     if args.cmd == "report":
