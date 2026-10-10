@@ -171,6 +171,35 @@ state.pkl.gz" instead of quietly giving it a warmup start if that step ever fail
   checkpoint (harvest), and harvest has had no server since 7-Oct. The `warmup` start gives one level of the model's
   own context inside the 30-minute clock; a lane that clears the warmup level writes a (non-exact-lineage) checkpoint
   for the target level start, which can be shipped back in the dataset.
-- Ronen's account (scizical) is entered in ARC-3 but cannot read Son's three private datasets (patchsets, the two
-  drafters): sharing them with scizical lets sprints run on his thirty spare hours instead of Son's.
+- ~~Ronen's account cannot read Son's private datasets~~: done 10-Oct, section 5.
 - `stuck-levels.json` on the site should be rebuilt from the nine-hour runs.
+
+## 5. Ronen's account and the start harvest (10-Oct-2026)
+
+**Ronen's account (scizical, the experiment account, no reserve).** It cannot read Son's private inputs, so it has
+private copies: `scizical/arc3-patchsets`, `scizical/flashnext-mtp-drafter-fx10`, `scizical/flashnext-mtp-drafter-tuned`
+(downloaded with Son's token; the tuned drafter's whole-dataset download returns 404, file by file works),
+`scizical/arc3-sprint-jitcache` (the `jitcache.tar` from Son's kernel output `arc3-daniel-8bit-w4kw8d-final-ct1`, so the
+server does not cold-start), and `scizical/arc3-level-sprint`. The notebook `scizical/arc3-level-start-sprint` is
+`build_notebook.py ... --rehome scizical --private-datasets arc3-patchsets,flashnext-mtp-drafter-fx10,flashnext-mtp-drafter-tuned
+--jitcache-dataset scizical/arc3-sprint-jitcache`: the same cells with those paths pointed at Ronen's copies. Card: a
+probe kernel pushed through the API on scizical with `machine_shape: NvidiaRtxPro6000` ran on "NVIDIA RTX PRO 6000
+Blackwell Server Edition" (10-Oct 11:40 ET). `kaggle kernels logs` returns nothing while a run is live, so a run's
+own card is read from its log afterwards; a P100 could not load the server, so a wrong card fails within minutes.
+
+**Start harvest** (version 1 of `scizical/arc3-level-start-sprint`, pushed 10-Oct 11:59 ET, dataset build
+20261010T155359Z, `LANES_FILE = "lanes-harvest.json"`, `WALL_MINUTES = 360`, `MAX_ACTIONS = 5000`): the seven games
+with no saved start (Buoyant Pontoons 3, Skewer Kebabs 5, Leapfrog 6, Warehouse Associates 5, Ghost Twin 6, Streaming
+Purple 5, Coded Notches 5) warm up from the level before, two lanes each, and play on through the game, saving a
+carried checkpoint at every level start they reach; Deck Control and Locksmith start from their saved level-5 start
+and play on (Deck Control 6, Locksmith 6-7). Sixteen lanes on twelve request slots, about the same over-admission as
+Son's own notebook (13 games on 10). Results are added here when it finishes.
+
+**Then the baseline**: the same notebook with `auto` starts, the stock prompt, 30 minutes, `PASSES = 2` (two tries per
+level, one lane per level at a time so the server is not oversubscribed), after the harvest checkpoints are shipped.
+Follow-up steps: `/Volumes/Samsung 9100 SSD/data/arc3-level-sprint/FOLLOWUP.md`, run by the OpenClaw automation
+`arc3-sprint-followup`.
+
+Offline check of any build before spending hours: `tools/level_sprint/offline_check.py <dataset dir> <scratch dir> --
+--start auto --expect-build <ID>` (unpacks the .gz files as Kaggle does, runs the notebook's setup steps, prints each
+lane's start).
