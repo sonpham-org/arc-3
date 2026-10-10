@@ -200,6 +200,11 @@ level, one lane per level at a time so the server is not oversubscribed), after 
 Follow-up steps: `/Volumes/Samsung 9100 SSD/data/arc3-level-sprint/FOLLOWUP.md`, run by the OpenClaw automation
 `arc3-sprint-followup`.
 
+**Son's notebook on Kaggle** (`sonphamorg/arc3-level-start-sprint`) still has the version 3 settings cell, without
+the dataset build check, copies or passes. The repo copy (`kaggle/level-start-sprint/`) is rebuilt with them; it was
+not pushed, because a kernel push starts a run on his hours. Refresh it from the repo the next time he runs it (that
+push is the run), after his dataset gets the harvest checkpoints.
+
 Offline check of any build before spending hours: `tools/level_sprint/offline_check.py <dataset dir> <scratch dir> --
 --start auto --expect-build <ID>` (unpacks the .gz files as Kaggle does, runs the notebook's setup steps, prints each
 lane's start).
