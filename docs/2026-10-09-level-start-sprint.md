@@ -98,7 +98,11 @@ Locally (any OpenAI-compatible server, e.g. a Spark): build the harness with `to
 ### Shipping new checkpoints
 
 `build_dataset.py --runner-home <copy of ~/arc3-runner> --owner sonphamorg --slug arc3-level-sprint --out <dir>`, then
-`kaggle datasets version -p <dir> -r zip -m <note>` with Son's token. Kaggle unpacks `.gz` files on upload; the
+`kaggle datasets version -p <dir> -r zip -m <note>` with Son's token. To ship checkpoints a sprint run saved, first
+copy `sprint/home/checkpoints/` from the run's output over the runner-home copy (without its `index.json`). **Wait
+until the new dataset version shows on the dataset page (or `kaggle datasets files` lists the new files) before
+pushing or running the notebook**: `kaggle datasets status` can still say "ready" for the previous version, and a run
+started then gets the old files. In the Kaggle editor, check the sprint dataset is on its newest version. Kaggle unpacks `.gz` files on upload; the
 notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's loader reads them.
 
 ## 3. Tests (9-Oct-2026)
@@ -128,6 +132,13 @@ notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's 
   All restore into Son's newest harness (checked offline on Jethro: replay, board, 70-91 messages of history, 7-35
   retained functions). They ship in dataset version 3, so `auto` starts those four stuck levels with carried context
   and the full 30 minutes.
+- **Kaggle, version 3** (10-Oct 00:13-00:52 ET, 0.6 GPU hours) was meant to be the first `auto` run, but it was
+  pushed four seconds before Kaggle finished processing dataset version 3 (`kaggle datasets status` reported the
+  previous version as ready), so it ran with version 2's code and checkpoints: every lane started with no context.
+  It is a second no-context control: **cleared 1 of 11**, Buoyant Pontoons 3 (in 25 minutes; it did not clear in
+  version 1). So one-pass no-context results flip from run to run. The notebook source on Kaggle is now version 3
+  (`auto`), and dataset version 3 (18 checkpoints) is processed; the `auto` start with carried checkpoints has passed
+  the offline restore check but has not yet been played on Kaggle.
 - **What that means**: the plumbing works, but as a yardstick a no-context, 30-minute, one-pass control at these levels
   reads zero everywhere, so a variant can only show up by clearing something. The warmup control shows the real cost:
   half an hour is often not enough to clear even the level before. So the sprint is only as good as its saved starts.
