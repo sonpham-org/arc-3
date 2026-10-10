@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Claude Opus 5.5 (Bubba)
-Date: 09-October-2026
+Date: 09-October-2026 (10-October-2026: dataset build check, copies/passes/play-on settings, --set, --rehome)
 PURPOSE: Build the Kaggle "level-start sprint" notebook from one of Son's own notebooks, so the serving stack and the
   harness are his, cell for cell, and only the benchmark part is swapped out:
     kept verbatim  the harness patch cell, the environment cell (paths, flags, patch applied to the bundle), Son's port
@@ -13,6 +13,12 @@ PURPOSE: Build the Kaggle "level-start sprint" notebook from one of Son's own no
                    lanes), sprint setup (runner home copied from the sprint dataset, the patched bundle frozen as the
                    runner harness with this process's flags), wait for the server, run every lane at once
                    (tools/level_sprint/sprint.py over tools/spark_runner/sample.py), show the results table
+  --set NAME=VALUE  changes a Sprint settings default (Python literal), e.g. --set WALL_MINUTES=360.
+  --expect-build ID the dataset build the notebook refuses to run without (build_dataset.py prints it; push.py sets it).
+  --rehome OWNER --private-datasets a,b,c  for another account (Ronen's scizical): the listed private datasets of the
+                   source owner are read from OWNER's copies instead (inputs and the paths in the kept cells), and
+                   --jitcache-dataset OWNER/SLUG replaces the source's kernel inputs (the compile-cache tar; the restore
+                   cell finds jitcache.tar under /kaggle/input by glob).
   Writes <out>/<slug>.ipynb and kernel-metadata.json (the source notebook's inputs + the sprint dataset; RTX PRO 6000;
   internet off). Never a competition submission: nothing in it calls the gateway.
   Usage: build_notebook.py --source <Son's .ipynb> --source-meta <its kernel-metadata.json> --owner sonphamorg
@@ -60,6 +66,12 @@ Write-up: sonpham-org/arc-3 `docs/2026-10-09-level-start-sprint.md`.
 
 SETTINGS = '''# ---- Sprint settings: the only cell to edit for a prompt / flag variant ----
 WALL_MINUTES = 30          # play time per lane (the model server's startup is not counted)
+COPIES = 0                 # lanes per level at once; 0 = lanes.json (1). The server has 12 request slots.
+PASSES = 1                 # play the whole lane set this many times in a row (starts planned once)
+LEVELS_TO_PLAY = 0         # 0 = lanes.json (1, or 2 for warmup); a large number plays on and saves every level start
+# The sprint dataset build this notebook was pushed for. The run stops if Kaggle attached another version (it can
+# attach the previous one when the notebook is pushed before the new version is processed). "" = run on any build.
+EXPECT_DATASET_BUILD = ""
 MAX_TURNS = 0              # 0 = no turn cap; the wall clock is the limit
 MAX_ACTIONS = 1000         # per lane, a safety net
 ONLY_GAMES = ""            # e.g. "sk48,lf52" to run a subset; "" = every lane in lanes.json
@@ -68,7 +80,7 @@ ONLY_GAMES = ""            # e.g. "sk48,lf52" to run a subset; "" = every lane i
 # model clears it and carries its own context into the stuck level (the clock covers both). "replay": the stuck level
 # with no context (the first stock control did this and cleared 0 of 11 in 30 min).
 LANE_START = "auto"
-LANES_FILE = None          # None = level_sprint/lanes.json from the dataset; or a path to your own
+LANES_FILE = None          # None = level_sprint/lanes.json; "lanes-harvest.json" = the start harvest; or a path
 VARIANT = {
     "name": "stock",               # shows in the results table
     "variant": "son",              # Son's wording (the port cell's flags apply either way in this notebook)
@@ -110,8 +122,11 @@ SPRINT_PY = [sys.executable, str(SPRINT_DATA / "level_sprint" / "sprint.py")]
 # The harness flags are this process's environment after the setup and port cells: freeze them for the lanes.
 subprocess.run(SPRINT_PY + ["freeze-env", str(BUNDLE_DIR)], check=True)
 (SPRINT_DIR / "variant.json").write_text(json.dumps(VARIANT, indent=1))
-LANES_PATH = Path(LANES_FILE) if LANES_FILE else SPRINT_DATA / "level_sprint" / "lanes.json"
-_only = (["--only", ONLY_GAMES] if ONLY_GAMES else []) + (["--start", LANE_START] if LANE_START else [])
+LANES_PATH = (Path(LANES_FILE) if LANES_FILE and "/" in str(LANES_FILE)       # a bare name = a file in level_sprint/
+              else SPRINT_DATA / "level_sprint" / (LANES_FILE or "lanes.json"))
+_only = ((["--only", ONLY_GAMES] if ONLY_GAMES else []) + (["--start", LANE_START] if LANE_START else [])
+         + (["--copies", str(COPIES)] if COPIES else []) + (["--levels-to-play", str(LEVELS_TO_PLAY)] if LEVELS_TO_PLAY else [])
+         + (["--expect-build", EXPECT_DATASET_BUILD] if EXPECT_DATASET_BUILD else []))
 subprocess.run(SPRINT_PY + ["plan", "--lanes", str(LANES_PATH), "--variant", str(SPRINT_DIR / "variant.json")] + _only,
                check=True)
 '''
@@ -140,7 +155,7 @@ RUN = '''# ---- Run every lane at once ----
 _cmd = SPRINT_PY + ["run", "--lanes", str(LANES_PATH), "--variant", str(SPRINT_DIR / "variant.json"),
                     "--out", str(SPRINT_DIR), "--base-url", SERVER_BASE_URL, "--model-id", SERVED_MODEL_NAME,
                     "--wall-minutes", str(WALL_MINUTES), "--max-turns", str(MAX_TURNS),
-                    "--max-actions", str(MAX_ACTIONS)] + _only
+                    "--max-actions", str(MAX_ACTIONS), "--passes", str(PASSES)] + _only
 print(" ".join(_cmd), flush=True)
 _p = subprocess.Popen(_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 for _line in _p.stdout:
@@ -172,7 +187,21 @@ def main() -> None:
     ap.add_argument("--title", default="ARC3 Level-Start Sprint")
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
+    ap.add_argument("--expect-build", default="")
+    ap.add_argument("--rehome", default="", help="owner whose copies of --private-datasets the notebook reads")
+    ap.add_argument("--private-datasets", default="", help="comma-separated slugs of the source owner's private datasets")
+    ap.add_argument("--jitcache-dataset", default="", help="OWNER/SLUG holding jitcache.tar, replaces kernel inputs")
     args = ap.parse_args()
+    settings = SETTINGS
+    sets = list(args.set) + ([f"EXPECT_DATASET_BUILD={args.expect_build!r}"] if args.expect_build else [])
+    for item in sets:
+        name, value = item.split("=", 1)
+        lines = [l for l in settings.splitlines() if l.startswith(f"{name} = ")]
+        if len(lines) != 1:
+            raise SystemExit(f"--set {name}: not a Sprint settings name")
+        comment = lines[0].split("#", 1)[1] if "#" in lines[0] else ""
+        settings = settings.replace(lines[0], f"{name} = {value}" + (f"          #{comment}" if comment else ""))
     nb = json.loads(args.source.read_text())
     code = [c for c in nb["cells"] if c["cell_type"] == "code"]
     cells = [md_cell(INTRO.format(source=args.source.stem))]
@@ -183,7 +212,17 @@ def main() -> None:
         c = copy.deepcopy(hits[0])
         c["outputs"], c["execution_count"] = [], None
         cells.append(c)
-    cells += [md_cell("## Sprint"), code_cell(SETTINGS), code_cell(SETUP), code_cell(WAIT), code_cell(RUN),
+    src_owner = args.source_meta and json.loads(args.source_meta.read_text())["id"].split("/")[0]
+    rehome = {}
+    if args.rehome:
+        for slug in filter(None, args.private_datasets.split(",")):
+            rehome[f"{src_owner}/{slug}"] = f"{args.rehome}/{slug}"
+        for c in cells:
+            text = "".join(c["source"]) if isinstance(c["source"], list) else c["source"]
+            for old, new in rehome.items():
+                text = text.replace(f"/kaggle/input/datasets/{old}", f"/kaggle/input/datasets/{new}")
+            c["source"] = text
+    cells += [md_cell("## Sprint"), code_cell(settings), code_cell(SETUP), code_cell(WAIT), code_cell(RUN),
               code_cell(SHOW)]
     out_nb = {"cells": cells, "metadata": nb.get("metadata", {}), "nbformat": nb.get("nbformat", 4),
               "nbformat_minor": nb.get("nbformat_minor", 5)}
@@ -194,7 +233,15 @@ def main() -> None:
                  "is_private": True, "enable_gpu": True, "enable_internet": False,
                  "machine_shape": "NvidiaRtxPro6000"})
     meta.pop("id_no", None)
-    meta["dataset_sources"] = sorted(set(meta.get("dataset_sources", [])) | {args.dataset})
+    sprint_slug = args.dataset.split("/")[1]       # the source's own sprint dataset (a rebuilt sprint notebook) is replaced
+    meta["dataset_sources"] = sorted({rehome.get(d, d) for d in meta.get("dataset_sources", [])
+                                      if d.split("/")[1] != sprint_slug} | {args.dataset})
+    if args.jitcache_dataset:
+        meta["kernel_sources"] = []
+        meta["dataset_sources"] = sorted(set(meta["dataset_sources"]) | {args.jitcache_dataset})
+    leftover = [d for d in meta["dataset_sources"] if args.rehome and d.split("/")[0] == src_owner]
+    if leftover:
+        raise SystemExit(f"still reads {src_owner}'s datasets: {leftover} (add them to --private-datasets)")
     (args.out / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
     print(f"wrote {args.out / (args.slug + '.ipynb')} ({len(cells)} cells) and kernel-metadata.json")
 

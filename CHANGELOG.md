@@ -15,6 +15,27 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.10-level-start-sprint-harvest]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-10*
+
+- **What:** the level-start sprint now refuses to run on a stale dataset, can put several lanes on one level, play
+  passes back to back and let lanes play on past the stuck level, and runs on Ronen's account (scizical).
+  `tools/level_sprint/build_dataset.py` writes a build marker (`level_sprint/build-<ID>.json`) and merges checkpoints a
+  run saved (`--add-checkpoints`); `sprint.py` takes `--expect-build`, `--copies`, `--passes`, `--levels-to-play`, stops
+  a lane whose saved start has no `state.pkl.gz` instead of quietly warming it up, and counts "cleared" as the stuck
+  level itself; new `push.py` versions the dataset, waits until the new build's marker file downloads from Kaggle,
+  then pushes the notebook; `build_notebook.py` gains `--set`, `--expect-build` and `--rehome` (reads another
+  account's private copies of the patch-set and drafter datasets, compile cache from a dataset instead of Son's
+  kernel output); new `lanes-harvest.json` (start harvest). Notebook source rebuilt with the new settings.
+- **Why:** sprint version 3 (10-Oct 00:13 ET) was pushed before Kaggle had processed dataset version 3, so it ran the
+  old `sprint.py` and old checkpoints and every lane started with no context; the status call said "ready" for the old
+  version. One lane per level flips from run to run, and the stuck levels need carried-context starts, which only
+  exist after the model clears the level before.
+- **How:** verified offline: dataset version 3 as Kaggle serves it, put through the notebook's setup, plans carried
+  starts at Sliding Indicator 7, Deck Control 5, Locksmith 5 and Kick Away 7; a wrong build stops the plan; unpacked
+  checkpoints stop it with the cause; a stand-in player ran two copies by two passes through `sprint.py run`.
+  Doc: `docs/2026-10-09-level-start-sprint.md`.
+
 ## [2026.10.09-level-start-sprint]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-09*
 

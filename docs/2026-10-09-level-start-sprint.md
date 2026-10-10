@@ -1,6 +1,6 @@
 <!--
 Author: Claude Opus 5.5 (Bubba)
-Date: 09-October-2026
+Date: 09-October-2026 (10-October-2026: version 3 cause and fix, Ronen's account, start harvest, two-pass baseline)
 PURPOSE: Son's level-start sprint (#arc-3, 9-Oct-2026 22:30 ET): the tally of levels we do not clear consistently,
   which of them have a saved level start, and the notebook that plays all of them at once (about ten lanes, one
   variant, a 30-minute clock) on Kaggle (Flash-Next, RTX PRO 6000) or against any local server. How to run a variant,
@@ -73,6 +73,11 @@ newest notebook `sonphamorg/arc3-daniel-int8v2-l12-ct1`. Source in the repo: `ka
   level (cleared = both levels; the clock covers both; checked offline: Skewer Kebabs from level 4 cleared it and
   entered level 5 with the conversation carried); `replay` = the stuck level with no context; `exact` = a saved
   checkpoint; `auto` = exact if one is saved for that level start, else replay.
+- **Lane count and length** (added 10-Oct): `COPIES` lanes per level at once (the server has 12 request slots),
+  `PASSES` plays the whole lane set again after the first finishes (starts planned once, so a checkpoint saved in
+  pass 1 never changes a pass-2 start), `LEVELS_TO_PLAY` lets a lane play on past the stuck level, saving a carried
+  checkpoint at every level start it reaches. `LANES_FILE = "lanes-harvest.json"` is the start harvest (section 5).
+  "Cleared" in the table always means the stuck level itself was cleared.
 - **Clock**: `WALL_MINUTES` (default 30) is play time per lane; the model server's startup (about 12-20 minutes on
   Kaggle) comes on top. A lane still running at the clock plus three minutes is killed and counts as not cleared.
 - **Output**: `/kaggle/working/sprint/results.md` + `results.json` (per level: cleared, outcome, actions used, turns,
@@ -95,15 +100,22 @@ Locally (any OpenAI-compatible server, e.g. a Spark): build the harness with `to
 `ARC3_RUNNER_ENVIRONMENTS` at copies of the runner's folders, then
 `sprint.py run --out <dir> --base-url <url>/v1 --model-id <id> --wall-minutes 30`.
 
-### Shipping new checkpoints
+### Shipping new checkpoints (and any sprint code change)
 
-`build_dataset.py --runner-home <copy of ~/arc3-runner> --owner sonphamorg --slug arc3-level-sprint --out <dir>`, then
-`kaggle datasets version -p <dir> -r zip -m <note>` with Son's token. To ship checkpoints a sprint run saved, first
-copy `sprint/home/checkpoints/` from the run's output over the runner-home copy (without its `index.json`). **Wait
-until the new dataset version shows on the dataset page (or `kaggle datasets files` lists the new files) before
-pushing or running the notebook**: `kaggle datasets status` can still say "ready" for the previous version, and a run
-started then gets the old files. In the Kaggle editor, check the sprint dataset is on its newest version. Kaggle unpacks `.gz` files on upload; the
-notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's loader reads them.
+1. `build_dataset.py --runner-home <copy of ~/arc3-runner> --owner <owner> --slug arc3-level-sprint --out <dir>
+   [--add-checkpoints <run output>/sprint/home/checkpoints ...]`. `--add-checkpoints` merges the checkpoints a run
+   saved into the runner-home copy (new folders only). Every build writes a marker `level_sprint/build-<ID>.json` (build
+   id, and the level starts that have a checkpoint) and prints the ID.
+2. `build_notebook.py ... --expect-build <ID>` writes the notebook with `EXPECT_DATASET_BUILD = '<ID>'`.
+3. `push.py --token-file <account's token> --dataset-dir <dir> --kernel-dir <notebook dir>` adds the dataset version,
+   **waits until that build's marker file can be downloaded from Kaggle** (the status call is not trusted: it said
+   "ready" for the old version on 10-Oct), then pushes the notebook.
+
+If Kaggle still attaches another build, the setup cell stops with "sprint dataset is build X, the notebook expects Y"
+before the server starts, so no GPU time is spent on old files. In the Kaggle editor, a hand edit can set
+`EXPECT_DATASET_BUILD = ""` to run on whatever is attached. Kaggle unpacks `.gz` files on upload; the notebook's setup
+cell gzips `request.json` and `state.pkl` back, and `sprint.py plan` now stops a lane with "saved start(s) ... have no
+state.pkl.gz" instead of quietly giving it a warmup start if that step ever fails.
 
 ## 3. Tests (9-Oct-2026)
 
@@ -135,6 +147,12 @@ notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's 
 - **Kaggle, version 3** (10-Oct 00:13-00:52 ET, 0.6 GPU hours) was meant to be the first `auto` run, but it was
   pushed four seconds before Kaggle finished processing dataset version 3 (`kaggle datasets status` reported the
   previous version as ready), so it ran with version 2's code and checkpoints: every lane started with no context.
+  Confirmed 10-Oct: its log shows `--start auto` and every lane labelled "no context (winning_line)", a label the
+  version 3 `sprint.py` cannot give for `auto` (its fallback is warmup); its copied `home/checkpoints` has none of
+  the four new games. Not the resolver and not the `.gz` handling: dataset version 3 downloaded as Kaggle serves it,
+  unpacked, put through the notebook's setup steps and planned with its own `sprint.py --start auto` gives carried
+  checkpoints at Sliding Indicator 7 (199 actions from reset), Deck Control 5 (274), Locksmith 5 (223) and Kick Away
+  7 (384), warmup for the other seven. Fix: the build marker, `EXPECT_DATASET_BUILD` and `push.py` above.
   It is a second no-context control: **cleared 1 of 11**, Buoyant Pontoons 3 (in 25 minutes; it did not clear in
   version 1). So one-pass no-context results flip from run to run. The notebook source on Kaggle is now version 3
   (`auto`), and dataset version 3 (18 checkpoints) is processed; the `auto` start with carried checkpoints has passed

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Claude Opus 5.5 (Bubba)
-Date: 09-October-2026
+Date: 09-October-2026 (10-October-2026: copies, passes, play-on levels, dataset build check, unreadable-checkpoint check)
 PURPOSE: Level-start sprint (Son, #arc-3, 9-Oct-2026 22:30 ET): play every stuck level at once, one lane per level,
   each from that level's start, under one prompt/harness variant, with a hard wall clock, and report cleared or not
   per level plus actions used. Built so a prompt or harness change can be judged in about thirty minutes of play.
@@ -22,6 +22,16 @@ PURPOSE: Level-start sprint (Son, #arc-3, 9-Oct-2026 22:30 ET): play every stuck
            the target level; the 30-minute clock covers both; cleared = both levels cleared. Such a lane saves a
            checkpoint at the target level start when it clears the level before (not exact lineage)
     auto   any saved checkpoint for the level start (exact lineage first, then one a warmup lane saved), else warmup
+  Lane count and length (lanes.json per lane, or the flags for every lane):
+    copies         lanes per level played at once (default 1). Harvest uses 2 so a level gets two tries per run.
+    levels_to_play levels a lane plays from its start (default 1, or 2 for warmup). A large number plays on through
+           the game, saving a carried-context checkpoint at every level start it reaches (harvest).
+    --passes P     the whole lane set played P times in a row against the same server, starts planned once before
+           the first pass (a checkpoint a pass-1 lane writes never changes a pass-2 start). Two passes of one lane
+           per level = two tries per level without putting more lanes on the server than it has request slots.
+  --expect-build ID   refuse to plan unless this dataset copy is build ID (level_sprint/build-<ID>.json, written by
+           build_dataset.py). Kaggle can attach the previous dataset version when a notebook is pushed before the new
+           one is processed (version 3, 10-Oct-2026: every lane ran on the old code and old checkpoints).
   Paths come from the runner's own variables: ARC3_RUNNER_HOME (solutions/, replays/, checkpoints/),
   ARC3_RUNNER_HARNESS (built harness + notebook_env.json), ARC3_RUNNER_ENVIRONMENTS (game files).
   Usage: sprint.py run --lanes lanes.json --variant variants/stock.json --out <dir> --base-url <url> --model-id <id>
@@ -75,6 +85,23 @@ def game_id_for(game: str) -> str | None:
     return None
 
 
+def unreadable_checkpoints(game: str, level: int) -> list[str]:
+    """Saved starts for this level the runner cannot load: meta.json present but state.pkl.gz missing (Kaggle unpacks
+    .gz files on upload; the notebook's setup cell gzips them back)."""
+    return [m.parent.name for m in sorted((checkpoints.ROOT / game / str(level)).glob("*/meta.json"))
+            if not (m.parent / "state.pkl.gz").exists()]
+
+
+def check_build(expect: str) -> str:
+    """The dataset build this sprint.py ships in; exits if it is not the expected one."""
+    builds = sorted(p.stem[len("build-"):] for p in HERE.glob("build-*.json"))
+    if expect and expect not in builds:
+        raise SystemExit(f"sprint dataset is build {builds or 'unknown'}, the notebook expects {expect}: Kaggle attached "
+                         f"an older dataset version. Wait until the new version shows on the dataset page, then rerun "
+                         f"(or set EXPECT_DATASET_BUILD = '' to run on whatever is attached).")
+    return builds[-1] if builds else "unknown"
+
+
 def best_checkpoint(game: str, level: int, variant: str) -> dict | None:
     """Any saved start of this level with carried context: exact lineage first (the runner's rule), else one a sprint
     lane wrote after clearing the level before from a replayed start (not exact lineage, but the model's own context
@@ -98,6 +125,9 @@ def resolve(lane: dict, variant: str) -> dict:
             kind = "exact" if cp.get("exact_lineage") else "carried"
             return {"start": {"kind": "checkpoint", "path": cp["path"]}, "context": "carried", "stuck_level": level,
                     "levels_to_play": 1, "start_label": f"{kind} checkpoint ({cp['actions_to_reach']} actions from RESET)"}
+        bad = unreadable_checkpoints(game, level)
+        if bad:
+            raise ValueError(f"{game} level {level}: saved start(s) {', '.join(bad)} have no state.pkl.gz")
         if want == "exact":
             raise ValueError(f"{game} level {level}: no exact checkpoint saved for this level start")
         want = "warmup"     # auto without a checkpoint: let the model build its own context on the level before
@@ -128,18 +158,21 @@ def stock_slot(var: dict) -> dict:
 
 
 def plan(lanes: list[dict], var: dict) -> list[dict]:
+    """One row per lane; a lane with copies=K gives K rows with the same start (copy 0..K-1)."""
     rows = []
     for lane in lanes:
         row = {"game": lane["game"], "name": lane.get("name", lane["game"]), "level": int(lane["level"]),
                "heatmap_pct": lane.get("heatmap_pct")}
         try:
             row.update(resolve(lane, var.get("variant", "son")))
+            if int(lane.get("levels_to_play") or 0) > 0:      # play on past the stuck level (harvest)
+                row["levels_to_play"] = int(lane["levels_to_play"])
             row["game_id"] = game_id_for(lane["game"])
             if not row["game_id"]:
                 raise ValueError(f"{lane['game']}: no game files under {ENV_DIR}")
         except ValueError as exc:
             row["plan_error"] = str(exc)
-        rows.append(row)
+        rows += [{**row, "copy": c} for c in range(max(1, int(lane.get("copies") or 1)))]
     return rows
 
 
@@ -159,7 +192,7 @@ def lane_result(row: dict, lane_dir: Path) -> dict:
     res = read_json(lane_dir / "samples" / "0" / "result.json")
     prog = read_json(lane_dir / "samples" / "0" / "progress.json", {})
     out = {"game": row["game"], "name": row["name"], "level": row["level"], "heatmap_pct": row.get("heatmap_pct"),
-           "start": row.get("start_label")}
+           "start": row.get("start_label"), "copy": row.get("copy", 0), "pass": row.get("pass", 1)}
     if row.get("plan_error"):
         return {**out, "cleared": False, "outcome": "not_started", "error": row["plan_error"]}
     if res is None:
@@ -167,24 +200,33 @@ def lane_result(row: dict, lane_dir: Path) -> dict:
                 "levels_cleared": prog.get("levels_cleared"), "turns": prog.get("turn"),
                 "error": (lane_dir / "samples" / "0" / "error.txt").read_text()[-500:]
                 if (lane_dir / "samples" / "0" / "error.txt").exists() else None}
-    cleared = int(res.get("levels_cleared") or 0) >= int(row["levels_to_play"])
-    return {**out, "cleared": cleared, "outcome": res.get("outcome"), "actions_used": res.get("actions_used"),
+    # cleared = the stuck level itself was cleared (a warmup lane must clear the level before it first); a lane that
+    # plays on (harvest) counts the stuck level, not every level it was allowed to play
+    need = int(row["level"]) - int(row["stuck_level"]) + 1
+    cleared = int(res.get("levels_cleared") or 0) >= need
+    return {**out, "cleared": cleared, "checkpoint_levels": sorted({c.get("level") for c in res.get("checkpoints_written") or []}), "outcome": res.get("outcome"), "actions_used": res.get("actions_used"),
             "levels_cleared": res.get("levels_cleared"), "turns": res.get("turns"), "seconds": res.get("seconds"),
             "tokens": res.get("generated_tokens"), "first_request_exact": (res.get("first_request") or {}).get("equal"),
             "checkpoints_written": len(res.get("checkpoints_written") or []), "error": res.get("error")}
 
 
 def markdown(summary: dict) -> str:
+    levels = sorted({(r["name"], r["level"]) for r in summary["results"]})
+    hit = sorted({(r["name"], r["level"]) for r in summary["results"] if r["cleared"]})
     lines = [f"# Level-start sprint: variant {summary['variant']}",
              "", f"{summary['started']} to {summary['finished']}, wall clock {summary['wall_minutes']} min per lane, "
-                 f"model {summary['model_id']}. Cleared {summary['cleared']} of {summary['lanes']} levels.", "",
-             "| Game | Level | Heatmap % | Start | Cleared | Outcome | Actions | Turns | Minutes |",
-             "|---|---|---|---|---|---|---|---|---|"]
+                 f"model {summary['model_id']}, dataset build {summary.get('dataset_build', 'unknown')}. "
+                 f"Cleared {summary['cleared']} of {summary['lanes']} lanes; {len(hit)} of {len(levels)} levels cleared "
+                 f"by at least one lane.", "",
+             "| Game | Level | Pass | Copy | Heatmap % | Start | Cleared | Outcome | Actions | Turns | Minutes | Saved starts |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in summary["results"]:
         mins = f"{r['seconds'] / 60:.1f}" if r.get("seconds") else ""
-        lines.append(f"| {r['name']} | {r['level']} | {r.get('heatmap_pct', '')} | {r.get('start') or ''} | "
+        lines.append(f"| {r['name']} | {r['level']} | {r.get('pass', 1)} | {r.get('copy', 0)} | {r.get('heatmap_pct', '')} | "
+                     f"{r.get('start') or ''} | "
                      f"{'yes' if r['cleared'] else 'no'} | {r['outcome']} | {r.get('actions_used') if r.get('actions_used') is not None else ''} | "
-                     f"{r.get('turns') if r.get('turns') is not None else ''} | {mins} |")
+                     f"{r.get('turns') if r.get('turns') is not None else ''} | {mins} | "
+                     f"{', '.join(str(x) for x in r.get('checkpoint_levels') or [])} |")
     errs = [r for r in summary["results"] if r.get("error")]
     if errs:
         lines += ["", "Errors:"] + [f"- {r['name']} level {r['level']}: {str(r['error'])[:300]}" for r in errs]
@@ -198,22 +240,52 @@ def load_lanes(args) -> list[dict]:
         lanes = [l for l in lanes if l["game"] in keep]
     if args.start:      # one start kind for every lane (the notebook's LANE_START)
         lanes = [{**l, "start": args.start} for l in lanes]
+    if args.copies:
+        lanes = [{**l, "copies": args.copies} for l in lanes]
+    if args.levels_to_play:
+        lanes = [{**l, "levels_to_play": args.levels_to_play} for l in lanes]
     return lanes
 
 
+def lane_dir_for(out: Path, i: int, row: dict) -> Path:
+    tag = f"-c{row['copy']}" if row.get("copy") else ""
+    sub = f"p{row['pass']}" if row.get("pass", 1) > 1 else ""
+    return out / "lanes" / sub / f"{i:02d}-{row['game']}-L{row['level']}{tag}"
+
+
 def run(args) -> int:
+    build = check_build(args.expect_build)
     lanes = load_lanes(args)
     var = read_json(args.variant)
     out = Path(args.out)
-    rows = plan(lanes, var)
+    planned = plan(lanes, var)          # once: a checkpoint written in pass 1 never changes a pass-2 start
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    write_json(out / "plan.json", {"variant": var, "lanes": rows, "started": started})
+    write_json(out / "plan.json", {"variant": var, "lanes": planned, "started": started, "dataset_build": build,
+                                   "passes": args.passes})
+    results = []
+    for pass_no in range(1, args.passes + 1):
+        rows = [{**r, "pass": pass_no} for r in planned]
+        print(f"pass {pass_no} of {args.passes}: {sum(1 for r in rows if not r.get('plan_error'))} lanes", flush=True)
+        results += run_pass(rows, var, out, args)
+        write_json(out / "results.partial.json", results)
+    summary = {"variant": var.get("name"), "variant_spec": var, "model_id": args.model_id, "base_url": args.base_url,
+               "wall_minutes": args.wall_minutes, "started": started, "dataset_build": build, "passes": args.passes,
+               "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "lanes": len(results), "cleared": sum(1 for r in results if r["cleared"]), "results": results}
+    write_json(out / "results.json", summary)
+    (out / "results.md").write_text(markdown(summary))
+    print(markdown(summary), flush=True)
+    return 0
+
+
+def run_pass(rows: list[dict], var: dict, out: Path, args) -> list[dict]:
     procs = {}
     for i, row in enumerate(rows):
-        print(f"lane {i:2d} {row['name']} level {row['level']}: {row.get('start_label') or row.get('plan_error')}", flush=True)
+        print(f"lane {i:2d} {row['name']} level {row['level']} copy {row.get('copy', 0)}: "
+              f"{row.get('start_label') or row.get('plan_error')}", flush=True)
         if row.get("plan_error"):
             continue
-        lane_dir = out / "lanes" / f"{i:02d}-{row['game']}-L{row['level']}"
+        lane_dir = lane_dir_for(out, i, row)
         write_json(lane_dir / "spec.json", spec_for(row, var, args))
         (lane_dir / "samples").mkdir(parents=True, exist_ok=True)
         log = open(lane_dir / "samples" / "0.log", "w")
@@ -244,18 +316,7 @@ def run(args) -> int:
         except subprocess.TimeoutExpired:
             p.kill()
         log.close()
-    results = []
-    for i, row in enumerate(rows):
-        lane_dir = out / "lanes" / f"{i:02d}-{row['game']}-L{row['level']}"
-        results.append(lane_result(row, lane_dir))
-    summary = {"variant": var.get("name"), "variant_spec": var, "model_id": args.model_id, "base_url": args.base_url,
-               "wall_minutes": args.wall_minutes, "started": started,
-               "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-               "lanes": len(results), "cleared": sum(1 for r in results if r["cleared"]), "results": results}
-    write_json(out / "results.json", summary)
-    (out / "results.md").write_text(markdown(summary))
-    print(markdown(summary), flush=True)
-    return 0
+    return [lane_result(row, lane_dir_for(out, i, row)) for i, row in enumerate(rows)]
 
 
 def freeze_env(harness: Path) -> None:
@@ -276,6 +337,10 @@ def main() -> int:
         p.add_argument("--only", default="")
         p.add_argument("--start", default="", choices=["", "auto", "exact", "replay", "warmup"],
                        help="override every lane's start")
+        p.add_argument("--copies", type=int, default=0, help="lanes per level at once for every lane (0 = lanes.json)")
+        p.add_argument("--levels-to-play", type=int, default=0,
+                       help="levels each lane plays from its start (0 = lanes.json, else 1, or 2 for warmup)")
+        p.add_argument("--expect-build", default="", help="refuse to plan unless the dataset is this build")
         if name == "run":
             p.add_argument("--out", required=True)
             p.add_argument("--base-url", required=True)
@@ -284,14 +349,17 @@ def main() -> int:
             p.add_argument("--max-turns", type=int, default=0, help="0 = no turn cap; the wall clock is the limit")
             p.add_argument("--max-actions", type=int, default=1000)
             p.add_argument("--print-every", type=float, default=60.0)
+            p.add_argument("--passes", type=int, default=1, help="play the whole lane set this many times in a row")
     r = sub.add_parser("report")
     r.add_argument("out")
     f = sub.add_parser("freeze-env")
     f.add_argument("harness", type=Path)
     args = ap.parse_args()
     if args.cmd == "plan":
+        print(f"sprint dataset build {check_build(args.expect_build)}")
         for row in plan(load_lanes(args), read_json(args.variant)):
-            print(f"{row['name']:22s} level {row['level']}: {row.get('start_label') or 'ERROR ' + row['plan_error']}")
+            print(f"{row['name']:22s} level {row['level']} copy {row['copy']}: "
+                  f"{row.get('start_label') or 'ERROR ' + row['plan_error']}")
         return 0
     if args.cmd == "report":
         print(markdown(read_json(Path(args.out) / "results.json")))
