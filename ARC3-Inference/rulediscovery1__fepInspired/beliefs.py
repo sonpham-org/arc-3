@@ -1,5 +1,5 @@
 # Author: Claude Opus 5.5 (Bubba)
-# Date: 23-September-2026
+# Date: 23-September-2026 (debate five 25-September-2026)
 # PURPOSE: Bayesian beliefs over rule sets for the rule discovery prototype (OpenMind, #arc-3,
 #   23-Sep-2026 21:03 ET). In active-inference terms this is the learned transition model B, held as
 #   a posterior over discrete structures (rule sets) rather than one parameter table.
@@ -28,6 +28,8 @@
 #   Integration: agent.py calls observe(rc, transition) once per step BEFORE the ContextBuilder is
 #   advanced (prequential); hypotheses.py scores candidate sets with score_ruleset; policy.py reads
 #   predictions(rc) for candidate actions. Not run yet: only py_compile was used.
+#   25-Sep-2026 debate five, pick 3 (OpenMind #arc-3 17:14 ET; Claude Opus 5.5 (Bubba)): BeliefState.library (None by
+#   default = the old price exactly): a library.RuleLibrary whose rules cost `reuse` x their description length in price().
 # SRP/DRY check: Pass -- chain back-off = round7.Model, Dirichlet with back-off prior =
 #   heldout_yardstick.TypePriorBeliefs, EIG / Dirichlet KL = efe_trace_analysis. New: the mixture of
 #   rule-set experts over the shared back-off, replay scoring, BMR over rules, surprise monitor.
@@ -352,12 +354,17 @@ class BeliefState:
         self.monitor = SurpriseMonitor()
         self.serial = 0
         self.dlc = DLContext()
+        self.library = None              # library.RuleLibrary (debate five pick 3): MDL reuse discount in price()
         self.hyps: list[Hypothesis] = [Hypothesis(RuleSet.empty(), self.price(RuleSet.empty()), origin="empty")]
 
     # -- posterior
     def price(self, rs: RuleSet) -> float:
-        """Prior cost of a rule set in nats: dl_weight x description length."""
-        return self.dl_weight * rs.description_length(self.dlc)
+        """Prior cost of a rule set in nats: dl_weight x description length (with a rule library, rules that held before
+        are discounted: library.RuleLibrary.discount)."""
+        dl = rs.description_length(self.dlc)
+        if self.library is not None:
+            dl -= self.library.discount(rs, self.dlc)
+        return self.dl_weight * dl
 
     def refresh_dl(self, scene: Optional[Scene]) -> None:
         self.dlc = dl_context_for(scene, self.backoff.vocab_size)

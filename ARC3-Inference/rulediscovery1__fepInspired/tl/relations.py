@@ -27,6 +27,12 @@
 #   single function used both for training rows (TLState.observe) and for prediction (tl/rule.TLRule.predict),
 #   so the two can never disagree. TLState is kept by rules.ContextBuilder when AgentConfig.use_tl is on and
 #   hands the rules a frozen TLView through RuleContext.tl (the hdc_bridge pattern: exact replay stays exact).
+#   24-Sep-2026 debate picks (OpenMind 22:49 ET; this change by Claude Opus 5.5 (Bubba)): TLView may carry the contingency
+#   self's part ids (selfmodel.ContingentSelf, AgentConfig.use_self), which then ARE the controlled group (Ctl), and the
+#   learned facing (dy, dx, confidence): Facing(o) = o in the strip the self would newly cover by its facing move, a soft
+#   relation (value = confidence) joined in equation P as a sixth self relation, so a rule can say "ACTION5 changes the
+#   object ahead of self". With the self model on, a self part's training target is the self's displacement (a turn is a
+#   reshape in place) and self parts are never counted as appearances. Both default off (None) = unchanged rows.
 # SRP/DRY check: Pass -- components, look-ahead cap and tracking come from perception.py / _distill; common fate
 #   from soft/a1_common_fate.py; the run-boundary jump from hdc/stage4_real.MAX_JUMP. New: the relation
 #   vocabulary, per-object effect targets, the entry builder and the online history / tape bookkeeping.
@@ -53,8 +59,9 @@ N_ACT = len(ACTIONS) + 1        # + "other"
 F_COL, F_TYPE, F_CTL, F_WORLD, F_BIAS = 0, N_COL, N_COL + T_MAX, N_COL + T_MAX + 1, N_COL + T_MAX + 2
 N_F = N_COL + T_MAX + 3
 SELF_RELS = ("contact", "on", "clicked", "adjacent", "comoved")
+SELF_RELS_ALL = SELF_RELS + ("facing",)     # debate pick 2: "facing" only materialised when AgentConfig.tl_facing is on
 LINK_RELS = ("contact", "on", "clicked", "changed", "adjacent")
-R_CONTACT, R_ON, R_CLICKED, R_CHANGED, R_ADJ, R_COMOVED = 0, 1, 2, 3, 4, 5   # relation ids in build_rows
+R_CONTACT, R_ON, R_CLICKED, R_CHANGED, R_ADJ, R_COMOVED, R_FACE = 0, 1, 2, 3, 4, 5, 6   # relation ids in build_rows
 TAPE_LAGS = (("act", -1), ("act", 0), ("act", 1), ("mv", -1), ("mv", 0), ("mv", 1), ("mv", 2))
 OBJ_CAP = 120
 NONE, APP, OTHER = "none", "app", "other"
@@ -208,6 +215,8 @@ class TLView:
     tape: tuple
     changed: frozenset = frozenset()     # component ids that changed (not a pure move) on the previous step
     comoved: frozenset = frozenset()     # component ids that moved with the controlled sprite on the previous step
+    self_ids: Optional[frozenset] = None # debate pick 1: the contingency self's part ids on this board (None = off)
+    facing: Optional[tuple] = None       # debate pick 2: (dy, dx, confidence) the self faces (None = off / unknown)
 
 
 # ---------------------------------------------------------------- entries (the materialised joins)
@@ -259,7 +268,7 @@ def own_features(c, types: dict, is_ctl: bool, soft: Optional[tuple] = None) -> 
     return out
 
 
-_SELF_IDX = {R_CONTACT: 0, R_ON: 1, R_CLICKED: 2, R_ADJ: 3, R_COMOVED: 4}
+_SELF_IDX = {R_CONTACT: 0, R_ON: 1, R_CLICKED: 2, R_ADJ: 3, R_COMOVED: 4, R_FACE: 5}
 _LINK_IDX = {R_CONTACT: 0, R_ON: 1, R_CLICKED: 2, R_CHANGED: 3, R_ADJ: 4}
 
 
@@ -272,15 +281,18 @@ def build_rows(scene, action, agent, *, types: dict, effects: dict, movable: fro
     sr = SceneRel.of(scene)
     group = view.group if view is not None else {}
     ctl_ids: set = set()
-    if agent is not None and agent.id in sr.by_id:
+    if view is not None and view.self_ids is not None:
+        ctl_ids = {i for i in view.self_ids if i in sr.by_id}      # debate pick 1: the contingency self
+    elif agent is not None and agent.id in sr.by_id:
         ctl_ids = {agent.id} | set(group.get(agent.id, ()))
     comps = list(sr.objs) + [None]
     rows = Rows(comps, [c is not None and c.id in ctl_ids for c in comps])
     a = act_index(action)
     moves = [(e, mv_delta(nm)) for nm, e in effects.items() if nm.startswith("mv")]
 
-    # relations that link objects: Contact / On / Clicked / Changed
+    # relations that link objects: Contact / On / Clicked / Changed (/ Facing, debate pick 2)
     rel: dict = {}
+    face_val: dict = {}
     if ctl_ids:
         members = tuple(sr.by_id[i] for i in sorted(ctl_ids) if i in sr.by_id)
         d = dirs.get(action.name) if action.is_button else None
@@ -299,6 +311,15 @@ def build_rows(scene, action, agent, *, types: dict, effects: dict, movable: fro
                 rel.setdefault(c.id, set()).add(R_ON)
             elif cb[0] <= sb[2] + 1 and sb[0] <= cb[2] + 1 and cb[1] <= sb[3] + 1 and sb[1] <= cb[3] + 1:
                 rel.setdefault(c.id, set()).add(R_ADJ)
+        if view is not None and view.facing is not None:
+            # Facing(o): o lies in the strip the self would newly cover by its facing move; the relation's value is the
+            # confidence of the learned facing (a soft relation), so "ACTIONk changes the object ahead" is one P weight
+            fy, fx, conf = view.facing
+            ys, xs, _ = sr.strip(members, int(fy), int(fx))
+            for cid in {int(v) for v in np.unique(scene.comps.lab[ys, xs]) if v}:
+                if cid in sr.by_id and cid not in ctl_ids:
+                    rel.setdefault(cid, set()).add(R_FACE)
+                    face_val[cid] = float(conf)
     if action.is_click and action.row is not None:
         cc = scene.comp_at(action.row, action.col)
         if cc is not None and cc.id in sr.by_id:
@@ -337,7 +358,7 @@ def build_rows(scene, action, agent, *, types: dict, effects: dict, movable: fro
             for r in rel.get(c.id, ()):
                 j = _SELF_IDX.get(r)
                 if j is not None:
-                    rows.P.append((n, (j * N_COL + col) * N_ACT + a, 1.0))
+                    rows.P.append((n, (j * N_COL + col) * N_ACT + a, face_val[c.id] if r == R_FACE else 1.0))
         # K: another object's relation x its colour x this object's colour (projection over o')
         if "K" in active:
             for oid, rs in rel.items():
@@ -382,6 +403,8 @@ class TLState:
         self.movable: set = set()
         self.scene = None
         self.view: Optional[TLView] = None
+        self.selfm = None                 # selfmodel.ContingentSelf (debate pick 1), set by rules.ContextBuilder
+        self.facing_src = None            # callable -> (dy, dx, confidence) or None (debate pick 2)
         self.new_level()
 
     def new_level(self) -> None:
@@ -445,7 +468,36 @@ class TLState:
                 changed.add(c.id)
             if t in self.comoved_tracks:
                 comoved.add(c.id)
-        return TLView(self.partners(), hist, tuple(self.world_hist), self._tape(), frozenset(changed), frozenset(comoved))
+        extra = {}
+        if self.selfm is not None:
+            f = self.selfm.frame(scene)
+            extra["self_ids"] = f.ids if f is not None else None
+        if self.facing_src is not None:
+            extra["facing"] = self.facing_src()
+        return TLView(self.partners(), hist, tuple(self.world_hist), self._tape(), frozenset(changed), frozenset(comoved),
+                      **extra)
+
+    def _self_targets(self, pre, post, self_ids, targets: dict, n_app: int) -> tuple:
+        """Debate pick 1: every self part's target is the self's displacement (a turn that redraws the sprite is a
+        reshape in place, not a vanish plus an appear), and self parts on the new board are not appearances."""
+        d = self.selfm.last_delta
+        if d is None:
+            return targets, n_app
+        out = dict(targets)
+        for cid in self_ids:
+            if cid not in out:
+                continue
+            if d != (0, 0):
+                out[cid] = mv_name(d[0], d[1])
+            else:
+                c = pre.comps.comps[cid - 1]
+                ys, xs = pre.cells(c)
+                out[cid] = NONE if bool((post.comps.arr[ys, xs] == c.colour).all()) else "reshape"
+        f = self.selfm.frame(post)
+        if f is not None and n_app:
+            pre_tracks = set(pre.track_ids.values())
+            n_app = sum(1 for b in post.objects() if post.track_ids.get(b.id) not in pre_tracks and b.id not in f.ids)
+        return out, n_app
 
     def observe(self, tr, rc, dirs: dict) -> None:
         """One finished step. rc: the context the step was predicted with (its .tl is self.view)."""
@@ -462,6 +514,8 @@ class TLState:
         pre = tr.pre
         view = self.view if rc is not None and rc.tl is self.view else None
         targets, n_app = target_effects(pre, post)
+        if self.selfm is not None and view is not None and view.self_ids:
+            targets, n_app = self._self_targets(pre, post, view.self_ids, targets, n_app)
         for c in post.objects():
             self.vocab.typ(c.type_key)
         agent = rc.agent if rc is not None else None
