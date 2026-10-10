@@ -5,7 +5,7 @@
 //   answer from the team-only review-status route (railway/games_store.py review_status):
 //   - the review board on the browse view: a thumbnail of every game tree in the catalog, every
 //     family, official first (the server's order), each marked with its review state -- a dot for
-//     a current version nobody has reviewed, a green tick for "trainable", a red cross for
+//     a game with no notes or current review, a green tick for "trainable", a red cross for
 //     "untrainable". Family chips, verdict chips and a search box narrow the list; a click opens the
 //     game in the player, where the review sits in the left sidebar;
 //   - the sidebar review of the version on screen: a two-way Trainable / Untrainable verdict
@@ -13,8 +13,8 @@
 //     until someone decides and clearable by clicking the chosen side again, then Son's four-item
 //     checklist, each saved per version with who and when. The game's comments sit under the
 //     checklist in the same box (markup in index.html; games-play.js paints them);
-//   - "Next unreviewed game": the next tree, in board order (official first, then by id), whose
-//     current version has no checklist or verdict saved by anyone, plus a reviewed-of-total count.
+//   - "Next unreviewed game": the next tree, in board order (official first, then by id), that
+//     has no written comments on any version and no current checklist or verdict, plus a count.
 //     It walks every tree, whatever the board's filters show. After any save the review state is
 //     reloaded, so the board, its filters, the count and this walk all match the verdict.
 //   games-play.js owns the player and calls attach() for each version it opens. Signed out, none
@@ -129,7 +129,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     const trees = boardTrees();
     const ticked = all.filter((t) => verdictOf(t) === "trainable").length;
     const rejected = all.filter((t) => verdictOf(t) === "rejected").length;
-    $("tbSummary").textContent = `Showing ${trees.length} of ${all.length} games, official first · ${ticked} trainable · ${rejected} untrainable · a dot marks a current version nobody has reviewed`;
+    $("tbSummary").textContent = `Showing ${trees.length} of ${all.length} games, official first · ${ticked} trainable · ${rejected} untrainable · a dot marks a game with no notes or current review`;
     if (!trees.length) grid.appendChild(el("p", "tb-empty", "No games match."));
     for (const tree of trees) {
       const verdict = verdictOf(tree);
@@ -152,7 +152,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
       if (verdict === "rejected") item.appendChild(el("span", "tb-tick no", "✕"));
       if (!tree.reviewed) {
         item.classList.add("unreviewed");
-        item.title += " · current version unreviewed";
+        item.title += " · no notes or current review";
       }
       item.addEventListener("click", () => onOpen(tree.treeId, shown.versionId));
       grid.appendChild(item);
@@ -165,7 +165,7 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     $("reviewProgress").textContent = text;
   }
 
-  // The tree after the one on screen, in board order, whose current version nobody has reviewed.
+  // The tree after the one on screen with no written notes or current checklist/verdict.
   // Fetched fresh each time so a teammate's reviews from the last few minutes count.
   async function next(button) {
     button.disabled = true;
@@ -176,7 +176,20 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
       const here = trees.findIndex((t) => t.treeId === currentTreeId());
       for (let step = 1; step <= trees.length; step++) {
         const tree = trees[(here + step + trees.length) % trees.length];
-        if (!tree.reviewed && tree.treeId !== currentTreeId()) return onOpen(tree.treeId, tree.head.versionId);
+        if (tree.reviewed || tree.treeId === currentTreeId()) continue;
+        // Also check the comments directly: this handles an older API during a rollout and
+        // a note posted by a teammate after review-status was fetched. Never treat a failed
+        // notes request as an empty game.
+        let notes;
+        try {
+          notes = await api.treeNotes(tree.treeId);
+        } catch (err) {
+          $("tbProgress").textContent = $("reviewProgress").textContent = `Could not check comments (${err.message}). Try again.`;
+          return;
+        }
+        const written = (notes.feedback || []).some((r) => !r.hidden &&
+          [r.comment, r.goalGuess, r.liked, r.disliked, r.suggestion, r.bugs].some((text) => text && text.trim()));
+        if (!written) return onOpen(tree.treeId, tree.head.versionId);
       }
       $("tbProgress").textContent = $("reviewProgress").textContent = "Every game is reviewed";
     } finally {
@@ -185,10 +198,10 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
   }
 
   // A save on the version on screen: reload the review state so the board, its filters, the count
-  // and "Next unreviewed game" all agree with it (a cleared verdict can hand the tree back to an
-  // older version's verdict, or make the current version unreviewed again).
+  // and "Next unreviewed game" all agree with it. Written notes still keep a tree reviewed
+  // when its current verdict is cleared.
   function noteSaved() {
-    refresh();
+    return refresh();
   }
 
   // The sidebar review of one version: the verdict toggle and the checklist under it.
@@ -269,5 +282,5 @@ export function createReview({ api, shortDate, onOpen, currentTreeId }) {
     }
   }
 
-  return { showBoard, refresh, attach };
+  return { showBoard, refresh, attach, noteSaved };
 }

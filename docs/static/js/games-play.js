@@ -29,7 +29,7 @@ import { createFeedback } from "./games-feedback.js?v=20260919-trees";
 import { createIdeasBoard } from "./games-ideas.js?v=20260920-rail";
 import { createTuning, patchSource } from "./games-tuning.js?v=20260920-sprites";
 import { createSprites, patchSprite, fromGrid } from "./games-sprites.js?v=20260920-sprites";
-import { createReview } from "./games-review.js?v=20261009-review-left";
+import { createReview } from "./games-review.js?v=20261010-no-notes";
 
 // Canonical ARC-3 board palette (values 0-15) -- identical to constants.py's
 // COLOR_MAP in the reference impl and to scripts/build_games_manifest.py's
@@ -504,13 +504,18 @@ async function renderTeamPanels(context) {
   box.hidden = trainBox.hidden = !me || !context.version.versionId;
   if (box.hidden) return;
   if (!context.notes) {
+    $("commentForm").querySelector("button").disabled = true;
+    $("commentCount").textContent = "";
+    $("commentList").textContent = "Loading comments…";
     try {
       context.notes = await api.treeNotes(context.tree.treeId);
     } catch (err) {
-      context.notes = { notes: {}, comments: [] };
+      if (current === context) $("commentList").textContent = `Could not load comments (${err.message}). Reload before posting.`;
+      return;
     }
   }
   if (current !== context) return;
+  $("commentForm").querySelector("button").disabled = false;
   trainReview.attach(context);
   paintComments(context);
 }
@@ -631,6 +636,7 @@ function paintComments(context) {
       $("commentBody").value = "";
       context.notes = await api.treeNotes(context.tree.treeId).catch(() => context.notes);
       paintComments(context);
+      trainReview.noteSaved();
     } catch (err) {
       error.hidden = false;
       error.textContent = `Could not post (${err.message}).`;

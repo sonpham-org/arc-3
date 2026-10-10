@@ -1282,9 +1282,9 @@ def review_status(cursor: Any) -> dict[str, Any]:
     """Every tree the Games page lists, with its current version's review state and the
     tree's latest training verdict. Team-only: the verdicts are the team's.
 
-    A current version counts as reviewed once anyone has saved its checklist or a training
-    verdict on it -- an unticked verdict (train_ok = false) included, since someone looked and
-    said no. A newer version lands unreviewed, so a game comes back round when it changes.
+    A tree counts as reviewed once anyone has written a visible comment on any version, or
+    saved a checklist or training verdict on its current version. Written feedback on an
+    older version keeps the game out of the queue; a verdict remains version-specific.
     The official 25 come first: they are the starting set of the Trainable box and the first
     games "Next unreviewed game" walks."""
 
@@ -1294,7 +1294,17 @@ def review_status(cursor: Any) -> dict[str, Any]:
         SELECT t.tree_id, t.family AS tree_family,
                g.family, g.title, g.description, g.tags,
                v.version_id, v.game_id, v.sha256, v.has_thumbnail, th.number,
-               (v.train_ok IS NOT NULL OR v.review_checks IS NOT NULL) AS reviewed,
+               (v.train_ok IS NOT NULL OR v.review_checks IS NOT NULL OR EXISTS (
+                   SELECT 1 FROM arc3_game_feedback AS f
+                   JOIN arc3_games AS fg ON fg.game_id = f.game_id
+                   WHERE fg.tree_id = t.tree_id AND NOT f.hidden
+                     AND COALESCE(NULLIF(BTRIM(f.comment), ''),
+                                  NULLIF(BTRIM(f.goal_guess), ''),
+                                  NULLIF(BTRIM(f.liked), ''),
+                                  NULLIF(BTRIM(f.disliked), ''),
+                                  NULLIF(BTRIM(f.suggestion), ''),
+                                  NULLIF(BTRIM(f.bugs), '')) IS NOT NULL
+               )) AS reviewed,
                vd.version_id AS verdict_version_id, vd.game_id AS verdict_game_id,
                vd.sha256 AS verdict_sha256, vd.has_thumbnail AS verdict_has_thumbnail,
                vd.train_ok AS verdict_ok, vd.train_ok_by AS verdict_by, vd.train_ok_at AS verdict_at,

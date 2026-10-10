@@ -456,6 +456,30 @@ class DatabaseTests(unittest.TestCase):
             self.query(set_review_checks, "rv-a@000000000000", {}, email="son@example.com")
         self.assertEqual(caught.exception.code, "version_not_found")
 
+    def test_written_notes_on_any_version_keep_a_tree_out_of_the_unreviewed_queue(self) -> None:
+        self.publish(upload("notes-1", "old", created_at="2026-09-01T00:00:00Z"))
+        self.publish(upload("notes-1", "new", created_at="2026-09-02T00:00:00Z"))
+
+        def reviewed():
+            return next(t for t in self.query(review_status)["trees"] if t["treeId"] == "notes-1")["reviewed"]
+
+        def add_note(cursor, **fields):
+            item = clean_feedback({"game_id": "notes-1", "version_id": vid("notes-1", "old"), **fields})
+            return insert_feedback(cursor, item, reviewer_class="public", reviewer="player", ip_hint=None,
+                                   static_game_ids=frozenset())
+
+        self.query(add_note, fun=4)  # Ratings alone are not written notes.
+        self.assertFalse(reviewed())
+        note = self.query(add_note, comment="Played the earlier build; the opening is too easy.")
+        self.assertTrue(reviewed())
+        self.assertIsNone(next(t for t in self.query(review_status)["trees"]
+                              if t["treeId"] == "notes-1")["verdict"])
+        self.query(lambda c: c.execute("UPDATE arc3_game_feedback SET hidden = true WHERE feedback_id = %s",
+                                      (note["feedbackId"],)))
+        self.assertFalse(reviewed())  # Hidden spam does not block the queue.
+        self.query(add_note, liked="The older multi-field comment format counts too.")
+        self.assertTrue(reviewed())
+
     def test_the_review_columns_arrive_on_an_existing_catalog_without_touching_its_rows(self) -> None:
         self.publish(upload("old-1", "o", created_at="2026-09-01T00:00:00Z"))
         self.query(set_train_ok, vid("old-1", "o"), True, email="son@example.com")
