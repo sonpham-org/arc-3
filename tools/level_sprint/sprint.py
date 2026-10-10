@@ -14,13 +14,14 @@ PURPOSE: Level-start sprint (Son, #arc-3, 9-Oct-2026 22:30 ET): play every stuck
     report reprint results.md from a finished output folder
     freeze-env  write <harness>/notebook_env.json from the CURRENT process environment (Kaggle: call it after the
            notebook's own setup and port cells ran, so the flags are exactly the notebook's, nothing retyped)
-  Lane starts (lanes.json "start"):
+  Lane starts (lanes.json "start", or --start for every lane):
     exact  the runner's chosen exact level-start checkpoint (carried context from a real clear of the level before);
            refused if none is saved for that level
     replay the verified winning line replayed to the level start, model starts with no context (sample.py "replay")
     warmup the winning line to the level BEFORE, then the model plays that level and carries its own context into
-           the target level; the 30-minute clock covers both; cleared = both levels cleared
-    auto   exact if one is saved, else replay
+           the target level; the 30-minute clock covers both; cleared = both levels cleared. Such a lane saves a
+           checkpoint at the target level start when it clears the level before (not exact lineage)
+    auto   any saved checkpoint for the level start (exact lineage first, then one a warmup lane saved), else warmup
   Paths come from the runner's own variables: ARC3_RUNNER_HOME (solutions/, replays/, checkpoints/),
   ARC3_RUNNER_HARNESS (built harness + notebook_env.json), ARC3_RUNNER_ENVIRONMENTS (game files).
   Usage: sprint.py run --lanes lanes.json --variant variants/stock.json --out <dir> --base-url <url> --model-id <id>
@@ -74,17 +75,33 @@ def game_id_for(game: str) -> str | None:
     return None
 
 
+def best_checkpoint(game: str, level: int, variant: str) -> dict | None:
+    """Any saved start of this level with carried context: exact lineage first (the runner's rule), else one a sprint
+    lane wrote after clearing the level before from a replayed start (not exact lineage, but the model's own context
+    from a real clear of the previous level). Then fewest actions from RESET, then fewest tokens."""
+    metas = []
+    for m in sorted((checkpoints.ROOT / game / str(level)).glob("*/meta.json")):
+        meta = read_json(m)
+        if meta and meta.get("variant", variant) == variant and (m.parent / "state.pkl.gz").exists():
+            metas.append({**meta, "path": str(m.parent)})
+    metas.sort(key=lambda x: (not x.get("exact_lineage"), x.get("actions_to_reach") or 10**9,
+                              x.get("tokens_to_reach") or 10**12))
+    return metas[0] if metas else None
+
+
 def resolve(lane: dict, variant: str) -> dict:
     """The sample.py start for one lane: {kind, start, context, stuck_level, levels_to_play, start_label}."""
     game, level, want = lane["game"], int(lane["level"]), lane.get("start", "auto")
     if want in ("exact", "auto"):
-        cp = checkpoints.chosen(game, level, variant)
+        cp = checkpoints.chosen(game, level, variant) if want == "exact" else best_checkpoint(game, level, variant)
         if cp is not None:
+            kind = "exact" if cp.get("exact_lineage") else "carried"
             return {"start": {"kind": "checkpoint", "path": cp["path"]}, "context": "carried", "stuck_level": level,
-                    "levels_to_play": 1, "start_label": f"exact ({cp['actions_to_reach']} actions from RESET)"}
+                    "levels_to_play": 1, "start_label": f"{kind} checkpoint ({cp['actions_to_reach']} actions from RESET)"}
         if want == "exact":
             raise ValueError(f"{game} level {level}: no exact checkpoint saved for this level start")
-    if want in ("replay", "auto"):
+        want = "warmup"     # auto without a checkpoint: let the model build its own context on the level before
+    if want == "replay":
         st = replays.start_for(game, level, variant)
         if st is None:
             raise ValueError(f"{game} level {level}: no verified replay to this level start")

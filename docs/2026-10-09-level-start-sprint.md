@@ -66,7 +66,9 @@ newest notebook `sonphamorg/arc3-daniel-int8v2-l12-ct1`. Source in the repo: `ka
   the first-request check, or the winning-line replay with its board check), the turn hooks and `result.json` are the
   runner's own code. The harness is the patched bundle the notebook just built, and its flags are frozen from the
   notebook process (`sprint.py freeze-env`), so nothing is retyped.
-- **Start per lane**: the notebook's `LANE_START` (default `warmup` since version 2) overrides `lanes.json`.
+- **Start per lane**: the notebook's `LANE_START` (default `auto` since version 3) overrides `lanes.json`.
+  `auto` = a saved checkpoint at the stuck level's start (exact lineage first, else one a warmup lane saved), else
+  `warmup`.
   `warmup` = winning line to the level BEFORE, the model plays that level and carries its own context into the target
   level (cleared = both levels; the clock covers both; checked offline: Skewer Kebabs from level 4 cleared it and
   entered level 5 with the conversation carried); `replay` = the stuck level with no context; `exact` = a saved
@@ -118,10 +120,21 @@ notebook's setup cell gzips `request.json` and `state.pkl` back so the runner's 
   Sliding Indicator 7 (133, 31), Streaming Purple 5 (85, 26), Coded Notches 5 (186, 43), Deck Control 5 (304, 35),
   Locksmith 5 (109, 24), Kick Away 7 (93, 31). Output kept on the Mini under
   `/Volumes/Samsung 9100 SSD/data/arc3-level-sprint/kaggle-v1/`.
+- **Kaggle, stock control with warmup, version 2** (9-Oct 23:32 ET - 10-Oct 00:11 ET, 0.6 GPU hours; RTX PRO 6000
+  checked; server healthy after about 6 minutes). **Cleared 1 of 11**: Sliding Indicator 7 (it cleared level 6, then
+  7, in 29 minutes). Only four lanes cleared their warmup level inside the clock (Sliding Indicator, Deck Control,
+  Locksmith, Kick Away); the other seven spent the whole half hour on a level the nine-hour runs always clear. Those
+  four lanes saved carried-context checkpoints at Deck Control 5, Locksmith 5, Kick Away 7 and Sliding Indicator 7 and 8.
+  All restore into Son's newest harness (checked offline on Jethro: replay, board, 70-91 messages of history, 7-35
+  retained functions). They ship in dataset version 3, so `auto` starts those four stuck levels with carried context
+  and the full 30 minutes.
 - **What that means**: the plumbing works, but as a yardstick a no-context, 30-minute, one-pass control at these levels
-  reads zero everywhere, so a variant can only show up by clearing something. Two levers, in order: carried context
-  (`warmup` lanes now; exact checkpoints once harvest has a server), and a longer clock or two lanes per level for the
-  levels closest to the line (Buoyant Pontoons 3, Ghost Twin 6, Coded Notches 5, Locksmith 5 at 67%).
+  reads zero everywhere, so a variant can only show up by clearing something. The warmup control shows the real cost:
+  half an hour is often not enough to clear even the level before. So the sprint is only as good as its saved starts.
+  Each run with `auto` saves new carried starts for the levels whose warmup it clears; copy
+  `sprint/home/checkpoints/` from the run output into the dataset (section "Shipping new checkpoints") and the next
+  run starts more lanes right at the stuck level. A longer clock or two lanes per level helps the levels closest to the
+  line (Buoyant Pontoons 3, Ghost Twin 6, Coded Notches 5, Locksmith 5 at 67%).
 
 ## 4. What is missing
 

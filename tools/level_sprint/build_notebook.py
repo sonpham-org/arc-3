@@ -46,9 +46,9 @@ Son's plan, #arc-3, 9-Oct-2026: test a prompt or harness change on the stuck lev
 
 * Serving and harness: copied cell for cell from **{source}** (Flash-Next on the RTX PRO 6000, his patch, his flags).
 * Lanes: `level_sprint/lanes.json` in the sprint dataset (the first level under ~80% per game in the nine-hour heatmap).
-  By default (`LANE_START = "warmup"`) a lane replays the verified winning line to the level BEFORE the stuck one,
-  the model clears that level and carries its own context into the stuck level. Other starts: "replay" (no context),
-  "auto" (an exact saved checkpoint when one exists, else "replay").
+  By default (`LANE_START = "auto"`) a lane starts at the stuck level from a saved checkpoint (context carried from a
+  real clear of the level before) when the dataset has one, else it replays the verified winning line to the level
+  BEFORE, the model clears that level and carries its own context in ("warmup"). "replay" = no context.
 * Your variant: edit the **Sprint settings** cell (extra turn instructions, harness flags, sampling settings).
   To change the harness itself, edit the patch cell or the port cell exactly as in your own notebook.
 * Output: `/kaggle/working/sprint/results.md` and `results.json`; per lane the transcript, turns and result under
@@ -63,10 +63,11 @@ WALL_MINUTES = 30          # play time per lane (the model server's startup is n
 MAX_TURNS = 0              # 0 = no turn cap; the wall clock is the limit
 MAX_ACTIONS = 1000         # per lane, a safety net
 ONLY_GAMES = ""            # e.g. "sk48,lf52" to run a subset; "" = every lane in lanes.json
-# Lane start for every lane. "warmup" (default since 9-Oct): replay to the level BEFORE, the model clears it and carries
-# its own context into the stuck level (the clock covers both). "replay": stuck level with no context (the first stock
-# control did this and cleared 0 of 11 in 30 min). "auto": an exact saved checkpoint if one exists, else "replay".
-LANE_START = "warmup"
+# Lane start for every lane. "auto" (default): a saved checkpoint at the stuck level's start when the dataset has one
+# (context carried from a real clear of the level before), else "warmup". "warmup": replay to the level BEFORE, the
+# model clears it and carries its own context into the stuck level (the clock covers both). "replay": the stuck level
+# with no context (the first stock control did this and cleared 0 of 11 in 30 min).
+LANE_START = "auto"
 LANES_FILE = None          # None = level_sprint/lanes.json from the dataset; or a path to your own
 VARIANT = {
     "name": "stock",               # shows in the results table
