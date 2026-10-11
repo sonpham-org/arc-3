@@ -303,7 +303,7 @@ function drawFinished(finished) {
 
 async function load() {
   try {
-    const r = await fetch("/api/v1/rl2/doc/score-climb", { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    const r = await fetch("/api/v1/rl2/doc/" + (window.CLIMB_DOC || "score-climb"), { cache: "no-store", credentials: "same-origin", redirect: "manual" });
     if (r.type === "opaqueredirect" || r.status === 401 || r.status === 403) throw new Error("sign in to the site to see this page");
     if (r.status === 404) throw new Error("nothing published yet");
     if (!r.ok) throw new Error("HTTP " + r.status);
