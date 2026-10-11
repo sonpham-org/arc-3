@@ -15,6 +15,18 @@ datasets/decision-steps/SCHEMA.md. This file only records what changed, when, an
 
 # Changelog
 
+## [2026.10.10-level-start-sprint-baseline]
+*Author: Claude Opus 5.5 (Bubba) | 2026-10-10*
+
+- **What:** start harvest and stock baseline of the level-start sprint ran on Ronen's account (scizical), both on the
+  RTX PRO 6000. Results and the baseline table are in `docs/2026-10-09-level-start-sprint.md` section 5. Harvest and
+  baseline checkpoints merged; datasets `scizical/arc3-level-sprint` and `sonphamorg/arc3-level-sprint` versioned
+  (29 level starts with a checkpoint).
+- **Why:** variants need a yardstick. Stock prompt, `auto` starts, 30 minutes, two tries per level: 4 of 11 stuck
+  levels cleared at least once, Coded Notches 5 cleared both times.
+- **How:** `tools/level_sprint/build_dataset.py --add-checkpoints`, `push.py --no-kernel`; steps followed from the
+  sprint's FOLLOWUP.md by the `arc3-sprint-followup` automation.
+
 ## [2026.10.10-level-start-sprint-harvest]
 *Author: Claude Opus 5.5 (Bubba) | 2026-10-10*
 

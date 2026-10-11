@@ -195,10 +195,62 @@ carried checkpoint at every level start they reach; Deck Control and Locksmith s
 and play on (Deck Control 6, Locksmith 6-7). Sixteen lanes on twelve request slots, about the same over-admission as
 Son's own notebook (13 games on 10). Results are added here when it finishes.
 
+**Harvest result** (finished 10-Oct 18:34 ET, 16:34-22:34 UTC; log shows "NVIDIA RTX PRO 6000 Blackwell Server
+Edition"). The stuck level was cleared on 9 of 16 lanes, 6 of 9 levels by at least one lane:
+
+| Game | Level | Lanes cleared | Saved starts it left |
+|---|---|---|---|
+| Buoyant Pontoons | 3 | 2 of 2 | 3, 4 |
+| Skewer Kebabs | 5 | 0 of 2 | 5 |
+| Leapfrog | 6 | 0 of 2 | none |
+| Warehouse Associates | 5 | 0 of 2 (both hit the 5000-action cap) | 5 |
+| Ghost Twin | 6 | 2 of 2 (one won the game) | 6, 7 |
+| Streaming Purple | 5 | 1 of 2 | 5, 6 |
+| Coded Notches | 5 | 2 of 2 (one won the game) | 5, 6 |
+| Deck Control | 5 (carried) | 1 of 1 | 6 |
+| Locksmith | 5 (carried) | 1 of 1 (won the game) | 6, 7 |
+
+22 new checkpoints were merged into the runner home (dataset builds 20261010T230236Z for scizical,
+20261010T230239Z for sonphamorg; 28 level starts now have a checkpoint). Of the seven games that had no saved start,
+six now do (Buoyant Pontoons 3, Skewer Kebabs 5, Warehouse Associates 5, Ghost Twin 6, Streaming Purple 5, Coded
+Notches 5); Leapfrog 6 still warms up from level 5. The offline check of the scizical build shows every other lane on
+"carried checkpoint". The baseline (version 2 of `scizical/arc3-level-start-sprint`) was pushed 10-Oct 19:05 ET.
+
 **Then the baseline**: the same notebook with `auto` starts, the stock prompt, 30 minutes, `PASSES = 2` (two tries per
 level, one lane per level at a time so the server is not oversubscribed), after the harvest checkpoints are shipped.
 Follow-up steps: `/Volumes/Samsung 9100 SSD/data/arc3-level-sprint/FOLLOWUP.md`, run by the OpenClaw automation
-`arc3-sprint-followup`.
+`arc3-sprint-followup` (removed once the baseline was in).
+
+**Baseline result** (version 2 of `scizical/arc3-level-start-sprint`, dataset build 20261010T230236Z, variant `stock`,
+ran 23:14-00:15 UTC = 10-Oct 19:14-20:15 ET; log shows "NVIDIA RTX PRO 6000 Blackwell Server Edition"). Stock prompt,
+`auto` starts, 30 minutes per lane, two passes of one lane per level. 5 of 22 lanes cleared; 4 of 11 levels cleared
+at least once:
+
+| Game | Level | Start | Cleared (of 2) |
+|---|---|---|---|
+| Buoyant Pontoons | 3 | carried checkpoint | 0 |
+| Skewer Kebabs | 5 | carried checkpoint | 0 |
+| Leapfrog | 6 | warmup from level 5 | 0 |
+| Warehouse Associates | 5 | carried checkpoint | 1 |
+| Ghost Twin | 6 | carried checkpoint | 0 |
+| Sliding Indicator | 7 | carried checkpoint | 1 |
+| Streaming Purple | 5 | carried checkpoint | 0 |
+| Coded Notches | 5 | carried checkpoint | 2 |
+| Deck Control | 5 | carried checkpoint | 0 |
+| Locksmith | 5 | carried checkpoint | 1 |
+| Kick Away | 7 | carried checkpoint | 0 |
+
+Every lane that did not clear stopped on the 30-minute clock. As a yardstick a level counts as cleared at one or two
+of two tries, so the stock bar is 4 of 11 levels, with Coded Notches 5 the only one cleared both times. The six-hour
+harvest lanes cleared Buoyant Pontoons 3, Ghost Twin 6, Streaming Purple 5 and Deck Control 5, which the 30-minute
+baseline did not, so those are reachable but not inside the clock. A variant beats the baseline if, on the same
+build and clock, it clears more of the 11 at least once or turns one-of-two levels into two-of-two.
+
+The baseline's 5 new checkpoints (Coded Notches 6 twice, Locksmith 6, Sliding Indicator 8, Warehouse Associates 6)
+were merged into the runner home: dataset builds 20261011T003152Z (scizical) and 20261011T003156Z (sonphamorg), 29
+level starts with a checkpoint, both live on Kaggle. Datasets only; no notebook was pushed. Variants judged against
+this baseline should run on build 20261010T230236Z starts or note that the newer build adds starts only past the
+sprint levels.
 
 **Son's notebook on Kaggle** (`sonphamorg/arc3-level-start-sprint`) still has the version 3 settings cell, without
 the dataset build check, copies or passes. The repo copy (`kaggle/level-start-sprint/`) is rebuilt with them; it was
